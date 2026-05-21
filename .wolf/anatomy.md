@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-21T15:49:13.994Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-21T16:34:31.539Z
 > Files: 9 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -17,8 +17,8 @@
 
 ## docs/
 
-- `ccmem-design.md` — Claude Code 记忆插件设计方案 v3.0 (~32322 tok)
-- `claude-code-behavior-uncertainties.md` — Claude Code 行为验证清单 (U1-U6 已验证) (~2800 tok)
+- `ccmem-design.md` — Claude Code 记忆插件设计方案 v3.0 (~33370 tok)
+- `claude-code-behavior-uncertainties.md` — Claude Code 行为验证清单 (~2337 tok)
 - `design-deep-analysis.md` — ccmem 设计深入分析 (~5248 tok)
 - `design-motivation.md` — 设计初衷：为什么要做这个记忆系统 (~523 tok)
 - `hermes-mem.md` (~319 tok)

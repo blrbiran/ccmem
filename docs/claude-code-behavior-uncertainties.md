@@ -244,6 +244,104 @@ if (response.hookSpecificOutput?.additionalContext) {
 
 ---
 
+## U7: Hook 执行模型 (并行)
+
+**位置**: ccmem-design.md §6 整体
+
+**验证结果**: ✅ **已确认 - 并行执行**
+
+**执行模型** (`hooks.ts:2142, 2743, 3083, 3380`):
+```typescript
+// Run all hooks in parallel with individual timeouts
+const hookPromises = matchingHooks.map(async function* (...) { ... })
+return await Promise.all(hookPromises)
+```
+
+**关键行为**:
+- 同一 event 的多个 hooks **并行执行** (`Promise.all`)
+- 每个 hook 有独立 timeout，不互相阻塞
+- 一个 hook 失败不影响其他 hooks 执行
+
+**ccmem 影响**:
+- 如果 SessionStart 和 UserPromptSubmit 各注册一个 hook，它们在各自 event 触发时独立执行，无问题
+- 如果同一 event 注册多个 hook 且有顺序依赖，需要合并为单个 hook 或在 hook 内部处理
+
+---
+
+## U8: Transcript JSONL 格式
+
+**位置**: ccmem-design.md §6.3 (parseTranscript 调用)
+
+**验证结果**: ⚠️ **需注意复杂格式**
+
+**实际格式** (`sessionStorage.ts:2289-2356`):
+```typescript
+// JSONL 文件结构复杂，不是简单的消息数组
+const {
+  messages,              // Map<UUID, TranscriptMessage>
+  summaries,             // Map<UUID, string>
+  customTitles,          // Map<UUID, string>
+  tags,                  // Map<UUID, string>
+  fileHistorySnapshots,  // Map<UUID, ...>
+  attributionSnapshots,  // Map<UUID, ...>
+  contextCollapseCommits,
+  contextCollapseSnapshot,
+  leafUuids,             // Set<UUID> - 用于找最新消息
+  contentReplacements,
+  worktreeStates,
+} = await loadTranscriptFile(filePath)
+
+// 需要从 leafUuids 找到最新消息，然后反向构建对话链
+const leafMessage = findLatestMessage(messages.values(), msg => leafUuids.has(msg.uuid))
+const transcript = buildConversationChain(messages, leafMessage)
+```
+
+**ccmem 影响**:
+- `parseTranscript()` 实现需要处理 JSONL 复杂结构
+- 不能简单按行解析，需要使用 `buildConversationChain` 逻辑
+- 建议：复用 Claude Code 的 `loadTranscriptFile` 或实现兼容解析器
+
+---
+
+## U9: 压缩比例 (70% 假设)
+
+**位置**: ccmem-design.md §6.3 `boundaryIdx = transcript.length * 0.7`
+
+**验证结果**: ⚠️ **假设可能不准确**
+
+**实际行为** (`compact.ts`):
+- Claude Code 的压缩是 **LLM 驱动**，不是固定比例
+- 压缩后保留的内容取决于 LLM 摘要，而非机械截断
+- `CompactBoundaryMessage` 标记压缩点，但不是按 70% 切分
+
+**ccmem 影响**:
+- 70% 是启发式估算，实际压缩边界可能不同
+- 更稳妥的策略：在 Stop hook 持续追踪重要内容，而非 PreCompact 时猜测边界
+- PreCompact 可作为"最后机会"补救，但不应是主要依赖
+
+---
+
+## U10: Session ID 格式
+
+**位置**: ccmem-design.md 各处 session_id 使用
+
+**验证结果**: ✅ **已确认为 UUID**
+
+**格式** (`bootstrap/state.ts:331, 447`):
+```typescript
+sessionId: randomUUID() as SessionId
+STATE.sessionId = randomUUID() as SessionId
+```
+
+**特性**:
+- 标准 UUID v4 格式
+- 每次 `resetSessionId()` 调用会生成新 UUID
+- 在 clear/resume 时会重置
+
+**ccmem 影响**: 无需调整，当前设计已按 UUID 处理
+
+---
+
 ## 验证状态追踪
 
 | ID | 问题 | 状态 | 验证人 | 日期 |
@@ -254,6 +352,10 @@ if (response.hookSpecificOutput?.additionalContext) {
 | U4 | Hook Timeout | ✅ 已确认 | Claude | 2026-05-21 |
 | U5 | Session 生命周期 | ✅ 已确认 | Claude | 2026-05-21 |
 | U6 | additionalContext 注入 | ✅ 已确认 | Claude | 2026-05-21 |
+| U7 | Hook 执行模型 | ✅ 并行执行 | Claude | 2026-05-21 |
+| U8 | Transcript JSONL 格式 | ⚠️ 复杂格式 | Claude | 2026-05-21 |
+| U9 | 压缩比例 70% | ⚠️ 启发式 | Claude | 2026-05-21 |
+| U10 | Session ID 格式 | ✅ UUID | Claude | 2026-05-21 |
 
 ---
 
@@ -261,11 +363,11 @@ if (response.hookSpecificOutput?.additionalContext) {
 
 基于验证结果，以下设计需要调整：
 
-### 1. §6.3 PreCompact Hook
+### 1. §6.3 PreCompact Hook ✅ 已更新
 - **问题**: 假设能访问 `messages` 数组
 - **调整**: 改为读取 `transcript_path` 或使用 Stop hook 预存重要内容
 
-### 2. §6.4 Stop Hook
+### 2. §6.4 Stop Hook ✅ 已更新
 - **问题**: 假设有 `tool_call_count`, `message_count`, `duration_ms`
 - **调整**: 这些字段不存在，改为从 transcript 统计或自行追踪
 
@@ -275,6 +377,15 @@ if (response.hookSpecificOutput?.additionalContext) {
 ### 4. SessionEnd 触发条件
 - **确认**: 正常退出会触发 SessionEnd hook
 - **补充**: 崩溃时不触发，需要 pending_summarize 兜底
+
+### 5. parseTranscript 实现 (新增)
+- **问题**: spec 中 `parseTranscript()` 未定义实现
+- **建议**: 需要处理 JSONL 复杂格式，参考 `sessionStorage.ts:loadTranscriptFile`
+- **关键**: 使用 `leafUuids` + `buildConversationChain` 构建对话链
+
+### 6. 压缩边界策略 (新增)
+- **问题**: 70% 是启发式，实际压缩是 LLM 驱动
+- **建议**: PreCompact 作为补救，主要依赖 Stop hook 持续追踪
 
 ---
 

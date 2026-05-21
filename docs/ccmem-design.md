@@ -78,7 +78,7 @@
 │                                                                        │
 │  SessionStart           UserPromptSubmit      PreCompact      Stop     │
 │  ┌────────────────┐    ┌────────────────┐   ┌──────────┐  ┌────────┐  │
-│  │ 读 injection_  │    │ Provider.retrieve│  │ 提取前 70%│  │ 入队列 │  │
+│  │ 读 injection_  │    │ Provider.retrieve│  │ 估算~70%*│  │ 入队列 │  │
 │  │ cache + pinned │    │ 写 feedback     │   │ 入队列   │  │ 写 wake│  │
 │  │ + fresh,注入   │    │ stdout JSON     │   │ 不注入   │  │ 不阻塞 │  │
 │  │ 写 feedback    │    │                 │   │          │  │ exit 0 │  │
@@ -650,6 +650,12 @@ async function jaccardSearch(query, scope, candidates) {
 
 ### 6.1 SessionStart
 
+> **VERIFIED (2026-05-21)**: SessionStart hook 实际输入 schema:
+> ```typescript
+> { hook_event_name: 'SessionStart', source: 'startup'|'resume'|'clear'|'compact',
+>   agent_type?: string, model?: string, session_id, transcript_path, cwd }
+> ```
+
 ```javascript
 async function handleSessionStart(hookData) {
   const { run, mode } = await shouldHookRun();
@@ -724,6 +730,12 @@ async function handleSessionStart(hookData) {
 
 ### 6.2 UserPromptSubmit
 
+> **VERIFIED (2026-05-21)**: UserPromptSubmit hook 实际输入 schema:
+> ```typescript
+> { hook_event_name: 'UserPromptSubmit', prompt: string,
+>   session_id, transcript_path, cwd }
+> ```
+
 ```javascript
 async function handleUserPromptSubmit(hookData) {
   const { run, mode } = await shouldHookRun();
@@ -796,19 +808,21 @@ async function handlePreCompact(hookData) {
   const transcriptPath = hookData.transcript_path;
   
   // 策略1: 从 transcript 提取即将被压缩的内容
+  // CAVEAT (U9): 70% 是启发式估算，Claude Code 实际压缩是 LLM 驱动，非固定比例。
+  //              此策略作为"补救"，主要依赖应是 Stop hook 持续追踪 (策略2)。
   let messagesSnapshot = null;
   if (transcriptPath && fs.existsSync(transcriptPath)) {
     try {
       const transcript = await parseTranscript(transcriptPath);
-      // 压缩通常保留最后 30%，我们关注前 70%
-      const boundaryIdx = Math.floor(transcript.length * 0.7);
+      const estimatedRatio = config.preCompact?.estimatedCompactRatio ?? 0.7;
+      const boundaryIdx = Math.floor(transcript.length * estimatedRatio);
       messagesSnapshot = transcript.slice(0, boundaryIdx);
     } catch (e) {
       logWarn('PreCompact: failed to parse transcript', e);
     }
   }
 
-  // 策略2: 从 session_context 表读取 Stop hook 已追踪的重要内容
+  // 策略2 (主策略): 从 session_context 表读取 Stop hook 已追踪的重要内容
   const trackedContext = await db.get(`
     SELECT important_facts, recent_decisions FROM session_context
     WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1
@@ -931,6 +945,10 @@ async function handleStop(hookData) {
 ```
 
 > **C12.2 注**: timeout 值与 §6.7 性能预算表对齐,略大于兜底 timeout 以留出系统调度 buffer。
+
+> **VERIFIED (U7)**: Claude Code 对同一 event 的多个 hooks **并行执行** (`Promise.all`)。
+> ccmem 每个 event 只注册一个 hook，无顺序依赖问题。若未来扩展为多 hook，
+> 需注意它们会同时执行，不能假设顺序。
 
 ### 6.6 反馈推断机制(B3)
 
@@ -1091,6 +1109,144 @@ async function applyOutcome(feedbackId, outcome, evidence) {
 > **C12.2 注**: settings.json timeout 应略大于兜底 timeout,留出系统调度 buffer。
 
 `/ccmem:bench` 命令测量并写入 `daily_metrics`,p95 持续超标时 stderr 提示用户。
+
+### 6.8 Transcript 辅助函数 (U8)
+
+> **VERIFIED (U8)**: Claude Code transcript 是复杂 JSONL 格式，包含 messages Map、
+> summaries、leafUuids 等。不能简单按行解析，需使用 `buildConversationChain` 逻辑。
+
+```javascript
+import * as readline from 'readline';
+import * as fs from 'fs';
+
+/**
+ * 解析 Claude Code transcript JSONL 文件
+ * 参考: reference/claudecode/src/utils/sessionStorage.ts:loadTranscriptFile
+ */
+async function parseTranscript(transcriptPath) {
+  const messages = new Map();      // uuid -> message
+  const leafUuids = new Set();     // 叶子消息 UUID
+  
+  const rl = readline.createInterface({
+    input: fs.createReadStream(transcriptPath),
+    crlfDelay: Infinity,
+  });
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry.type === 'message' && entry.message) {
+        messages.set(entry.message.uuid, entry.message);
+      } else if (entry.type === 'leaf') {
+        leafUuids.add(entry.uuid);
+      }
+    } catch (e) {
+      // Skip malformed lines
+    }
+  }
+
+  if (messages.size === 0) return [];
+
+  // 找到最新的叶子消息
+  let leafMessage = null;
+  let latestTs = 0;
+  for (const uuid of leafUuids) {
+    const msg = messages.get(uuid);
+    if (msg) {
+      const ts = new Date(msg.timestamp).getTime();
+      if (ts > latestTs) {
+        latestTs = ts;
+        leafMessage = msg;
+      }
+    }
+  }
+
+  if (!leafMessage) {
+    // Fallback: 使用最后一条消息
+    leafMessage = [...messages.values()].pop();
+  }
+
+  // 从叶子节点反向构建对话链
+  return buildConversationChain(messages, leafMessage);
+}
+
+function buildConversationChain(messages, leafMessage) {
+  const chain = [];
+  let current = leafMessage;
+  
+  while (current) {
+    chain.unshift(current);
+    const parentUuid = current.parentUuid || current.parent_uuid;
+    current = parentUuid ? messages.get(parentUuid) : null;
+  }
+  
+  return chain;
+}
+
+/**
+ * 从 transcript 计算会话统计 (用于 Stop hook)
+ */
+async function computeSessionStats(transcriptPath) {
+  const messages = await parseTranscript(transcriptPath);
+  
+  let toolCalls = 0;
+  let firstTs = null;
+  let lastTs = null;
+
+  for (const msg of messages) {
+    const ts = new Date(msg.timestamp).getTime();
+    if (!firstTs) firstTs = ts;
+    lastTs = ts;
+
+    // 统计 tool calls (assistant 消息中的 tool_use)
+    if (msg.type === 'assistant' && msg.content) {
+      const content = Array.isArray(msg.content) ? msg.content : [msg.content];
+      toolCalls += content.filter(c => c.type === 'tool_use').length;
+    }
+  }
+
+  return {
+    toolCalls,
+    messageCount: messages.length,
+    durationMs: (lastTs && firstTs) ? (lastTs - firstTs) : 0,
+  };
+}
+
+/**
+ * 读取 transcript 并提取最后一条 assistant 消息文本
+ */
+function readTranscriptJsonl(transcriptPath) {
+  // 同步版本用于简单场景，返回消息数组
+  const content = fs.readFileSync(transcriptPath, 'utf-8');
+  const entries = [];
+  
+  for (const line of content.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry.type === 'message' && entry.message) {
+        entries.push(entry.message);
+      }
+    } catch (e) { /* skip */ }
+  }
+  
+  return entries;
+}
+
+function extractAssistantText(message) {
+  if (!message || message.type !== 'assistant') return '';
+  
+  const content = message.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  
+  return content
+    .filter(block => block.type === 'text')
+    .map(block => block.text || '')
+    .join('\n');
+}
+```
 
 ---
 
@@ -3828,7 +3984,7 @@ async function handleSessionStart(hookData) {
 ### Phase 3:深度反思与防护
 
 - `weekly_reflection`:consolidated_rules + injection_cache 重生 + lineage 写入 + L4 反馈复核
-- PreCompact hook(前 70% 切片入队)
+- PreCompact hook(估算 ~70% 边界入队，实际压缩是 LLM 驱动)
 - 语义矛盾检测 + quarantine 状态
 - `security_audit` + `revalidation_audit`
 - consolidated 级联降级兜底

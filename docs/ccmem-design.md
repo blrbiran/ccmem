@@ -112,7 +112,7 @@
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ summarize_pending  自适应轮询(1-30s 活跃 / 5min 空闲)            │  │
 │  │ daily_consolidation     每日 02:17,catch-up 24h                  │  │
-│  │ weekly_reflection       每周日 03:17,catch-up 72h                │  │
+│  │ weekly_reflection       每周日 03:17,catch-up 7d (C8)            │  │
 │  │ security_audit          每周一 04:17,catch-up 72h                │  │
 │  │ revalidation_audit      每周三 04:17,catch-up 72h(C2 复核)      │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
@@ -158,6 +158,7 @@ CREATE TABLE memories (
   generation           INTEGER DEFAULT 0,      -- 0=raw, 1=first consolidation, >=2 forbidden
   last_revalidated_at  TIMESTAMP,              -- periodic revalidation timestamp
   revalidation_count   INTEGER DEFAULT 0,
+  requires_revalidation INTEGER DEFAULT 0,     -- 0|1, derived from tags (C12.1 index optimization)
 
   -- Frequency and time
   recall_count    INTEGER DEFAULT 0,
@@ -178,7 +179,9 @@ CREATE INDEX idx_mem_scope_status ON memories(scope, decay_status);
 CREATE INDEX idx_mem_project ON memories(project_key) WHERE project_key IS NOT NULL;
 CREATE INDEX idx_mem_touched ON memories(last_touched_at);
 CREATE INDEX idx_mem_pinned ON memories(pinned) WHERE pinned = 1;
-CREATE INDEX idx_mem_revalidation ON memories(last_revalidated_at) WHERE tags LIKE '%require_periodic_revalidation%';
+-- Revalidation index: use boolean field instead of LIKE for performance (C12.1)
+CREATE INDEX idx_mem_revalidation ON memories(last_revalidated_at) 
+  WHERE requires_revalidation = 1;
 
 -- FTS5 full-text index
 CREATE VIRTUAL TABLE memories_fts USING fts5(
@@ -308,6 +311,16 @@ CREATE TABLE mode_state (
   set_at      TIMESTAMP NOT NULL,
   set_by      TEXT NOT NULL                    -- 'user_command'|'install_default'|...
 );
+
+-- Daemon singleton lock (cross-platform, C3)
+CREATE TABLE daemon_lock (
+  id              INTEGER PRIMARY KEY CHECK (id = 1),
+  holder_pid      INTEGER NOT NULL,
+  holder_hostname TEXT NOT NULL,
+  acquired_at     INTEGER NOT NULL,           -- Unix timestamp ms
+  heartbeat_at    INTEGER NOT NULL,
+  version         INTEGER NOT NULL DEFAULT 1  -- optimistic lock
+);
 ```
 
 ### 4.2 记忆类型
@@ -349,6 +362,11 @@ CREATE TABLE mode_state (
 ```
 
 惩罚 > 奖励:让错误记忆退场更快。
+
+> **C7 注**: 上述系数 (0.05/0.10 等) 为初始经验值,缺乏 A/B 测试支撑。
+> 1. 已通过 `config.trust.rewardOnHelpful` 等配置项支持调整
+> 2. `daily_metrics` 追踪 trust 分布变化,便于后续调优
+> 3. Phase 5 评估后可能调整默认值
 
 ### 4.5 SOURCE_MAX_TRUST 常量(H8)
 
@@ -644,7 +662,9 @@ async function handlePreCompact(hookData) {
 
   // Heuristic: compaction usually targets the first 70%, keeping the last 30%.
   // What we need to rescue is the leading content about to be discarded.
-  const compactBoundary = Math.floor(messages.length * 0.7);
+  // TODO(C1): 70% 是启发式估算,实际 Claude Code 压缩边界可能不同,待验证。
+  //           若 hookData 提供实际边界,优先使用: hookData.compact_boundary ?? ...
+  const compactBoundary = Math.floor(messages.length * config.preCompact?.boundaryRatio ?? 0.7);
   const toCompact = messages.slice(0, compactBoundary);
 
   await db.run(`
@@ -718,31 +738,33 @@ async function handleStop(hookData) {
     "SessionStart": [{
       "hooks": [{ "type": "command",
                   "command": "node ~/.claude/plugins/ccmem/scripts/hook.mjs session-start",
-                  "timeout": 5 }]
+                  "timeout": 1 }]
     }],
     "UserPromptSubmit": [{
       "hooks": [{ "type": "command",
                   "command": "node ~/.claude/plugins/ccmem/scripts/hook.mjs prompt-submit",
-                  "timeout": 8 }]
+                  "timeout": 2 }]
     }],
     "PreCompact": [{
       "hooks": [{ "type": "command",
                   "command": "node ~/.claude/plugins/ccmem/scripts/hook.mjs pre-compact",
-                  "timeout": 3 }]
+                  "timeout": 1 }]
     }],
     "Stop": [{
       "hooks": [{ "type": "command",
                   "command": "node ~/.claude/plugins/ccmem/scripts/hook.mjs stop",
-                  "timeout": 3 }]
+                  "timeout": 1 }]
     }],
     "SessionEnd": [{
       "hooks": [{ "type": "command",
                   "command": "node ~/.claude/plugins/ccmem/scripts/hook.mjs session-end",
-                  "timeout": 3 }]
+                  "timeout": 1 }]
     }]
   }
 }
 ```
+
+> **C12.2 注**: timeout 值与 §6.7 性能预算表对齐,略大于兜底 timeout 以留出系统调度 buffer。
 
 ### 6.6 反馈推断机制(B3)
 
@@ -759,9 +781,12 @@ async function handleStop(hookData) {
 
 ```javascript
 async function inferPrevTurnOutcome(sessionId, currentPrompt) {
+  // C6: Add time window to prevent cross-session feedback conflicts
+  //     when multiple Claude Code sessions run concurrently
   const lastInjection = await db.get(`
     SELECT id, injected_ids FROM memory_feedback
     WHERE session_id = ? AND outcome = 'unknown' AND outcome_locked = 0
+      AND recorded_at > datetime('now', '-5 minutes')
     ORDER BY recorded_at DESC LIMIT 1
   `, [sessionId]);
   if (!lastInjection) return;
@@ -890,12 +915,14 @@ async function applyOutcome(feedbackId, outcome, evidence) {
 
 ### 6.7 性能预算(H5)
 
-| Hook | p50 预算 | p95 预算 | 兜底 timeout(降级) |
-|------|---------|---------|---------------------|
-| SessionStart | 150ms | 300ms | 1s(降级:只注入 pinned 段) |
-| UserPromptSubmit | 200ms | 500ms | 1.5s(降级:FTS5 only) |
-| PreCompact | 30ms | 80ms | 500ms |
-| Stop / SessionEnd | 30ms | 80ms | 500ms |
+| Hook | p50 预算 | p95 预算 | 兜底 timeout(降级) | settings.json timeout |
+|------|---------|---------|---------------------|----------------------|
+| SessionStart | 150ms | 300ms | 1s(降级:只注入 pinned 段) | 1s |
+| UserPromptSubmit | 200ms | 500ms | 1.5s(降级:FTS5 only) | 2s (含 buffer) |
+| PreCompact | 30ms | 80ms | 500ms | 1s |
+| Stop / SessionEnd | 30ms | 80ms | 500ms | 1s |
+
+> **C12.2 注**: settings.json timeout 应略大于兜底 timeout,留出系统调度 buffer。
 
 `/ccmem:bench` 命令测量并写入 `daily_metrics`,p95 持续超标时 stderr 提示用户。
 
@@ -915,9 +942,9 @@ async function applyOutcome(feedbackId, outcome, evidence) {
 |------|------|--------------|------|
 | `summarize_pending` | daemon 自适应轮询 + Stop 触发 wake file | 1h | 消费 `pending_summarize` → claude -p 提取 → 写入 `memories` |
 | `daily_consolidation` | 每日 02:17 | 24h | half-life 衰减更新 / 相似度 > 0.92 合并 / 标记 candidate_expire / 删除已 archived 超 14 天 |
-| `weekly_reflection` | 每周日 03:17 | 72h | LLM 跨记忆深度反思 / consolidated 提炼 / 重生 injection_cache / L4 反馈复核 |
+| `weekly_reflection` | 每周日 03:17 | 7d (C8) | LLM 跨记忆深度反思 / consolidated 提炼 / 重生 injection_cache / L4 反馈复核 |
 | `security_audit` | 每周一 04:17 | 72h | trust < 0.4 簇审查 / 投毒模式回扫 / consolidated 级联降级兜底 |
-| `revalidation_audit` | 每周三 04:17 | 72h | C2 时效性复核:扫 `require_periodic_revalidation` tag 且 trust ≥ 0.5 的记忆 |
+| `revalidation_audit` | 每周三 04:17 | 72h | C2 时效性复核:扫 `requires_revalidation=1` 且 trust ≥ 0.5 的记忆 |
 
 ### 7.3 `summarize_pending` prompt 模板(英文输出)
 
@@ -1007,7 +1034,75 @@ Output JSON:
 }
 ```
 
-### 7.4.1 consolidated 写入事务模型
+### 7.4.1 LLM 响应解析与错误处理(C10)
+
+```javascript
+// scripts/lib/llm-parse.mjs
+async function parseMemoriesFromLlm(llmResponse, expectedShape = 'array') {
+  try {
+    // Handle common LLM output quirks
+    let cleaned = llmResponse.trim();
+    // Strip markdown code fences if present
+    cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+
+    const parsed = JSON.parse(cleaned);
+
+    if (expectedShape === 'array' && !Array.isArray(parsed)) {
+      throw new Error(`Expected array, got ${typeof parsed}`);
+    }
+    if (expectedShape === 'object' && (typeof parsed !== 'object' || Array.isArray(parsed))) {
+      throw new Error(`Expected object, got ${Array.isArray(parsed) ? 'array' : typeof parsed}`);
+    }
+
+    // Validate individual items have required fields
+    const validated = expectedShape === 'array'
+      ? parsed.filter(item => validateMemoryShape(item))
+      : parsed;
+
+    return { success: true, data: validated, droppedCount: parsed.length - validated.length };
+  } catch (e) {
+    await logAudit({
+      action: 'llm_parse_failed',
+      details: JSON.stringify({
+        error: e.message,
+        response_excerpt: llmResponse.slice(0, 500),
+        response_length: llmResponse.length,
+      }),
+    });
+    return { success: false, error: e.message, raw: llmResponse };
+  }
+}
+
+function validateMemoryShape(item) {
+  if (!item || typeof item !== 'object') return false;
+  if (typeof item.content !== 'string' || item.content.length === 0) return false;
+  if (!['rule', 'fact', 'skill', 'episode'].includes(item.type)) return false;
+  if (!['global', 'project'].includes(item.scope)) return false;
+  return true;
+}
+```
+
+在 `summarize_pending` 和 `weekly_reflection` cron 任务中使用:
+
+```javascript
+const llmResult = await callClaudeP(prompt);
+const parsed = await parseMemoriesFromLlm(llmResult, 'array');
+
+if (!parsed.success) {
+  // Retry with backoff, or skip this batch
+  await db.run(`
+    UPDATE pending_summarize SET attempts = attempts + 1, last_error = ?
+    WHERE id = ?
+  `, [parsed.error, batchId]);
+  continue;
+}
+
+for (const mem of parsed.data) {
+  await insertMemory(mem);  // goes through full gate (§10.1)
+}
+```
+
+### 7.4.2 consolidated 写入事务模型
 
 LLM 返回 K 条 `consolidated_rules` 后,**每条独立一个 SQLite transaction**,失败不影响其他条目。三步操作的依赖:
 
@@ -1247,55 +1342,136 @@ async function lazyCatchUpScan() {
 2. 处理量上界:补打不能无限放大工作量,`truncate=true` 时只处理"最近 max_catch_up_window 内"
 3. 可中断恢复:每完成一批写一次 `last_success_at`,挂掉重启不会重做或丢工作
 
-### 7.7 Daemon 主循环(自适应轮询 + 文件触发)
+### 7.7 Daemon 主循环(自适应轮询 + 文件触发 + SQLite 锁)
 
 ```javascript
 // scripts/daemon.mjs
 const WAKE_FILE = path.join(getDataRoot(), 'daemon.wake');
-const PID_FILE  = path.join(getDataRoot(), 'daemon.pid');
 let wakeUpEarly = false;
 let lastWakeProcessedTs = 0;
 let shouldStop = false;
 let consecutiveIdleTicks = 0;
 
+// C3: SQLite-based singleton lock (cross-platform)
+const LOCK_STALE_MS = 60_000;       // 60s without heartbeat = stale
+const LOCK_SOFT_STALE_MS = 20_000;  // 20s: try PID probe on same machine
+const HEARTBEAT_INTERVAL_MS = 15_000;
+
 async function main() {
-  await acquireSingletonLock();    // check pid file, ensure single instance
-  await startHeartbeat();           // refresh pid file every 30s
-  await initWakeWatcher();          // fs.watch + polling fallback
-  await mainLoop();
-  await cleanup();
-}
-
-async function acquireSingletonLock() {
-  if (fs.existsSync(PID_FILE)) {
-    try {
-      const { pid } = JSON.parse(await fs.promises.readFile(PID_FILE, 'utf8'));
-      try {
-        process.kill(pid, 0);
-        console.error(`daemon already running: pid=${pid}`);
-        process.exit(0);
-      } catch { /* stale pid, take over */ }
-    } catch { /* corrupted, take over */ }
+  try {
+    await acquireDaemonLock();
+  } catch (e) {
+    if (e instanceof DaemonAlreadyRunningError) {
+      console.error(e.message);
+      process.exit(0);
+    }
+    throw e;
   }
-  await writePidFile();
+
+  // SQLite-based heartbeat
+  const heartbeatInterval = setInterval(refreshHeartbeat, HEARTBEAT_INTERVAL_MS);
+  heartbeatInterval.unref();
+
+  process.on('SIGTERM', () => { shouldStop = true; });
+  process.on('SIGINT', () => { shouldStop = true; });
+
+  await initWakeWatcher();
+  try {
+    await mainLoop();
+  } finally {
+    clearInterval(heartbeatInterval);
+    await releaseDaemonLock();
+  }
 }
 
-async function writePidFile() {
-  await fs.promises.writeFile(PID_FILE, JSON.stringify({
-    pid: process.pid,
-    started_at: Date.now(),
-    heartbeat_at: Date.now(),
-    auto_started: process.env.CCMEM_DAEMON_AUTO_STARTED === '1',
-  }));
+async function acquireDaemonLock() {
+  const now = Date.now();
+  const hostname = os.hostname();
+  const pid = process.pid;
+
+  const existing = await db.get(`SELECT * FROM daemon_lock WHERE id = 1`);
+
+  if (existing) {
+    const age = now - existing.heartbeat_at;
+
+    // Case 1: Same process re-entry (allow)
+    if (existing.holder_pid === pid && existing.holder_hostname === hostname) {
+      await db.run(`UPDATE daemon_lock SET heartbeat_at = ? WHERE id = 1`, [now]);
+      return { acquired: true, reentry: true };
+    }
+
+    // Case 2: Hard timeout (60s no heartbeat → force acquire)
+    if (age >= LOCK_STALE_MS) {
+      return await forceAcquireLock(now, pid, hostname, 'hard_timeout');
+    }
+
+    // Case 3: Soft timeout + same machine + PID dead (20s, probe)
+    if (age >= LOCK_SOFT_STALE_MS && existing.holder_hostname === hostname) {
+      if (!isPidAlive(existing.holder_pid)) {
+        return await forceAcquireLock(now, pid, hostname, 'pid_dead');
+      }
+    }
+
+    // Case 4: Lock still valid
+    throw new DaemonAlreadyRunningError(
+      `Daemon already running: pid=${existing.holder_pid} on ${existing.holder_hostname} ` +
+      `(heartbeat ${Math.round(age / 1000)}s ago)`
+    );
+  }
+
+  // Case 5: No lock, acquire fresh
+  await db.run(`
+    INSERT INTO daemon_lock (id, holder_pid, holder_hostname, acquired_at, heartbeat_at, version)
+    VALUES (1, ?, ?, ?, ?, 1)
+  `, [pid, hostname, now, now]);
+
+  return { acquired: true, fresh: true };
 }
 
-function startHeartbeat() {
-  setInterval(() => {
-    fs.promises.writeFile(PID_FILE, JSON.stringify({
-      pid: process.pid,
-      heartbeat_at: Date.now(),
-    })).catch(() => {});
-  }, 30_000).unref();
+async function forceAcquireLock(now, pid, hostname, reason) {
+  await db.run(`
+    UPDATE daemon_lock
+    SET holder_pid = ?, holder_hostname = ?, acquired_at = ?, heartbeat_at = ?, version = version + 1
+    WHERE id = 1
+  `, [pid, hostname, now, now]);
+
+  await logAudit({
+    action: 'daemon_lock_force_acquire',
+    reason,
+    details: JSON.stringify({ pid, hostname }),
+  });
+
+  return { acquired: true, forced: true, reason };
+}
+
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    // ESRCH = process not found, EPERM = process exists but no permission
+    return e.code === 'EPERM';
+  }
+}
+
+async function refreshHeartbeat() {
+  await db.run(`
+    UPDATE daemon_lock SET heartbeat_at = ?
+    WHERE id = 1 AND holder_pid = ? AND holder_hostname = ?
+  `, [Date.now(), process.pid, os.hostname()]).catch(() => {});
+}
+
+async function releaseDaemonLock() {
+  await db.run(`
+    DELETE FROM daemon_lock
+    WHERE id = 1 AND holder_pid = ? AND holder_hostname = ?
+  `, [process.pid, os.hostname()]);
+}
+
+async function isDaemonHealthy() {
+  const lock = await db.get(`SELECT * FROM daemon_lock WHERE id = 1`);
+  if (!lock) return false;
+  return (Date.now() - lock.heartbeat_at) < LOCK_STALE_MS;
 }
 
 async function initWakeWatcher() {
@@ -1337,12 +1513,27 @@ async function handleWakeEvent() {
 }
 
 function startWakeFilePoller() {
-  setInterval(async () => {
+  // C12.3: Adaptive polling - fast initially, slow down if no activity
+  let pollInterval = 1000;  // Start at 1s
+  let consecutiveEmpty = 0;
+
+  const poll = async () => {
     try {
       await fs.promises.access(WAKE_FILE);
       await handleWakeEvent();
-    } catch { /* not present */ }
-  }, 5000).unref();
+      consecutiveEmpty = 0;
+      pollInterval = 1000;  // Reset to fast
+    } catch {
+      consecutiveEmpty++;
+      // Slow down after 10 empty polls (10s of no activity)
+      if (consecutiveEmpty > 10) {
+        pollInterval = Math.min(pollInterval * 1.5, 5000);  // Max 5s
+      }
+    }
+    setTimeout(poll, pollInterval);
+  };
+
+  poll();
 }
 
 async function sleep(ms) {
@@ -1425,7 +1616,7 @@ async function releaseTaskLock(taskId) {
 | task_id | schedule | max_catch_up_window_sec |
 |---------|----------|-------------------------|
 | `daily_consolidation` | `17 2 * * *` | 86400 |
-| `weekly_reflection` | `17 3 * * 0` | 259200 |
+| `weekly_reflection` | `17 3 * * 0` | 604800 (C8: 7 天) |
 | `security_audit` | `17 4 * * 1` | 259200 |
 | `revalidation_audit` | `17 4 * * 3` | 259200 |
 | `summarize_pending` | (daemon 自适应) | 3600 |
@@ -1521,6 +1712,36 @@ WHERE (scope = 'global' OR (scope = 'project' AND project_key = ?))
 | `## Decision Log` | **不读** | 过度具体,价值低 |
 
 写入走 §10 写入闸门(投毒扫描照样过)。同步是单向的:**ccmem 只读 cerebrum,不写**。除非用户开启 `ccmem.write_cerebrum: true`(Phase 5+)。
+
+#### C9: SessionStart 增量扫描
+
+除了 `daily_consolidation` 的批量同步,`SessionStart` 也会增量检查 cerebrum.md 变更:
+
+```javascript
+// handlers/session-start.mjs (在 lazy catch-up 之后)
+
+// C9: Incremental cerebrum.md sync on SessionStart
+if (config.hooks.openwolfIntegration !== 'disabled') {
+  const cerebrumPath = path.join(projectDir, '.wolf', 'cerebrum.md');
+  const lastSync = await db.get(`
+    SELECT MAX(created_at) as ts FROM memories
+    WHERE source = 'cerebrum_import' AND project_key = ?
+  `, [projectKey]);
+
+  try {
+    const stat = await fs.promises.stat(cerebrumPath);
+    if (!lastSync?.ts || new Date(stat.mtime) > new Date(lastSync.ts)) {
+      // cerebrum.md changed since last sync, queue incremental import
+      await enqueueTask('cerebrum_incremental_sync', {
+        project_key: projectKey,
+        cerebrum_path: cerebrumPath,
+        last_sync_ts: lastSync?.ts,
+      });
+      logger.debug('cerebrum.md changed, queued incremental sync');
+    }
+  } catch { /* cerebrum.md not present, skip */ }
+}
+```
 
 ### 9.3 检测与降级
 
@@ -1629,8 +1850,40 @@ async function insertMemory(mem) {
     throw new GenerationLimitError(`Generation must be < 2, got ${mem.generation}`);
   }
 
-  // 6. Actual insert
-  return await db.run(`INSERT INTO memories (...) VALUES (...)`, mem);
+  // 6. C5: Capacity check before insert
+  const scopeKey = mem.scope === 'global' ? 'global' : mem.project_key;
+  const count = await db.get(`
+    SELECT COUNT(*) as n FROM memories
+    WHERE (scope = 'global' OR project_key = ?) AND decay_status = 'active'
+  `, [scopeKey]);
+  if (count.n >= config.capacity.maxActivePerScope * 0.95) {
+    process.stderr.write(
+      `ccmem: capacity warning (${count.n}/${config.capacity.maxActivePerScope})\n`
+    );
+    // Trigger async consolidation if near limit
+    if (count.n >= config.capacity.maxActivePerScope * config.capacity.forceConsolidateAtPercent / 100) {
+      await enqueueTask('force_consolidation', { scope: scopeKey });
+    }
+  }
+
+  // 7. C12.1: Set requires_revalidation based on tags
+  mem.requires_revalidation = (mem.tags || []).includes('require_periodic_revalidation') ? 1 : 0;
+
+  // 8. Actual insert
+  const result = await db.run(`INSERT INTO memories (...) VALUES (...)`, mem);
+
+  // 9. C2: Invalidate fresh cache if this is a recent episode
+  //    Purpose: ensure subsequent sessions see newly created episodes
+  if (mem.type === 'episode') {
+    const cacheScope = mem.scope === 'global' ? 'global' : `project:${mem.project_key}`;
+    await db.run(`
+      UPDATE injection_cache
+      SET ttl_seconds = 0, rendered_at = datetime('now', '-1 day')
+      WHERE scope = ? AND segment = 'fresh'
+    `, [cacheScope]);
+  }
+
+  return result;
 }
 ```
 
@@ -1752,8 +2005,10 @@ function hasImperativePrefix(text, index) {
 }
 
 function hasExplanatoryFollow(text, index) {
-  const after = text.slice(index, index + 100);
-  return /\b(removes?|deletes?|means?|is used|will|可以|意思是|表示|用于|含义)\b/i.test(after);
+  const after = text.slice(index, index + 120);
+  // C12.4: Tightened regex - require more explicit explanatory patterns
+  // Removed "will" which caused false positives like "rm -rf will delete"
+  return /\b(this\s+(removes?|deletes?|means?|is\s+used)|because|用于|意思是|表示|含义是|之所以|原因是)\b/i.test(after);
 }
 
 function isShortContentDominant(text) {
@@ -1764,10 +2019,11 @@ function isShortContentDominant(text) {
 ### 10.5 周期复核(revalidation_audit cron)
 
 ```sql
+-- C12.1: Use boolean field instead of LIKE for performance
 SELECT id, content, created_at, tags FROM memories
 WHERE decay_status = 'active'
   AND trust_score >= 0.5
-  AND tags LIKE '%require_periodic_revalidation%'
+  AND requires_revalidation = 1
   AND (last_revalidated_at IS NULL
        OR julianday('now') - julianday(last_revalidated_at) > 30);
 ```
@@ -1955,8 +2211,10 @@ async function invalidateInjectionCacheFor(memId) {
 [m2002] f|0.85|3d
 所有 API 都要走 src/lib/auth.ts 的 requireAuth 中间件
 
-[m2003] e|0.70|1d!p
+[m2003] e|0.70|1d!ctx
 危险操作记录:在 myapp 项目(2026-04)调试依赖冲突时使用了 `rm -rf node_modules && npm install` — 仅一次性场景,不作为通用规则
+
+> **C12.5 注**: `!ctx` 表示 context-bound(含 `dangerous_command` tag),而非 `!p` (probation)。
 ```
 
 ### 11.3 紧凑格式规范
@@ -2673,20 +2931,37 @@ Type the following declaration verbatim to confirm:
     return `ccmem: purge aborted (declaration mismatch)`;
   }
 
-  // 3. Audit before destructive ops
+  // 3. C11: Auto-backup before destructive operation
+  const backupDir = path.join(getDataRoot(), 'backups');
+  await fs.promises.mkdir(backupDir, { recursive: true });
+  const backupTs = Date.now();
+  const backupPath = path.join(backupDir, `pre-purge-${target}-${backupTs}.db`);
+
+  if (target === 'project') {
+    const projectDbPath = path.join(resolveProjectDir(), '.ccmem', 'project.db');
+    if (fs.existsSync(projectDbPath)) {
+      await fs.promises.copyFile(projectDbPath, backupPath);
+      process.stderr.write(`ccmem: backup created at ${backupPath}\n`);
+    }
+  } else {
+    await fs.promises.copyFile(getGlobalDbPath(), backupPath);
+    process.stderr.write(`ccmem: backup created at ${backupPath}\n`);
+  }
+
+  // 4. Audit before destructive ops
   await logAudit({
     action: target === 'all' ? 'purge_all' : 'purge_project',
-    details: JSON.stringify(summary),
+    details: JSON.stringify({ ...summary, backup_path: backupPath }),
   });
 
-  // 4. Execute (must go through safe-fs, see section 16)
+  // 5. Execute (must go through safe-fs, see section 16)
   if (target === 'project') {
     await purgeProjectData(resolveProjectKey());
   } else {
     await purgeAllUserData();
   }
 
-  return `ccmem: ${target} purged.`;
+  return `ccmem: ${target} purged. Backup at ${backupPath}`;
 }
 ```
 
@@ -2852,7 +3127,7 @@ async function computeDailyMetrics() {
     "tasks": {
       "summarize_pending":      { "schedule": "adaptive",   "max_catch_up_window_sec": 3600 },
       "daily_consolidation":    { "schedule": "17 2 * * *", "max_catch_up_window_sec": 86400 },
-      "weekly_reflection":      { "schedule": "17 3 * * 0", "max_catch_up_window_sec": 259200 },
+      "weekly_reflection":      { "schedule": "17 3 * * 0", "max_catch_up_window_sec": 604800 },
       "security_audit":         { "schedule": "17 4 * * 1", "max_catch_up_window_sec": 259200 },
       "revalidation_audit":     { "schedule": "17 4 * * 3", "max_catch_up_window_sec": 259200 }
     }
@@ -3176,7 +3451,7 @@ async function removeEmptyDirsRecursive(root) { /* 用 rmdir,不接受 recursive
 - **多机同步**:目前设计是单机本地,跨设备同步(笔记本 + 台式)未覆盖。可能策略:`<project>/.ccmem/project.db` 纳入 git;`global.db` 留本地,通过 `/ccmem:export/import` 手动同步。
 - **多用户共享项目**:同一 git remote 下多人各自有自己的 ccmem,跨人的 project 记忆是否要合并?暂不考虑(隐私 + 个性化需求矛盾)。
 - **反馈推断误判率**:L1/L2 关键词模板初版基于经验,需实测调整。L4 LLM 复核可纠正,但累积错误需观察。
-- **`weekly_reflection` 周日深夜跑不到的概率**:Layer 1 在 72h 内有效。极端场景(周一/周二都没开机)需评估是否扩窗到 168h。
+- **`weekly_reflection` 周日深夜跑不到的概率**:已扩窗到 604800s (7 天, C8),覆盖整周未开机场景。Layer 1 lazy catch-up 在下次 SessionStart 时补执行。
 - **fs.watch 在 NFS / 远程文件系统的可靠性**:已设计轮询降级,但需要在 CI 上覆盖。
 - **summarize_pending 高频触发场景**:用户连开多个短会话,pending 队列可能膨胀。当前没有去重(同 session_id 多条 trigger 入队);可能需要 daemon 消费时合并。
 - **dangerous_command tag 的国际化**:目前正则只覆盖中英,日韩等用户的场景未测。

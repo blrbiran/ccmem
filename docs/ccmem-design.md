@@ -183,6 +183,15 @@ CREATE INDEX idx_mem_pinned ON memories(pinned) WHERE pinned = 1;
 CREATE INDEX idx_mem_revalidation ON memories(last_revalidated_at) 
   WHERE requires_revalidation = 1;
 
+-- Trigger to keep requires_revalidation in sync with tags (C12.1.1)
+CREATE TRIGGER sync_requires_revalidation_on_update 
+AFTER UPDATE OF tags ON memories
+BEGIN
+  UPDATE memories SET requires_revalidation = 
+    CASE WHEN NEW.tags LIKE '%require_periodic_revalidation%' THEN 1 ELSE 0 END
+  WHERE id = NEW.id;
+END;
+
 -- FTS5 full-text index
 CREATE VIRTUAL TABLE memories_fts USING fts5(
   id UNINDEXED,
@@ -207,6 +216,7 @@ CREATE TABLE injection_cache (
   member_ids    TEXT NOT NULL,               -- JSON array of memories.id
   rendered_at   TIMESTAMP NOT NULL,
   ttl_seconds   INTEGER,                      -- consolidated=604800, fresh=86400, pinned=NULL
+  version       INTEGER DEFAULT 1,           -- monotonic version for race condition prevention (C4.1)
   PRIMARY KEY (scope, segment)
 );
 
@@ -297,6 +307,18 @@ CREATE TABLE embedding_active (
   enabled_at      TIMESTAMP NOT NULL
 );
 
+-- Session context tracking (for PreCompact strategy 2)
+CREATE TABLE session_context (
+  session_id       TEXT PRIMARY KEY,
+  project_key      TEXT,
+  important_facts  TEXT,                -- JSON array of key facts discovered
+  recent_decisions TEXT,                -- JSON array of decisions made
+  tool_call_count  INTEGER DEFAULT 0,
+  message_count    INTEGER DEFAULT 0,
+  updated_at       TIMESTAMP NOT NULL
+);
+CREATE INDEX idx_session_context_project ON session_context(project_key);
+
 -- Daily metrics (M6, replaces metrics.json file)
 CREATE TABLE daily_metrics (
   date         TEXT PRIMARY KEY,              -- YYYY-MM-DD
@@ -311,6 +333,9 @@ CREATE TABLE mode_state (
   set_at      TIMESTAMP NOT NULL,
   set_by      TEXT NOT NULL                    -- 'user_command'|'install_default'|...
 );
+-- Initialize default mode on schema creation
+INSERT INTO mode_state (id, mode, set_at, set_by) 
+VALUES (1, 'active', datetime('now'), 'install_default');
 
 -- Daemon singleton lock (cross-platform, C3)
 CREATE TABLE daemon_lock (
@@ -362,6 +387,11 @@ CREATE TABLE daemon_lock (
 ```
 
 惩罚 > 奖励:让错误记忆退场更快。
+
+**Trust 阈值自动归档**: 当 `trust_score < 0.2` 时,记忆自动转为 `archived` 状态。
+此逻辑在以下位置执行:
+1. `applyOutcome()` 中 trust 调整后立即检查
+2. `daily_consolidation` 兜底扫描
 
 > **C7 注**: 上述系数 (0.05/0.10 等) 为初始经验值,缺乏 A/B 测试支撑。
 > 1. 已通过 `config.trust.rewardOnHelpful` 等配置项支持调整
@@ -436,7 +466,15 @@ export function namespacedModelId(source, modelName) {
 // Layer 3: 配置哈希(同名不同配置 → 不同表)
 export function vecTableName(modelId, configHash) {
   const suffix = configHash.slice(0, 8);
-  return `vec_${modelId}_${suffix}`;
+  const tableName = `vec_${modelId}_${suffix}`;
+  
+  // C11.1: Extra SQL safety validation for dynamic table names
+  // Defense-in-depth even though modelId is already validated
+  if (!/^vec_[a-z0-9_]{1,50}_[a-f0-9]{8}$/.test(tableName)) {
+    throw new Error(`Invalid table name format: ${tableName}`);
+  }
+  
+  return tableName;
 }
 
 // Layer 5: 运行时活检
@@ -677,11 +715,12 @@ async function handleSessionStart(hookData) {
     budget: config.injection.budget,                // see section 14
   });
 
-  // composeInjectionBlock 裁剪逻辑:
+  // composeInjectionBlock 裁剪逻辑 (C13.1 实现):
   // 1. 每个 segment 先按自身 budget 裁剪
   // 2. 若总量仍超 total_cap,按 overflow_trim_order 顺序继续裁剪
   //    默认: fresh → consolidated_project → consolidated_global → pinned
   // 3. pinned 最后裁剪(用户明确 pin 的内容优先保留)
+  // 4. 若 pinned 单独超过 total_cap,截断并记录 audit
 
   // 3. Record feedback (C1 critical)
   const allMembers = uniqueIds([
@@ -725,6 +764,118 @@ async function handleSessionStart(hookData) {
   }));
 
   process.exit(0);
+}
+```
+
+#### 6.1.1 composeInjectionBlock 实现 (C13.1)
+
+```javascript
+// lib/injection-cache.mjs
+
+/**
+ * Compose injection block with budget-aware trimming
+ * @param {Object} opts
+ * @param {Array<{name: string, text: string, member_ids: string[]}>} opts.segments
+ * @param {Object} opts.budget - from config.injection.budget
+ * @returns {string} Composed injection text
+ */
+export function composeInjectionBlock({ segments, budget }) {
+  const segmentBudgets = {
+    consolidated_global:  budget.consolidated_global  || 1000,
+    consolidated_project: budget.consolidated_project || 1000,
+    pinned:               budget.pinned               || 1000,
+    fresh:                budget.fresh                || 500,
+  };
+  const totalCap = budget.total_cap || 4000;
+  const trimOrder = budget.overflow_trim_order || 
+    ['fresh', 'consolidated_project', 'consolidated_global', 'pinned'];
+
+  // 1. Per-segment budget trim (preserve whole entries where possible)
+  for (const seg of segments) {
+    const segBudget = segmentBudgets[seg.name] || 500;
+    if (seg.text.length > segBudget) {
+      seg.text = trimToCharLimit(seg.text, segBudget, { preserveWholeEntries: true });
+      seg.trimmed = true;
+    }
+  }
+
+  // 2. Total overflow handling
+  let total = segments.reduce((sum, seg) => sum + seg.text.length, 0);
+  
+  for (const segName of trimOrder) {
+    if (total <= totalCap) break;
+    
+    const seg = segments.find(s => s.name === segName);
+    if (!seg || seg.text.length === 0) continue;
+    
+    const excess = total - totalCap;
+    const newLen = Math.max(0, seg.text.length - excess);
+    seg.text = trimToCharLimit(seg.text, newLen, { preserveWholeEntries: true });
+    seg.overflowTrimmed = true;
+    
+    total = segments.reduce((sum, s) => sum + s.text.length, 0);
+  }
+
+  // 3. Last resort: if pinned alone exceeds total_cap, hard truncate
+  if (total > totalCap) {
+    const pinned = segments.find(s => s.name === 'pinned');
+    if (pinned && pinned.text.length > 0) {
+      const pinnedCap = totalCap - segments
+        .filter(s => s.name !== 'pinned')
+        .reduce((sum, s) => sum + s.text.length, 0);
+      
+      if (pinnedCap > 0) {
+        pinned.text = pinned.text.slice(0, pinnedCap);
+      } else {
+        pinned.text = '';
+      }
+      pinned.hardTruncated = true;
+      
+      // Log audit for pinned truncation (unusual, indicates misconfiguration)
+      logAudit({
+        action: 'injection_pinned_truncated',
+        details: JSON.stringify({
+          original_total: total,
+          total_cap: totalCap,
+          pinned_truncated_to: pinned.text.length,
+        }),
+      });
+    }
+  }
+
+  // 4. Compose final text
+  return segments
+    .filter(seg => seg.text.length > 0)
+    .map(seg => seg.text)
+    .join('\n\n');
+}
+
+/**
+ * Trim text to character limit, preserving whole entries (lines) where possible
+ */
+function trimToCharLimit(text, limit, opts = {}) {
+  if (text.length <= limit) return text;
+  
+  if (!opts.preserveWholeEntries) {
+    return text.slice(0, limit);
+  }
+  
+  // Try to preserve whole lines (entries separated by newlines)
+  const lines = text.split('\n');
+  let result = '';
+  
+  for (const line of lines) {
+    const candidate = result ? result + '\n' + line : line;
+    if (candidate.length > limit) break;
+    result = candidate;
+  }
+  
+  // If even first line exceeds limit, hard truncate
+  if (result.length === 0 && lines[0]) {
+    return lines[0].slice(0, limit);
+  }
+  
+  return result;
 }
 ```
 
@@ -1093,6 +1244,12 @@ async function applyOutcome(feedbackId, outcome, evidence) {
         helpful_count = helpful_count + 1
         WHERE id = ?`, [maxTrust, memId]);
     }
+
+    // Auto-archive when trust drops below threshold (§4.4)
+    await db.run(`
+      UPDATE memories SET decay_status = 'archived', modified_at = ?
+      WHERE id = ? AND trust_score < 0.2 AND decay_status != 'archived'
+    `, [now(), memId]);
   }
 }
 ```
@@ -1108,6 +1265,40 @@ async function applyOutcome(feedbackId, outcome, evidence) {
 
 > **C12.2 注**: settings.json timeout 应略大于兜底 timeout,留出系统调度 buffer。
 
+#### Timeout 行为规范 (C8.1)
+
+| 场景 | 行为 | 理由 |
+|------|------|------|
+| Hook 正常完成 | exit 0 + stdout JSON | 正常路径 |
+| Hook 内部 timeout | exit 0 + empty additionalContext | 优雅降级,不阻塞用户 |
+| Hook 被 Claude Code kill | 无控制 | 事务会被 SQLite 回滚 |
+| DB 操作失败 | exit 0 + empty additionalContext + stderr 警告 | 优雅降级 |
+
+**实现要点**:
+1. 所有 DB 写操作必须在事务内,确保原子性
+2. 使用 `Promise.race` 实现内部 timeout,在 settings.json timeout 之前主动降级
+3. Timeout 时输出 empty `additionalContext`(不注入),但仍写 audit 日志
+4. Claude Code 不会重试失败的 hook(fire-once 语义)
+5. 部分完成的状态由 SQLite 事务回滚保证一致性
+
+```javascript
+// 内部 timeout 包装示例
+async function withTimeout(fn, ms, fallback) {
+  const timer = new Promise((_, reject) => 
+    setTimeout(() => reject(new TimeoutError()), ms)
+  );
+  try {
+    return await Promise.race([fn(), timer]);
+  } catch (e) {
+    if (e instanceof TimeoutError) {
+      await logAudit({ action: 'hook_timeout', details: JSON.stringify({ ms }) });
+      return fallback;
+    }
+    throw e;
+  }
+}
+```
+
 `/ccmem:bench` 命令测量并写入 `daily_metrics`,p95 持续超标时 stderr 提示用户。
 
 ### 6.8 Transcript 辅助函数 (U8)
@@ -1122,10 +1313,14 @@ import * as fs from 'fs';
 /**
  * 解析 Claude Code transcript JSONL 文件
  * 参考: reference/claudecode/src/utils/sessionStorage.ts:loadTranscriptFile
+ * 
+ * C12.1: Improved error handling - distinguish partial vs complete failure
  */
 async function parseTranscript(transcriptPath) {
   const messages = new Map();      // uuid -> message
   const leafUuids = new Set();     // 叶子消息 UUID
+  let parseErrors = 0;             // C12.1: track parse errors
+  let totalLines = 0;
   
   const rl = readline.createInterface({
     input: fs.createReadStream(transcriptPath),
@@ -1134,6 +1329,7 @@ async function parseTranscript(transcriptPath) {
 
   for await (const line of rl) {
     if (!line.trim()) continue;
+    totalLines++;
     try {
       const entry = JSON.parse(line);
       if (entry.type === 'message' && entry.message) {
@@ -1142,11 +1338,35 @@ async function parseTranscript(transcriptPath) {
         leafUuids.add(entry.uuid);
       }
     } catch (e) {
-      // Skip malformed lines
+      parseErrors++;
     }
   }
 
-  if (messages.size === 0) return [];
+  // C12.1: Distinguish partial failure from complete failure
+  if (messages.size === 0) {
+    if (parseErrors > 0 && totalLines > 0) {
+      // Complete parse failure - likely corrupted file
+      throw new TranscriptCorruptError(
+        `Failed to parse any messages from transcript ` +
+        `(${parseErrors}/${totalLines} lines failed)`
+      );
+    }
+    // Empty file - legitimate empty session
+    return [];
+  }
+  
+  // Log partial failures for debugging (but don't fail)
+  if (parseErrors > 0) {
+    await logAudit({
+      action: 'transcript_partial_parse_failure',
+      details: JSON.stringify({ 
+        path: transcriptPath, 
+        parseErrors, 
+        totalLines, 
+        messagesRecovered: messages.size 
+      }),
+    });
+  }
 
   // 找到最新的叶子消息
   let leafMessage = null;
@@ -1457,31 +1677,44 @@ async function writeConsolidatedRules(consolidatedRules) {
       const memId = generateMemoryId();
 
       await db.transaction(async (tx) => {
-        // Generation constraint (M9): max source generation must be < 1
-        const sourceGenerations = await tx.all(`
-          SELECT generation FROM memories
+        // Combined source validation: generation, decay_status, and tags (C7.1)
+        const sources = await tx.all(`
+          SELECT id, generation, decay_status, tags FROM memories
           WHERE id IN (${rule.source_ids.map(() => '?').join(',')})
         `, rule.source_ids);
-        const maxSrcGen = Math.max(0, ...sourceGenerations.map(s => s.generation));
-        if (maxSrcGen >= 1) {
-          throw new GenerationLimitError(
-            `Cannot consolidate from sources at generation >= 1 (max=${maxSrcGen})`
-          );
+
+        // Check all source IDs exist
+        if (sources.length !== rule.source_ids.length) {
+          const foundIds = new Set(sources.map(s => s.id));
+          const missing = rule.source_ids.filter(id => !foundIds.has(id));
+          throw new Error(`Source memories not found: ${missing.join(', ')}`);
         }
 
-        // Source memory tagged dangerous_command must not enter consolidated (section 10 gate backup)
-        const srcTags = await tx.all(`
-          SELECT tags FROM memories
-          WHERE id IN (${rule.source_ids.map(() => '?').join(',')})
-        `, rule.source_ids);
-        for (const row of srcTags) {
-          const tags = JSON.parse(row.tags || '[]');
+        for (const src of sources) {
+          // Generation constraint (M9): max source generation must be < 1
+          if (src.generation >= 1) {
+            throw new GenerationLimitError(
+              `Cannot consolidate from source ${src.id} at generation >= 1 (got ${src.generation})`
+            );
+          }
+
+          // Decay status constraint (C7.1): only active sources can be consolidated
+          if (src.decay_status !== 'active') {
+            throw new Error(
+              `Cannot consolidate from source ${src.id} with status '${src.decay_status}' (must be 'active')`
+            );
+          }
+
+          // Tag constraint: dangerous_command must not enter consolidated
+          const tags = JSON.parse(src.tags || '[]');
           if (tags.includes('dangerous_command')) {
             throw new Error(
-              'Source memory with dangerous_command tag cannot be consolidated'
+              `Source memory ${src.id} with dangerous_command tag cannot be consolidated`
             );
           }
         }
+
+        const maxSrcGen = Math.max(0, ...sources.map(s => s.generation));
 
         // Step 1: insert consolidated
         await tx.run(`
@@ -1542,8 +1775,22 @@ async function writeConsolidatedRules(consolidatedRules) {
   return results;
 }
 
-// Idempotent regen: UPSERT guarantees equivalent results on repeated runs
+// Idempotent regen with version-based race prevention (C4.1)
 async function regenerateInjectionCache(scope) {
+  // 1. Read current version before regeneration
+  const current = await db.get(`
+    SELECT version FROM injection_cache WHERE scope = ? AND segment = 'consolidated'
+  `, [scope]);
+  const versionBefore = current?.version || 0;
+
+  // 2. Check for recent forget events that should exclude memories
+  const recentForgets = await db.all(`
+    SELECT json_each.value as mem_id FROM memory_audit_log, json_each(affected_ids)
+    WHERE action = 'user_forget' AND ts > datetime('now', '-5 minutes')
+  `);
+  const excludeIds = new Set(recentForgets.map(r => r.mem_id));
+
+  // 3. Fetch consolidated memories, excluding recently forgotten
   const consolidated = await db.all(`
     SELECT id, content FROM memories
     WHERE scope = ? AND type = 'consolidated' AND decay_status = 'active'
@@ -1551,19 +1798,33 @@ async function regenerateInjectionCache(scope) {
     LIMIT 50
   `, [scope]);
 
+  const filtered = consolidated.filter(m => !excludeIds.has(m.id));
   const { selected, memberIds } = selectByBudget(
-    consolidated, config.injection.budget.consolidated_global
+    filtered, config.injection.budget.consolidated_global
   );
 
   const renderedText = selected
     .map(m => `- ${m.content} <!--${shortId(m.id)}-->`)
     .join('\n');
 
-  await db.run(`
-    INSERT OR REPLACE INTO injection_cache
-      (scope, segment, rendered_text, member_ids, rendered_at, ttl_seconds)
-    VALUES (?, 'consolidated', ?, ?, ?, ?)
-  `, [scope, renderedText, JSON.stringify(memberIds), now(), 604800]);
+  // 4. Conditional update: only if version hasn't changed (no concurrent forget)
+  const result = await db.run(`
+    INSERT INTO injection_cache
+      (scope, segment, rendered_text, member_ids, rendered_at, ttl_seconds, version)
+    VALUES (?, 'consolidated', ?, ?, ?, ?, ?)
+    ON CONFLICT(scope, segment) DO UPDATE SET
+      rendered_text = excluded.rendered_text,
+      member_ids = excluded.member_ids,
+      rendered_at = excluded.rendered_at,
+      ttl_seconds = excluded.ttl_seconds
+    WHERE version = ?
+  `, [scope, renderedText, JSON.stringify(memberIds), now(), 604800, versionBefore + 1, versionBefore]);
+
+  if (result.changes === 0 && versionBefore > 0) {
+    // Version changed during regeneration (concurrent forget happened)
+    // Re-queue for another attempt
+    await enqueueTask('regenerate_injection_cache', { scope, retry: true });
+  }
 }
 ```
 
@@ -1606,13 +1867,44 @@ async function dailyConsolidation() {
     }
   }
 
-  // 4. Archived rows older than 14 days -> hard delete
+  // 4. Trust threshold backstop: archive low-trust memories (§4.4)
+  await db.run(`
+    UPDATE memories SET decay_status = 'archived', modified_at = ?
+    WHERE trust_score < 0.2 AND decay_status IN ('active', 'probation')
+  `, [isoNow]);
+
+  // 5. Archived rows older than 14 days -> hard delete
   await db.run(`
     DELETE FROM memories WHERE decay_status='archived'
       AND julianday(?) - julianday(last_touched_at) > 14
   `, [isoNow]);
 
   await logAudit({ action: 'daily_consolidation_complete', details: { ts: isoNow } });
+}
+
+// Wrapper to ensure metrics collection runs even if consolidation fails (C10.1)
+async function dailyConsolidationWithMetrics() {
+  let consolidationError = null;
+  try {
+    await dailyConsolidation();
+  } catch (e) {
+    consolidationError = e;
+    await logAudit({ 
+      action: 'daily_consolidation_failed', 
+      details: JSON.stringify({ error: e.message }) 
+    });
+  } finally {
+    // Metrics collection should succeed independently
+    try {
+      await computeDailyMetrics();
+    } catch (metricsError) {
+      await logAudit({
+        action: 'daily_metrics_failed',
+        details: JSON.stringify({ error: metricsError.message }),
+      });
+    }
+  }
+  if (consolidationError) throw consolidationError;
 }
 ```
 
@@ -2138,12 +2430,44 @@ if (config.hooks.openwolfIntegration !== 'disabled') {
 ### 9.3 检测与降级
 
 ```javascript
+// C14.1: Multi-marker detection for OpenWolf presence
+// cron-manifest.json may not exist on first run, so check multiple markers
 function detectOpenWolf(projectDir) {
-  return fs.existsSync(path.join(projectDir, '.wolf', 'cron-manifest.json'));
+  const wolfDir = path.join(projectDir, '.wolf');
+  
+  // Primary: cron-manifest.json exists (OpenWolf cron already initialized)
+  if (fs.existsSync(path.join(wolfDir, 'cron-manifest.json'))) {
+    return { detected: true, mode: 'full' };
+  }
+  
+  // Secondary: OPENWOLF.md exists (OpenWolf installed but cron not yet run)
+  if (fs.existsSync(path.join(wolfDir, 'OPENWOLF.md'))) {
+    return { detected: true, mode: 'partial' };
+  }
+  
+  // Tertiary: config.json with openwolf markers
+  const configPath = path.join(wolfDir, 'config.json');
+  if (fs.existsSync(configPath)) {
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (config.openwolf || config.cron) {
+        return { detected: true, mode: 'partial' };
+      }
+    } catch { /* ignore parse errors */ }
+  }
+  
+  return { detected: false };
 }
 
-if (detectOpenWolf(projectDir)) {
-  registerToOpenWolfCron();
+const owDetection = detectOpenWolf(projectDir);
+if (owDetection.detected) {
+  if (owDetection.mode === 'full') {
+    registerToOpenWolfCron();
+  } else {
+    // Partial mode: wait for cron-manifest.json, use standalone daemon for now
+    process.stderr.write('ccmem: OpenWolf detected but cron not initialized, using standalone daemon\n');
+    startStandaloneDaemon();
+  }
 } else {
   startStandaloneDaemon();
 }
@@ -2242,18 +2566,23 @@ async function insertMemory(mem) {
     throw new GenerationLimitError(`Generation must be < 2, got ${mem.generation}`);
   }
 
-  // 6. C5: Capacity check before insert
+  // 6. C5: Capacity check with soft/hard limits (A+D solution)
+  // See §10.1.1 for semantic explanation
   const scopeKey = mem.scope === 'global' ? 'global' : mem.project_key;
   const count = await db.get(`
     SELECT COUNT(*) as n FROM memories
     WHERE (scope = 'global' OR project_key = ?) AND decay_status = 'active'
   `, [scopeKey]);
-  if (count.n >= config.capacity.maxActivePerScope * 0.95) {
+
+  const softLimit = config.capacity.maxActivePerScope;
+  const hardLimit = softLimit * (config.capacity.hardLimitMultiplier || 1.1);
+
+  // Soft limit: warning + trigger async consolidation
+  if (count.n >= softLimit * 0.95) {
     process.stderr.write(
-      `ccmem: capacity warning (${count.n}/${config.capacity.maxActivePerScope})\n`
+      `ccmem: capacity warning (${count.n}/${softLimit})\n`
     );
-    // Trigger async consolidation if near limit
-    if (count.n >= config.capacity.maxActivePerScope * config.capacity.forceConsolidateAtPercent / 100) {
+    if (count.n >= softLimit * config.capacity.forceConsolidateAtPercent / 100) {
       await enqueueTask('force_consolidation', { scope: scopeKey });
     }
   }
@@ -2261,8 +2590,44 @@ async function insertMemory(mem) {
   // 7. C12.1: Set requires_revalidation based on tags
   mem.requires_revalidation = (mem.tags || []).includes('require_periodic_revalidation') ? 1 : 0;
 
-  // 8. Actual insert
-  const result = await db.run(`INSERT INTO memories (...) VALUES (...)`, mem);
+  // 8. Actual insert (with optional hard limit protection)
+  let result;
+  if (count.n >= hardLimit * 0.95 || config.capacity.strictMode) {
+    // Hard limit: atomic check-and-insert
+    result = await db.run(`
+      INSERT INTO memories (id, scope, project_key, type, source, content, 
+        trust_score, base_priority, half_life_days, decay_status,
+        generation, recall_count, helpful_count, unhelpful_count,
+        last_touched_at, created_at, modified_by, modified_at, tags,
+        pinned, probation_until, requires_revalidation)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE (
+        SELECT COUNT(*) FROM memories 
+        WHERE (scope = 'global' OR project_key = ?) AND decay_status = 'active'
+      ) < ?
+    `, [
+      mem.id, mem.scope, mem.project_key, mem.type, mem.source, mem.content,
+      mem.trust_score, mem.base_priority, mem.half_life_days, mem.decay_status,
+      mem.generation, 0, 0, 0,
+      now(), now(), mem.modified_by || 'system', now(), JSON.stringify(mem.tags || []),
+      mem.pinned || 0, mem.probation_until, mem.requires_revalidation,
+      scopeKey, hardLimit
+    ]);
+
+    if (result.changes === 0) {
+      await logAudit({
+        action: 'insert_blocked_hard_limit',
+        details: JSON.stringify({ scope: scopeKey, count: count.n, hardLimit }),
+      });
+      throw new HardCapacityError(
+        `Hard capacity limit reached (${hardLimit}). ` +
+        `Run /ccmem:stats to check, or wait for consolidation.`
+      );
+    }
+  } else {
+    // Normal path: non-atomic insert (allows race within soft→hard buffer)
+    result = await db.run(`INSERT INTO memories (...) VALUES (...)`, mem);
+  }
 
   // 9. C2: Invalidate fresh cache if this is a recent episode
   //    Purpose: ensure subsequent sessions see newly created episodes
@@ -2278,6 +2643,28 @@ async function insertMemory(mem) {
   return result;
 }
 ```
+
+#### 10.1.1 容量检查语义 (C5.1)
+
+**默认行为**: 检查与插入非原子,高并发下可能短暂超出 `maxActivePerScope`。
+超出量受限于 `并发窗口数 × 单窗口批量写入数`(通常 < 50 条),
+下一个 `force_consolidation` 周期会清理。
+
+**设计选择理由**:
+- 原子操作需要数据库锁或条件 INSERT
+- 写锁会阻塞其他窗口,增加 hook 延迟
+- p95 ≤ 500ms 预算不允许长时间持锁
+- 短暂超出对 FTS5 检索性能影响可忽略(< 3%)
+
+**软上限 + 硬上限分离**:
+
+| 限制 | 阈值 | 行为 |
+|------|------|------|
+| 警告线 | 95% of softLimit | stderr 警告 |
+| 触发整合 | `forceConsolidateAtPercent` (默认 90%) | 异步入队 `force_consolidation` |
+| 硬上限检查 | 95% of hardLimit (默认 110%) | 原子 INSERT,失败则抛 `HardCapacityError` |
+
+**可选严格模式**: `config.capacity.strictMode: true` 时,所有写入都做原子检查(接受延迟代价)。
 
 ### 10.2 Tier 1 模式(always-block)
 
@@ -2554,8 +2941,9 @@ async function forgetMemory(memId, options = {}) {
 }
 
 async function invalidateInjectionCacheFor(memId) {
+  // C4.1: Increment version to prevent race with concurrent regeneration
   await db.run(`
-    UPDATE injection_cache SET ttl_seconds = 0
+    UPDATE injection_cache SET ttl_seconds = 0, version = version + 1
     WHERE EXISTS (
       SELECT 1 FROM json_each(member_ids) WHERE value = ?
     )
@@ -2631,17 +3019,40 @@ export function generateMemoryId() {
   return `mem_${ts}_${rand}`;
 }
 
+// Basic short ID generation (for display only, deterministic)
 export function toShortId(fullId) {
   return 'm' + crypto.createHash('sha256')
     .update(fullId).digest('hex').slice(0, 7);
 }
 
+// Collision-safe short ID generation (C5.1)
+// Used when uniqueness matters (e.g., injection markers for feedback attribution)
+export async function toShortIdSafe(db, fullId) {
+  const hash = crypto.createHash('sha256').update(fullId).digest('hex');
+  
+  // Try progressively longer prefixes until unique
+  for (let len = 7; len <= 12; len++) {
+    const candidate = 'm' + hash.slice(0, len);
+    const collision = await db.get(`
+      SELECT id FROM memories 
+      WHERE id != ? AND 'm' || substr(hex(sha256(id)), 1, ?) = ?
+    `, [fullId, len, candidate]);
+    
+    if (!collision) return candidate;
+  }
+  
+  // Fallback: use full hash prefix (extremely rare)
+  return 'm' + hash.slice(0, 16);
+}
+
 export function findByShortId(db, shortId) {
   // 遍历查找(短 ID 不存储,从完整 ID 计算)
+  // 支持 7-16 字符长度的短 ID
+  const len = shortId.length - 1; // minus 'm' prefix
   return db.get(`
     SELECT * FROM memories 
-    WHERE 'm' || substr(hex(sha256(id)), 1, 7) = ?
-  `, [shortId]);
+    WHERE 'm' || substr(hex(sha256(id)), 1, ?) = ?
+  `, [len, shortId]);
   // 注: SQLite 无内置 sha256,实际用应用层过滤
 }
 ```
@@ -3594,7 +4005,9 @@ async function computeDailyMetrics() {
   "capacity": {
     "maxActivePerScope": 2000,
     "forceConsolidateAtPercent": 90,
-    "evictBottomPercent": 20
+    "evictBottomPercent": 20,
+    "hardLimitMultiplier": 1.1,           // 硬上限 = maxActivePerScope × 1.1 (C5.1)
+    "strictMode": false                    // true 时所有写入都做原子检查
   },
   "hooks": {
     "openwolfIntegration": "auto",
@@ -4025,3 +4438,4 @@ async function handleSessionStart(hookData) {
 - **summarize_pending 高频触发场景**:用户连开多个短会话,pending 队列可能膨胀。当前没有去重(同 session_id 多条 trigger 入队);可能需要 daemon 消费时合并。
 - **dangerous_command tag 的国际化**:目前正则只覆盖中英,日韩等用户的场景未测。
 - **prompt cache 利用率**:Anthropic prompt cache TTL 默认 5 分钟,在 agent 长时会话场景常 miss。**设计明确不依赖 cache 优化**——hot/injection_cache 的稳定性是为了"语义有用"而非"命中 cache"。已不在 metrics 中追踪。
+- **多 Claude Code 窗口反馈冲突 (C15.1)**:用户同时打开多个窗口时,反馈推断基于 session_id 隔离,理论安全。但若用户混淆窗口说"刚才不对"时指的是另一个窗口,可能产生误判。暂无自动防御,依赖 L4 LLM 复核纠正。5 分钟时间窗口 (§6.6 C6) 可减少跨 session 干扰但不能完全消除用户心智混淆的场景。

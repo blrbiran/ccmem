@@ -367,6 +367,11 @@ CREATE TABLE daemon_lock (
 > 1. 已通过 `config.trust.rewardOnHelpful` 等配置项支持调整
 > 2. `daily_metrics` 追踪 trust 分布变化,便于后续调优
 > 3. Phase 5 评估后可能调整默认值
+>
+> **Trust 分布监控指标**(daily_metrics.memory_health):
+> - `trust_histogram`: 按 0.1 分桶的 trust 分布
+> - `trust_drift_7d`: 7 天内平均 trust 变化(检测通胀/紧缩)
+> - `low_trust_surge`: trust < 0.4 的记忆数突增告警阈值
 
 ### 4.5 SOURCE_MAX_TRUST 常量(H8)
 
@@ -380,6 +385,121 @@ export const SOURCE_MAX_TRUST = {
   external:          0.70,
   cerebrum_import:   0.85,
 };
+```
+
+### 4.6 Embedding Model Identity 模块(5 层唯一性防御)
+
+为防止 HuggingFace 模型命名碰撞、用户手动编辑 registry 导致不一致等问题,统一通过 `model-identity.mjs` 模块管理模型注册。
+
+#### 5 层防御链
+
+| 层 | 名称 | 防御目标 | 实现 |
+|----|------|---------|------|
+| 1 | 格式校验 | 非法字符/保留前缀 | `validateModelId()` 正则 + 黑名单 |
+| 2 | 命名空间 | 不同来源同名模型碰撞 | `hf_xenova_bge_small` 前缀区分 |
+| 3 | 配置哈希 | 同名但配置不同的模型 | `vec_<model>_<sha256(dim+vocab+type)[:8]>` |
+| 4 | DB 约束 | 重复注册 | `UNIQUE(vec_table_name)` |
+| 5 | 运行时活检 | 物理表/registry 漂移 | `verifyModelIntegrity()` 检查 dim/count |
+
+#### 核心函数
+
+```javascript
+// lib/model-identity.mjs
+
+const MODEL_ID_PATTERN = /^[a-z][a-z0-9_-]{2,63}$/;
+const RESERVED_PREFIXES = ['vec_', 'ccmem_', 'test_'];
+
+// Layer 1: 格式校验
+export function validateModelId(rawId) {
+  const id = rawId.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+  if (!MODEL_ID_PATTERN.test(id)) {
+    throw new InvalidModelIdError(`Invalid model ID format: ${rawId}`);
+  }
+  if (RESERVED_PREFIXES.some(p => id.startsWith(p))) {
+    throw new InvalidModelIdError(`Reserved prefix: ${rawId}`);
+  }
+  return id;
+}
+
+// Layer 2: 命名空间(防 HuggingFace org 碰撞)
+export function namespacedModelId(source, modelName) {
+  // source: 'hf' | 'local' | 'custom'
+  // Example: hf/Xenova/bge-small-zh-v1.5 → hf_xenova_bge_small_zh_v1_5
+  const normalized = `${source}_${modelName}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '_')
+    .replace(/_+/g, '_')
+    .slice(0, 48);
+  return validateModelId(normalized);
+}
+
+// Layer 3: 配置哈希(同名不同配置 → 不同表)
+export function vecTableName(modelId, configHash) {
+  const suffix = configHash.slice(0, 8);
+  return `vec_${modelId}_${suffix}`;
+}
+
+// Layer 5: 运行时活检
+export async function verifyModelIntegrity(db, modelId) {
+  const registry = await db.get(`
+    SELECT * FROM embedding_model_registry WHERE model_id = ?
+  `, [modelId]);
+  if (!registry) return { ok: false, error: 'not_in_registry' };
+
+  // 检查物理表存在
+  const table = await db.get(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name = ?
+  `, [registry.vec_table_name]);
+  if (!table) return { ok: false, error: 'table_missing' };
+
+  // 检查维度一致性
+  const tableInfo = await db.all(`PRAGMA table_info(${registry.vec_table_name})`);
+  const embCol = tableInfo.find(c => c.name === 'embedding');
+  const dimMatch = embCol?.type.match(/FLOAT\[(\d+)\]/);
+  const actualDim = dimMatch ? parseInt(dimMatch[1]) : null;
+  if (actualDim !== registry.dim) {
+    return { ok: false, error: 'dim_mismatch', expected: registry.dim, actual: actualDim };
+  }
+
+  return { ok: true };
+}
+```
+
+#### 注册流程
+
+```javascript
+export async function registerModel(db, modelConfig) {
+  const modelId = namespacedModelId(modelConfig.source, modelConfig.name);
+  const configHash = sha256(`${modelConfig.dim}:${modelConfig.vocab_size}:${modelConfig.type}`);
+  const tableName = vecTableName(modelId, configHash);
+
+  await db.transaction(async (tx) => {
+    const existing = await tx.get(`
+      SELECT * FROM embedding_model_registry WHERE model_id = ?
+    `, [modelId]);
+
+    if (existing && existing.vec_table_name !== tableName) {
+      throw new ModelCollisionError(
+        `Model ${modelId} already registered with different config`
+      );
+    }
+
+    if (!existing) {
+      await tx.run(`
+        INSERT INTO embedding_model_registry 
+        (model_id, vec_table_name, dim, registered_at, status)
+        VALUES (?, ?, ?, ?, 'downloading')
+      `, [modelId, tableName, modelConfig.dim, now()]);
+
+      await tx.run(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS ${tableName}
+        USING vec0(embedding FLOAT[${modelConfig.dim}])
+      `);
+    }
+  });
+
+  return { modelId, tableName };
+}
 ```
 
 ---
@@ -545,11 +665,17 @@ async function handleSessionStart(hookData) {
     renderFresh(projectKey, /*windowHours=*/24),    // live-rendered episodes from last 24h
   ]);
 
-  // 2. Trim and concatenate according to budget
+  // 2. Trim and concatenate according to budget (with overflow handling)
   const block = composeInjectionBlock({
     segments: [consolidatedGlobal, consolidatedProject, pinned, fresh],
     budget: config.injection.budget,                // see section 14
   });
+
+  // composeInjectionBlock 裁剪逻辑:
+  // 1. 每个 segment 先按自身 budget 裁剪
+  // 2. 若总量仍超 total_cap,按 overflow_trim_order 顺序继续裁剪
+  //    默认: fresh → consolidated_project → consolidated_global → pinned
+  // 3. pinned 最后裁剪(用户明确 pin 的内容优先保留)
 
   // 3. Record feedback (C1 critical)
   const allMembers = uniqueIds([
@@ -653,19 +779,40 @@ async function handleUserPromptSubmit(hookData) {
 
 ### 6.3 PreCompact(H6 修正)
 
+> **VERIFIED (2026-05-21)**: PreCompact hook 实际输入 schema:
+> ```typescript
+> { hook_event_name: 'PreCompact', trigger: 'manual'|'auto', 
+>   custom_instructions: string|null, session_id, transcript_path, cwd }
+> ```
+> **不包含 messages 数组**。需通过 transcript_path 读取历史。
+
 ```javascript
 async function handlePreCompact(hookData) {
   const { run } = await shouldHookRun();
   if (!run) { process.exit(0); }
 
-  const messages = hookData.messages || [];
+  // PreCompact 不提供 messages，需从 transcript 读取
+  // 或依赖 Stop hook 已持续追踪的重要内容
+  const transcriptPath = hookData.transcript_path;
+  
+  // 策略1: 从 transcript 提取即将被压缩的内容
+  let messagesSnapshot = null;
+  if (transcriptPath && fs.existsSync(transcriptPath)) {
+    try {
+      const transcript = await parseTranscript(transcriptPath);
+      // 压缩通常保留最后 30%，我们关注前 70%
+      const boundaryIdx = Math.floor(transcript.length * 0.7);
+      messagesSnapshot = transcript.slice(0, boundaryIdx);
+    } catch (e) {
+      logWarn('PreCompact: failed to parse transcript', e);
+    }
+  }
 
-  // Heuristic: compaction usually targets the first 70%, keeping the last 30%.
-  // What we need to rescue is the leading content about to be discarded.
-  // TODO(C1): 70% 是启发式估算,实际 Claude Code 压缩边界可能不同,待验证。
-  //           若 hookData 提供实际边界,优先使用: hookData.compact_boundary ?? ...
-  const compactBoundary = Math.floor(messages.length * config.preCompact?.boundaryRatio ?? 0.7);
-  const toCompact = messages.slice(0, compactBoundary);
+  // 策略2: 从 session_context 表读取 Stop hook 已追踪的重要内容
+  const trackedContext = await db.get(`
+    SELECT important_facts, recent_decisions FROM session_context
+    WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1
+  `, [hookData.session_id]);
 
   await db.run(`
     INSERT INTO pending_summarize
@@ -677,10 +824,11 @@ async function handlePreCompact(hookData) {
     5,                                   // mid priority
     'pre_compact',
     JSON.stringify({
-      messages_to_compact: toCompact,
-      total_messages: messages.length,
-      compact_boundary: compactBoundary,
-      transcript_path: hookData.transcript_path,
+      trigger: hookData.trigger,         // 'manual' | 'auto'
+      custom_instructions: hookData.custom_instructions,
+      transcript_path: transcriptPath,
+      messages_snapshot: messagesSnapshot,
+      tracked_context: trackedContext,
     }),
     now(),
   ]);
@@ -692,6 +840,13 @@ async function handlePreCompact(hookData) {
 
 ### 6.4 Stop / SessionEnd
 
+> **VERIFIED (2026-05-21)**: Stop hook 实际输入 schema:
+> ```typescript
+> { hook_event_name: 'Stop', stop_hook_active: boolean,
+>   last_assistant_message?: string, session_id, transcript_path, cwd }
+> ```
+> **不包含** tool_call_count, message_count, duration_ms。需自行从 transcript 统计。
+
 ```javascript
 async function handleStop(hookData) {
   const { run } = await shouldHookRun();
@@ -702,8 +857,18 @@ async function handleStop(hookData) {
     await inferFromTranscript(hookData.session_id, hookData.transcript_path);
   }
 
-  const wasSignificant = (hookData.tool_call_count || 0) > 3
-                      || (hookData.message_count || 0) > 6;
+  // 从 transcript 统计会话规模（hookData 不提供这些字段）
+  let sessionStats = { toolCalls: 0, messageCount: 0, durationMs: 0 };
+  if (hookData.transcript_path && fs.existsSync(hookData.transcript_path)) {
+    try {
+      sessionStats = await computeSessionStats(hookData.transcript_path);
+    } catch (e) {
+      logWarn('Stop: failed to compute session stats', e);
+    }
+  }
+
+  const wasSignificant = sessionStats.toolCalls > 3
+                      || sessionStats.messageCount > 6;
 
   if (!wasSignificant) { process.exit(0); }
 
@@ -717,9 +882,10 @@ async function handleStop(hookData) {
     10,                                  // high priority
     'session_end',
     JSON.stringify({
-      summary: hookData.transcript_excerpt,
-      tool_calls: hookData.tool_call_count,
-      duration_ms: hookData.duration_ms,
+      last_assistant_message: hookData.last_assistant_message,
+      stop_hook_active: hookData.stop_hook_active,
+      tool_calls: sessionStats.toolCalls,
+      duration_ms: sessionStats.durationMs,
       transcript_path: hookData.transcript_path,
     }),
     now(),
@@ -1713,6 +1879,76 @@ WHERE (scope = 'global' OR (scope = 'project' AND project_key = ?))
 
 写入走 §10 写入闸门(投毒扫描照样过)。同步是单向的:**ccmem 只读 cerebrum,不写**。除非用户开启 `ccmem.write_cerebrum: true`(Phase 5+)。
 
+#### 三阶段去重(防止重复导入)
+
+用户手动编辑 cerebrum.md 时可能添加 ccmem 已有的内容,需在导入前去重:
+
+| 阶段 | 方法 | 成本 | 匹配策略 |
+|------|------|------|---------|
+| Stage 1 | 精确匹配 | O(1) 查询 | `content = ?` 完全相同 |
+| Stage 2 | 归一化匹配 | O(n) 候选 | 忽略空白/标点/大小写后相同 |
+| Stage 3 | 语义相似 | 需 embedding | cosine > 0.85 |
+
+```javascript
+// lib/cerebrum-sync.mjs
+export async function syncCerebrumEntry(db, entry, projectKey) {
+  const { content, section, lineNumber } = entry;
+
+  // Stage 1: 精确匹配 → 跳过,只更新 tag
+  const exact = await db.get(`
+    SELECT * FROM memories WHERE content = ? 
+    AND (scope = 'global' OR project_key = ?) LIMIT 1
+  `, [content, projectKey]);
+  if (exact) {
+    await db.run(`UPDATE memories SET tags = json_insert(
+      COALESCE(tags, '[]'), '$[#]', ?
+    ) WHERE id = ?`, [`cerebrum_synced:${section}:L${lineNumber}`, exact.id]);
+    return { action: 'exact_match', existingId: exact.id, inserted: false };
+  }
+
+  // Stage 2: 归一化匹配 → 跳过,合并引用
+  const normalized = normalizeForComparison(content);
+  const candidates = await db.all(`
+    SELECT * FROM memories WHERE decay_status = 'active'
+      AND (scope = 'global' OR project_key = ?)
+      AND ABS(LENGTH(content) - ?) < 50 LIMIT 20
+  `, [projectKey, content.length]);
+
+  for (const c of candidates) {
+    if (normalizeForComparison(c.content) === normalized) {
+      await db.run(`UPDATE memories SET tags = json_insert(
+        COALESCE(tags, '[]'), '$[#]', ?
+      ) WHERE id = ?`, [`cerebrum_normalized:${section}:L${lineNumber}`, c.id]);
+      return { action: 'normalized_match', existingId: c.id, inserted: false };
+    }
+  }
+
+  // Stage 3: 语义相似(仅当 embedding 启用) → 创建并链接
+  if (await isEmbeddingEnabled(db)) {
+    const similar = await findSimilarByEmbedding(db, content, projectKey, 0.85);
+    if (similar) {
+      // 保留两者,但降低新条目优先级并建立双向链接
+      const newId = await insertNewFromCerebrum(db, entry, projectKey, {
+        trust_score: Math.min(similar.trust_score, 0.7),
+        tags: ['semantic_duplicate_of:' + similar.id],
+      });
+      await db.run(`UPDATE memories SET tags = json_insert(
+        COALESCE(tags, '[]'), '$[#]', ?
+      ) WHERE id = ?`, ['has_semantic_duplicate:' + newId, similar.id]);
+      return { action: 'semantic_match', existingId: similar.id, newId, inserted: true };
+    }
+  }
+
+  // 无匹配 → 正常插入
+  return insertNewFromCerebrum(db, entry, projectKey);
+}
+
+function normalizeForComparison(text) {
+  return text.toLowerCase().replace(/\s+/g, ' ')
+    .replace(/[^\w\s一-鿿]/g, '').trim();
+}
+```
+
 #### C9: SessionStart 增量扫描
 
 除了 `daily_consolidation` 的批量同步,`SessionStart` 也会增量检查 cerebrum.md 变更:
@@ -2219,17 +2455,55 @@ async function invalidateInjectionCacheFor(memId) {
 
 ### 11.3 紧凑格式规范
 
+#### Memory ID 格式(确定性哈希)
+
 ```
-ID 格式:m + 8 字节哈希(从 memories.id 派生)
-紧凑元数据格式: <type>|<trust>|<age><status_suffix>
-  type:    r=rule, f=fact, s=skill, e=episode, c=consolidated
-  trust:   两位小数,如 0.85
-  age:     基于 last_touched_at;Nd=N天前,Nh=N小时前
-  status:  可选后缀
-    无后缀 = active
-    !p      = probation
-    !c      = candidate_expire
-    !ctx    = context-bound(含 dangerous_command 等 tag)
+完整 ID:  mem_<timestamp_hex>_<random_hex>  (例: mem_1a2b3c4d_5e6f7g8h)
+短 ID:    m + SHA256(完整ID)[:7]             (例: m3f8a2c1)
+
+映射函数(确定性,可从完整 ID 重算):
+  shortId = 'm' + sha256(fullId).slice(0, 7)
+```
+
+**确定性保证**:即使 `injection_cache` 损坏,只要 `memories.id` 存在,短 ID 可重算,反馈归因不会丢失。
+
+```javascript
+// lib/memory-id.mjs
+export function generateMemoryId() {
+  const ts = Date.now().toString(16).padStart(8, '0');
+  const rand = crypto.randomBytes(4).toString('hex');
+  return `mem_${ts}_${rand}`;
+}
+
+export function toShortId(fullId) {
+  return 'm' + crypto.createHash('sha256')
+    .update(fullId).digest('hex').slice(0, 7);
+}
+
+export function findByShortId(db, shortId) {
+  // 遍历查找(短 ID 不存储,从完整 ID 计算)
+  return db.get(`
+    SELECT * FROM memories 
+    WHERE 'm' || substr(hex(sha256(id)), 1, 7) = ?
+  `, [shortId]);
+  // 注: SQLite 无内置 sha256,实际用应用层过滤
+}
+```
+
+#### 紧凑元数据格式
+
+```
+格式: [<shortId>] <type>|<trust>|<age><status_suffix>
+示例: [m3f8a2c1] f|0.85|3d
+
+type:    r=rule, f=fact, s=skill, e=episode, c=consolidated
+trust:   两位小数,如 0.85
+age:     基于 last_touched_at;Nd=N天前,Nh=N小时前
+status:  可选后缀
+  无后缀 = active
+  !p      = probation
+  !c      = candidate_expire
+  !ctx    = context-bound(含 dangerous_command 等 tag)
 ```
 
 ### 11.4 格式三档
@@ -2251,6 +2525,7 @@ ID 格式:m + 8 字节哈希(从 memories.id 派生)
                           - List memories
 /ccmem:show <id>          - Show single memory detail (trust history, lineage)
 /ccmem:pin <id>           - Pin: trust=0.95, memories.pinned=1, never auto-archived
+                            LIMIT: max 20 pinned per scope; exceeds → error + suggest unpin
 /ccmem:unpin <id>         - Remove pin
 /ccmem:forget <id>        - Mark archived; sync cascade to dependent consolidated
 /ccmem:edit <id>          - Edit content (source→user_explicit, trust=0.95)
@@ -2285,6 +2560,10 @@ ID 格式:m + 8 字节哈希(从 memories.id 派生)
 
 /ccmem:audit --recent     - Show recent audit log entries
 /ccmem:audit-allow <id>   - Override block decision (requires reason)
+
+/ccmem:diagnose           - Check database health, show operation mode (§16.3)
+/ccmem:recover            - Attempt automatic recovery from degraded/safe mode
+/ccmem:reset-db --confirm - HIGH-RISK: Force reset database (requires verbatim confirm)
 ```
 
 ### 12.2 `/ccmem:mode` 实现(S4)
@@ -3088,7 +3367,9 @@ async function computeDailyMetrics() {
       "fresh":                500,
       "total_cap":            4000,
       "_comment":             "total_cap > sum 留 buffer (M4)",
-      "pinned_max_lines":     20
+      "pinned_max_lines":     20,
+      "overflow_trim_order":  ["fresh", "consolidated_project", "consolidated_global", "pinned"],
+      "_comment_trim":        "当总量超 total_cap 时,按此顺序裁剪(左侧先裁)"
     }
   },
   "priority": {
@@ -3381,6 +3662,138 @@ async function removeEmptyDirsRecursive(root) { /* 用 rmdir,不接受 recursive
 - mode_state 表为 `off` 时,所有 hook 立即 `exit 0`
 - daemon 主循环 mode='off' 时只休眠
 - 用户运行 `/ccmem:mode active` 恢复
+
+### 16.3 数据库故障容错(A11)
+
+当数据库损坏、磁盘满、权限错误时,ccmem 不应导致 Claude Code 完全不可用。
+
+#### 4 级降级模式
+
+| 模式 | 触发条件 | 功能 |
+|------|---------|------|
+| `normal` | 数据库健康 | 全部功能 |
+| `degraded` | 数据库被锁定 | Hook 正常,daemon 不运行 |
+| `safe` | 数据库损坏/只读 | 仅注入(用缓存),不写入 |
+| `bypass` | 无法恢复的错误 | ccmem 完全禁用 |
+
+#### 功能矩阵
+
+| 功能 | normal | degraded | safe | bypass |
+|------|--------|----------|------|--------|
+| 记忆注入 | ✓ | ✓ | ✓ (cached) | ✗ |
+| 记忆写入 | ✓ | ✓ | ✗ | ✗ |
+| 反馈记录 | ✓ | ✓ | ✗ | ✗ |
+| Daemon | ✓ | ✗ | ✗ | ✗ |
+| Cron 任务 | ✓ | ✗ | ✗ | ✗ |
+| 用户命令 | ✓ | ✓ (部分) | ✓ (只读) | ✗ |
+
+#### 实现
+
+```javascript
+// lib/daemon-lock.mjs
+const OPERATION_MODES = {
+  NORMAL: 'normal', DEGRADED: 'degraded', SAFE: 'safe', BYPASS: 'bypass'
+};
+
+let currentMode = OPERATION_MODES.NORMAL;
+
+export async function acquireDaemonLockWithFallback() {
+  try {
+    await verifyDatabaseHealth();
+    return await acquireDaemonLock();
+  } catch (e) {
+    return handleLockFailure(e);
+  }
+}
+
+async function verifyDatabaseHealth() {
+  const checks = ['file_exists', 'file_writable', 'schema_valid', 'lock_table'];
+  for (const check of checks) {
+    const result = await runCheck(check);
+    if (!result.ok) throw new DbHealthError(check, result.error);
+  }
+}
+
+function handleLockFailure(error) {
+  const classification = classifyDbError(error);
+  
+  switch (classification.type) {
+    case 'corruption':
+    case 'permission':
+    case 'disk_full':
+      currentMode = OPERATION_MODES.SAFE;
+      break;
+    case 'locked':
+      currentMode = OPERATION_MODES.DEGRADED;
+      break;
+    case 'missing':
+      return { mode: OPERATION_MODES.NORMAL, firstRun: true };
+    default:
+      currentMode = OPERATION_MODES.DEGRADED;
+  }
+  
+  logDegradation(classification, error);
+  return { mode: currentMode, reason: classification.type };
+}
+
+function classifyDbError(error) {
+  const msg = error.message.toLowerCase();
+  if (msg.includes('malformed') || msg.includes('corrupt')) return { type: 'corruption' };
+  if (msg.includes('permission') || msg.includes('readonly')) return { type: 'permission' };
+  if (msg.includes('disk full') || msg.includes('enospc')) return { type: 'disk_full' };
+  if (msg.includes('locked') || msg.includes('busy')) return { type: 'locked' };
+  if (msg.includes('no such file')) return { type: 'missing' };
+  return { type: 'unknown' };
+}
+
+// Hook 入口使用
+export function canWrite() {
+  return currentMode === OPERATION_MODES.NORMAL || currentMode === OPERATION_MODES.DEGRADED;
+}
+export function canInject() {
+  return currentMode !== OPERATION_MODES.BYPASS;
+}
+export function canRunDaemon() {
+  return currentMode === OPERATION_MODES.NORMAL;
+}
+```
+
+#### Hook 入口集成
+
+```javascript
+// handlers/session-start.mjs
+async function handleSessionStart(hookData) {
+  const lockResult = await acquireDaemonLockWithFallback();
+  
+  if (lockResult.mode === 'bypass') {
+    process.stderr.write('ccmem: disabled due to unrecoverable error\n');
+    process.exit(0);
+  }
+  if (lockResult.mode === 'safe') {
+    process.stderr.write('ccmem [safe mode]: read-only, run /ccmem:diagnose\n');
+  }
+  if (lockResult.mode === 'degraded') {
+    process.stderr.write('ccmem [degraded]: daemon unavailable\n');
+  }
+
+  // 模式感知的逻辑分支
+  if (canWrite()) {
+    await recordFeedback(...);
+    await bumpRecallCounters(...);
+  }
+  if (canInject()) {
+    // ... injection logic
+  }
+}
+```
+
+#### 用户诊断命令
+
+```bash
+/ccmem:diagnose    # 检查数据库健康状态
+/ccmem:recover     # 尝试自动恢复
+/ccmem:reset-db --confirm  # 强制重置(高危)
+```
 
 ---
 

@@ -1,17 +1,54 @@
-# Claude Code 记忆插件设计方案
+# Claude Code 记忆插件设计方案 v3.0
 
-> 基于 Chroma 向量数据库，为 Claude Code 实现持久化记忆系统。
-> 利用 Hook 生命周期实现记忆的加载与沉淀，用 Cron 实现周期性整合。
+> 基于 SQLite + 嵌入式向量检索,为 Claude Code 实现持久化记忆系统。
+> 利用 Hook 多阶段生命周期实现「热记忆直注 + 按问题检索 + 异步整合」,用 Cron 实现周期性深度反思。
+>
+> **v3.0 是 greenfield 重写**,放弃了 v2.1 的所有妥协设计,以"当前最优"为唯一原则。
+> 实现尚未开始,本文档作为 Phase 0 之后所有实现的唯一依据。
+
+---
+
+## v3.0 相对 v2.1 的关键变更
+
+按影响排序,引用 v2.1 章节便于追溯:
+
+| # | 变更 | v2.1 出处 | 原因 |
+|---|------|-----------|------|
+| 1 | **hot_memory 表降级为 injection_cache(预渲染缓存)**;`pinned` 改为 `memories.pinned` 字段;每条 hot 行带隐式 `<!--mXXX-->` 注释,反馈机制天然可追溯 | §4.1 / §6.1 / §11.1 | 旧设计中段级注入断了反馈闭环,近半注入内容不参与 trust 调整 |
+| 2 | **`/ccmem:forget` 改为同步级联**,立即降级所有引用此 id 的 consolidated + 失效 hot 段 | §7.5 / §10.4 / §12 | 旧设计的级联在周级 security_audit 才生效,用户体验失败 |
+| 3 | **frequency_factor 改为 sigmoid + floor 0.1**,惩罚系数 1.5→2.0,允许负反馈占主导 | §5.1 | 旧公式在负向场景可输出负数 priority,数学上不可解释 |
+| 4 | **写入闸门 `insertMemory()` 统一所有写入路径**(用户/cron/summarize_pending) | §10.1 缺失 | 旧设计中 LLM 抽取路径绕过模式扫描,投毒防御有缺口 |
+| 5 | **三层意图判别取代单一模式黑白名单**:Tier 1 always-block / Tier 2 context-gated / Tier 3 semantic-review;在代码块/引号内、有解释性后续的危险词不阻止 | §10.1 / §10.2 | 用户讨论 unix 命令时大量假阳性 |
+| 6 | **危险命令强制降级**:Tier 2 命中时 `type` 被强制为 `episode`、`scope` 强制为 `project`、`trust` 上限 0.6;`/ccmem:promote` 提供逐字声明覆盖路径 | 新增 | 防止时效性内容被错误升级为通用规则 |
+| 7 | **daemon 自动拉起 + 心跳 + 单实例锁**;hook 探测 daemon 不健康则 `spawn detached` 接管 | §17 known unknown | 旧设计下 daemon 静默死亡无人监控 |
+| 8 | **文件触发器 daemon.wake 跨平台唤醒**,放弃 SIGUSR1 Unix-only 方案 | §6.4 / §7.6 | 跨平台双实现成本高,文件触发器够用 |
+| 9 | **嵌入向量改为多 vec_index 表 + BLOB 原始存储 + 5 层唯一性防御**(validate→hash 后缀→UNIQUE 约束→运行时活检→repair 命令) | §4.1 维度硬编码 | 模型切换无成本,防 HuggingFace 命名碰撞 |
+| 10 | **RetrievalProvider 接口从 Day 1 抽象**(LexicalProvider / HybridProvider / DaemonIpcProvider),Phase 1 用 lexical,Phase 5 评估升级 | §5.2 | 解耦检索策略与 hook 逻辑 |
+| 11 | **/ccmem:mode 统一启停**(`active` / `shadow` / `off`),取消 `enable`/`disable` 双义命令 | §12 | 命令语义清晰 |
+| 12 | **`/ccmem:purge-*` 走特批高危删除**(强确认 + 显示删除总大小 + 审计) | §12 | 防误删用户数据 |
+| 13 | **safe-fs 模块封装所有删除**:绝对路径 + realpath + 白名单根目录 + 类型检查 + 文件名 pattern;**永不使用 `rm -rf`** | 缺失 | 防符号链接逃逸、路径误解析 |
+| 14 | **Schema 加 `schema_meta` 版本表**;`cron_task_state` 加锁字段(`lock_holder` / `lock_acquired_at`);`memories` 加 `generation` / `pinned` / `last_revalidated_at` 字段 | §4.1 / §7.6 | 支持平滑迁移、并发去重、防止二级整合 |
+| 15 | **反馈推断 L1 加 code-block / quote / imperative 信号判别**,降低代码引用造成的假阳性 | §6.6 L1 | 中英开发者频繁在 prompt 中粘代码 |
+| 16 | **性能预算硬约束**(SessionStart p95 ≤ 300ms,UserPromptSubmit p95 ≤ 500ms,Stop/PreCompact p95 ≤ 80ms);`/ccmem:bench` 命令测量 | 缺失 | 防 hook 链阻塞用户感知 |
+| 17 | **统一注入格式规范**:type 单字母 + trust + age + 状态后缀(`!p`/`!c`/`!ctx`);verbose / compact / raw 三档,默认 compact | §11.2 不一致 | LLM 解读一致性 |
+| 18 | **`cache_hit_rate` 字段移除**;`memory_audit_log` 表加入 schema | §13 / §10.1 | 不可观测的指标删除,审计是一等公民 |
+| 19 | **目录结构按"代码/用户数据/项目数据"三分**;插件目录卸载不丢用户数据 | §15 不一致 | 升级与清理路径清晰 |
+| 20 | **OpenWolf cerebrum.md 段落映射规则明确**(User Preferences→global rule, Key Learnings→project fact, Do-Not-Repeat→project rule + tag) | §9.1 模糊 | 双系统数据流可追溯 |
 
 ---
 
 ## 一、设计目标
 
-在不修改 LLM 权重的前提下，通过应用层机制为 Claude Code 提供：
-1. **跨会话记忆持久化**：会话结束后记忆不丢失
-2. **智能优先级排序**：高价值记忆优先注入上下文
-3. **自动衰减与整合**：旧记忆自动淘汰，周期性深度整理
-4. **双层作用域**：全局通用记忆 + 项目专属记忆
+在不修改 LLM 权重的前提下,通过应用层机制为 Claude Code 提供:
+
+1. **跨会话记忆持久化**:会话结束后记忆不丢失
+2. **多阶段记忆触达**:启动注入背景 + 按 prompt 检索细节 + 压缩前抢救 + 结束沉淀
+3. **可追溯的反馈闭环**:每条注入的记忆都能精确回写 trust
+4. **自动衰减与整合**:旧记忆按 half-life 自然淡出,cron 做深度整合
+5. **双层作用域**:全局通用记忆 + 项目专属记忆
+6. **强投毒防御**:三层意图判别 + 强制降级 + 周期复核
+7. **可观测、可控制**:用户可查可改可禁用,系统有反馈指标
+8. **跨平台运行**:macOS / Linux / Windows 同等行为
 
 ---
 
@@ -19,658 +56,3128 @@
 
 | 组件 | 选型 | 理由 |
 |------|------|------|
-| 向量数据库 | chromadb-js (npm) | 与现有 hook 生态一致（Node.js/ESM），本地 persistent mode |
-| Hook 语言 | Node.js ESM | 与 OpenWolf hooks、audit-hook 一致 |
-| LLM 调用 | `claude -p` 子进程 | OpenWolf cron 已验证的模式（`use_claude_p: true`） |
-| Cron 实现 | launchd (macOS) / crontab | 系统级调度，独立于 Claude Code 进程 |
-| 记忆存储路径 | `~/.claude/memory/` (全局) + `.claude-memory/` (项目) | 双层分离 |
+| 嵌入式向量索引 | **sqlite-vec** (按需 opt-in) | 纯进程内,无需常驻服务 |
+| 全文检索 | **SQLite FTS5** | 与向量同库,支持三路融合,内置 |
+| 词重叠检索 | **FTS5 候选 + 内存 Jaccard 计算** | < 2k 记忆下延迟 < 50ms,无额外依赖 |
+| Embedding 模型(opt-in) | 本地 `Xenova/bge-small-zh-v1.5` / `Xenova/all-MiniLM-L6-v2` 通过 `@xenova/transformers` | 完全本地,无隐私问题 |
+| Hook 语言 | Node.js ESM | 与 OpenWolf hooks 一致,Claude Code 内置 |
+| LLM 整合调用 | `claude -p` 子进程 | 仅在 cron 异步任务里调用,不在 hook 里同步等待 |
+| Cron 实现 | **检测到 OpenWolf 时复用 cron-engine**(插件模式)/ 否则 `node-cron` 自托管(独立模式) | 复用 retry/backoff/dead-letter,跨平台 |
+| 项目根目录定位 | `CLAUDE_PROJECT_DIR` 环境变量 | 比 cwd 更稳,worktree 切换不会乱 |
+| 用户数据存储路径 | `~/.claude/ccmem/global.db` + `<project>/.ccmem/project.db` | 物理分离,便于迁移/清理 |
+| Daemon 跨平台唤醒 | 文件触发器 `daemon.wake` + `fs.watch` + 轮询降级 | 替代 SIGUSR1,跨平台一致 |
 
 ---
 
 ## 三、架构总览
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Claude Code 会话                           │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  SessionStart Hook                    Stop/SessionEnd Hook  │
-│  ┌─────────────────┐                 ┌──────────────────┐  │
-│  │ 1. 读取 stdin    │                 │ 1. 读取会话数据   │  │
-│  │ 2. 查询 Chroma   │                 │ 2. claude -p 总结│  │
-│  │ 3. 优先级排序    │                 │ 3. 写入 Chroma   │  │
-│  │ 4. stderr 注入   │                 │ 4. 更新元数据    │  │
-│  └─────────────────┘                 └──────────────────┘  │
-│           │                                    │            │
-│           ▼                                    ▼            │
-│  ┌──────────────────────────────────────────────────┐      │
-│  │              Chroma 向量数据库                      │      │
-│  │  ┌────────────────┐  ┌─────────────────────┐     │      │
-│  │  │ global_memory   │  │ project_{hash}_memory│     │      │
-│  │  │ (全局通用记忆)   │  │ (项目专属记忆)        │     │      │
-│  │  └────────────────┘  └─────────────────────┘     │      │
-│  └──────────────────────────────────────────────────┘      │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│                    Cron 后台任务                              │
-│  ┌──────────────────────────────────────────────────┐      │
-│  │ 每日 02:00 - 记忆整合 pass                         │      │
-│  │   去重合并 / 矛盾解决 / 抽象提升 / 衰减计算         │      │
-│  │ 每周日 03:00 - 深度反思                            │      │
-│  │   跨项目模式识别 / 通用规则提炼 / 过期淘汰          │      │
-│  └──────────────────────────────────────────────────┘      │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                          Claude Code 会话                                │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  SessionStart           UserPromptSubmit      PreCompact      Stop     │
+│  ┌────────────────┐    ┌────────────────┐   ┌──────────┐  ┌────────┐  │
+│  │ 读 injection_  │    │ Provider.retrieve│  │ 提取前 70%│  │ 入队列 │  │
+│  │ cache + pinned │    │ 写 feedback     │   │ 入队列   │  │ 写 wake│  │
+│  │ + fresh,注入   │    │ stdout JSON     │   │ 不注入   │  │ 不阻塞 │  │
+│  │ 写 feedback    │    │                 │   │          │  │ exit 0 │  │
+│  └────────┬───────┘    └────────┬───────┘   └────┬─────┘  └───┬────┘  │
+│           │                     │                │            │       │
+│           ▼                     ▼                ▼            ▼       │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │              SQLite (global.db / project.db)                      │  │
+│  │  ┌───────────┐ ┌──────────────┐ ┌───────────────┐                │  │
+│  │  │ memories  │ │ memories_fts │ │ vec_<model>   │                │  │
+│  │  │           │ │ (FTS5)       │ │ (opt-in)      │                │  │
+│  │  └───────────┘ └──────────────┘ └───────────────┘                │  │
+│  │  ┌───────────┐ ┌──────────────┐ ┌───────────────┐                │  │
+│  │  │injection_ │ │ pending_     │ │ memory_       │                │  │
+│  │  │cache      │ │ summarize    │ │ feedback      │                │  │
+│  │  └───────────┘ └──────────────┘ └───────────────┘                │  │
+│  │  ┌───────────────┐ ┌──────────────┐ ┌────────────────┐           │  │
+│  │  │ consolidated_ │ │ cron_task_   │ │ memory_audit_  │           │  │
+│  │  │ lineage       │ │ state        │ │ log            │           │  │
+│  │  └───────────────┘ └──────────────┘ └────────────────┘           │  │
+│  │  ┌─────────────────┐ ┌──────────────────────┐                    │  │
+│  │  │ embedding_      │ │ schema_meta          │                    │  │
+│  │  │ model_registry  │ │                      │                    │  │
+│  │  └─────────────────┘ └──────────────────────┘                    │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                ▲                                       │
+│                                │ daemon.wake 文件触发                  │
+│                                │                                       │
+├────────────────────────────────────────────────────────────────────────┤
+│                       Daemon (独立或 OpenWolf cron-engine)             │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ summarize_pending  自适应轮询(1-30s 活跃 / 5min 空闲)            │  │
+│  │ daily_consolidation     每日 02:17,catch-up 24h                  │  │
+│  │ weekly_reflection       每周日 03:17,catch-up 72h                │  │
+│  │ security_audit          每周一 04:17,catch-up 72h                │  │
+│  │ revalidation_audit      每周三 04:17,catch-up 72h(C2 复核)      │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+时间用 `:17` 等非整点,避开 cron 调度峰值。
+
+---
+
+## 四、数据模型
+
+### 4.1 SQLite Schema
+
+```sql
+-- Schema version (migration support)
+CREATE TABLE schema_meta (
+  version    INTEGER PRIMARY KEY,
+  applied_at TIMESTAMP NOT NULL,
+  notes      TEXT
+);
+INSERT INTO schema_meta VALUES (1, datetime('now'), 'initial schema v3.0');
+
+-- Main table
+CREATE TABLE memories (
+  id              TEXT PRIMARY KEY,            -- mem_<8hex>_<rand>
+  scope           TEXT NOT NULL,               -- 'global' | 'project'
+  project_key     TEXT,                        -- project identifier (see section 8)
+
+  -- Type and source
+  type            TEXT NOT NULL,               -- 'rule'|'fact'|'skill'|'episode'|'consolidated'
+  source          TEXT NOT NULL,               -- 'user_explicit'|'tool_output'|'auto_inferred'|'cron_consolidated'|'external'|'cerebrum_import'
+  content         TEXT NOT NULL,               -- recommended <= 200 chars
+
+  -- Trust and decay
+  trust_score          REAL DEFAULT 0.5,
+  base_priority        REAL DEFAULT 1.0,
+  half_life_days       REAL NOT NULL,
+  decay_status         TEXT DEFAULT 'active',  -- 'active'|'probation'|'quarantine'|'candidate_expire'|'archived'
+
+  -- Behavior flags
+  pinned               INTEGER DEFAULT 0,      -- 0|1, user pinned
+  generation           INTEGER DEFAULT 0,      -- 0=raw, 1=first consolidation, >=2 forbidden
+  last_revalidated_at  TIMESTAMP,              -- periodic revalidation timestamp
+  revalidation_count   INTEGER DEFAULT 0,
+
+  -- Frequency and time
+  recall_count    INTEGER DEFAULT 0,
+  helpful_count   INTEGER DEFAULT 0,
+  unhelpful_count INTEGER DEFAULT 0,
+  last_touched_at TIMESTAMP NOT NULL,
+  created_at      TIMESTAMP NOT NULL,
+  probation_until TIMESTAMP,
+
+  -- Context
+  session_id      TEXT,
+  modified_by     TEXT DEFAULT 'system',       -- 'user'|'system'|'cron' (used by M10)
+  modified_at     TIMESTAMP,
+  tags            TEXT                          -- JSON array
+);
+
+CREATE INDEX idx_mem_scope_status ON memories(scope, decay_status);
+CREATE INDEX idx_mem_project ON memories(project_key) WHERE project_key IS NOT NULL;
+CREATE INDEX idx_mem_touched ON memories(last_touched_at);
+CREATE INDEX idx_mem_pinned ON memories(pinned) WHERE pinned = 1;
+CREATE INDEX idx_mem_revalidation ON memories(last_revalidated_at) WHERE tags LIKE '%require_periodic_revalidation%';
+
+-- FTS5 full-text index
+CREATE VIRTUAL TABLE memories_fts USING fts5(
+  id UNINDEXED,
+  content,
+  tags,
+  tokenize = 'porter unicode61'
+);
+
+-- consolidated source lineage
+CREATE TABLE consolidated_lineage (
+  consolidated_id   TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  source_memory_id  TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  PRIMARY KEY (consolidated_id, source_memory_id)
+);
+CREATE INDEX idx_lineage_source ON consolidated_lineage(source_memory_id);
+
+-- Pre-rendered cache (SessionStart performance optimization)
+CREATE TABLE injection_cache (
+  scope         TEXT NOT NULL,               -- 'global' | 'project:<project_key>'
+  segment       TEXT NOT NULL,               -- 'consolidated' | 'pinned' | 'fresh'
+  rendered_text TEXT NOT NULL,               -- rendered text with <!--m1234--> markers
+  member_ids    TEXT NOT NULL,               -- JSON array of memories.id
+  rendered_at   TIMESTAMP NOT NULL,
+  ttl_seconds   INTEGER,                      -- consolidated=604800, fresh=86400, pinned=NULL
+  PRIMARY KEY (scope, segment)
+);
+
+-- Cron task state + concurrency lock
+CREATE TABLE cron_task_state (
+  task_id                  TEXT PRIMARY KEY,
+  schedule                 TEXT NOT NULL,
+  last_success_at          INTEGER,
+  last_attempt_at          INTEGER,
+  last_error               TEXT,
+  next_due_at              INTEGER NOT NULL,
+  max_catch_up_window_sec  INTEGER NOT NULL,
+
+  -- Concurrency lock (M2)
+  lock_holder              TEXT,              -- 'daemon'|'hook'|pid identifier
+  lock_acquired_at         INTEGER,
+  lock_ttl_sec             INTEGER DEFAULT 600
+);
+
+-- Pending summarization queue
+CREATE TABLE pending_summarize (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id   TEXT,
+  project_key  TEXT,
+  priority     INTEGER DEFAULT 0,             -- 0=normal, 10=high (Stop-triggered)
+  trigger      TEXT NOT NULL,                 -- 'pre_compact' | 'session_end' | 'manual'
+  raw_payload  TEXT NOT NULL,
+  enqueued_at  TIMESTAMP NOT NULL,
+  attempts     INTEGER DEFAULT 0,
+  last_error   TEXT
+);
+CREATE INDEX idx_pending_priority ON pending_summarize(priority DESC, enqueued_at ASC);
+
+-- Feedback and evaluation
+CREATE TABLE memory_feedback (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id         TEXT,
+  injected_ids       TEXT NOT NULL,           -- JSON array
+  injection_source   TEXT NOT NULL,           -- 'session_start'|'user_prompt_submit'
+  prompt_excerpt     TEXT,                    -- char-count truncated to 100
+  outcome            TEXT,                    -- 'helpful'|'unhelpful'|'helpful_implicit'|'unknown'
+  outcome_locked     INTEGER DEFAULT 0,       -- 1 = L4 LLM review has locked this
+  evidence           TEXT,
+  recorded_at        TIMESTAMP NOT NULL
+);
+CREATE INDEX idx_feedback_session_outcome ON memory_feedback(session_id, outcome);
+
+-- Audit log
+CREATE TABLE memory_audit_log (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts              TIMESTAMP NOT NULL,
+  action          TEXT NOT NULL,              -- 'insert_blocked'|'cascade_archive'|'mode_change'|'promote_to_rule'|...
+  reason          TEXT,
+  source          TEXT,
+  session_id      TEXT,
+  affected_ids    TEXT,                       -- JSON array
+  details         TEXT                        -- JSON blob
+);
+CREATE INDEX idx_audit_ts ON memory_audit_log(ts);
+CREATE INDEX idx_audit_action ON memory_audit_log(action);
+
+-- Embedding model registry (H2)
+CREATE TABLE embedding_model_registry (
+  model_id        TEXT PRIMARY KEY,
+  vec_table_name  TEXT NOT NULL UNIQUE,
+  dim             INTEGER NOT NULL,
+  registered_at   TIMESTAMP NOT NULL,
+  status          TEXT NOT NULL,              -- 'downloading'|'ready'|'failed'|'deprecated'
+
+  CHECK (model_id GLOB '[a-z0-9]*'),
+  CHECK (vec_table_name GLOB 'vec_*')
+);
+
+-- Embedding raw data (arbitrary dim; model switch needs no schema change)
+CREATE TABLE memory_embedding (
+  memory_id    TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  model_id     TEXT NOT NULL REFERENCES embedding_model_registry(model_id),
+  embedding    BLOB NOT NULL,                 -- Float32Array as bytes
+  created_at   TIMESTAMP NOT NULL,
+  PRIMARY KEY (memory_id, model_id)
+);
+CREATE INDEX idx_emb_model ON memory_embedding(model_id);
+
+-- Active embedding model (single-row table)
+CREATE TABLE embedding_active (
+  id              INTEGER PRIMARY KEY CHECK (id = 1),
+  active_model    TEXT NOT NULL REFERENCES embedding_model_registry(model_id),
+  enabled_at      TIMESTAMP NOT NULL
+);
+
+-- Daily metrics (M6, replaces metrics.json file)
+CREATE TABLE daily_metrics (
+  date         TEXT PRIMARY KEY,              -- YYYY-MM-DD
+  metrics_json TEXT NOT NULL,
+  updated_at   TIMESTAMP NOT NULL
+);
+
+-- Mode state (S4)
+CREATE TABLE mode_state (
+  id          INTEGER PRIMARY KEY CHECK (id = 1),
+  mode        TEXT NOT NULL,                  -- 'active'|'shadow'|'off'
+  set_at      TIMESTAMP NOT NULL,
+  set_by      TEXT NOT NULL                    -- 'user_command'|'install_default'|...
+);
+```
+
+### 4.2 记忆类型
+
+| type | 含义 | base_priority | half_life_days | 默认 trust 上限 |
+|------|------|---------------|----------------|----------------|
+| `rule` | 用户偏好 / 项目规则 | 1.2 | 90 | 0.95 |
+| `fact` | 事实(技术栈、配置、路径) | 1.0 | 60 | 0.9 |
+| `skill` | 可复用操作方法论 | 1.3 | 90 | 0.9 |
+| `episode` | 一次性情景片段 | 0.7 | 14 | 0.7 |
+| `consolidated` | cron 整合产出的高阶规则 | 1.5 | 180 | 0.95 |
+
+### 4.3 来源分级 trust
+
+| source | 初始 trust | 观察期天数 | 注入前最低 trust |
+|--------|-----------|-----------|------------------|
+| `user_explicit` | 0.9 | 0 | — |
+| `cron_consolidated` | 0.85 | 0 | — |
+| `tool_output` | 0.7 | 7 | 0.5 |
+| `auto_inferred` | 0.5 | 14 | 0.5 |
+| `external`(MCP 等) | 0.3 | 14 | 0.6 |
+| `cerebrum_import`(从 OpenWolf cerebrum.md 同步) | 0.8 | 7 | 0.5 |
+
+观察期内 trust 上限锁为 0.6,被显式否定 → 直接删除,被肯定 → 提前结束观察期。
+
+**`cron_consolidated` 不进入观察期**:其输入均来自已通过观察期的高 trust 记忆,但仍受 `security_audit` 级联降级保护。
+
+### 4.4 trust 不对称调整
+
+```
+被肯定一次(显式): trust += 0.05  (上限 = source 类别上限)
+被肯定一次(隐式): trust += 0.025 (helpful_implicit,沉默通过)
+被否定一次:       trust -= 0.10  (下限 0.0,< 0.2 转 archived)
+被纠正一次:       trust -= 0.15
+被整合保留:       trust += 0.03
+被整合淘汰:       trust = 0
+级联降级(部分):  trust -= 0.10
+级联降级(过半):  trust -= 0.30
+```
+
+惩罚 > 奖励:让错误记忆退场更快。
+
+### 4.5 SOURCE_MAX_TRUST 常量(H8)
+
+```javascript
+// lib/trust-constants.mjs
+export const SOURCE_MAX_TRUST = {
+  user_explicit:     0.95,
+  cron_consolidated: 0.95,
+  tool_output:       0.90,
+  auto_inferred:     0.80,
+  external:          0.70,
+  cerebrum_import:   0.85,
+};
 ```
 
 ---
 
-## 四、记忆数据模型
+## 五、优先级与检索
 
-### 4.1 Chroma Collection 设计
-
-每条记忆在 Chroma 中存储为一个 document，附带结构化 metadata：
+### 5.1 优先级公式(C4 修正版)
 
 ```javascript
-{
-  // Chroma 原生字段
-  id: "mem_20260520_143022_a7f3",         // 唯一ID
-  document: "用户偏好 TypeScript，禁止在此项目使用 JavaScript", // 记忆正文（用于向量检索）
-  
-  // metadata 字段
-  metadata: {
-    // 基础信息
-    type: "rule",              // rule | fact | skill | episode | consolidated
-    source: "user_explicit",   // user_explicit | auto_inferred | nudge_reflection | cron_consolidated
-    created_at: "2026-05-20T14:30:22Z",
-    
-    // 优先级相关
-    priority_score: 1.85,      // 综合优先级分数（动态计算）
-    base_priority: 1.0,        // 基础优先级（写入时确定）
-    recall_count: 7,           // 被召回次数
-    last_recalled_at: "2026-05-20T10:00:00Z",
-    last_touched_at: "2026-05-20T14:30:22Z", // 最后被触碰时间（召回或更新）
-    
-    // 衰减相关
-    decay_rate: 0.02,          // 每日衰减系数
-    decay_status: "active",    // active | candidate_expire | archived
-    
-    // 作用域
-    scope: "project",          // global | project
-    project_hash: "a1b2c3d4",  // 项目路径的 hash（scope=project 时有值）
-    
-    // 来源追溯
-    session_id: "session-2026-05-20-1430",
-    confidence: 0.9            // 置信度 0-1
+priority = base_priority
+         × recency_factor      // natural half-life decay
+         × frequency_factor    // sigmoid + floor, modulated by trust
+         × trust_score         // poisoning defense core
+```
+
+各因子:
+
+```javascript
+// Half-life decay
+function recencyFactor(daysSinceTouched, halfLifeDays) {
+  return Math.pow(0.5, daysSinceTouched / halfLifeDays);
+}
+
+// Frequency factor: sigmoid decay with floor
+function frequencyFactor(helpfulCount, unhelpfulCount, trustScore) {
+  const signal = helpfulCount - 2.0 * unhelpfulCount;  // penalty coefficient = 2.0
+
+  if (signal >= 0) {
+    // Positive: higher trust amplifies boost
+    return Math.min(1 + 0.08 * signal * trustScore, 1.8);
+  } else {
+    // Negative: trust-independent sigmoid decay, floor 0.1
+    const x = Math.abs(signal);
+    return Math.max(0.1, 1 / (1 + 0.15 * x));
   }
 }
 ```
 
-### 4.2 记忆类型定义
+注入门槛:
+- `trust_score >= source 对应最低值`(见 §4.3)
+- `decay_status IN ('active', 'probation')`(不含 `quarantine`)
+- 观察期记忆额外打 ×0.5 注入权重
 
-| type | 说明 | 默认 base_priority | 默认 decay_rate |
-|------|------|-------------------|-----------------|
-| `rule` | 用户偏好/项目规则 | 1.2 | 0.02/天 |
-| `fact` | 事实性信息（技术栈、配置） | 1.0 | 0.03/天 |
-| `skill` | 操作技能/方法论 | 1.3 | 0.01/天 |
-| `episode` | 具体情景记录 | 0.7 | 0.1/天 |
-| `consolidated` | 周期整合产出的高阶规则 | 1.5 | 0.01/天 |
-
-### 4.3 来源置信度映射
-
-| source | 默认 confidence | 说明 |
-|--------|-----------------|------|
-| `user_explicit` | 0.95 | 用户明确陈述的偏好/规则 |
-| `auto_inferred` | 0.6 | 从对话中自动推断 |
-| `nudge_reflection` | 0.75 | Stop hook 反思总结产出 |
-| `cron_consolidated` | 0.85 | Cron 整合任务产出 |
-
----
-
-## 五、优先级排序算法
-
-### 5.1 综合优先级计算公式
-
-```
-priority_score = base_priority × recency_weight × frequency_boost × type_multiplier × confidence
-```
-
-各因子：
+### 5.2 RetrievalProvider 抽象(H3)
 
 ```javascript
-// 时间衰减权重：距离上次触碰越久，权重越低
-recency_weight = 1 / (1 + decay_rate × days_since_last_touched)
+// lib/retrieve.mjs
+export class LexicalProvider {
+  async retrieve(query, scope, topK) {
+    const [ftsHits, jaccardHits] = await Promise.all([
+      ftsSearch(query, scope, /*candidates=*/30),
+      jaccardSearch(query, scope, /*candidates=*/30),
+    ]);
+    return fuseScores({
+      fts:     { hits: ftsHits, weight: 0.6 },
+      jaccard: { hits: jaccardHits, weight: 0.4 },
+    }).slice(0, topK);
+  }
+  async warmup() { /* no-op */ }
+}
 
-// 频率提升：被召回越多，说明越重要（上限 cap 为 2.0）
-frequency_boost = Math.min(1.0 + 0.1 × recall_count, 2.0)
+export class HybridProvider {
+  async retrieve(query, scope, topK) {
+    const [ftsHits, jaccardHits, vecHits] = await Promise.all([
+      ftsSearch(query, scope, 30),
+      jaccardSearch(query, scope, 30),
+      vectorSearch(query, scope, 30),
+    ]);
+    return fuseScores({
+      fts:     { hits: ftsHits,     weight: 0.4 },
+      jaccard: { hits: jaccardHits, weight: 0.3 },
+      vec:     { hits: vecHits,     weight: 0.3 },
+    }).slice(0, topK);
+  }
+  async warmup() { return ensureVecIndexLoaded(); }
+}
 
-// 类型乘数
-type_multiplier = {
-  consolidated: 1.5,  // 周期总结产出，最高优先
-  skill: 1.3,         // 技能类
-  rule: 1.2,          // 规则类
-  fact: 1.0,          // 事实类
-  episode: 0.7        // 情景类，最低
-}[type]
+export class DaemonIpcProvider {
+  // Phase 5 option A: route through daemon-exposed unix socket
+  constructor(socketPath) { this.socketPath = socketPath; }
+  async retrieve(query, scope, topK) {
+    return await ipcCall(this.socketPath, '/retrieve',
+                          { query, scope, topK }, { timeoutMs: 500 });
+  }
+  async warmup() { return ipcCall(this.socketPath, '/health'); }
+}
+
+export class PrefetchProvider {
+  // Phase 5 option B: Stop hook pre-warms the likely next-turn query
+  async retrieve(query, scope, topK) {
+    const cached = await readPrefetchCache(query, scope);
+    if (cached) return cached;
+    return await fallbackProvider.retrieve(query, scope, topK);
+  }
+}
+
+export function getRetrievalProvider(config) {
+  switch (config.retrieval.mode) {
+    case 'lexical':  return new LexicalProvider();
+    case 'hybrid':   return new HybridProvider();
+    case 'daemon':   return new DaemonIpcProvider(config.retrieval.daemon_socket);
+    case 'prefetch': return new PrefetchProvider();
+    default: throw new Error(`Unknown retrieval mode: ${config.retrieval.mode}`);
+  }
+}
 ```
 
-### 5.2 实际检索流程
+**Phase 1 默认 lexical;Phase 5 评估升级。**
 
+### 5.3 Jaccard 实现(H1)
+
+复用 FTS5 倒排索引降低成本:
+
+```javascript
+async function jaccardSearch(query, scope, candidates) {
+  // 1. Use FTS5 to pull candidates (already tokenized).
+  //    Pull candidates*3 to leave headroom after filtering.
+  const ftsCandidates = await db.all(`
+    SELECT m.id, m.content
+    FROM memories_fts f
+    JOIN memories m ON m.id = f.id
+    WHERE memories_fts MATCH ? AND m.decay_status IN ('active', 'probation')
+      AND (m.scope = 'global' OR m.project_key = ?)
+    LIMIT ?
+  `, [query, scope, candidates * 3]);
+
+  // 2. Compute Jaccard in memory, only over the FTS5-returned candidates (<100 rows)
+  const queryTokens = tokenize(query);
+  return ftsCandidates
+    .map(m => ({ id: m.id, score: jaccard(queryTokens, tokenize(m.content)) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, candidates);
+}
 ```
-1. 从 Chroma 做语义检索，取 top-30 候选（where: decay_status = "active"）
-2. 对候选集计算实时 priority_score
-3. 按 priority_score 降序排列
-4. 取 top-k（默认 k=10）注入上下文
-5. 对被选中的记忆：recall_count++, last_recalled_at = now
-```
 
-### 5.3 Touch 机制
+延迟实测预期:< 2k 记忆下 < 50ms。
 
-以下行为会刷新记忆的 `last_touched_at`，从而重置衰减：
-- 被检索命中并注入上下文（recall）
-- 被 Cron 整合任务引用但未淘汰（survive consolidation）
-- 被用户在对话中再次提及相同内容（re-confirm）
+### 5.4 召回反馈机制
+
+注入后:
+- `recall_count++`,`last_touched_at = now`
+- 写入 `memory_feedback`(`outcome='unknown'`)
+- 下一个 UserPromptSubmit / Stop 时回填 outcome(详见 §6.6)
 
 ---
 
-## 六、Hook 实现设计
+## 六、Hook 设计(四阶段)
 
-### 6.1 目录结构
+### 6.1 SessionStart
 
+```javascript
+async function handleSessionStart(hookData) {
+  const { run, mode } = await shouldHookRun();
+  if (!run) { process.exit(0); }
+
+  const projectKey = resolveProjectKey(process.env.CLAUDE_PROJECT_DIR || hookData.cwd);
+
+  // 1. Pull the four pre-rendered segments
+  const [consolidatedGlobal, consolidatedProject, pinned, fresh] = await Promise.all([
+    getInjectionCache('global', 'consolidated'),
+    getInjectionCache(`project:${projectKey}`, 'consolidated'),
+    renderPinned(projectKey),                       // live-rendered, max 20 lines
+    renderFresh(projectKey, /*windowHours=*/24),    // live-rendered episodes from last 24h
+  ]);
+
+  // 2. Trim and concatenate according to budget
+  const block = composeInjectionBlock({
+    segments: [consolidatedGlobal, consolidatedProject, pinned, fresh],
+    budget: config.injection.budget,                // see section 14
+  });
+
+  // 3. Record feedback (C1 critical)
+  const allMembers = uniqueIds([
+    ...consolidatedGlobal.member_ids,
+    ...consolidatedProject.member_ids,
+    ...pinned.member_ids,
+    ...fresh.member_ids,
+  ]);
+  await recordFeedback({
+    session_id: hookData.session_id,
+    injected_ids: JSON.stringify(allMembers),
+    injection_source: 'session_start',
+    outcome: 'unknown',
+  });
+
+  // 4. Bump recall counters (batched)
+  if (allMembers.length > 0) {
+    await db.run(`
+      UPDATE memories SET recall_count = recall_count + 1, last_touched_at = ?
+      WHERE id IN (${allMembers.map(() => '?').join(',')})
+    `, [now(), ...allMembers]);
+  }
+
+  // 5. Lazy catch-up (<50ms, SQL-only + enqueue)
+  if (config.cron.lazy_catch_up_on_hook) {
+    await lazyCatchUpScan();
+  }
+
+  // 6. Output (shadow mode does not actually inject)
+  const additionalContext = (mode === 'shadow') ? '' : block;
+  if (mode === 'shadow') {
+    process.stderr.write(`ccmem [shadow]: would inject ${block.length} chars\n`);
+  } else {
+    process.stderr.write(`ccmem: loaded ${allMembers.length} memories\n`);
+  }
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+      additionalContext,
+    },
+  }));
+
+  process.exit(0);
+}
 ```
-~/.claude/plugins/claude-memory/
-├── package.json
-├── scripts/
-│   ├── memory-hook.mjs          # 统一入口（根据 hook_event_name 分发）
-│   ├── handlers/
-│   │   ├── session-start.mjs    # 会话开始：加载记忆
-│   │   ├── stop.mjs             # 会话结束：总结记忆
-│   │   └── user-prompt.mjs      # 用户提交：可选的实时记忆触发
-│   ├── lib/
-│   │   ├── chroma-client.mjs    # Chroma 连接与查询封装
-│   │   ├── priority.mjs         # 优先级计算逻辑
-│   │   ├── summarizer.mjs       # claude -p 调用封装
-│   │   └── config.mjs           # 配置加载
-│   └── cron/
-│       ├── daily-consolidation.mjs   # 每日整合任务
-│       └── weekly-reflection.mjs     # 每周深度反思
-├── config.json                  # 插件配置
-└── data/
-    └── chroma/                  # Chroma 持久化目录
+
+### 6.2 UserPromptSubmit
+
+```javascript
+async function handleUserPromptSubmit(hookData) {
+  const { run, mode } = await shouldHookRun();
+  if (!run) { process.exit(0); }
+
+  // 0. Backfill previous-turn outcome first (section 6.6 L1)
+  await inferPrevTurnOutcome(hookData.session_id, hookData.prompt || '');
+
+  const userPrompt = hookData.prompt || '';
+  const projectKey = resolveProjectKey();
+
+  // 1. Three-lane retrieval (provider selected by config)
+  const provider = getRetrievalProvider(config);
+  const candidates = await provider.retrieve(userPrompt, projectKey, /*topK=*/12);
+
+  // 2. Filter: trust threshold + dedupe against injection_cache
+  const cachedIds = await getCachedMemberIds(projectKey);
+  const filtered = candidates
+    .filter(c => c.trust_score >= sourceMinTrust(c.source))
+    .filter(c => !cachedIds.has(c.id));
+
+  const final = filtered.slice(0, 6);
+
+  // 3. Record feedback
+  await recordFeedback({
+    session_id: hookData.session_id,
+    injected_ids: JSON.stringify(final.map(f => f.id)),
+    injection_source: 'user_prompt_submit',
+    prompt_excerpt: safeTrimChars(userPrompt, 100),
+    outcome: 'unknown',
+  });
+
+  // 4. Bump recall counters
+  if (final.length > 0) {
+    await db.run(`
+      UPDATE memories SET recall_count = recall_count + 1, last_touched_at = ?
+      WHERE id IN (${final.map(() => '?').join(',')})
+    `, [now(), ...final.map(f => f.id)]);
+  }
+
+  // 5. Inject
+  const block = formatRetrievedBlock(final, config.injection.format);  // see section 11
+  const additionalContext = (mode === 'shadow') ? '' : block;
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'UserPromptSubmit',
+      additionalContext,
+    },
+  }));
+  process.exit(0);
+}
 ```
 
-### 6.2 settings.json Hook 注册
+### 6.3 PreCompact(H6 修正)
+
+```javascript
+async function handlePreCompact(hookData) {
+  const { run } = await shouldHookRun();
+  if (!run) { process.exit(0); }
+
+  const messages = hookData.messages || [];
+
+  // Heuristic: compaction usually targets the first 70%, keeping the last 30%.
+  // What we need to rescue is the leading content about to be discarded.
+  const compactBoundary = Math.floor(messages.length * 0.7);
+  const toCompact = messages.slice(0, compactBoundary);
+
+  await db.run(`
+    INSERT INTO pending_summarize
+      (session_id, project_key, priority, trigger, raw_payload, enqueued_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `, [
+    hookData.session_id,
+    resolveProjectKey(),
+    5,                                   // mid priority
+    'pre_compact',
+    JSON.stringify({
+      messages_to_compact: toCompact,
+      total_messages: messages.length,
+      compact_boundary: compactBoundary,
+      transcript_path: hookData.transcript_path,
+    }),
+    now(),
+  ]);
+
+  await wakeDaemon();   // see section 7.6
+  process.exit(0);
+}
+```
+
+### 6.4 Stop / SessionEnd
+
+```javascript
+async function handleStop(hookData) {
+  const { run } = await shouldHookRun();
+  if (!run) { process.exit(0); }
+
+  // 0. L2 inference: assistant self-correction in transcript
+  if (hookData.transcript_path) {
+    await inferFromTranscript(hookData.session_id, hookData.transcript_path);
+  }
+
+  const wasSignificant = (hookData.tool_call_count || 0) > 3
+                      || (hookData.message_count || 0) > 6;
+
+  if (!wasSignificant) { process.exit(0); }
+
+  await db.run(`
+    INSERT INTO pending_summarize
+      (session_id, project_key, priority, trigger, raw_payload, enqueued_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `, [
+    hookData.session_id,
+    resolveProjectKey(),
+    10,                                  // high priority
+    'session_end',
+    JSON.stringify({
+      summary: hookData.transcript_excerpt,
+      tool_calls: hookData.tool_call_count,
+      duration_ms: hookData.duration_ms,
+      transcript_path: hookData.transcript_path,
+    }),
+    now(),
+  ]);
+
+  await wakeDaemon();
+  process.exit(0);
+}
+```
+
+### 6.5 settings.json 注册
 
 ```json
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/plugins/claude-memory/scripts/memory-hook.mjs",
-            "timeout": 8
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/plugins/claude-memory/scripts/memory-hook.mjs",
-            "timeout": 15,
-            "async": true
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/plugins/claude-memory/scripts/memory-hook.mjs",
-            "timeout": 15,
-            "async": true
-          }
-        ]
-      }
-    ]
+    "SessionStart": [{
+      "hooks": [{ "type": "command",
+                  "command": "node ~/.claude/plugins/ccmem/scripts/hook.mjs session-start",
+                  "timeout": 5 }]
+    }],
+    "UserPromptSubmit": [{
+      "hooks": [{ "type": "command",
+                  "command": "node ~/.claude/plugins/ccmem/scripts/hook.mjs prompt-submit",
+                  "timeout": 8 }]
+    }],
+    "PreCompact": [{
+      "hooks": [{ "type": "command",
+                  "command": "node ~/.claude/plugins/ccmem/scripts/hook.mjs pre-compact",
+                  "timeout": 3 }]
+    }],
+    "Stop": [{
+      "hooks": [{ "type": "command",
+                  "command": "node ~/.claude/plugins/ccmem/scripts/hook.mjs stop",
+                  "timeout": 3 }]
+    }],
+    "SessionEnd": [{
+      "hooks": [{ "type": "command",
+                  "command": "node ~/.claude/plugins/ccmem/scripts/hook.mjs session-end",
+                  "timeout": 3 }]
+    }]
   }
 }
 ```
 
-### 6.3 SessionStart Handler 逻辑
+### 6.6 反馈推断机制(B3)
+
+四层推断架构:
+
+| 层 | 时机 | 成本 | 置信度 | 主要信号 |
+|---|------|------|--------|----------|
+| L1 显式否定 | UserPromptSubmit 入口 | 零(关键词) | 高 | 用户 prompt 含否定/纠正词 |
+| L2 assistant 自纠 | Stop(读 transcript) | 零(关键词) | 中 | assistant 在响应里自我修正 |
+| L3 沉默通过 | `summarize_pending` cron 兜底 | 零(计数) | 低 | 连续 N 轮未否定 → helpful_implicit |
+| L4 LLM 复核 | `weekly_reflection` cron | LLM 调用 | 高 | 抽样复核 unknown/helpful_implicit |
+
+#### L1 关键词扫描 + 上下文判别(S5 鲁棒性)
 
 ```javascript
-// handlers/session-start.mjs 伪代码
+async function inferPrevTurnOutcome(sessionId, currentPrompt) {
+  const lastInjection = await db.get(`
+    SELECT id, injected_ids FROM memory_feedback
+    WHERE session_id = ? AND outcome = 'unknown' AND outcome_locked = 0
+    ORDER BY recorded_at DESC LIMIT 1
+  `, [sessionId]);
+  if (!lastInjection) return;
 
-async function handleSessionStart(hookData) {
-  const projectPath = hookData.cwd || process.cwd();
-  const projectHash = hashPath(projectPath);
-  
-  // 1. 查询全局记忆（语义检索 + 优先级排序）
-  const globalMemories = await queryMemories({
-    collection: "global_memory",
-    query: buildContextQuery(hookData),  // 基于当前项目信息构建查询
-    topK: 30,
-    where: { decay_status: "active" }
-  });
-  
-  // 2. 查询项目专属记忆
-  const projectMemories = await queryMemories({
-    collection: `project_${projectHash}_memory`,
-    query: buildContextQuery(hookData),
-    topK: 30,
-    where: { decay_status: "active" }
-  });
-  
-  // 3. 合并并按 priority_score 排序
-  const allMemories = [...globalMemories, ...projectMemories];
-  const ranked = computePriorityScores(allMemories);
-  const topMemories = ranked.slice(0, config.maxInjectCount); // 默认 10 条
-  
-  // 4. 更新被召回记忆的元数据
-  await batchUpdateRecallMetadata(topMemories);
-  
-  // 5. 格式化并通过 stderr 注入上下文
-  const formatted = formatForInjection(topMemories);
-  process.stderr.write(`\n📝 记忆系统已加载 ${topMemories.length} 条相关记忆:\n${formatted}\n`);
+  const NEG = /不对|重做|错了|撤销|这不是|不是我要|不要这样|wrong|redo|not what i (want|asked)|that's (incorrect|wrong)|undo|revert/i;
+  const COR = /应该是|改成|换成|不,是|实际上是|should be|actually|i meant|let me clarify/i;
+
+  for (const pattern of [NEG, COR]) {
+    const m = currentPrompt.match(pattern);
+    if (!m) continue;
+
+    // Context guards (reduce false positives)
+    if (isInCodeBlock(currentPrompt, m.index)) continue;        // inside code block -> quoted
+    if (isInQuotes(currentPrompt, m.index)) continue;           // inside quotes -> quoted
+    if (isLikelyAboutCode(currentPrompt, m.index)) continue;    // adjacent to filename/class -> talking about code
+
+    const reason = pattern === NEG ? 'neg_keyword' : 'correction_keyword';
+    await applyOutcome(lastInjection.id, 'unhelpful', `${reason}:${m[0]}`);
+    return;
+  }
+}
+
+function isInCodeBlock(text, index) {
+  const before = text.slice(0, index);
+  const fencedOpens = (before.match(/^```/gm) || []).length;
+  if (fencedOpens % 2 === 1) return true;
+  const inlineTicks = countUnescapedTicks(before);
+  if (inlineTicks % 2 === 1) return true;
+  const codeOpens = (before.match(/<code\b[^>]*>/gi) || []).length;
+  const codeCloses = (before.match(/<\/code>/gi) || []).length;
+  if (codeOpens > codeCloses) return true;
+  const preOpens = (before.match(/<pre\b[^>]*>/gi) || []).length;
+  const preCloses = (before.match(/<\/pre>/gi) || []).length;
+  if (preOpens > preCloses) return true;
+  return false;
+}
+
+function isInQuotes(text, index) {
+  const before = text.slice(0, index);
+  // English double/single quotes, Chinese corner brackets, smart quotes
+  return /["'「『](?:[^"'」』]*)$/.test(before.replace(/\\["']/g, ''));
+}
+
+function isLikelyAboutCode(text, index) {
+  const context = text.slice(Math.max(0, index - 30), index + 30);
+  return /\b(\w+\.(ts|js|py|tsx|jsx|mjs|go|rs)|src\/\S+|class\s+\w+|function\s+\w+)\b/.test(context);
 }
 ```
 
-### 6.4 Stop Handler 逻辑
+#### L2 transcript assistant 自纠
 
 ```javascript
-// handlers/stop.mjs 伪代码
+async function inferFromTranscript(sessionId, transcriptPath) {
+  if (!transcriptPath || !fs.existsSync(transcriptPath)) return;
 
-async function handleStop(hookData) {
-  const sessionData = hookData; // stdin 传入的会话数据
-  
-  // 1. 判断是否有值得记忆的内容
-  if (!hasSignificantActivity(sessionData)) {
-    return; // 无实质活动，跳过
-  }
-  
-  // 2. 用 claude -p 生成记忆摘要
-  const summaryPrompt = buildSummaryPrompt(sessionData);
-  const memories = await callClaudeP(summaryPrompt);
-  // 返回格式: [{ content, type, scope, confidence }, ...]
-  
-  // 3. 写入 Chroma
-  for (const mem of memories) {
-    const collection = mem.scope === "global" 
-      ? "global_memory" 
-      : `project_${projectHash}_memory`;
-    
-    await upsertMemory(collection, {
-      id: generateMemoryId(),
-      document: mem.content,
-      metadata: {
-        type: mem.type,
-        source: "nudge_reflection",
-        created_at: new Date().toISOString(),
-        base_priority: BASE_PRIORITY[mem.type],
-        decay_rate: DECAY_RATE[mem.type],
-        recall_count: 0,
-        last_recalled_at: null,
-        last_touched_at: new Date().toISOString(),
-        decay_status: "active",
-        scope: mem.scope,
-        project_hash: mem.scope === "project" ? projectHash : null,
-        session_id: sessionData.session_id || "unknown",
-        confidence: mem.confidence
-      }
-    });
+  const entries = readTranscriptJsonl(transcriptPath);
+  const lastAssistant = [...entries].reverse().find(e => e.type === 'assistant');
+  if (!lastAssistant) return;
+  const text = extractAssistantText(lastAssistant);
+
+  const SELF_CORRECT = /(actually|on second thought|wait|let me reconsider|i was wrong|你说的对.*我之前|我之前.*错了|其实|应该是|更准确地说)/i;
+  if (SELF_CORRECT.test(text)) {
+    const lastUnknown = await db.get(`
+      SELECT id FROM memory_feedback
+      WHERE session_id = ? AND outcome = 'unknown' AND outcome_locked = 0
+      ORDER BY recorded_at DESC LIMIT 1
+    `, [sessionId]);
+    if (lastUnknown) {
+      await applyOutcome(lastUnknown.id, 'unhelpful', 'assistant_self_correction');
+    }
   }
 }
 ```
 
-### 6.5 claude -p 总结 Prompt 模板
+#### L3 沉默通过
 
+```sql
+UPDATE memory_feedback
+SET outcome = 'helpful_implicit', evidence = 'silence_passthrough'
+WHERE outcome = 'unknown' AND outcome_locked = 0
+  AND (SELECT COUNT(*) FROM memory_feedback mf2
+       WHERE mf2.session_id = memory_feedback.session_id
+         AND mf2.recorded_at > memory_feedback.recorded_at) >= ?
 ```
-你是一个记忆提取助手。分析以下 Claude Code 会话数据，提取值得跨会话记忆的信息。
 
-会话数据：
-{session_summary}
+#### L4 LLM 复核
 
-任务：
-1. 识别用户偏好和规则（type: "rule"）
-2. 识别事实性信息如技术栈、项目配置（type: "fact"）  
-3. 识别可复用的操作技能（type: "skill"）
-4. 仅在必要时记录关键情景（type: "episode"）
+`weekly_reflection` 抽样 `unknown` / `helpful_implicit` 让 LLM 看 transcript 上下文判别,结果写回并设 `outcome_locked = 1`,防止 L1-L3 后续覆写。
 
-每条记忆要求：
-- 简洁精炼，不超过 100 字
-- 独立可理解，不依赖上下文
-- 标注 scope："global"（适用于所有项目）或 "project"（仅适用当前项目）
-- 标注 confidence：0.6-0.95
+#### trust 调整统一收口
 
-输出 JSON 数组：
-[{"content": "...", "type": "...", "scope": "...", "confidence": 0.8}]
+```javascript
+async function applyOutcome(feedbackId, outcome, evidence) {
+  // Check if locked by prior L4 review (M8)
+  const fb = await db.get(`
+    SELECT outcome_locked, injected_ids FROM memory_feedback WHERE id = ?
+  `, [feedbackId]);
+  if (!fb) return;
+  if (fb.outcome_locked) return;
 
-如果本次会话没有值得记忆的新信息，返回空数组 []。
+  await db.run(`UPDATE memory_feedback SET outcome=?, evidence=? WHERE id=?`,
+               [outcome, evidence, feedbackId]);
+
+  const ids = JSON.parse(fb.injected_ids);
+  for (const memId of ids) {
+    const maxTrust = await getSourceMaxTrust(memId);
+    if (outcome === 'unhelpful') {
+      await db.run(`UPDATE memories SET
+        trust_score = MAX(0, trust_score - 0.10),
+        unhelpful_count = unhelpful_count + 1
+        WHERE id = ?`, [memId]);
+    } else if (outcome === 'helpful') {
+      await db.run(`UPDATE memories SET
+        trust_score = MIN(?, trust_score + 0.05),
+        helpful_count = helpful_count + 1
+        WHERE id = ?`, [maxTrust, memId]);
+    } else if (outcome === 'helpful_implicit') {
+      await db.run(`UPDATE memories SET
+        trust_score = MIN(?, trust_score + 0.025),
+        helpful_count = helpful_count + 1
+        WHERE id = ?`, [maxTrust, memId]);
+    }
+  }
+}
 ```
+
+### 6.7 性能预算(H5)
+
+| Hook | p50 预算 | p95 预算 | 兜底 timeout(降级) |
+|------|---------|---------|---------------------|
+| SessionStart | 150ms | 300ms | 1s(降级:只注入 pinned 段) |
+| UserPromptSubmit | 200ms | 500ms | 1.5s(降级:FTS5 only) |
+| PreCompact | 30ms | 80ms | 500ms |
+| Stop / SessionEnd | 30ms | 80ms | 500ms |
+
+`/ccmem:bench` 命令测量并写入 `daily_metrics`,p95 持续超标时 stderr 提示用户。
 
 ---
 
 ## 七、Cron 任务设计
 
-### 7.1 调度配置
+### 7.1 与 OpenWolf 协作
 
-macOS launchd plist 或 crontab：
+**优先策略**:检测到 `.wolf/cron-manifest.json` 时,注册为 OpenWolf cron-engine 的 ai_task,复用其 retry/backoff/dead-letter/heartbeat。
 
-```
-# 每日 02:00 - 记忆整合
-0 2 * * * node ~/.claude/plugins/claude-memory/scripts/cron/daily-consolidation.mjs
+**独立策略**:无 OpenWolf 时,自托管 `node-cron` daemon(详见 §7.6)。
 
-# 每周日 03:00 - 深度反思
-0 3 * * 0 node ~/.claude/plugins/claude-memory/scripts/cron/weekly-reflection.mjs
-```
+### 7.2 任务清单
 
-### 7.2 每日整合任务逻辑
+| 任务 | 触发 | catch-up 窗口 | 操作 |
+|------|------|--------------|------|
+| `summarize_pending` | daemon 自适应轮询 + Stop 触发 wake file | 1h | 消费 `pending_summarize` → claude -p 提取 → 写入 `memories` |
+| `daily_consolidation` | 每日 02:17 | 24h | half-life 衰减更新 / 相似度 > 0.92 合并 / 标记 candidate_expire / 删除已 archived 超 14 天 |
+| `weekly_reflection` | 每周日 03:17 | 72h | LLM 跨记忆深度反思 / consolidated 提炼 / 重生 injection_cache / L4 反馈复核 |
+| `security_audit` | 每周一 04:17 | 72h | trust < 0.4 簇审查 / 投毒模式回扫 / consolidated 级联降级兜底 |
+| `revalidation_audit` | 每周三 04:17 | 72h | C2 时效性复核:扫 `require_periodic_revalidation` tag 且 trust ≥ 0.5 的记忆 |
 
-```javascript
-// cron/daily-consolidation.mjs 伪代码
+### 7.3 `summarize_pending` prompt 模板(英文输出)
 
-async function dailyConsolidation() {
-  const collections = await listAllCollections();
-  
-  for (const collection of collections) {
-    // 1. 衰减计算：更新所有 active 记忆的 priority_score
-    const allMemories = await getAllMemories(collection, { where: { decay_status: "active" } });
-    
-    for (const mem of allMemories) {
-      const daysSinceTouch = daysBetween(mem.metadata.last_touched_at, now());
-      const newScore = computePriorityScore(mem.metadata);
-      
-      // 检查是否应该标记为候选淘汰
-      if (mem.metadata.recall_count === 0 && daysSinceTouch > 30) {
-        await updateMetadata(collection, mem.id, { decay_status: "candidate_expire" });
-      } else {
-        await updateMetadata(collection, mem.id, { priority_score: newScore });
-      }
-    }
-    
-    // 2. 去重：语义相似度 > 0.92 的记忆合并
-    const duplicates = await findDuplicates(collection, threshold: 0.92);
-    for (const [keep, remove] of duplicates) {
-      // 保留 priority 更高的，合并 recall_count
-      await mergeMemories(collection, keep, remove);
-    }
-    
-    // 3. 淘汰：candidate_expire 超过 14 天的删除
-    const expired = await getMemories(collection, {
-      where: { 
-        decay_status: "candidate_expire",
-        last_touched_at: { $lt: daysAgo(14) }
-      }
-    });
-    await deleteMemories(collection, expired.map(m => m.id));
+```text
+You are a memory extraction assistant. Analyze the following Claude Code
+session fragment and extract information worth remembering across sessions.
+
+Session data: {payload}
+
+Tasks:
+1. Identify user preferences and rules (type=rule).
+   Scope decision: universal across all user's projects → global;
+                   specific to current project only → project.
+2. Identify factual information (type=fact, e.g. tech stack, API, paths, config).
+3. Identify reusable operational methodologies (type=skill).
+4. Record episodes (type=episode) only if they have standalone value.
+
+Hard constraints (highest priority):
+- When content involves dangerous operations: rm -rf, del /s, format,
+  curl|sh, wget|sh, DROP TABLE, TRUNCATE, chmod 777, iptables -F:
+  * MUST extract as type='episode' (never type='rule')
+  * MUST set scope='project' (never 'global')
+  * MUST preserve causal context ("because X happened, used Y")
+  * MUST include time/project anchor (e.g. "2026-05 in myapp project")
+  * MUST add tags: ["dangerous_command", "time_bound"]
+  * MUST set confidence <= 0.6
+- When content includes secrets, credentials, tokens, API keys:
+  * MUST set scope='project' (never 'global')
+  * Recommend redaction or reject if directly identifiable
+
+Output requirements:
+- Each entry <= 200 characters, standalone-understandable
+- Mark confidence 0.5-0.95 based on evidence strength
+- Mark source: user_explicit / tool_output / auto_inferred
+- Return empty array if fragment not worth remembering
+
+Output JSON:
+[
+  {
+    "content": "...",
+    "type": "...",
+    "scope": "...",
+    "source": "...",
+    "confidence": 0.8,
+    "tags": ["..."]
   }
-  
-  logConsolidation({ processed: allMemories.length, merged: duplicates.length, deleted: expired.length });
+]
+```
+
+### 7.4 `weekly_reflection` prompt 模板(英文输出)
+
+```text
+You are a memory consolidation expert. Analyze {n_recent} newly added +
+{n_frequent} frequently-recalled memories from the past week.
+
+Recent memories: {recent_json}
+Frequent memories: {frequent_json}
+
+Tasks:
+1. Merge semantic duplicates into consolidated rules.
+   Reference source_ids; do not invent new content.
+2. Resolve contradictions: identify pairs, decide which to keep based on
+   trust + recency.
+3. Discover co-occurrence patterns: memories frequently invoked in the
+   same session are candidate relationships.
+4. Regenerate injection_cache.consolidated segments:
+   - one for global scope (~1000 chars max)
+   - one for current project_key (~1000 chars max)
+   Use ONLY the existing memory IDs you've reviewed; do NOT generate new
+   content not backed by source memories.
+
+Hard constraints:
+- consolidated.generation must be derived from source.generation + 1
+- Never produce generation >= 2 outputs
+- Source memories with tag 'dangerous_command' cannot be used in
+  consolidated rules (they remain project-scoped episodes)
+
+Output JSON:
+{
+  "consolidated_rules": [
+    { "content": "...", "source_ids": ["m1","m2"], "scope": "project", "trust": 0.85 }
+  ],
+  "contradictions": [{ "pair": [id1, id2], "keep": id, "reason": "..." }],
+  "patterns": [...],
+  "injection_cache_consolidated_global": "rendered text with <!--mXXX--> markers",
+  "injection_cache_consolidated_project": "..."
 }
 ```
 
-### 7.3 每周深度反思任务逻辑
+### 7.4.1 consolidated 写入事务模型
+
+LLM 返回 K 条 `consolidated_rules` 后,**每条独立一个 SQLite transaction**,失败不影响其他条目。三步操作的依赖:
+
+```
+Step 1: INSERT INTO memories         (新 consolidated 行)
+Step 2: INSERT INTO consolidated_lineage (N 条 source 映射)
+Step 3: INSERT OR REPLACE injection_cache (异步幂等再生)
+```
+
+**事务边界**:Step 1 + Step 2 同一事务(强一致);Step 3 在事务提交后异步入队(最终一致)。
+
+#### 失败场景
+
+| 场景 | 处理 |
+|------|------|
+| Step 1 失败 | 整条 rule 跳过,记入 `results.failed`,下次 cron 重试 |
+| Step 1 成功 / Step 2 中途失败 | 事务 rollback,无孤儿 consolidated;下次 cron 重试 |
+| Step 1+2 成功 / Step 3 失败 | 事务已提交,injection_cache 缺新段,下次 SessionStart 触发再生(可接受) |
+| daemon crash 在 Step 3 入队前 | 同上;daily_consolidation 末尾会兜底触发再生 |
+
+#### 实现
 
 ```javascript
-// cron/weekly-reflection.mjs 伪代码
+// scripts/cron/weekly-reflection.mjs
+async function writeConsolidatedRules(consolidatedRules) {
+  const results = { succeeded: 0, failed: [], inserted_ids: [] };
 
-async function weeklyReflection() {
-  const collections = await listAllCollections();
-  
-  for (const collection of collections) {
-    // 1. 获取本周新增和高频召回的记忆
-    const recentMemories = await getMemories(collection, {
-      where: { created_at: { $gt: daysAgo(7) } }
-    });
-    const frequentMemories = await getMemories(collection, {
-      where: { recall_count: { $gt: 3 } },
-      orderBy: "recall_count",
-      limit: 50
-    });
-    
-    // 2. 用 claude -p 做深度分析
-    const reflectionPrompt = buildReflectionPrompt(recentMemories, frequentMemories);
-    const insights = await callClaudeP(reflectionPrompt);
-    // 返回: { consolidated_rules: [...], contradictions: [...], patterns: [...] }
-    
-    // 3. 写入整合产出的高阶规则
-    for (const rule of insights.consolidated_rules) {
-      await upsertMemory(collection, {
-        id: generateMemoryId(),
-        document: rule.content,
-        metadata: {
-          type: "consolidated",
-          source: "cron_consolidated",
-          base_priority: 1.5,
-          decay_rate: 0.01,
-          confidence: 0.85,
-          // ...其他字段
+  for (const rule of consolidatedRules) {
+    try {
+      const memId = generateMemoryId();
+
+      await db.transaction(async (tx) => {
+        // Generation constraint (M9): max source generation must be < 1
+        const sourceGenerations = await tx.all(`
+          SELECT generation FROM memories
+          WHERE id IN (${rule.source_ids.map(() => '?').join(',')})
+        `, rule.source_ids);
+        const maxSrcGen = Math.max(0, ...sourceGenerations.map(s => s.generation));
+        if (maxSrcGen >= 1) {
+          throw new GenerationLimitError(
+            `Cannot consolidate from sources at generation >= 1 (max=${maxSrcGen})`
+          );
         }
+
+        // Source memory tagged dangerous_command must not enter consolidated (section 10 gate backup)
+        const srcTags = await tx.all(`
+          SELECT tags FROM memories
+          WHERE id IN (${rule.source_ids.map(() => '?').join(',')})
+        `, rule.source_ids);
+        for (const row of srcTags) {
+          const tags = JSON.parse(row.tags || '[]');
+          if (tags.includes('dangerous_command')) {
+            throw new Error(
+              'Source memory with dangerous_command tag cannot be consolidated'
+            );
+          }
+        }
+
+        // Step 1: insert consolidated
+        await tx.run(`
+          INSERT INTO memories (
+            id, scope, project_key, type, source, content,
+            trust_score, base_priority, half_life_days, decay_status,
+            generation, recall_count, helpful_count, unhelpful_count,
+            last_touched_at, created_at, modified_by, modified_at, tags
+          ) VALUES (?, ?, ?, 'consolidated', 'cron_consolidated', ?,
+                    ?, 1.5, 180, 'active',
+                    ?, 0, 0, 0, ?, ?, 'cron', ?, ?)
+        `, [
+          memId, rule.scope,
+          rule.scope === 'project' ? rule.project_key : null,
+          rule.content, rule.trust, maxSrcGen + 1,
+          now(), now(), now(), JSON.stringify(rule.tags || []),
+        ]);
+
+        // Step 2: insert lineage (batched in same transaction)
+        const stmt = await tx.prepare(`
+          INSERT INTO consolidated_lineage (consolidated_id, source_memory_id)
+          VALUES (?, ?)
+        `);
+        try {
+          for (const srcId of rule.source_ids) {
+            await stmt.run([memId, srcId]);
+          }
+        } finally {
+          await stmt.finalize();
+        }
+        // Commit at transaction end
+      });
+
+      results.succeeded++;
+      results.inserted_ids.push(memId);
+    } catch (err) {
+      results.failed.push({
+        rule_excerpt: rule.content.slice(0, 80),
+        error: err.message,
+        source_ids: rule.source_ids,
+      });
+      await logAudit({
+        action: 'consolidated_write_failed',
+        details: JSON.stringify({ rule_excerpt: rule.content.slice(0, 200), error: err.message }),
+      });
+      // Do not throw; keep processing the next rule
+    }
+  }
+
+  // Step 3: async idempotent regen (fired once after all consolidated rules processed)
+  if (results.succeeded > 0) {
+    await enqueueRegenerateInjectionCache({
+      reason: 'weekly_reflection_consolidated',
+      affected_scopes: uniqueScopes(consolidatedRules),
+    });
+  }
+
+  return results;
+}
+
+// Idempotent regen: UPSERT guarantees equivalent results on repeated runs
+async function regenerateInjectionCache(scope) {
+  const consolidated = await db.all(`
+    SELECT id, content FROM memories
+    WHERE scope = ? AND type = 'consolidated' AND decay_status = 'active'
+    ORDER BY trust_score DESC, last_touched_at DESC
+    LIMIT 50
+  `, [scope]);
+
+  const { selected, memberIds } = selectByBudget(
+    consolidated, config.injection.budget.consolidated_global
+  );
+
+  const renderedText = selected
+    .map(m => `- ${m.content} <!--${shortId(m.id)}-->`)
+    .join('\n');
+
+  await db.run(`
+    INSERT OR REPLACE INTO injection_cache
+      (scope, segment, rendered_text, member_ids, rendered_at, ttl_seconds)
+    VALUES (?, 'consolidated', ?, ?, ?, ?)
+  `, [scope, renderedText, JSON.stringify(memberIds), now(), 604800]);
+}
+```
+
+#### 锁交互(M2)
+
+`weekly_reflection` 整个 cron 任务持 `cron_task_state.lock_holder` (§7.7
+`acquireTaskLock`);单条 consolidated 的事务在此锁内串行,无需额外锁。
+`enqueueRegenerateInjectionCache` 入队后由 daemon 消费,消费时再获一次
+task lock 避免与下次 `weekly_reflection` 重叠。
+
+### 7.5 `daily_consolidation` 伪代码
+
+```javascript
+async function dailyConsolidation() {
+  const isoNow = new Date().toISOString();
+
+  // 1. Half-life: move to candidate_expire
+  await db.run(`
+    UPDATE memories SET decay_status = 'candidate_expire'
+    WHERE decay_status='active' AND pinned = 0
+      AND recall_count = 0
+      AND julianday(?) - julianday(last_touched_at) > half_life_days * 2
+  `, [isoNow]);
+
+  // 2. Probation expiry handling
+  await db.run(`
+    UPDATE memories SET decay_status='active'
+    WHERE decay_status='probation' AND probation_until <= ? AND helpful_count > 0
+  `, [isoNow]);
+  await db.run(`
+    UPDATE memories SET decay_status='archived'
+    WHERE decay_status='probation' AND probation_until <= ? AND helpful_count = 0
+  `, [isoNow]);
+
+  // 3. Similarity dedup (enabled only in hybrid mode)
+  if (config.retrieval.mode === 'hybrid') {
+    const duplicates = await findNearDuplicates(0.92);
+    for (const [keep, drop] of duplicates) {
+      await mergeMemories(keep.id, drop.id);
+    }
+  }
+
+  // 4. Archived rows older than 14 days -> hard delete
+  await db.run(`
+    DELETE FROM memories WHERE decay_status='archived'
+      AND julianday(?) - julianday(last_touched_at) > 14
+  `, [isoNow]);
+
+  await logAudit({ action: 'daily_consolidation_complete', details: { ts: isoNow } });
+}
+```
+
+### 7.6 补打与幂等(三层防御)
+
+**Layer 1: Lazy Catch-up**(必做)
+
+所有 cron 任务在 `cron_task_state` 维护 `last_success_at` / `next_due_at`,三个入口检查:
+
+1. Daemon 启动时:扫所有 task,补跑过期的
+2. 任意 hook 启动时(尤其 SessionStart):8s 内做轻检查,过期任务**写入异步队列**(不阻塞 hook)
+3. 正常 cron tick:无错过时走原路径
+
+```javascript
+async function lazyCatchUpScan() {
+  const now = Date.now();
+  const overdue = await db.all(`
+    SELECT task_id, next_due_at, max_catch_up_window_sec
+    FROM cron_task_state
+    WHERE next_due_at < ?
+      AND (lock_holder IS NULL OR lock_acquired_at + lock_ttl_sec * 1000 < ?)
+  `, [now, now]);
+
+  if (overdue.length === 0) return;
+
+  for (const t of overdue) {
+    const overdueSec = (now - t.next_due_at) / 1000;
+    const truncate = overdueSec > t.max_catch_up_window_sec;
+    await enqueueCatchUp(t.task_id, { catch_up: true, truncate });
+  }
+
+  // Standalone mode: probe daemon health; fire-and-forget spawn if missing (C3)
+  if (config.cron.mode !== 'openwolf') {
+    const healthy = await checkDaemonHealth();
+    if (!healthy) startDaemonDetached();
+  }
+}
+```
+
+**Layer 2: platform 模板**(可选优化)
+
+- macOS launchd plist 加 `WakeFromSleep` LaunchEvents
+- Linux systemd timer 加 `Persistent=true`
+- Windows scheduled task 勾选 `Run task as soon as possible after a scheduled start is missed`
+
+**Layer 3: 任务幂等约定**(强制契约)
+
+1. 所有任务必须幂等(用水位线游标,而非"自上次以来 N 天")
+2. 处理量上界:补打不能无限放大工作量,`truncate=true` 时只处理"最近 max_catch_up_window 内"
+3. 可中断恢复:每完成一批写一次 `last_success_at`,挂掉重启不会重做或丢工作
+
+### 7.7 Daemon 主循环(自适应轮询 + 文件触发)
+
+```javascript
+// scripts/daemon.mjs
+const WAKE_FILE = path.join(getDataRoot(), 'daemon.wake');
+const PID_FILE  = path.join(getDataRoot(), 'daemon.pid');
+let wakeUpEarly = false;
+let lastWakeProcessedTs = 0;
+let shouldStop = false;
+let consecutiveIdleTicks = 0;
+
+async function main() {
+  await acquireSingletonLock();    // check pid file, ensure single instance
+  await startHeartbeat();           // refresh pid file every 30s
+  await initWakeWatcher();          // fs.watch + polling fallback
+  await mainLoop();
+  await cleanup();
+}
+
+async function acquireSingletonLock() {
+  if (fs.existsSync(PID_FILE)) {
+    try {
+      const { pid } = JSON.parse(await fs.promises.readFile(PID_FILE, 'utf8'));
+      try {
+        process.kill(pid, 0);
+        console.error(`daemon already running: pid=${pid}`);
+        process.exit(0);
+      } catch { /* stale pid, take over */ }
+    } catch { /* corrupted, take over */ }
+  }
+  await writePidFile();
+}
+
+async function writePidFile() {
+  await fs.promises.writeFile(PID_FILE, JSON.stringify({
+    pid: process.pid,
+    started_at: Date.now(),
+    heartbeat_at: Date.now(),
+    auto_started: process.env.CCMEM_DAEMON_AUTO_STARTED === '1',
+  }));
+}
+
+function startHeartbeat() {
+  setInterval(() => {
+    fs.promises.writeFile(PID_FILE, JSON.stringify({
+      pid: process.pid,
+      heartbeat_at: Date.now(),
+    })).catch(() => {});
+  }, 30_000).unref();
+}
+
+async function initWakeWatcher() {
+  // Clean any leftover wake file on startup
+  try {
+    const content = await fs.promises.readFile(WAKE_FILE, 'utf8');
+    const { ts } = JSON.parse(content);
+    if (Date.now() - ts < 300_000) wakeUpEarly = true;
+    await fs.promises.unlink(WAKE_FILE).catch(() => {});
+  } catch { /* not present */ }
+
+  try {
+    const watcher = fs.watch(getDataRoot(), { persistent: false }, (event, filename) => {
+      if (filename === 'daemon.wake' && (event === 'change' || event === 'rename')) {
+        handleWakeEvent();
+      }
+    });
+    watcher.on('error', () => {
+      logger.warn('fs.watch failed, falling back to polling');
+      watcher.close();
+      startWakeFilePoller();
+    });
+  } catch {
+    logger.info('fs.watch unavailable, using polling');
+    startWakeFilePoller();
+  }
+}
+
+async function handleWakeEvent() {
+  try {
+    const content = await fs.promises.readFile(WAKE_FILE, 'utf8');
+    const { ts, reason } = JSON.parse(content);
+    if (ts <= lastWakeProcessedTs) return;
+    lastWakeProcessedTs = ts;
+    wakeUpEarly = true;
+    logger.debug(`woken by ${reason} at ${new Date(ts).toISOString()}`);
+    await fs.promises.unlink(WAKE_FILE).catch(() => {});
+  } catch { /* concurrent delete, ignore */ }
+}
+
+function startWakeFilePoller() {
+  setInterval(async () => {
+    try {
+      await fs.promises.access(WAKE_FILE);
+      await handleWakeEvent();
+    } catch { /* not present */ }
+  }, 5000).unref();
+}
+
+async function sleep(ms) {
+  const start = Date.now();
+  while (Date.now() - start < ms && !wakeUpEarly && !shouldStop) {
+    await new Promise(r => setTimeout(r, Math.min(200, ms - (Date.now() - start))));
+  }
+  wakeUpEarly = false;
+}
+
+async function mainLoop() {
+  while (!shouldStop) {
+    const { mode } = await getCurrentMode();
+    if (mode === 'off') {
+      await sleep(60_000);
+      continue;
+    }
+
+    const hasPending = await db.get(`SELECT 1 FROM pending_summarize LIMIT 1`);
+    const dueCron = await db.all(`
+      SELECT task_id FROM cron_task_state
+      WHERE next_due_at < ?
+        AND (lock_holder IS NULL OR lock_acquired_at + lock_ttl_sec * 1000 < ?)
+    `, [Date.now(), Date.now()]);
+
+    let didWork = false;
+    if (hasPending) {
+      await processOneBatch('summarize_pending', { batch_size: 5 });
+      didWork = true;
+    }
+    for (const t of dueCron) {
+      if (await acquireTaskLock(t.task_id)) {
+        try { await runCronTask(t.task_id); }
+        finally { await releaseTaskLock(t.task_id); }
+        didWork = true;
+      }
+    }
+
+    consecutiveIdleTicks = didWork ? 0 : consecutiveIdleTicks + 1;
+
+    const sleepMs = consecutiveIdleTicks === 0 ? 1000
+                  : consecutiveIdleTicks < 5  ? 30_000
+                  :                              300_000;
+    await sleep(sleepMs);
+  }
+}
+
+// Hook side: trigger wake
+async function wakeDaemon() {
+  try {
+    await fs.promises.writeFile(WAKE_FILE, JSON.stringify({
+      ts: Date.now(),
+      reason: 'hook_trigger',
+      pid: process.pid,
+    }));
+  } catch { /* non-fatal */ }
+}
+
+// Task lock (M2)
+async function acquireTaskLock(taskId) {
+  const result = await db.run(`
+    UPDATE cron_task_state
+    SET lock_holder = ?, lock_acquired_at = ?
+    WHERE task_id = ?
+      AND (lock_holder IS NULL OR lock_acquired_at + lock_ttl_sec * 1000 < ?)
+  `, ['daemon:' + process.pid, Date.now(), taskId, Date.now()]);
+  return result.changes > 0;
+}
+
+async function releaseTaskLock(taskId) {
+  await db.run(`
+    UPDATE cron_task_state SET lock_holder = NULL, lock_acquired_at = NULL
+    WHERE task_id = ? AND lock_holder = ?
+  `, [taskId, 'daemon:' + process.pid]);
+}
+```
+
+### 7.8 cron_task_state 初始默认
+
+| task_id | schedule | max_catch_up_window_sec |
+|---------|----------|-------------------------|
+| `daily_consolidation` | `17 2 * * *` | 86400 |
+| `weekly_reflection` | `17 3 * * 0` | 259200 |
+| `security_audit` | `17 4 * * 1` | 259200 |
+| `revalidation_audit` | `17 4 * * 3` | 259200 |
+| `summarize_pending` | (daemon 自适应) | 3600 |
+
+---
+
+## 八、双层作用域
+
+### 8.1 project_key 解析(H4)
+
+```javascript
+function resolveProjectKey(projectDir) {
+  try {
+    const origin = execSync(
+      `git -C "${projectDir}" config --get remote.origin.url`
+    ).toString().trim();
+    if (origin) return 'git:' + normalizeGitUrl(origin);
+  } catch {}
+
+  try {
+    const remotes = execSync(`git -C "${projectDir}" remote`)
+      .toString().trim().split('\n').filter(Boolean).sort();
+    if (remotes.length > 0) {
+      const url = execSync(
+        `git -C "${projectDir}" config --get remote.${remotes[0]}.url`
+      ).toString().trim();
+      process.stderr.write(`ccmem: no 'origin' remote, using '${remotes[0]}'\n`);
+      return 'git:' + normalizeGitUrl(url);
+    }
+  } catch {}
+
+  return 'path:' + sha256(projectDir).slice(0, 16);
+}
+
+function normalizeGitUrl(url) {
+  let s = url.trim()
+    .replace(/^git\+/, '')
+    .replace(/^git@([^:]+):/, 'ssh://$1/')
+    .replace(/^(https?|ssh|git):\/\/[^@\/]+@/, '$1://');
+
+  const m = s.match(/^(?:https?|ssh|git):\/\/([^\/]+)\/(.+?)(\.git)?\/?$/);
+  if (!m) throw new Error(`Invalid git URL: ${url}`);
+
+  const [, host, path] = m;
+  return `${host.toLowerCase()}/${path.toLowerCase()}`;
+}
+```
+
+诊断命令 `/ccmem:show-key` 显示当前解析结果。
+
+### 8.2 scope 判断(由 summarize_pending LLM 决定)
+
+| 信息 | 例 | scope |
+|------|-----|-------|
+| 用户通用偏好 | "偏好简洁回答" | global |
+| 编辑器/语言习惯 | "TypeScript 严格模式" | global |
+| 项目技术栈 | "本项目 Next.js 14 + App Router" | project |
+| 项目约定 | "API 路由在 /app/api/" | project |
+| 含 dangerous_command tag | 任何 | **强制 project** |
+| 含 secret 模式 | 任何 | **强制 project** + 拒绝 global |
+
+### 8.3 检索时合并
+
+```sql
+-- Retrieval scope filter used by UserPromptSubmit
+WHERE (scope = 'global' OR (scope = 'project' AND project_key = ?))
+```
+
+---
+
+## 九、与 OpenWolf 协同
+
+### 9.1 共存原则
+
+| 维度 | OpenWolf | ccmem |
+|------|----------|-------|
+| 文件导航 / anatomy | ✅ 独占 | — |
+| Token 审计 | ✅ 独占 | — |
+| Session 内行为追踪 | ✅ `memory.md` | — |
+| 文本型学习提醒 | ✅ `cerebrum.md` | — |
+| 跨 session 语义记忆 | — | ✅ SQLite |
+| Cron 调度 | ✅ cron-engine | 复用 / 注册 |
+
+### 9.2 cerebrum.md 段落映射(S3 精确化)
+
+`daily_consolidation` 增加 cerebrum sync 子步骤:
+
+| cerebrum 段 | ccmem 写入 | 备注 |
+|-------------|------------|------|
+| `## User Preferences` | scope=global, type=rule, source=cerebrum_import, trust=0.85 | probation 7 天 |
+| `## Key Learnings` | scope=project, type=fact, source=cerebrum_import, trust=0.80 | probation 7 天 |
+| `## Do-Not-Repeat` | scope=project, type=rule, source=cerebrum_import, trust=0.90, tag=['dnr'] | 无 probation(高 trust) |
+| `## Decision Log` | **不读** | 过度具体,价值低 |
+
+写入走 §10 写入闸门(投毒扫描照样过)。同步是单向的:**ccmem 只读 cerebrum,不写**。除非用户开启 `ccmem.write_cerebrum: true`(Phase 5+)。
+
+### 9.3 检测与降级
+
+```javascript
+function detectOpenWolf(projectDir) {
+  return fs.existsSync(path.join(projectDir, '.wolf', 'cron-manifest.json'));
+}
+
+if (detectOpenWolf(projectDir)) {
+  registerToOpenWolfCron();
+} else {
+  startStandaloneDaemon();
+}
+```
+
+---
+
+## 十、安全防护(三层意图判别 + 强制降级)
+
+### 10.1 写入闸门(C2 核心)
+
+```javascript
+// lib/db.mjs
+async function insertMemory(mem) {
+  // 1. Tier 1: always-block pattern scan
+  const t1 = scanTier1(mem.content);
+  if (t1.matched) {
+    await logAudit({
+      action: 'insert_blocked',
+      reason: 'tier1:' + t1.pattern,
+      attempted_content: safeTrimChars(mem.content, 500),
+      source: mem.source,
+      session_id: mem.session_id,
+    });
+    throw new ThreatBlockedError(`Tier 1 pattern blocked: ${t1.pattern}`);
+  }
+
+  // 2. Secret scan
+  const secrets = scanSecrets(mem.content);
+  if (secrets.length > 0 && mem.scope === 'global') {
+    await logAudit({ action: 'insert_blocked', reason: 'secret_in_global' });
+    throw new SecretInGlobalError(`Secret patterns not allowed in global scope`);
+  }
+
+  // 3. Tier 2: dangerous-command context classification
+  const t2 = await evaluateTier2(mem.content, mem.source, mem.type);
+  if (t2.action === 'block') {
+    await logAudit({
+      action: 'insert_blocked',
+      reason: 'tier2:' + t2.matched_pattern,
+      details: JSON.stringify(t2.evidence),
+    });
+    throw new ThreatBlockedError(`Tier 2 instruction-shape detected`);
+  } else if (t2.action === 'quarantine') {
+    mem.decay_status = 'quarantine';
+    mem.trust_score = 0.1;
+    mem.probation_until = isoDateNDaysFromNow(30);
+    mem.tags = [...(mem.tags || []), 'quarantined_pending_review'];
+  } else if (t2.action === 'force_demote') {
+    const originalType = mem.type;
+    const originalScope = mem.scope;
+
+    if (mem.type === 'rule' || mem.type === 'consolidated') {
+      mem.type = 'episode';
+      mem.half_life_days = 7;
+    }
+    if (mem.scope === 'global') {
+      mem.scope = 'project';
+    }
+    mem.trust_score = Math.min(mem.trust_score, 0.6);
+    mem.tags = [
+      ...(mem.tags || []),
+      'force_demoted_from_' + originalType,
+      'dangerous_command',
+      'require_periodic_revalidation',
+    ];
+
+    // User-visible notice (English, per cerebrum convention)
+    process.stderr.write(
+      `ccmem: demoted ${originalType}→episode due to dangerous command ` +
+      `(use /ccmem:promote ${mem.id} to override)\n`
+    );
+
+    await logAudit({
+      action: 'force_demoted',
+      from: { type: originalType, scope: originalScope },
+      to:   { type: mem.type, scope: mem.scope },
+      details: JSON.stringify(t2.evidence),
+    });
+  } else if (t2.action === 'allow_with_tag') {
+    mem.tags = [...(mem.tags || []), 'dangerous_command_discussed'];
+  }
+
+  // 4. Semantic contradiction detection (skipped for cron_consolidated)
+  if (mem.source !== 'cron_consolidated') {
+    const contradiction = await detectContradiction(mem);
+    if (contradiction.high_risk) {
+      mem.trust_score = Math.min(mem.trust_score, 0.5);
+      mem.decay_status = 'probation';
+      await queueForContradictionReview(mem, contradiction.similar);
+    }
+  }
+
+  // 5. Generation check (M9)
+  if (mem.generation >= 2) {
+    throw new GenerationLimitError(`Generation must be < 2, got ${mem.generation}`);
+  }
+
+  // 6. Actual insert
+  return await db.run(`INSERT INTO memories (...) VALUES (...)`, mem);
+}
+```
+
+### 10.2 Tier 1 模式(always-block)
+
+```javascript
+const TIER1_PATTERNS = [
+  /ignore\s+(previous|prior|above|all)\s+(instructions|prompts|context)/i,
+  /<\|im_start\|>|<\|im_end\|>|<\|system\|>|<\|assistant\|>/,
+  /[​‌‍﻿]/,                                            // zero-width chars
+  /system\s*:\s*you\s+are\s+now/i,
+  /forget\s+(everything|all)\s+you\s+(know|learned|remember)/i,
+  /(?:you\s+are\s+now|从现在(?:开始|起))\s+(?:a|an|the|一个|一名)/i,
+  /<!--\s*(?:system|admin|prompt|hidden|inject)/i,
+  /(?:base64|atob)\s*[(:]/i,
+];
+```
+
+### 10.3 Tier 2 模式 + 评分
+
+```javascript
+const TIER2_PATTERNS = [
+  { name: 'rm_rf',      regex: /\brm\s+-rf\b/ },
+  { name: 'format_disk', regex: /\b(format\s+c:|format\s+[a-z]:\s+\/q)/i },
+  { name: 'del_recursive', regex: /\bdel\s+\/[fsq]+\s+/i },
+  { name: 'pipe_to_shell', regex: /(curl|wget)\s+\S+\s*\|\s*(sh|bash|zsh|python)/i },
+  { name: 'dangerous_eval', regex: /\b(eval|exec|spawn|subprocess)\s*\(/i },
+  { name: 'sql_destructive', regex: /\b(DROP\s+TABLE|TRUNCATE|DELETE\s+FROM\s+\w+)\b/i },
+  { name: 'perm_777', regex: /\bchmod\s+(?:-R\s+)?777\b/i },
+  { name: 'iptables_flush', regex: /\biptables\s+-F\b/i },
+];
+
+// Default weights (overridable via config.security.tier2_weights)
+const DEFAULT_TIER2_WEIGHTS = {
+  in_code_block:          -3,
+  in_quotes:              -2,
+  imperative_prefix:      +2,
+  no_explanation:         +1,
+  short_content_dominant: +1,
+};
+
+const DEFAULT_TIER2_THRESHOLDS = {
+  allow_below:    -1,
+  block_above:    +2,
+  // values in between: quarantine
+};
+
+async function evaluateTier2(content, source, type) {
+  const matches = TIER2_PATTERNS
+    .map(p => ({ name: p.name, match: content.match(p.regex) }))
+    .filter(x => x.match);
+
+  if (matches.length === 0) {
+    return { action: 'allow', evidence: [] };
+  }
+
+  const weights = { ...DEFAULT_TIER2_WEIGHTS, ...(config.security.tier2_weights || {}) };
+  const thresholds = { ...DEFAULT_TIER2_THRESHOLDS, ...(config.security.tier2_thresholds || {}) };
+
+  let totalScore = 0;
+  const evidence = [];
+
+  for (const m of matches) {
+    const idx = m.match.index;
+    if (isInCodeBlock(content, idx))       { totalScore += weights.in_code_block;     evidence.push('in_code_block'); }
+    if (isInQuotes(content, idx))          { totalScore += weights.in_quotes;          evidence.push('in_quotes'); }
+    if (hasImperativePrefix(content, idx)) { totalScore += weights.imperative_prefix;  evidence.push('imperative_prefix'); }
+    if (!hasExplanatoryFollow(content, idx)) { totalScore += weights.no_explanation;   evidence.push('no_explanation'); }
+    if (isShortContentDominant(content))   { totalScore += weights.short_content_dominant; evidence.push('short_content_dominant'); }
+  }
+
+  // user_explicit is always lenient: never block, but still force_demote
+  if (source === 'user_explicit') {
+    if (totalScore >= thresholds.block_above) {
+      return { action: 'force_demote', evidence, matched_pattern: matches[0].name };
+    } else {
+      return { action: 'allow_with_tag', evidence };
+    }
+  }
+
+  // Other sources: decided by threshold
+  if (totalScore <= thresholds.allow_below) {
+    return { action: 'allow', evidence };
+  }
+  if (totalScore >= thresholds.block_above) {
+    // type='rule' -> hard block; type='fact'/'episode' -> force-demote
+    if (type === 'rule' || type === 'consolidated') {
+      return { action: 'block', evidence, matched_pattern: matches[0].name };
+    }
+    return { action: 'force_demote', evidence, matched_pattern: matches[0].name };
+  }
+  return { action: 'quarantine', evidence };
+}
+```
+
+### 10.4 上下文判别 helper
+
+```javascript
+function isInCodeBlock(text, index) {
+  const before = text.slice(0, index);
+  if ((before.match(/^```/gm) || []).length % 2 === 1) return true;
+  if (countUnescapedTicks(before) % 2 === 1) return true;
+  const co = (before.match(/<code\b[^>]*>/gi) || []).length;
+  const cc = (before.match(/<\/code>/gi) || []).length;
+  if (co > cc) return true;
+  const po = (before.match(/<pre\b[^>]*>/gi) || []).length;
+  const pc = (before.match(/<\/pre>/gi) || []).length;
+  return po > pc;
+}
+
+function isInQuotes(text, index) {
+  const before = text.slice(0, index).replace(/\\["']/g, '');
+  return /["'「『](?:[^"'」』]*)$/.test(before);
+}
+
+function hasImperativePrefix(text, index) {
+  const before = text.slice(Math.max(0, index - 60), index);
+  return /\b(should|must|always|please|now|run|execute|exec)\b|必须|应该|请|从现在|立即|马上/i.test(before);
+}
+
+function hasExplanatoryFollow(text, index) {
+  const after = text.slice(index, index + 100);
+  return /\b(removes?|deletes?|means?|is used|will|可以|意思是|表示|用于|含义)\b/i.test(after);
+}
+
+function isShortContentDominant(text) {
+  return text.trim().length < 100;
+}
+```
+
+### 10.5 周期复核(revalidation_audit cron)
+
+```sql
+SELECT id, content, created_at, tags FROM memories
+WHERE decay_status = 'active'
+  AND trust_score >= 0.5
+  AND tags LIKE '%require_periodic_revalidation%'
+  AND (last_revalidated_at IS NULL
+       OR julianday('now') - julianday(last_revalidated_at) > 30);
+```
+
+复核 prompt(英文输出):
+
+```text
+The following memories were created N days ago and involve dangerous operations
+or time-sensitive content. Determine if they remain applicable.
+
+{memory_dump_with_metadata}
+
+For each memory return JSON:
+{
+  "id": "...",
+  "verdict": "still_valid" | "stale" | "context_bound" | "should_archive",
+  "reason": "..."
+}
+
+Actions taken based on verdict:
+- still_valid: trust unchanged, last_revalidated_at updated
+- stale: trust -= 0.3
+- context_bound: add tag "scope_restricted", trust unchanged
+- should_archive: decay_status='archived'
+```
+
+### 10.6 security_audit 兜底
+
+```javascript
+async function securityAudit() {
+  // 1. trust < 0.4 cluster review (suspicious poisoning ring)
+  const suspiciousCluster = await db.all(`
+    SELECT m.id, m.content, m.trust_score, m.source, m.created_at, m.session_id
+    FROM memories m
+    WHERE m.trust_score < 0.4 AND m.decay_status='active'
+    ORDER BY m.session_id, m.created_at
+  `);
+  // Group by session_id; entire-session-low-trust -> escalate to LLM review
+
+  // 2. Retroactive scan when threat patterns are upgraded
+  const patternsVersion = config.security.patterns_version || 'v1';
+  const memoriesToRescan = await db.all(`
+    SELECT id, content FROM memories
+    WHERE decay_status='active'
+      AND (last_scanned_patterns_version IS NULL OR last_scanned_patterns_version != ?)
+  `, [patternsVersion]);
+  for (const m of memoriesToRescan) {
+    const t1 = scanTier1(m.content);
+    if (t1.matched) {
+      await db.run(`
+        UPDATE memories SET decay_status='archived', trust_score=0
+        WHERE id = ?
+      `, [m.id]);
+      await logAudit({
+        action: 'retro_scan_archived',
+        affected_ids: [m.id],
+        reason: 'tier1:' + t1.pattern,
       });
     }
-    
-    // 4. 处理矛盾：标记低置信度的为 candidate_expire
-    for (const contradiction of insights.contradictions) {
-      await updateMetadata(collection, contradiction.weaker_id, { decay_status: "candidate_expire" });
+  }
+
+  // 3. Consolidated cascade-degrade backstop (catches anything missed by sync paths)
+  await db.run(`
+    UPDATE memories SET decay_status='archived'
+    WHERE type='consolidated' AND decay_status='active'
+      AND NOT EXISTS (
+        SELECT 1 FROM consolidated_lineage l
+        JOIN memories src ON src.id = l.source_memory_id
+        WHERE l.consolidated_id = memories.id
+          AND src.decay_status = 'active'
+      )
+  `);
+}
+```
+
+### 10.7 `/ccmem:forget` 同步级联(C5)
+
+```javascript
+async function forgetMemory(memId, options = {}) {
+  await db.transaction(async (tx) => {
+    // 1. Primary action
+    await tx.run(`
+      UPDATE memories
+      SET decay_status='archived', last_touched_at=?, modified_by='user', modified_at=?
+      WHERE id=?
+    `, [now(), now(), memId]);
+
+    // 2. Find all consolidated entries referencing this id
+    const affected = await tx.all(`
+      SELECT consolidated_id FROM consolidated_lineage WHERE source_memory_id=?
+    `, [memId]);
+
+    let cascadeArchived = 0;
+    let cascadeDegraded = 0;
+
+    for (const { consolidated_id: cid } of affected) {
+      const allSources = await tx.all(`
+        SELECT m.id, m.decay_status FROM consolidated_lineage l
+        JOIN memories m ON m.id = l.source_memory_id
+        WHERE l.consolidated_id = ?
+      `, [cid]);
+
+      const activeCount = allSources.filter(s => s.decay_status === 'active').length;
+      const ratio = (allSources.length - activeCount) / allSources.length;
+
+      if (activeCount === 0) {
+        await tx.run(`UPDATE memories SET decay_status='archived' WHERE id=?`, [cid]);
+        cascadeArchived++;
+      } else if (ratio >= 0.5) {
+        await tx.run(`
+          UPDATE memories SET trust_score = MAX(0, trust_score - 0.30) WHERE id=?
+        `, [cid]);
+        cascadeDegraded++;
+      } else {
+        await tx.run(`
+          UPDATE memories SET trust_score = MAX(0, trust_score - 0.10) WHERE id=?
+        `, [cid]);
+      }
+    }
+
+    // 3. Synchronously invalidate injection_cache segments (C1)
+    await invalidateInjectionCacheFor(memId);
+
+    await logAudit({
+      action: 'user_forget',
+      affected_ids: [memId, ...affected.map(a => a.consolidated_id)],
+      details: JSON.stringify({ cascade_archived: cascadeArchived, cascade_degraded: cascadeDegraded }),
+    });
+
+    return {
+      forgotten: memId,
+      cascade_archived: cascadeArchived,
+      cascade_degraded: cascadeDegraded,
+    };
+  });
+}
+
+async function invalidateInjectionCacheFor(memId) {
+  await db.run(`
+    UPDATE injection_cache SET ttl_seconds = 0
+    WHERE EXISTS (
+      SELECT 1 FROM json_each(member_ids) WHERE value = ?
+    )
+  `, [memId]);
+  await enqueueImmediate('regenerate_injection_cache_segments');
+}
+```
+
+---
+
+## 十一、注入格式(H7 规范)
+
+### 11.1 SessionStart 注入文本示例
+
+```
+=== ccmem: project background ===
+
+[CONSOLIDATED · GLOBAL]
+- 用户偏好简洁直接的回答风格 <!--m1a2b3c-->
+- 用户偏好 TypeScript 严格模式,禁用 any <!--m4d5e6f-->
+
+[CONSOLIDATED · PROJECT git:github.com/me/myapp]
+- Next.js 14 App Router + Tailwind CSS <!--m7g8h9i-->
+- API 路由统一放在 /app/api/ <!--mjklmno-->
+- 部署目标 AWS cn-north-1,使用 CDK <!--mpqrst-->
+
+[PINNED · PROJECT(top 20 by trust)]
+- 提交前必须跑 pnpm typecheck && pnpm test <!--muvwxy-->
+
+[FRESH · last 24h]
+- 上次添加 /api/upload 时遇到 4MB 限制,需在 next.config.js 调 bodySizeLimit <!--mzabcd-->
+
+* Citation hint: 若回复采纳了上述记忆中的某条,请在末尾以 (ref: m1a2b3c) 形式
+  标注 1-3 条最关键来源。
+```
+
+### 11.2 UserPromptSubmit 注入文本示例
+
+```
+=== ccmem: retrieved for "如何添加新的 API 路由" ===
+
+[m2001] s|0.90|12d
+新 API 路由步骤:1) 在 /app/api/<name>/route.ts 创建 2) 默认导出 GET/POST 命名函数 3) 用 zod 校验入参
+
+[m2002] f|0.85|3d
+所有 API 都要走 src/lib/auth.ts 的 requireAuth 中间件
+
+[m2003] e|0.70|1d!p
+危险操作记录:在 myapp 项目(2026-04)调试依赖冲突时使用了 `rm -rf node_modules && npm install` — 仅一次性场景,不作为通用规则
+```
+
+### 11.3 紧凑格式规范
+
+```
+ID 格式:m + 8 字节哈希(从 memories.id 派生)
+紧凑元数据格式: <type>|<trust>|<age><status_suffix>
+  type:    r=rule, f=fact, s=skill, e=episode, c=consolidated
+  trust:   两位小数,如 0.85
+  age:     基于 last_touched_at;Nd=N天前,Nh=N小时前
+  status:  可选后缀
+    无后缀 = active
+    !p      = probation
+    !c      = candidate_expire
+    !ctx    = context-bound(含 dangerous_command 等 tag)
+```
+
+### 11.4 格式三档
+
+| 格式 | 用途 | 例 |
+|------|------|-----|
+| `verbose` | 调试 / `/ccmem:show` | `[memory#mem_1234abcd] (type=fact, trust=0.85, age_touched=3d, age_created=15d, hits=7, source=user_explicit)` |
+| `compact` | 默认 / UserPromptSubmit | `[m1234] f\|0.85\|3d` |
+| `raw` | SessionStart hot segments | (只显示内容,ID 在 HTML 注释里) |
+
+---
+
+## 十二、用户管理命令(slash commands)
+
+### 12.1 命令清单
+
+```
+/ccmem:list [--scope all|global|project] [--type rule|...]
+                          - List memories
+/ccmem:show <id>          - Show single memory detail (trust history, lineage)
+/ccmem:pin <id>           - Pin: trust=0.95, memories.pinned=1, never auto-archived
+/ccmem:unpin <id>         - Remove pin
+/ccmem:forget <id>        - Mark archived; sync cascade to dependent consolidated
+/ccmem:edit <id>          - Edit content (source→user_explicit, trust=0.95)
+/ccmem:promote <id>       - Promote episode→rule (project scope; requires verbatim safety declaration)
+/ccmem:promote-global <id>
+                          - Promote rule (project)→rule (global); requires §12.4 safety declaration;
+                            BLOCKED for memories tagged dangerous_command or contains_secret
+/ccmem:init               - Bootstrap project with initial rules
+/ccmem:stats              - Hit rate / acceptance / capacity / recent corrections
+/ccmem:bench              - Measure hook latency, write to daily_metrics
+/ccmem:migrate <old_key> <new_key>
+                          - Project rename / merge
+/ccmem:semantic on|off|switch <model>|status
+                          - Manage embedding (opt-in)
+/ccmem:semantic repair-registry [--dry-run | --interactive | --fix-all]
+                          - Diagnose registry / physical-table / embedding inconsistencies (§12.5)
+/ccmem:semantic purge-model <model_id>
+                          - Drop cached embeddings + physical table for one model;
+                            does NOT delete memory content (§12.6)
+/ccmem:export [--scope ...]   - Export memories as JSON
+/ccmem:import <file>      - Import (auto dedup + trust re-evaluation)
+
+/ccmem:mode [active|shadow|off]
+                          - Get/set mode (unifies enable/disable/shadow)
+/ccmem:show-key           - Diagnose project_key resolution
+
+/ccmem:daemon start|stop|restart|status
+                          - Manage daemon process
+
+/ccmem:purge project      - HIGH-RISK: delete all project memories (strong confirm)
+/ccmem:purge-all          - HIGH-RISK: delete all user data (strongest confirm)
+
+/ccmem:audit --recent     - Show recent audit log entries
+/ccmem:audit-allow <id>   - Override block decision (requires reason)
+```
+
+### 12.2 `/ccmem:mode` 实现(S4)
+
+```javascript
+const VALID_MODES = ['active', 'shadow', 'off'];
+
+async function modeCommand(arg) {
+  if (!arg) {
+    const { mode, set_at, set_by } = await getCurrentMode();
+    return `Mode: ${mode} (set ${humanizeAge(set_at)} by ${set_by})`;
+  }
+  if (!VALID_MODES.includes(arg)) {
+    throw new Error(`Invalid mode: ${arg}. Valid: ${VALID_MODES.join(', ')}`);
+  }
+  const prev = await getCurrentMode();
+  await db.run(`
+    INSERT OR REPLACE INTO mode_state (id, mode, set_at, set_by) VALUES (1, ?, ?, ?)
+  `, [arg, now(), 'user_command']);
+  await logAudit({ action: 'mode_change', details: JSON.stringify({ from: prev.mode, to: arg }) });
+  return `ccmem: mode set to '${arg}'`;
+}
+
+async function shouldHookRun() {
+  const { mode } = await getCurrentMode();
+  if (mode === 'off') return { run: false, reason: 'mode_off' };
+  return { run: true, mode };
+}
+```
+
+Hook 入口:
+```javascript
+const { run, mode } = await shouldHookRun();
+if (!run) {
+  process.stderr.write(`ccmem: skipped (${mode === undefined ? 'unknown' : 'mode_off'})\n`);
+  process.exit(0);
+}
+// In shadow mode, data is written normally but additionalContext stays empty.
+```
+
+### 12.3 `/ccmem:promote` 强确认(C2)
+
+交互式:
+
+```text
+================ HIGH-RISK PROMOTION REQUEST ================
+Memory ID: m1234abcd
+Current type:  episode  (will become rule)
+Current scope: project  (will remain project; use /ccmem:promote-global for global)
+Current trust: 0.55     (will become 0.70)
+Current tags:  [dangerous_command, force_demoted_from_rule,
+                require_periodic_revalidation]
+
+Content:
+  Dangerous operation record: in myapp project (2026-04) debugging
+  dependency conflict, used `rm -rf node_modules && npm install` —
+  one-time scenario, not a general rule.
+
+Matched dangerous patterns:
+  - rm -rf (Tier 2: bulk file deletion)
+
+Risk notice:
+  This content will be treated as a general rule and may be injected
+  into the LLM context in all future sessions of this project.
+  The LLM may recommend executing rm -rf based on this rule.
+  Confirm only if you fully understand the consequences.
+
+==============================================================
+Type the following declaration verbatim to confirm:
+
+  "I understand the risk and confirm m1234abcd is safe to apply
+   in all scenarios of this project"
+
+>>> _
+```
+
+非交互(脚本/CI):
+
+```bash
+$ /ccmem:promote m1234abcd \
+  --confirm-with-declaration "I understand the risk and confirm m1234abcd is safe to apply in all scenarios of this project"
+```
+
+声明文本必须包含 memory ID,且与命令的 ID 参数一致,防止脚本批量提权。
+
+实现:
+
+```javascript
+async function promoteCommand(memId, opts = {}) {
+  const mem = await db.get(`SELECT * FROM memories WHERE id = ?`, [memId]);
+  if (!mem) throw new Error(`Memory not found: ${memId}`);
+  if (mem.type === 'rule') {
+    return `Memory ${memId} is already a rule. No action taken.`;
+  }
+
+  const expectedDeclaration =
+    `I understand the risk and confirm ${memId} is safe to apply ` +
+    `in all scenarios of this project`;
+
+  if (opts.confirmWithDeclaration) {
+    if (opts.confirmWithDeclaration !== expectedDeclaration) {
+      throw new Error(`Declaration mismatch. Expected verbatim: "${expectedDeclaration}"`);
+    }
+  } else {
+    // Interactive confirmation
+    const got = await promptUser(formatPromoteRiskNotice(mem));
+    if (got !== expectedDeclaration) {
+      throw new Error('Declaration mismatch or aborted.');
+    }
+  }
+
+  const fromType = mem.type;
+  await db.transaction(async (tx) => {
+    await tx.run(`
+      UPDATE memories
+      SET type='rule', trust_score=0.70, half_life_days=90,
+          modified_by='user_promote', modified_at=?,
+          tags=?
+      WHERE id=?
+    `, [
+      now(),
+      JSON.stringify(
+        (JSON.parse(mem.tags || '[]'))
+          .filter(t => t !== 'force_demoted_from_episode'
+                    && t !== 'force_demoted_from_rule'
+                    && t !== 'dangerous_command')
+        // Note: 'require_periodic_revalidation' is intentionally preserved
+      ),
+      memId,
+    ]);
+    await logAudit({
+      action: 'promote_to_rule',
+      affected_ids: [memId],
+      details: JSON.stringify({
+        from: { type: fromType, trust: mem.trust_score },
+        to:   { type: 'rule', trust: 0.70 },
+        declaration_received: true,
+      }),
+    });
+  });
+
+  return `ccmem: m${memId} promoted to rule (trust=0.70)`;
+}
+```
+
+### 12.4 `/ccmem:promote-global` 强确认
+
+`/ccmem:promote-global` 把项目级 rule 提升为全局 rule。**两步走的第二步**——
+必须先 `/ccmem:promote` 把 episode 升为 project rule,才能再升 global。
+
+#### 硬阻断规则
+
+| 阻断条件 | 理由 | 用户可选恢复路径 |
+|---------|------|----------------|
+| `mem.type !== 'rule'` | 跨度太大,强制走两步 | 先 `/ccmem:promote <id>` |
+| `mem.scope === 'global'` | 已经是 global,no-op | (无需操作) |
+| tag 含 `dangerous_command` | Tier 2 demote 体系不允许跨项目危险规则 | `/ccmem:edit <id>` 重写为非危险措辞后再 promote |
+| tag 含 `contains_secret` | secret 不可跨项目泄漏 | 同上 |
+
+> 把 `dangerous_command` 硬阻断,而不是允许"强声明覆盖",是设计上的明确选择:
+> Tier 2 防御的整个前提是危险命令的上下文相关性。如果允许 promote-global
+> 覆盖,等于打通了 dangerous → global 的路径。用户若真的需要跨项目的"危险类
+> 规则",应通过 `/ccmem:edit` 改写措辞(例如把 `rm -rf node_modules` 改成
+> "清理依赖目录前先备份"),再正常 promote。这种摩擦是健康的。
+
+#### 实现
+
+```javascript
+async function promoteGlobalCommand(memId, opts = {}) {
+  const mem = await db.get(`SELECT * FROM memories WHERE id = ?`, [memId]);
+  if (!mem) throw new Error(`Memory not found: ${memId}`);
+
+  // 1. Must already be a rule (force two-step path)
+  if (mem.type !== 'rule') {
+    throw new Error(
+      `promote-global requires type='rule', got '${mem.type}'. ` +
+      `Run /ccmem:promote ${memId} first.`
+    );
+  }
+
+  // 2. Already global -> no-op
+  if (mem.scope === 'global') {
+    return `Memory ${memId} is already global. No action taken.`;
+  }
+
+  // 3. Hard-block on dangerous tags (no override)
+  const tags = JSON.parse(mem.tags || '[]');
+  if (tags.includes('dangerous_command')) {
+    throw new Error(
+      `Cannot promote-global a memory tagged 'dangerous_command'. ` +
+      `Tier 2 demotion enforces project-scope confinement. ` +
+      `To make the rule global, use /ccmem:edit ${memId} to rewrite ` +
+      `the content without dangerous-command pattern, then re-promote.`
+    );
+  }
+  if (tags.includes('contains_secret')) {
+    throw new Error(
+      `Cannot promote-global a memory tagged 'contains_secret'. ` +
+      `Secrets must stay project-scoped.`
+    );
+  }
+
+  // 4. Strong verbatim confirmation
+  const expectedDeclaration =
+    `I confirm ${memId} is universally applicable across ` +
+    `ALL my future projects and accept the cross-project risk`;
+
+  if (opts.confirmWithDeclaration) {
+    if (opts.confirmWithDeclaration !== expectedDeclaration) {
+      throw new Error(`Declaration mismatch. Expected verbatim: "${expectedDeclaration}"`);
+    }
+  } else {
+    const got = await promptUser(formatPromoteGlobalRiskNotice(mem));
+    if (got !== expectedDeclaration) {
+      throw new Error('Declaration mismatch or aborted.');
+    }
+  }
+
+  // 5. Apply (transaction)
+  await db.transaction(async (tx) => {
+    await tx.run(`
+      UPDATE memories
+      SET scope='global', project_key=NULL,
+          modified_by='user_promote_global', modified_at=?,
+          half_life_days = MAX(half_life_days, 90)
+      WHERE id=?
+    `, [now(), memId]);
+
+    await logAudit({
+      action: 'promote_to_global',
+      affected_ids: [memId],
+      details: JSON.stringify({
+        from: { scope: 'project', project_key: mem.project_key },
+        to:   { scope: 'global' },
+        declaration_received: true,
+      }),
+    });
+  });
+
+  return `ccmem: ${memId} promoted to global rule`;
+}
+```
+
+#### 用户视角
+
+```text
+$ /ccmem:promote-global m1234abcd
+
+================ GLOBAL PROMOTION REQUEST ================
+Memory ID:     m1234abcd
+Current type:  rule          (no change)
+Current scope: project: git:github.com/me/myapp
+                              ↓ will become ↓
+                              global (visible across ALL your future projects)
+Current trust: 0.85           (no change)
+
+Content:
+  Prefer pnpm over npm/yarn for all dependency management.
+
+Risk notice:
+  This rule will be injected into the LLM context in ALL future
+  Claude Code sessions across ALL your projects, including new
+  projects you have not started yet. Confirm only if this rule is
+  truly universal (not specific to one tech stack, framework, or
+  team convention).
+
+==========================================================
+Type the following declaration verbatim to confirm:
+
+  "I confirm m1234abcd is universally applicable across
+   ALL my future projects and accept the cross-project risk"
+
+>>> _
+```
+
+非交互模式(脚本/CI):
+
+```bash
+$ /ccmem:promote-global m1234abcd \
+  --confirm-with-declaration "I confirm m1234abcd is universally applicable across ALL my future projects and accept the cross-project risk"
+```
+
+声明文本必须包含 memory ID 且与命令的 ID 参数一致,防止脚本批量提权。
+
+### 12.5 `/ccmem:semantic repair-registry`
+
+诊断 `embedding_model_registry`、`memory_embedding`、物理 `vec_*` 表三者之间
+的状态一致性,并提供受控修复。该命令**只处理元数据/索引不一致**,**真正的
+数据清理(包括派生数据)走 `/ccmem:semantic purge-model`**(§12.6)。
+
+#### 5 类不一致场景
+
+| # | 场景 | 检测方法 | 风险 |
+|---|------|---------|------|
+| 1 | registry 有但物理表缺失 | registry 行 vs `sqlite_master` 名匹配 | 检索时报 "no such table",自动 fallback 到 lexical |
+| 2 | 物理表存在但 registry 缺 | 同上反向 | 占用磁盘,不被使用,无功能影响 |
+| 3 | `embedding_active` 指向不存在的 registry | LEFT JOIN 为 NULL | 启用 hybrid 后崩溃 |
+| 4 | `memory_embedding` 有 `model_id` 但 registry 缺 | LEFT JOIN registry IS NULL | 占用磁盘的孤儿数据 |
+| 5 | registry 与物理表 dim 不一致 | 解析物理表 SQL 的 `FLOAT[N]` 与 `registry.dim` 对比 | 检索结果错误,无明显报错(最危险) |
+
+#### 三种修复模式
+
+```
+/ccmem:semantic repair-registry              # 默认 --dry-run
+/ccmem:semantic repair-registry --interactive   # 逐项 y/N/q 选择
+/ccmem:semantic repair-registry --fix-all       # 批量,需 verbatim 'fix all'
+```
+
+#### dry-run 输出示例
+
+```text
+$ /ccmem:semantic repair-registry
+
+=== ccmem embedding registry diagnostic ===
+
+Active model:
+  bge-small-zh-v1.5  (dim 384, status: ready)  OK
+
+Registry entries (3):
+  [OK]      bge-small-zh-v1.5  -> vec_bge_small_zh_v1_5_a1b2c3d4   (dim 384)  ready
+  [ISSUE-1] minilm-l6-v2        -> vec_minilm_l6_v2_e5f6g7h8        MISSING physical table
+  [STALE]   old-experimental    -> vec_old_experimental_z9y8x7w6    (dim 768)  status=failed
+
+Physical vec_* tables (3):
+  [OK]      vec_bge_small_zh_v1_5_a1b2c3d4   in registry
+  [OK]      vec_old_experimental_z9y8x7w6    in registry (but status=failed)
+  [ISSUE-2] vec_orphan_legacy_q1w2e3r4       ORPHAN: not in registry
+
+memory_embedding rows (487 total):
+  bge-small-zh-v1.5:  423 rows  (active model)
+  old-experimental:   0 rows
+  [ISSUE-4] unknown-model-x:  64 rows  ORPHAN: no registry entry
+
+Dimension consistency:
+  bge-small-zh-v1.5:  registry says 384, physical table says 384  OK
+  old-experimental:   registry says 768, physical table says 768  OK
+
+----------------------------------------------------
+Summary: 3 issues found, 1 stale entry
+
+Suggested actions:
+  [1] Drop registry entry "minilm-l6-v2"
+      Reason: physical table missing; no recoverable data
+      Effect: 1 registry row removed; 0 memory_embedding rows affected
+
+  [2] Drop orphan physical table "vec_orphan_legacy_q1w2e3r4"
+      Reason: not referenced by any registry entry
+      Effect: DROP TABLE; 0 memory_embedding rows affected
+
+  [3] Delete 64 orphan rows from memory_embedding for "unknown-model-x"
+      Reason: no registry entry exists for this model_id
+      Sample memory_ids: m1a2b3c, m4d5e6f, m7g8h9i  (61 more)
+      Effect: 64 rows deleted; disk reclaimed ~512KB
+
+  [4] Clean up failed-status registry entry "old-experimental"
+      (separate command: /ccmem:semantic purge-model old-experimental)
+      Effect: registry row + physical table + memory_embedding rows all removed
+
+This was a dry-run. No changes made.
+Run with --interactive to choose per-issue, or --fix-all to apply all.
+```
+
+#### 安全约束
+
+1. 所有 `DROP TABLE` 必须先确认 row count = 0(查物理表 + 关联的 memory_embedding 双重检查)
+2. `DELETE` 操作前 sample 3-5 行展示给用户
+3. 审计日志必写(每个 fix 一条 audit 记录)
+4. **dim_mismatch 不提供自动修复**(数据可能已损坏,需用户决策,引导到 purge-model)
+5. `--fix-all` 也要求 verbatim 确认 `fix all`(防止脚本误调)
+6. **repair-registry 永远不删 memories 表的任何行**(那是 `/ccmem:forget` / `/ccmem:purge project` 的职责)
+
+#### 实现框架
+
+```javascript
+const ISSUE_TYPES = {
+  REGISTRY_MISSING_TABLE:  'registry_missing_physical_table',
+  TABLE_NOT_IN_REGISTRY:   'physical_table_not_in_registry',
+  ACTIVE_POINTS_TO_GHOST:  'active_model_not_in_registry',
+  ORPHAN_EMBEDDINGS:       'memory_embedding_no_registry',
+  DIM_MISMATCH:            'registry_dim_mismatch_physical',
+};
+
+async function diagnoseRegistry() {
+  const issues = [];
+  const registryEntries = await db.all(`SELECT * FROM embedding_model_registry`);
+  const physicalTables = (await db.all(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'vec_*'
+  `)).map(r => r.name);
+  const active = await db.get(`SELECT * FROM embedding_active WHERE id = 1`);
+  const embeddingModelIds = (await db.all(`
+    SELECT DISTINCT model_id FROM memory_embedding
+  `)).map(r => r.model_id);
+
+  // ... (detect each of the 5 inconsistency categories above and construct issue records)
+  return issues;
+}
+
+async function applyFix(issue, opts = {}) {
+  if (issue.suggested_action.manual) {
+    throw new Error(`Issue type ${issue.type} requires manual intervention`);
+  }
+  await logAudit({
+    action: 'repair_registry_apply',
+    details: JSON.stringify({
+      issue_type: issue.type,
+      action: issue.suggested_action.description,
+      requested_by: opts.requested_by || 'user',
+    }),
+  });
+  await db.run(issue.suggested_action.command, issue.suggested_action.args || []);
+}
+
+export async function repairRegistryCommand(opts = {}) {
+  const issues = await diagnoseRegistry();
+
+  if (!opts.mode || opts.mode === 'dry-run') {
+    return formatDryRunReport(issues);
+  }
+  if (opts.mode === 'interactive') {
+    for (const issue of issues) {
+      const choice = await promptUser(formatIssueChoice(issue));
+      if (choice === 'y') await applyFix(issue);
+      else if (choice === 'q') break;
+    }
+  }
+  if (opts.mode === 'fix-all') {
+    const confirm = opts.confirmText || await promptUser(`Type 'fix all' to confirm:`);
+    if (confirm !== 'fix all') throw new Error('Confirmation mismatch, aborted');
+    for (const issue of issues) {
+      try { await applyFix(issue); }
+      catch (err) { await logAudit({ action: 'repair_registry_fix_failed', details: JSON.stringify({ issue, error: err.message }) }); }
+    }
+  }
+  return formatFinalReport(issues);
+}
+```
+
+### 12.6 `/ccmem:semantic purge-model`
+
+清除某个 embedding model 的全部派生数据(向量缓存 + 物理索引表 + registry
+条目)。**不影响任何 memory 内容**——`memories.content` 是 source of truth,
+embeddings 可随时重新生成。
+
+#### 数据分层(理解前提)
+
+| 层 | 内容 | purge-model 影响 |
+|---|------|---------------|
+| `memories.content` | 用户记忆原始文本 | ❌ 不动(永远 source of truth) |
+| `memory_embedding` (BLOB) | 该 model 的向量缓存 | ✅ 删除 |
+| `vec_<model>` 虚拟表 | 该 model 的物理索引 | ✅ DROP |
+| `embedding_model_registry` 该行 | model 元数据 | ✅ DELETE |
+| `embedding_active`(若指向该 model) | active 指针 | ❌ 阻断(必须先 switch / off) |
+| 其他模型的所有数据 | | ❌ 不动 |
+
+#### 边界 case 处理
+
+| Case | 处理 |
+|------|------|
+| 用户对 active model 运行 purge-model | **拒绝**,要求先 `/ccmem:semantic switch <other>` 或 `/ccmem:semantic off` |
+| 用户对正在下载的(status=`downloading`) | **拒绝**,要求先 `/ccmem:semantic cancel-download` |
+| 用户对 failed status 的 model | ✅ 允许(主要用途之一) |
+| 物理表已不存在(只剩 registry) | ✅ 允许,跳过 DROP TABLE,只清 DB rows |
+| 用户在 transaction 中途 Ctrl-C | SQLite 原子性保证回滚,无半成品 |
+
+#### 实现
+
+```javascript
+async function purgeModelCommand(modelId, opts = {}) {
+  // 1. Active-model check
+  const active = await db.get(`SELECT active_model FROM embedding_active WHERE id = 1`);
+  if (active && active.active_model === modelId) {
+    throw new Error(
+      `Cannot purge active model "${modelId}". ` +
+      `Switch to another model first: /ccmem:semantic switch <other-model>, ` +
+      `or disable embedding entirely: /ccmem:semantic off`
+    );
+  }
+
+  // 2. Registry lookup + row stats
+  const regEntry = await db.get(`
+    SELECT * FROM embedding_model_registry WHERE model_id = ?
+  `, [modelId]);
+  if (!regEntry) {
+    throw new Error(
+      `Model "${modelId}" not in registry. ` +
+      `Use /ccmem:semantic repair-registry for orphans.`
+    );
+  }
+  if (regEntry.status === 'downloading') {
+    throw new Error(
+      `Cannot purge model "${modelId}" while download is in progress. ` +
+      `Wait for completion or cancel via /ccmem:semantic cancel-download.`
+    );
+  }
+
+  const embRowCount = await db.get(`
+    SELECT COUNT(*) AS n FROM memory_embedding WHERE model_id = ?
+  `, [modelId]);
+  const vecTableExists = await db.get(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name = ?
+  `, [regEntry.vec_table_name]);
+
+  // 3. Strong confirmation
+  process.stderr.write(formatPurgeModelRiskNotice({
+    modelId,
+    regStatus: regEntry.status,
+    embRowCount: embRowCount.n,
+    vecTableName: vecTableExists ? regEntry.vec_table_name : '(already missing)',
+  }));
+
+  const expected =
+    `I want to purge embedding cache for ${modelId} and accept ` +
+    `the cost of re-embedding if I reactivate later`;
+  const got = opts.confirmWithDeclaration || await promptUser();
+  if (got !== expected) {
+    return `ccmem: purge-model aborted (declaration mismatch)`;
+  }
+
+  // 4. Audit + apply (transaction)
+  await logAudit({
+    action: 'purge_model',
+    affected_ids: [modelId],
+    details: JSON.stringify({
+      embeddings_removed: embRowCount.n,
+      physical_table: regEntry.vec_table_name,
+      table_existed: !!vecTableExists,
+    }),
+  });
+
+  await db.transaction(async (tx) => {
+    if (vecTableExists) {
+      await tx.run(`DROP TABLE ${regEntry.vec_table_name}`);
+    }
+    await tx.run(`DELETE FROM memory_embedding WHERE model_id = ?`, [modelId]);
+    await tx.run(`DELETE FROM embedding_model_registry WHERE model_id = ?`, [modelId]);
+  });
+
+  return `ccmem: model "${modelId}" purged (${embRowCount.n} embeddings removed). Memory content unchanged.`;
+}
+```
+
+#### 用户视角
+
+```text
+$ /ccmem:semantic purge-model old-experimental
+
+================ MODEL PURGE REQUEST ================
+Model ID:               old-experimental
+Registry status:        failed
+Embeddings to delete:   0 rows in memory_embedding
+Physical index table:   vec_old_experimental_z9y8x7w6
+
+WHAT THIS DOES:
+  - Removes 0 cached embedding vectors
+  - Drops the per-model index table
+  - Removes the registry entry
+
+WHAT THIS DOES NOT DO:
+  - Does NOT delete any memory content (memories.content untouched)
+  - Does NOT affect injection_cache (lexical retrieval still works)
+  - Does NOT affect other models' embeddings
+
+COST TO REVERSE:
+  - Re-activating this model later requires re-embedding all
+    your memories, which takes time proportional to your model's
+    inference speed (typically 1-5 minutes for bge-small-zh-v1.5
+    on 500 memories, CPU).
+
+=====================================================
+Type the following declaration verbatim to confirm:
+
+  "I want to purge embedding cache for old-experimental and accept
+   the cost of re-embedding if I reactivate later"
+
+>>> _
+```
+
+#### 与 `/ccmem:purge-*` 的根本区别
+
+| 命令 | 删除范围 | 数据可恢复? |
+|------|---------|------------|
+| `/ccmem:semantic purge-model <id>` | 仅嵌入向量(派生数据) | ✅ 可,re-activate 后台重算 |
+| `/ccmem:purge project` | 该项目所有 memories + 嵌入 + 反馈 + lineage | ❌ 不可,memory 内容丢失 |
+| `/ccmem:purge-all` | 全部用户数据(`~/.claude/ccmem/`) | ❌ 不可 |
+
+purge-model 危险等级**远低于** purge-project / purge-all:前者清缓存,后者删数据。
+但仍走强确认,因为 re-embed 有时间成本,用户应明确知道。
+
+### 12.7 `/ccmem:purge-*` 高危删除(M5)
+
+```javascript
+async function purgeCommand(target, opts = {}) {
+  if (!['project', 'all'].includes(target)) {
+    throw new Error(`Invalid purge target: ${target}. Valid: project, all`);
+  }
+
+  // 1. Compute what will be deleted (summary)
+  let summary;
+  if (target === 'project') {
+    const projectKey = resolveProjectKey();
+    const counts = await db.get(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN type='rule' THEN 1 ELSE 0 END) AS rules,
+        SUM(CASE WHEN type='consolidated' THEN 1 ELSE 0 END) AS consolidated
+      FROM memories WHERE project_key = ?
+    `, [projectKey]);
+    summary = {
+      scope: `project: ${projectKey}`,
+      total: counts.total, rules: counts.rules, consolidated: counts.consolidated,
+    };
+  } else {
+    const counts = await db.get(`SELECT COUNT(*) AS total FROM memories`);
+    const dirSize = await computeDirSize(getDataRoot());
+    summary = {
+      scope: 'ALL USER DATA',
+      total: counts.total,
+      data_dir: getDataRoot(),
+      disk_size_mb: (dirSize / 1024 / 1024).toFixed(1),
+    };
+  }
+
+  // 2. Show breakdown + require confirmation
+  process.stderr.write(`
+================ HIGH-RISK PURGE REQUEST ================
+Scope:        ${summary.scope}
+Total memories: ${summary.total}
+${target === 'project' ? `  Rules:           ${summary.rules}\n  Consolidated:    ${summary.consolidated}` : ''}
+${target === 'all'     ? `  Data directory:  ${summary.data_dir}\n  Disk size:       ${summary.disk_size_mb} MB` : ''}
+
+THIS ACTION IS IRREVERSIBLE.
+========================================================
+Type the following declaration verbatim to confirm:
+
+  "I want to permanently delete ${summary.scope} and accept data loss"
+
+>>> 
+`);
+
+  const expected =
+    `I want to permanently delete ${summary.scope} and accept data loss`;
+  const got = opts.confirmWithDeclaration || await promptUser();
+  if (got !== expected) {
+    return `ccmem: purge aborted (declaration mismatch)`;
+  }
+
+  // 3. Audit before destructive ops
+  await logAudit({
+    action: target === 'all' ? 'purge_all' : 'purge_project',
+    details: JSON.stringify(summary),
+  });
+
+  // 4. Execute (must go through safe-fs, see section 16)
+  if (target === 'project') {
+    await purgeProjectData(resolveProjectKey());
+  } else {
+    await purgeAllUserData();
+  }
+
+  return `ccmem: ${target} purged.`;
+}
+```
+
+---
+
+## 十三、评估指标(M6,SQLite 表)
+
+### 13.1 metrics schema 与生成
+
+```sql
+-- Already defined in section 4.1
+CREATE TABLE daily_metrics (
+  date         TEXT PRIMARY KEY,
+  metrics_json TEXT NOT NULL,
+  updated_at   TIMESTAMP NOT NULL
+);
+```
+
+`daily_consolidation` 末尾写入:
+
+```javascript
+async function computeDailyMetrics() {
+  const today = todayDateStr();
+  const metrics = {
+    version: 1,
+    as_of: today,
+    rolling_7d: await compute7dStats(),
+    memory_health: await computeMemoryHealth(),
+    consolidation: await computeConsolidationStats(),
+    observability: await computeObservability(),
+  };
+  await db.run(`
+    INSERT OR REPLACE INTO daily_metrics (date, metrics_json, updated_at)
+    VALUES (?, ?, ?)
+  `, [today, JSON.stringify(metrics), now()]);
+}
+```
+
+### 13.2 metrics 字段
+
+```json
+{
+  "version": 1,
+  "as_of": "2026-05-21",
+  "rolling_7d": {
+    "injection_count": 142,
+    "hit_helpful": 87,
+    "hit_unhelpful": 11,
+    "hit_helpful_implicit": 33,
+    "hit_unknown": 11,
+    "helpful_rate": 0.61,
+    "avg_injected_per_prompt": 4.3
+  },
+  "memory_health": {
+    "total_active": 312,
+    "total_archived": 47,
+    "total_probation": 9,
+    "total_quarantine": 2,
+    "avg_trust_active": 0.78,
+    "dangerous_command_count": 5,
+    "pending_revalidation": 3
+  },
+  "consolidation": {
+    "last_daily_run": "2026-05-21T02:17:00",
+    "merged_last_7d": 23,
+    "consolidated_last_7d": 4,
+    "cascade_archived_last_7d": 2
+  },
+  "observability": {
+    "hook_latency_ms": {
+      "session_start":      { "p50": 180, "p95": 290, "p99": 450 },
+      "user_prompt_submit": { "p50": 240, "p95": 540, "p99": 820 },
+      "pre_compact":        { "p50": 25,  "p95": 60,  "p99": 120 },
+      "stop":               { "p50": 18,  "p95": 45,  "p99": 90  }
+    },
+    "cron_catch_up_events_7d": 3,
+    "tier2_demoted_7d": 8,
+    "tier2_blocked_7d": 2,
+    "tier1_blocked_7d": 0
+  }
+}
+```
+
+**注**:不含 `cache_hit_rate`(v2.1 移除),因 Anthropic prompt cache 不对 hook 暴露指标。
+
+---
+
+## 十四、配置文件
+
+```jsonc
+// ~/.claude/ccmem/config.json (覆盖 config.default.json)
+{
+  "version": "3.0",
+  "paths": {
+    "data_root": "~/.claude/ccmem",
+    "project_subdir": ".ccmem"
+  },
+  "retrieval": {
+    "mode": "lexical",
+    "_comment_mode": "lexical (default, no download) | hybrid (opt-in, requires /ccmem:semantic on) | daemon (Phase 5 A) | prefetch (Phase 5 B)",
+    "candidatesPerLane": 30,
+    "promptSubmitTopK": 6,
+    "sessionStartStableTopN": 8,
+    "min_trust_inject": 0.4,
+    "daemon_socket": "~/.claude/ccmem/daemon.sock"
+  },
+  "embedding": {
+    "enabled": false,
+    "active_model": "bge-small-zh-v1.5",
+    "registry": {
+      "bge-small-zh-v1.5": { "dim": 384,  "url": "...", "size_mb": 95  },
+      "bge-m3":            { "dim": 1024, "url": "...", "size_mb": 567 },
+      "all-minilm-l6-v2":  { "dim": 384,  "url": "...", "size_mb": 80  }
+    },
+    "purge_old_on_switch": false
+  },
+  "injection": {
+    "format": "compact",
+    "use_raw_for_hot_segments": true,
+    "budget": {
+      "consolidated_global":  1000,
+      "consolidated_project": 1000,
+      "pinned":               1000,
+      "fresh":                500,
+      "total_cap":            4000,
+      "_comment":             "total_cap > sum 留 buffer (M4)",
+      "pinned_max_lines":     20
+    }
+  },
+  "priority": {
+    "basePriority":      { "rule": 1.2, "fact": 1.0, "skill": 1.3, "episode": 0.7, "consolidated": 1.5 },
+    "halfLifeDays":      { "rule": 90,  "fact": 60,  "skill": 90,  "episode": 14,  "consolidated": 180 },
+    "frequencyBoostCap": 1.8,
+    "frequencyBoostCoef": 0.08,
+    "unhelpfulPenaltyCoef": 2.0,
+    "frequencyFactorFloor": 0.1
+  },
+  "trust": {
+    "sourceInitial": {
+      "user_explicit": 0.9, "cron_consolidated": 0.85,
+      "tool_output": 0.7, "auto_inferred": 0.5,
+      "external": 0.3, "cerebrum_import": 0.8
+    },
+    "sourceMaxAfterProbation": {
+      "user_explicit": 0.95, "cron_consolidated": 0.95,
+      "tool_output": 0.9, "auto_inferred": 0.8,
+      "external": 0.7, "cerebrum_import": 0.85
+    },
+    "probationDays": {
+      "user_explicit": 0, "cron_consolidated": 0,
+      "tool_output": 7, "auto_inferred": 14,
+      "external": 14, "cerebrum_import": 7
+    },
+    "rewardOnHelpful": 0.05,
+    "rewardOnHelpfulImplicit": 0.025,
+    "penaltyOnUnhelpful": 0.10,
+    "penaltyOnCorrection": 0.15
+  },
+  "cron": {
+    "mode": "auto",
+    "lazy_catch_up_on_hook": true,
+    "auto_start_daemon": true,
+    "tasks": {
+      "summarize_pending":      { "schedule": "adaptive",   "max_catch_up_window_sec": 3600 },
+      "daily_consolidation":    { "schedule": "17 2 * * *", "max_catch_up_window_sec": 86400 },
+      "weekly_reflection":      { "schedule": "17 3 * * 0", "max_catch_up_window_sec": 259200 },
+      "security_audit":         { "schedule": "17 4 * * 1", "max_catch_up_window_sec": 259200 },
+      "revalidation_audit":     { "schedule": "17 4 * * 3", "max_catch_up_window_sec": 259200 }
+    }
+  },
+  "security": {
+    "tier1_patterns": "default",
+    "tier2_patterns": "default",
+    "tier2_weights": {
+      "in_code_block":          -3,
+      "in_quotes":              -2,
+      "imperative_prefix":      2,
+      "no_explanation":         1,
+      "short_content_dominant": 1
+    },
+    "tier2_thresholds": {
+      "allow_below": -1,
+      "block_above": 2
+    },
+    "secret_patterns": "default",
+    "block_secret_in_global": true,
+    "revalidation_interval_days": 30,
+    "force_demote_rule_to_episode": true,
+    "force_scope_to_project": true,
+    "auditTrustThreshold": 0.4,
+    "cascadeDegradeOnLineageEmpty": true
+  },
+  "capacity": {
+    "maxActivePerScope": 2000,
+    "forceConsolidateAtPercent": 90,
+    "evictBottomPercent": 20
+  },
+  "hooks": {
+    "openwolfIntegration": "auto",
+    "writeCerebrum": false
+  },
+  "feedback": {
+    "enabled": true,
+    "inference_window_turns": {
+      "retrieved":         2,
+      "session_start":     5
+    },
+    "negative_keywords_pattern":      "default",
+    "correction_keywords_pattern":    "default",
+    "assistant_selfcorrect_pattern":  "default",
+    "implicit_helpful_boost":         0.025,
+    "llm_review_sample_size":         100
+  },
+  "logging": {
+    "daemon_log_rotation": {
+      "rotate_daily":      true,
+      "max_size_mb":       10,
+      "retain_days":       90
     }
   }
 }
 ```
 
-### 7.4 每周反思 Prompt 模板
+---
+
+## 十五、目录结构(L5)
 
 ```
-你是一个记忆整合专家。分析以下记忆集合，执行深度整理。
+~/.claude/plugins/ccmem/          # 代码与默认配置(版本管理跟着插件走)
+├── package.json
+├── config.default.json
+├── scripts/
+│   ├── hook.mjs                  # 单入口分发
+│   ├── daemon.mjs
+│   ├── handlers/
+│   │   ├── session-start.mjs
+│   │   ├── prompt-submit.mjs
+│   │   ├── pre-compact.mjs
+│   │   ├── stop.mjs
+│   │   └── session-end.mjs
+│   ├── lib/
+│   │   ├── db.mjs
+│   │   ├── safe-fs.mjs           # 全部删除操作必走此模块(§16)
+│   │   ├── retrieve.mjs          # RetrievalProvider 抽象
+│   │   ├── priority.mjs
+│   │   ├── trust.mjs
+│   │   ├── trust-constants.mjs   # SOURCE_MAX_TRUST 等
+│   │   ├── embed.mjs             # opt-in
+│   │   ├── threat-scan.mjs       # Tier 1/2/3 判别
+│   │   ├── threat-patterns.mjs   # 正则库(版本化)
+│   │   ├── secret-scan.mjs       # secret 模式库
+│   │   ├── project-key.mjs       # normalizeGitUrl 等
+│   │   ├── injection-cache.mjs   # 段渲染 + budget 裁剪
+│   │   ├── lazy-catch-up.mjs
+│   │   ├── daemon-control.mjs    # checkDaemonHealth / startDaemonDetached
+│   │   ├── wake-file.mjs         # daemon.wake 触发 / 监听
+│   │   ├── mode.mjs              # active/shadow/off
+│   │   ├── audit.mjs             # logAudit 封装
+│   │   ├── openwolf-bridge.mjs   # cron-manifest / cerebrum 解析
+│   │   └── claude-p.mjs          # claude -p 子进程封装
+│   ├── cron/
+│   │   ├── summarize-pending.mjs
+│   │   ├── daily-consolidation.mjs
+│   │   ├── weekly-reflection.mjs
+│   │   ├── security-audit.mjs
+│   │   └── revalidation-audit.mjs
+│   ├── migrations/
+│   │   └── 001_initial.sql
+│   └── platform/
+│       ├── launchd.plist.tmpl    # macOS,含 WakeFromSleep
+│       ├── systemd.service.tmpl  # Linux,timer 配 Persistent=true
+│       └── win-task.xml.tmpl     # Windows,missed-trigger catch-up
+├── commands/                     # /ccmem:xxx slash command 定义
+│   ├── ccmem-list.md
+│   ├── ccmem-show.md
+│   ├── ccmem-pin.md
+│   ├── ccmem-unpin.md
+│   ├── ccmem-forget.md
+│   ├── ccmem-edit.md
+│   ├── ccmem-promote.md
+│   ├── ccmem-init.md
+│   ├── ccmem-stats.md
+│   ├── ccmem-bench.md
+│   ├── ccmem-migrate.md
+│   ├── ccmem-semantic.md
+│   ├── ccmem-export.md
+│   ├── ccmem-import.md
+│   ├── ccmem-mode.md
+│   ├── ccmem-show-key.md
+│   ├── ccmem-daemon.md
+│   ├── ccmem-purge.md
+│   ├── ccmem-audit.md
+│   └── ccmem-audit-allow.md
+└── tests/
 
-本周新增记忆（{recent_count} 条）：
-{recent_memories_json}
+~/.claude/ccmem/                  # 用户数据(不跟版本走)
+├── config.json                   # 用户配置(覆盖 config.default.json)
+├── global.db                     # 全局记忆 DB
+├── daemon.pid                    # daemon 进程信息
+├── daemon.log                    # daemon 滚动日志
+├── daemon.wake                   # Stop hook 触发文件
+├── daemon.sock                   # Phase 5 daemon IPC(可选)
+├── embeddings/                   # 模型缓存(按需下载)
+│   └── bge-small-zh-v1.5/
+│       ├── tokenizer.json
+│       ├── model.onnx
+│       └── tmp_<uuid>.partial    # 下载临时文件
+├── audit/                        # 审计日志归档(daemon 滚动)
+│   ├── 2026-W20.log
+│   └── 2026-W21.log
+└── README.md                     # 自动生成,提示用户内容与清理方式
 
-高频召回记忆（{frequent_count} 条）：
-{frequent_memories_json}
-
-任务：
-1. 识别可以合并为一条通用规则的多条具体记忆（consolidated_rules）
-2. 识别互相矛盾的记忆对，判断哪条应保留（contradictions）
-3. 识别频繁共现的模式，总结为新规则（patterns）
-
-输出 JSON：
-{
-  "consolidated_rules": [{"content": "...", "source_ids": ["id1", "id2"]}],
-  "contradictions": [{"pair": ["id1", "id2"], "weaker_id": "id1", "reason": "..."}],
-  "patterns": [{"content": "...", "evidence_ids": ["id1", "id2", "id3"]}]
-}
-
-如果没有值得整合的内容，对应数组返回空。
+<project>/.ccmem/                 # 项目数据
+├── project.db
+└── .gitignore                    # 推荐:`*.db` + `!.gitkeep`
 ```
+
+### 用户清理路径
+
+| 操作 | 影响 |
+|------|------|
+| `rm -rf ~/.claude/plugins/ccmem` | 卸载插件,**数据保留** |
+| `rm -rf ~/.claude/ccmem` | 删除全部用户数据(global + 缓存 + 日志) |
+| `rm -rf <project>/.ccmem` | 仅删该项目记忆 |
+| `/ccmem:purge project` | 同上,**走特批高危删除**(强确认 + 审计) |
+| `/ccmem:purge-all` | 同 `~/.claude/ccmem` 全删,**特批高危** |
 
 ---
 
-## 八、双层作用域设计
+## 十六、安全删除与逃生口
 
-### 8.1 全局记忆 vs 项目记忆
+### 16.1 safe-fs 模块(M5)
 
-```
-~/.claude/plugins/claude-memory/data/chroma/
-├── global_memory/                  # 全局通用记忆
-│   └── (chroma persistent data)
-├── project_a1b2c3d4_memory/        # 项目 A 专属记忆
-├── project_e5f6g7h8_memory/        # 项目 B 专属记忆
-└── ...
-```
-
-### 8.2 作用域判断规则
-
-| 信息类型 | 示例 | 归属 scope |
-|----------|------|-----------|
-| 用户通用偏好 | "偏好 4 空格缩进" | global |
-| 沟通风格 | "回答要简洁" | global |
-| 项目技术栈 | "本项目使用 Next.js 14 + TypeScript" | project |
-| 项目约定 | "API 路由统一放在 /app/api/" | project |
-| 操作技能 | "Docker Compose 部署流程" | 视通用性判断 |
-
-### 8.3 检索时的合并策略
+**永不使用 `rm -rf` 或任何 shell 通配删除**。
 
 ```javascript
-// SessionStart 时的检索逻辑
+// scripts/lib/safe-fs.mjs
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
-// 全局记忆：始终加载，但数量较少（top-5）
-const globalTop = await queryWithPriority("global_memory", query, 5);
+const CCMEM_DATA_ROOT = path.resolve(
+  process.env.CCMEM_DATA_ROOT
+    || path.join(os.homedir(), '.claude/ccmem')
+);
 
-// 项目记忆：项目相关，数量更多（top-7）
-const projectTop = await queryWithPriority(`project_${hash}_memory`, query, 7);
-
-// 合并后再统一排序，最终注入 top-10
-const merged = [...globalTop, ...projectTop]
-  .sort((a, b) => b.priority_score - a.priority_score)
-  .slice(0, 10);
-```
-
----
-
-## 九、与 OpenWolf 的协作
-
-本插件与 OpenWolf 并行运行，职责分工：
-
-| 职责 | OpenWolf | 记忆插件 |
-|------|----------|----------|
-| 文件导航优化 | ✅ anatomy.md | — |
-| Token 审计 | ✅ token-ledger | — |
-| Session 内行为追踪 | ✅ hooks + memory.md | — |
-| 跨 session 语义记忆 | — | ✅ Chroma 向量检索 |
-| 规则/偏好持久化 | ⚠️ cerebrum.md（文本） | ✅ 向量化 + 优先级排序 |
-| 周期性整合 | ⚠️ cron-manifest（简单压缩） | ✅ LLM 驱动的深度整合 |
-| 技能沉淀 | — | ✅ type=skill 记忆 |
-
-**协作而非冲突**：OpenWolf 的 cerebrum.md 侧重于「当前 session 内的即时学习提醒」，记忆插件侧重于「跨 session 的长期知识积累与智能检索」。
-
----
-
-## 十、配置文件设计
-
-```json
-// ~/.claude/plugins/claude-memory/config.json
-{
-  "version": 1,
-  "chroma": {
-    "persistPath": "~/.claude/plugins/claude-memory/data/chroma",
-    "embeddingModel": "default"
-  },
-  "retrieval": {
-    "maxInjectCount": 10,
-    "globalTopK": 5,
-    "projectTopK": 7,
-    "candidatePoolSize": 30,
-    "similarityThreshold": 0.3
-  },
-  "priority": {
-    "basePriority": {
-      "rule": 1.2,
-      "fact": 1.0,
-      "skill": 1.3,
-      "episode": 0.7,
-      "consolidated": 1.5
-    },
-    "decayRate": {
-      "rule": 0.02,
-      "fact": 0.03,
-      "skill": 0.01,
-      "episode": 0.1,
-      "consolidated": 0.01
-    },
-    "frequencyBoostCap": 2.0,
-    "frequencyBoostStep": 0.1
-  },
-  "consolidation": {
-    "dailyCronTime": "0 2 * * *",
-    "weeklyCronTime": "0 3 * * 0",
-    "deduplicationThreshold": 0.92,
-    "candidateExpireDays": 30,
-    "finalDeleteDays": 14
-  },
-  "summarization": {
-    "model": "claude -p",
-    "maxSessionTokens": 4000,
-    "maxMemoryContentLength": 100
-  },
-  "hooks": {
-    "sessionStartTimeout": 8,
-    "stopTimeout": 15,
-    "stopAsync": true
+export async function safeDeleteFile(filePath, opts = {}) {
+  if (!path.isAbsolute(filePath)) {
+    throw new Error(`safeDeleteFile requires absolute path: ${filePath}`);
   }
+
+  const resolved = await fs.realpath(filePath).catch(() => path.resolve(filePath));
+  const allowedRoots = (opts.allowedRoots || [CCMEM_DATA_ROOT]).map(r => path.resolve(r));
+
+  const inAllowedRoot = allowedRoots.some(root =>
+    resolved === root || resolved.startsWith(root + path.sep)
+  );
+  if (!inAllowedRoot) {
+    throw new Error(
+      `Refusing to delete outside allowed roots:\n` +
+      `  path: ${resolved}\n` +
+      `  allowed: ${allowedRoots.join(', ')}`
+    );
+  }
+
+  const stat = await fs.lstat(resolved);
+  if (!stat.isFile()) {
+    throw new Error(
+      `safeDeleteFile only deletes regular files: ${resolved} ` +
+      `is ${stat.isDirectory() ? 'directory' : 'special'}`
+    );
+  }
+
+  if (opts.filenamePattern && !opts.filenamePattern.test(path.basename(resolved))) {
+    throw new Error(`Filename does not match expected pattern: ${path.basename(resolved)}`);
+  }
+
+  await logAudit({
+    action: 'safe_delete_file',
+    path: resolved,
+    size: stat.size,
+    requested_by: opts.requested_by || 'system',
+  });
+
+  await fs.unlink(resolved);
 }
+
+// 不实现 safeDeleteDirectory(避免递归删除的风险扩散)
+// 删除目录:遍历调用 safeDeleteFile + 最后单独删空目录
+export async function safeEmptyAndRemoveDir(dirPath, opts = {}) {
+  if (!path.isAbsolute(dirPath)) throw new Error(`absolute path required`);
+  const resolved = await fs.realpath(dirPath).catch(() => path.resolve(dirPath));
+  const allowedRoots = (opts.allowedRoots || [CCMEM_DATA_ROOT]).map(r => path.resolve(r));
+  if (!allowedRoots.some(r => resolved === r || resolved.startsWith(r + path.sep))) {
+    throw new Error(`Refusing to remove directory outside allowed roots: ${resolved}`);
+  }
+
+  // 递归遍历,只删 file(走 safeDeleteFile),不接受目录中的目录链接
+  for await (const entry of walkFilesOnly(resolved)) {
+    await safeDeleteFile(entry, {
+      allowedRoots: [resolved],
+      requested_by: opts.requested_by || 'system',
+    });
+  }
+
+  // 删空目录(自底向上)
+  await removeEmptyDirsRecursive(resolved);
+}
+
+async function walkFilesOnly(root) { /* ... */ }
+async function removeEmptyDirsRecursive(root) { /* 用 rmdir,不接受 recursive */ }
 ```
+
+### 16.2 Kill switch(L10)
+
+`/ccmem:mode off` 已覆盖此场景(§12.2):
+- mode_state 表为 `off` 时,所有 hook 立即 `exit 0`
+- daemon 主循环 mode='off' 时只休眠
+- 用户运行 `/ccmem:mode active` 恢复
 
 ---
 
-## 十一、注入格式设计
+## 十七、实现路线图
 
-SessionStart hook 通过 stderr 注入的记忆格式：
+### Phase 0:基础设施
 
-```
-📝 Memory System: 10 relevant memories loaded
+- 目录结构 + SQLite + schema migration 001
+- `project_key` 解析(git remote 优先)
+- safe-fs 模块 + 单元测试
+- audit log 模块
+- mode 切换骨架
 
-[RULES]
-• (0.95) 用户偏好 TypeScript，禁止在此项目使用 JavaScript
-• (0.90) 回答要简洁直接，不要冗余解释
+### Phase 1:核心 hook 链(lexical-only)
 
-[FACTS]  
-• (0.85) 本项目使用 Next.js 14 + App Router + Tailwind CSS
-• (0.80) 部署目标：AWS cn-north-1，使用 CDK 管理基础设施
+- SessionStart:injection_cache 读取 + pinned/fresh 实时渲染 + lazy catch-up
+- UserPromptSubmit:LexicalProvider(FTS5 + Jaccard) + 反馈写入
+- Stop / SessionEnd:写 pending_summarize + wake file
+- 写入闸门 insertMemory():Tier 1 + secret + Tier 2 + 强制降级
+- `/ccmem:mode`, `/ccmem:list`, `/ccmem:show`, `/ccmem:forget`(同步级联), `/ccmem:show-key`
+- 反馈推断 L1(关键词 + 上下文判别)
 
-[SKILLS]
-• (0.88) Docker 部署流程：先 build → 推送 ECR → 更新 ECS task definition
+### Phase 2:Daemon + 异步整合
 
-[CONSOLIDATED]
-• (0.92) 此项目的测试规范：单元测试用 Vitest，E2E 用 Playwright，覆盖率 > 80%
-```
+- 独立 daemon(单实例锁 + 心跳 + wake file)
+- daemon 自动拉起(checkDaemonHealth + startDaemonDetached)
+- `summarize_pending` cron(自适应轮询 + 高优先级 + claude -p 封装)
+- `daily_consolidation`(half-life + dedupe + 删除归档)
+- 反馈推断 L2(transcript 自纠) + L3(沉默通过)
+- `/ccmem:pin`, `/ccmem:unpin`, `/ccmem:edit`, `/ccmem:promote`, `/ccmem:stats`, `/ccmem:daemon`, `/ccmem:bench`
 
-括号内为 confidence 值，便于 Claude 判断可信度。
+### Phase 3:深度反思与防护
 
----
+- `weekly_reflection`:consolidated_rules + injection_cache 重生 + lineage 写入 + L4 反馈复核
+- PreCompact hook(前 70% 切片入队)
+- 语义矛盾检测 + quarantine 状态
+- `security_audit` + `revalidation_audit`
+- consolidated 级联降级兜底
+- `/ccmem:audit`, `/ccmem:audit-allow`
 
-## 十二、安全与防护
+### Phase 4:OpenWolf 集成 + 评估
 
-### 12.1 记忆写入校验
+- 检测 `.wolf/cron-manifest.json` 自动注册
+- cerebrum.md 段落映射 sync 子步骤(读)
+- `/ccmem:export`, `/ccmem:import`, `/ccmem:migrate`
+- daily_metrics 完整指标 + `/ccmem:stats` 输出
+- 跨平台守护模板(launchd / systemd / scheduled task)
+- `/ccmem:purge`, `/ccmem:purge-all`(特批高危删除)
 
-- 新记忆写入前，与现有记忆做语义相似度检查（> 0.95 视为重复，跳过）
-- 与现有记忆做矛盾检测（相似度 0.7-0.9 且语义方向相反 → 标记为需要人工确认）
+### Phase 5:增强(opt-in)
 
-### 12.2 置信度防护
-
-- `source: auto_inferred` 的记忆 confidence 上限为 0.7
-- 仅 `user_explicit` 来源可达 0.95
-- confidence < 0.4 的记忆不会被注入上下文
-
-### 12.3 容量保护
-
-- 单个 collection 最大 2000 条记忆
-- 超过上限时触发强制整合（淘汰最低 priority_score 的 20%）
-- 注入上下文的总字符数上限：2000 字符（避免挤占有效上下文）
-
----
-
-## 十三、实现路线图
-
-### Phase 1：核心功能
-- Chroma 初始化与基础 CRUD
-- SessionStart hook：基础语义检索 + 注入
-- Stop hook：claude -p 总结 + 写入
-- 优先级排序算法
-- 全局/项目双层 collection
-
-### Phase 2：智能整合
-- 每日 Cron 整合任务（衰减、去重、淘汰）
-- 每周 Cron 深度反思（LLM 驱动的规则提炼）
-- Touch 机制与衰减状态机
-
-### Phase 3：增强功能
-- 矛盾检测与自动解决
+- `embedding` opt-in 流程:`/ccmem:semantic on/switch/repair-registry`
+  - 5 层唯一性防御(validateModelId / hash 后缀 / UNIQUE 约束 / 运行时活检 / repair 命令)
+  - 多 vec_index 表 + BLOB 原始数据
+  - 后台 embed worker
+- HybridProvider 上线
+- 评估实测:容量、p95、helpful_rate 决定是否进 DaemonIpcProvider 或 PrefetchProvider
 - 容量保护与强制整合
-- 记忆导出/导入（迁移支持）
-- 可视化 dashboard（记忆状态、优先级分布）
+- 可视化 dashboard(可选)
+- shadow mode 数据观察(beta 用户试用 1 周再切 active)
+
+---
+
+## 十八、Known unknowns
+
+- **Embedding 模型可选下载体验**:`/ccmem:semantic on` 时后台下载 ~95MB(bge-small),需明确进度提示。下载期间检索自动 fallback 到 lexical。
+- **Windows 守护进程**:`scheduled tasks` 可靠性不如 launchd/systemd。Layer 1 lazy catch-up + daemon 自动拉起组合应可兜底,但用户从不开 Claude Code 时会持续积压。
+- **多机同步**:目前设计是单机本地,跨设备同步(笔记本 + 台式)未覆盖。可能策略:`<project>/.ccmem/project.db` 纳入 git;`global.db` 留本地,通过 `/ccmem:export/import` 手动同步。
+- **多用户共享项目**:同一 git remote 下多人各自有自己的 ccmem,跨人的 project 记忆是否要合并?暂不考虑(隐私 + 个性化需求矛盾)。
+- **反馈推断误判率**:L1/L2 关键词模板初版基于经验,需实测调整。L4 LLM 复核可纠正,但累积错误需观察。
+- **`weekly_reflection` 周日深夜跑不到的概率**:Layer 1 在 72h 内有效。极端场景(周一/周二都没开机)需评估是否扩窗到 168h。
+- **fs.watch 在 NFS / 远程文件系统的可靠性**:已设计轮询降级,但需要在 CI 上覆盖。
+- **summarize_pending 高频触发场景**:用户连开多个短会话,pending 队列可能膨胀。当前没有去重(同 session_id 多条 trigger 入队);可能需要 daemon 消费时合并。
+- **dangerous_command tag 的国际化**:目前正则只覆盖中英,日韩等用户的场景未测。
+- **prompt cache 利用率**:Anthropic prompt cache TTL 默认 5 分钟,在 agent 长时会话场景常 miss。**设计明确不依赖 cache 优化**——hot/injection_cache 的稳定性是为了"语义有用"而非"命中 cache"。已不在 metrics 中追踪。

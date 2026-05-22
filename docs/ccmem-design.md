@@ -27,7 +27,7 @@
 | 11 | **/ccmem:mode 统一启停**(`active` / `shadow` / `off`),取消 `enable`/`disable` 双义命令 | §12 | 命令语义清晰 |
 | 12 | **`/ccmem:purge-*` 走特批高危删除**(强确认 + 显示删除总大小 + 审计) | §12 | 防误删用户数据 |
 | 13 | **safe-fs 模块封装所有删除**:绝对路径 + realpath + 白名单根目录 + 类型检查 + 文件名 pattern;**永不使用 `rm -rf`** | 缺失 | 防符号链接逃逸、路径误解析 |
-| 14 | **Schema 加 `schema_meta` 版本表**;`cron_task_state` 加锁字段(`lock_holder` / `lock_acquired_at`);`memories` 加 `generation` / `pinned` / `last_revalidated_at` 字段 | §4.1 / §7.6 | 支持平滑迁移、并发去重、防止二级整合 |
+| 14 | **Schema 加 `schema_meta` 版本表**;`cron_task_state` 加锁字段(`lock_holder` / `lock_acquired_at`);`memories` 加 `generation` / `pinned` / `last_revalidated_at` 字段 | §4.1 / §7.6 | 支持平滑迁移、并发去重、三级整合(gen 0→1→2) |
 | 15 | **反馈推断 L1 加 code-block / quote / imperative 信号判别**,降低代码引用造成的假阳性 | §6.6 L1 | 中英开发者频繁在 prompt 中粘代码 |
 | 16 | **性能预算硬约束**(SessionStart p95 ≤ 300ms,UserPromptSubmit p95 ≤ 500ms,Stop/PreCompact p95 ≤ 80ms);`/ccmem:bench` 命令测量 | 缺失 | 防 hook 链阻塞用户感知 |
 | 17 | **统一注入格式规范**:type 单字母 + trust + age + 状态后缀(`!p`/`!c`/`!ctx`);verbose / compact / raw 三档,默认 compact | §11.2 不一致 | LLM 解读一致性 |
@@ -155,7 +155,7 @@ CREATE TABLE memories (
 
   -- Behavior flags
   pinned               INTEGER DEFAULT 0,      -- 0|1, user pinned
-  generation           INTEGER DEFAULT 0,      -- 0=raw, 1=first consolidation, >=2 forbidden
+  generation           INTEGER DEFAULT 0,      -- 0=raw, 1=shallow consolidation, 2=deep consolidation
   last_revalidated_at  TIMESTAMP,              -- periodic revalidation timestamp
   revalidation_count   INTEGER DEFAULT 0,
   requires_revalidation INTEGER DEFAULT 0,     -- 0|1, derived from tags (C12.1 index optimization)
@@ -357,6 +357,44 @@ CREATE TABLE daemon_lock (
 | `skill` | 可复用操作方法论 | 1.3 | 90 | 0.9 |
 | `episode` | 一次性情景片段 | 0.7 | 14 | 0.7 |
 | `consolidated` | cron 整合产出的高阶规则 | 1.5 | 180 | 0.95 |
+
+### 4.2.1 Generation 与半衰期设计原理
+
+#### Generation 层级
+
+| Generation | 语义 | 触发条件 | 半衰期 |
+|------------|------|----------|--------|
+| gen 0 | 原始情景记忆 | hook 写入 | 3 天 |
+| gen 1 | 浅层整合（规则提取） | `mini_consolidate` 每 10 分钟 | 14 天 |
+| gen 2 | 深层整合（跨规则归纳） | `weekly_reflection` 每周 | 60 天 |
+
+类比人类睡眠：gen 0 是清醒时的短期记忆，gen 1 是浅层睡眠的初步整理，gen 2 是深层睡眠的长期固化。
+
+#### 半衰期基于 `last_touched_at` 而非 `created_at`
+
+**设计决策**：`recencyFactor` 计算使用 `last_touched_at`（最后活跃时间），而非 `created_at`（创建时间）。
+
+**原因**：支持不同使用频率的用户。
+
+| 用户类型 | 使用模式 | 若基于 created_at | 若基于 last_touched_at |
+|----------|----------|-------------------|------------------------|
+| 高频同质 | 每天 10+ 次，类似工作 | 正常：记忆快速积累并整合 | 正常 |
+| 低频异质 | 每天 1-2 次，不同工作 | **问题**：记忆还没积累到可整合数量就已衰减 | 每次召回刷新活跃时间，保持优先级 |
+
+基于 `last_touched_at` 的好处：
+1. **低频用户**：记忆被检索命中 → 刷新活跃时间 → 保持高优先级，等待相似记忆积累
+2. **高频用户**：相似记忆快速整合 → gen 1 继承较新的 `last_touched_at`
+3. **无用记忆**：长期不被召回 → 自然衰减沉底 → 最终归档
+
+#### 半衰期与整合周期的关系
+
+设计原则：**半衰期 ≥ 2× 整合周期**，确保记忆在被整合前有足够优先级。
+
+| Generation | 半衰期 | 整合周期 | 整合时 recency_factor |
+|------------|--------|----------|----------------------|
+| gen 0 | 3 天 | 10 分钟 | ~1.0（远未衰减） |
+| gen 1 | 14 天 | 7 天 | ~0.71（仍有高优先级） |
+| gen 2 | 60 天 | —（终态） | 长期保持 |
 
 ### 4.3 来源分级 trust
 
@@ -1560,7 +1598,9 @@ Tasks:
 
 Hard constraints:
 - consolidated.generation must be derived from source.generation + 1
-- Never produce generation >= 2 outputs
+- Generation limit: gen ∈ {0, 1, 2}, where gen 2 is the terminal state
+- mini_consolidate: gen 0 → gen 1 (shallow consolidation)
+- weekly_reflection: gen 1 clusters → gen 2 (deep consolidation)
 - Source memories with tag 'dangerous_command' cannot be used in
   consolidated rules (they remain project-scoped episodes)
 
@@ -1691,10 +1731,12 @@ async function writeConsolidatedRules(consolidatedRules) {
         }
 
         for (const src of sources) {
-          // Generation constraint (M9): max source generation must be < 1
-          if (src.generation >= 1) {
+          // Generation constraint (M9): source generation must be < 2
+          // - mini_consolidate: gen 0 → gen 1 (shallow)
+          // - weekly_reflection: gen 1 → gen 2 (deep, terminal)
+          if (src.generation >= 2) {
             throw new GenerationLimitError(
-              `Cannot consolidate from source ${src.id} at generation >= 1 (got ${src.generation})`
+              `Cannot consolidate from source ${src.id} at generation >= 2 (got ${src.generation})`
             );
           }
 
@@ -2561,9 +2603,9 @@ async function insertMemory(mem) {
     }
   }
 
-  // 5. Generation check (M9)
-  if (mem.generation >= 2) {
-    throw new GenerationLimitError(`Generation must be < 2, got ${mem.generation}`);
+  // 5. Generation check (M9): gen ∈ {0, 1, 2}, gen 2 is terminal
+  if (mem.generation < 0 || mem.generation > 2) {
+    throw new GenerationLimitError(`Generation must be 0, 1, or 2, got ${mem.generation}`);
   }
 
   // 6. C5: Capacity check with soft/hard limits (A+D solution)

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --experimental-sqlite \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" session-start",
+            "timeout": 1
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --experimental-sqlite \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" prompt-submit",
+            "timeout": 2
+          }
+        ]
+      }
+    ]
+  }
+}

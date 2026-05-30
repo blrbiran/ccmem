@@ -1,0 +1,14 @@
+{
+  "name": "ccmem",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ccmem": "./bin/ccmem"
+  },
+  "scripts": {
+    "test": "node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
+    "test:unit": "node --test tests/unit/*.test.mjs",
+    "test:integration": "node --test tests/integration/*.test.mjs"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "ccmem",
+  "version": "0.2.0",
+  "description": "Cross-session semantic memory for Claude Code using SQLite and FTS5.",
+  "license": "MIT",
+  "mcpServers": {},
+  "commands": ["./commands/"],
+  "skills": []
+}

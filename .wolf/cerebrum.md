@@ -2,7 +2,7 @@
 
 > OpenWolf's learning memory. Updated automatically as the AI learns from interactions.
 > Do not edit manually unless correcting an error.
-> Last updated: 2026-05-27
+> Last updated: 2026-05-30
 
 ## User Preferences
 
@@ -34,6 +34,9 @@
   在 schema 中显式声明。C-1 review 发现 6 处 column 引用但未定义、C-4 发现整张
   memory_feedback 表无 CREATE TABLE、C-3 发现 mode_state vs config_kv 矛盾。规范:
   PR 引入新 SQL 引用必须同步更新 schema 章节,grep checklist 加这一项。
+- **[2026-05-30] 本机验证要显式用 `/usr/local/bin/node`**:默认 `node` 是 v20.19.5,
+  但当前实现依赖 `node:sqlite`; `/usr/local/bin/node` 是 v24.13.0,可以稳定跑测试。
+  在这个仓库里执行 sqlite 相关测试/脚本时,不要假设 PATH 上的 `node` 可用。
 - **[2026-05-28] 冗余字段反 SSOT**:数据已有 single source of truth 时不应在其它
   位置冗余存储(易失同步)。C-2:`parent_ids` 应是纯整数数组而非 `[{id, depth}]`,
   depth 由 `consolidation_depth` 列承担,不再 JSON 内嵌。
@@ -170,3 +173,9 @@
 | 2026-05-22 | 4 层优先级:defaults < user < project < runtime。null=delete deep merge | design.md §14 |
 | B5 | 项目级 config 只认 `project_key` / `project_key_remote_priority` 两个 key | v0.1-spec §7.1 |
 | U-6 | shadow 三档清晰边界:active(全功能) / shadow(read-only diagnostic) / off(early-exit) | v0.1-spec §5.6 |
+
+### 主题 7: 实施策略
+
+| 决策 ID | 结论 | 详见 |
+|---------|------|------|
+| 2026-05-30 | v0.1 + v0.2 作为一个交付实现；实施顺序采用 vertical slicing；运行时通过 capability gate 保留 Tier 退化语义 | docs/superpowers/specs/2026-05-30-ccmem-v01-v02-implementation-design.md |

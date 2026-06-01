@@ -1,5 +1,7 @@
 import { openDb } from './lib/db.mjs';
+import { cmdAuditShow } from './lib/cmd/audit.mjs';
 import { cmdList } from './lib/cmd/list.mjs';
+import { cmdMode } from './lib/cmd/mode.mjs';
 import { cmdSave } from './lib/cmd/save.mjs';
 
 const db = openDb();
@@ -16,6 +18,12 @@ try {
     for (const row of rows) {
       process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}\n`);
     }
+  } else if (verb === 'mode') {
+    const result = await cmdMode(db, { mode: args[0] ?? null });
+    process.stdout.write(`ccmem: mode=${result.mode}\n`);
+  } else if (verb === 'audit' && args[0] === 'show' && args[1]) {
+    const row = await cmdAuditShow(db, { id: Number(args[1]) });
+    process.stdout.write(`${JSON.stringify(row)}\n`);
   }
 } finally {
   db.close();

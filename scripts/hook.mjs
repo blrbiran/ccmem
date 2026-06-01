@@ -22,3 +22,17 @@ if (mode === 'prompt-submit') {
   const { handlePromptSubmit } = await import('./handlers/prompt-submit.mjs');
   await withHookSafety('prompt_submit', 2000, () => handlePromptSubmit(hookData), T_ENTRY);
 }
+
+if (mode === 'stop') {
+  const { withHookSafety } = await import('./lib/hook-safety.mjs');
+  const { openDb } = await import('./lib/db.mjs');
+  const { handleStop } = await import('./handlers/stop.mjs');
+  const db = openDb();
+  await withHookSafety('stop', 200, async () => {
+    try {
+      return await handleStop(db, hookData);
+    } finally {
+      db.close();
+    }
+  }, T_ENTRY);
+}

@@ -2525,7 +2525,7 @@ test('scheduleCronTasks at local 03:17 on Sunday enqueues daily and weekly work 
   ]);
   assert.deepEqual(leases, [
     { type: 'daily_maintenance', date_key: dayKey(sundayMorning), ran_by: 'daemon', status: 'running' },
-    { type: 'weekly_synthesis', date_key: weekKey(sundayMorning), ran_by: 'daemon', status: 'running' }
+    { type: 'weekly_synthesis', date_key: weeklyLeaseKey(sundayMorning), ran_by: 'daemon', status: 'running' }
   ]);
 
   db.close();
@@ -2713,7 +2713,7 @@ test('scheduleCronTasks at local 03:17 on Monday catches up weekly synthesis onc
   ]);
   assert.deepEqual(leases, [
     { type: 'daily_maintenance', date_key: dayKey(mondayBoundary), ran_by: 'daemon', status: 'running' },
-    { type: 'weekly_synthesis', date_key: weekKey(mondayBoundary), ran_by: 'daemon', status: 'running' }
+    { type: 'weekly_synthesis', date_key: weeklyLeaseKey(mondayBoundary), ran_by: 'daemon', status: 'running' }
   ]);
 
   db.close();
@@ -2752,7 +2752,7 @@ test('scheduleCronTasks on Monday after local 03:17 catches up weekly synthesis 
   ]);
   assert.deepEqual(leases, [
     { type: 'daily_maintenance', date_key: dayKey(mondayAfterWeeklyHour), ran_by: 'daemon', status: 'running' },
-    { type: 'weekly_synthesis', date_key: weekKey(mondayAfterWeeklyHour), ran_by: 'daemon', status: 'running' }
+    { type: 'weekly_synthesis', date_key: weeklyLeaseKey(mondayAfterWeeklyHour), ran_by: 'daemon', status: 'running' }
   ]);
 
   db.close();
@@ -2786,7 +2786,7 @@ test('scheduleCronTasks keeps weekly catch-up under the same Sunday lease across
 
   assert.equal(weeklyTaskCount.n, 1);
   assert.deepEqual(weeklyLeases, [
-    { date_key: weekKey(sundayBoundary), ran_by: 'daemon', status: 'running' }
+    { date_key: weeklyLeaseKey(sundayBoundary), ran_by: 'daemon', status: 'running' }
   ]);
 
   db.close();

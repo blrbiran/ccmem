@@ -19,6 +19,8 @@ const NODE = '/usr/local/bin/node';
 const CLI = '/Users/biran/code/skills/ccmem/scripts/cli.mjs';
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
+const { dispatchTask } = await import('../../scripts/daemon/dispatch.mjs');
+const { dayKey, weeklyLeaseKey, runTask } = await import('../../scripts/daemon/loop.mjs');
 const { cmdAdminCron } = await import('../../scripts/lib/admin/cron.mjs');
 
 function resetCronTables(db) {
@@ -98,22 +100,410 @@ test('cmdAdminCron returns latest runs and queued counts', async () => {
   db.close();
 });
 
-test('cmdAdminCron run enqueues supported cron tasks immediately', async () => {
+test('cmdAdminCron run enqueues daily maintenance with a manual local-day lease key', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const fixedNow = new Date(2026, 5, 8, 2, 17, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    const result = await cmdAdminCron(db, { verb: 'run', taskType: 'daily_maintenance' });
+    const task = db.prepare(
+      `SELECT type, payload, scheduled_for, status
+       FROM tasks
+       WHERE id = ?`
+    ).get(result.task_id);
+    const lease = db.prepare(
+      `SELECT date_key, ran_by, status
+       FROM task_runs
+       WHERE type = 'daily_maintenance'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+
+    assert.equal(result.type, 'daily_maintenance');
+    assert.equal(task.type, 'daily_maintenance');
+    assert.equal(task.scheduled_for, fixedNowMs);
+    assert.equal(task.status, 'queued');
+    assert.deepEqual(JSON.parse(task.payload), { lease_key: dayKey(fixedNow) });
+    assert.equal(lease.date_key, dayKey(fixedNow));
+    assert.equal(lease.ran_by, 'manual');
+    assert.equal(lease.status, 'running');
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('cmdAdminCron run enqueues weekly synthesis with the anchored manual week lease key', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const fixedNow = new Date(2026, 5, 8, 3, 18, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    const result = await cmdAdminCron(db, { verb: 'run', taskType: 'weekly_synthesis' });
+    const task = db.prepare(
+      `SELECT type, payload, scheduled_for, status
+       FROM tasks
+       WHERE id = ?`
+    ).get(result.task_id);
+    const lease = db.prepare(
+      `SELECT date_key, ran_by, status
+       FROM task_runs
+       WHERE type = 'weekly_synthesis'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+
+    assert.equal(result.type, 'weekly_synthesis');
+    assert.equal(task.type, 'weekly_synthesis');
+    assert.equal(task.scheduled_for, fixedNowMs);
+    assert.equal(task.status, 'queued');
+    assert.deepEqual(JSON.parse(task.payload), { lease_key: weeklyLeaseKey(fixedNow) });
+    assert.equal(lease.date_key, weeklyLeaseKey(fixedNow));
+    assert.equal(lease.ran_by, 'manual');
+    assert.equal(lease.status, 'running');
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('cmdAdminCron run skips a duplicate daily manual lease', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const fixedNow = new Date(2026, 5, 8, 2, 17, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    const first = await cmdAdminCron(db, { verb: 'run', taskType: 'daily_maintenance' });
+    const second = await cmdAdminCron(db, { verb: 'run', taskType: 'daily_maintenance' });
+    const queued = db.prepare(
+      `SELECT COUNT(*) AS n
+       FROM tasks
+       WHERE type = 'daily_maintenance'`
+    ).get();
+    const leases = db.prepare(
+      `SELECT COUNT(*) AS n
+       FROM task_runs
+       WHERE type = 'daily_maintenance'`
+    ).get();
+
+    assert.equal(first.status, 'queued');
+    assert.equal(second.status, 'skipped');
+    assert.equal(second.task_id, null);
+    assert.equal(second.reason, 'lease already claimed');
+    assert.equal(queued.n, 1);
+    assert.equal(leases.n, 1);
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('manual daily admin cron run completes the claimed lease after dispatch', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const fixedNow = new Date(2026, 5, 8, 2, 17, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    const result = await cmdAdminCron(db, { verb: 'run', taskType: 'daily_maintenance' });
+    const task = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(result.task_id);
+
+    await runTask(db, task, dispatchTask);
+
+    const storedTask = db.prepare(
+      `SELECT status, finished_at
+       FROM tasks
+       WHERE id = ?`
+    ).get(result.task_id);
+    const lease = db.prepare(
+      `SELECT date_key, ran_by, status, completed_at
+       FROM task_runs
+       WHERE type = 'daily_maintenance'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+
+    assert.equal(storedTask.status, 'completed');
+    assert.equal(typeof storedTask.finished_at, 'number');
+    assert.equal(lease.date_key, dayKey(fixedNow));
+    assert.equal(lease.ran_by, 'manual');
+    assert.equal(lease.status, 'completed');
+    assert.equal(typeof lease.completed_at, 'number');
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('manual weekly admin cron run completes the claimed lease after dispatch', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const fixedNow = new Date(2026, 5, 8, 3, 18, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    const result = await cmdAdminCron(db, { verb: 'run', taskType: 'weekly_synthesis' });
+    const task = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(result.task_id);
+
+    await runTask(db, task, dispatchTask);
+
+    const storedTask = db.prepare(
+      `SELECT status, finished_at
+       FROM tasks
+       WHERE id = ?`
+    ).get(result.task_id);
+    const lease = db.prepare(
+      `SELECT date_key, ran_by, status, completed_at
+       FROM task_runs
+       WHERE type = 'weekly_synthesis'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+
+    assert.equal(storedTask.status, 'completed');
+    assert.equal(typeof storedTask.finished_at, 'number');
+    assert.equal(lease.date_key, weeklyLeaseKey(fixedNow));
+    assert.equal(lease.ran_by, 'manual');
+    assert.equal(lease.status, 'completed');
+    assert.equal(typeof lease.completed_at, 'number');
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('cmdAdminCron run keeps summarize_pending as a plain queued task without a manual lease', async () => {
   const db = openDb();
   resetCronTables(db);
 
-  const result = await cmdAdminCron(db, { verb: 'run', taskType: 'daily_maintenance' });
+  const result = await cmdAdminCron(db, { verb: 'run', taskType: 'summarize_pending' });
   const task = db.prepare(
-    `SELECT type, scheduled_for, status
+    `SELECT type, payload, scheduled_for, status
      FROM tasks
      WHERE id = ?`
   ).get(result.task_id);
+  const leases = db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM task_runs
+     WHERE type = 'summarize_pending'`
+  ).get();
 
-  assert.equal(result.type, 'daily_maintenance');
-  assert.equal(task.type, 'daily_maintenance');
-  assert.equal(task.scheduled_for, 0);
+  assert.equal(result.type, 'summarize_pending');
+  assert.equal(task.type, 'summarize_pending');
   assert.equal(task.status, 'queued');
+  assert.equal(typeof task.scheduled_for, 'number');
+  assert.deepEqual(JSON.parse(task.payload), {});
+  assert.equal(leases.n, 0);
   db.close();
+});
+
+test('cmdAdminCron run skips daily maintenance when the day lease already exists from daemon work', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const fixedNow = new Date(2026, 5, 8, 2, 17, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    db.prepare(
+      `INSERT INTO task_runs (type, date_key, started_at, completed_at, status, ran_by)
+       VALUES ('daily_maintenance', ?, ?, ?, 'completed', 'daemon')`
+    ).run(dayKey(fixedNow), fixedNowMs - 1000, fixedNowMs - 500);
+
+    const result = await cmdAdminCron(db, { verb: 'run', taskType: 'daily_maintenance' });
+    const tasks = db.prepare(
+      `SELECT COUNT(*) AS n
+       FROM tasks
+       WHERE type = 'daily_maintenance'`
+    ).get();
+
+    assert.equal(result.status, 'skipped');
+    assert.equal(result.task_id, null);
+    assert.equal(result.reason, 'lease already claimed');
+    assert.equal(tasks.n, 0);
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('cmdAdminCron run skips weekly synthesis when the week lease already exists from daemon work', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const fixedNow = new Date(2026, 5, 8, 3, 18, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    db.prepare(
+      `INSERT INTO task_runs (type, date_key, started_at, completed_at, status, ran_by)
+       VALUES ('weekly_synthesis', ?, ?, ?, 'completed', 'daemon')`
+    ).run(weeklyLeaseKey(fixedNow), fixedNowMs - 1000, fixedNowMs - 500);
+
+    const result = await cmdAdminCron(db, { verb: 'run', taskType: 'weekly_synthesis' });
+    const tasks = db.prepare(
+      `SELECT COUNT(*) AS n
+       FROM tasks
+       WHERE type = 'weekly_synthesis'`
+    ).get();
+
+    assert.equal(result.status, 'skipped');
+    assert.equal(result.task_id, null);
+    assert.equal(result.reason, 'lease already claimed');
+    assert.equal(tasks.n, 0);
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
 });
 
 test('cmdAdminCron list returns bounded history for one task type', async () => {
@@ -240,8 +630,15 @@ test('cli admin cron run enqueues supported tasks', () => {
 
   const verifyDb = openDb();
   const task = verifyDb.prepare(
-    `SELECT type, scheduled_for, status
+    `SELECT type, scheduled_for, status, payload
      FROM tasks
+     WHERE type = 'weekly_synthesis'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const lease = verifyDb.prepare(
+    `SELECT date_key, ran_by, status
+     FROM task_runs
      WHERE type = 'weekly_synthesis'
      ORDER BY id DESC
      LIMIT 1`
@@ -249,8 +646,98 @@ test('cli admin cron run enqueues supported tasks', () => {
   verifyDb.close();
 
   assert.match(output, /ccmem: enqueued weekly_synthesis as task#\d+/);
-  assert.equal(task.scheduled_for, 0);
+  assert.equal(typeof task.scheduled_for, 'number');
   assert.equal(task.status, 'queued');
+  assert.equal(typeof JSON.parse(task.payload).lease_key, 'string');
+  assert.equal(lease.ran_by, 'manual');
+  assert.equal(lease.status, 'running');
+});
+
+test('cli admin cron run reports duplicate manual leases as skipped', () => {
+  const db = openDb();
+  resetCronTables(db);
+  db.close();
+
+  const first = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'run', 'daily_maintenance'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8'
+  });
+  const second = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'run', 'daily_maintenance'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8'
+  });
+
+  const verifyDb = openDb();
+  const tasks = verifyDb.prepare(
+    `SELECT COUNT(*) AS n
+     FROM tasks
+     WHERE type = 'daily_maintenance'`
+  ).get();
+  verifyDb.close();
+
+  assert.match(first, /ccmem: enqueued daily_maintenance as task#\d+/);
+  assert.match(second, /ccmem: skipped daily_maintenance \(lease already claimed\)/);
+  assert.equal(tasks.n, 1);
+});
+
+test('cli admin cron run reports daemon-held daily leases as skipped', () => {
+  const db = openDb();
+  resetCronTables(db);
+  const now = new Date();
+  const nowMs = now.getTime();
+  db.prepare(
+    `INSERT INTO task_runs (type, date_key, started_at, completed_at, status, ran_by)
+     VALUES ('daily_maintenance', ?, ?, ?, 'completed', 'daemon')`
+  ).run(dayKey(now), nowMs - 1000, nowMs - 500);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'run', 'daily_maintenance'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8'
+  });
+
+  const verifyDb = openDb();
+  const tasks = verifyDb.prepare(
+    `SELECT COUNT(*) AS n
+     FROM tasks
+     WHERE type = 'daily_maintenance'`
+  ).get();
+  verifyDb.close();
+
+  assert.match(output, /ccmem: skipped daily_maintenance \(lease already claimed\)/);
+  assert.equal(tasks.n, 0);
+});
+
+test('cli admin cron run reports daemon-held weekly leases as skipped', () => {
+  const db = openDb();
+  resetCronTables(db);
+  const now = new Date();
+  const nowMs = now.getTime();
+  db.prepare(
+    `INSERT INTO task_runs (type, date_key, started_at, completed_at, status, ran_by)
+     VALUES ('weekly_synthesis', ?, ?, ?, 'completed', 'daemon')`
+  ).run(weeklyLeaseKey(now), nowMs - 1000, nowMs - 500);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'run', 'weekly_synthesis'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8'
+  });
+
+  const verifyDb = openDb();
+  const tasks = verifyDb.prepare(
+    `SELECT COUNT(*) AS n
+     FROM tasks
+     WHERE type = 'weekly_synthesis'`
+  ).get();
+  verifyDb.close();
+
+  assert.match(output, /ccmem: skipped weekly_synthesis \(lease already claimed\)/);
+  assert.equal(tasks.n, 0);
 });
 
 test('cmdAdminCron run rejects unsupported tasks', async () => {

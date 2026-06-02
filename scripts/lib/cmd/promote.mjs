@@ -1,4 +1,5 @@
 import { rebuildInjectionCache } from '../injection-cache.mjs';
+import { maybeRunTier15 } from '../tier15.mjs';
 
 const BLOCKED_GLOBAL_TAGS = new Set(['dangerous_command', 'contains_secret']);
 
@@ -16,6 +17,10 @@ function parseTags(tags) {
 }
 
 export async function cmdPromote(db, { id, global = false, confirm = () => '' } = {}) {
+  try {
+    maybeRunTier15(db);
+  } catch {}
+
   const memId = parseMemoryId(id);
   const mem = Number.isFinite(memId)
     ? db.prepare(`SELECT * FROM memories WHERE id = ?`).get(memId)

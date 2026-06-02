@@ -135,7 +135,11 @@ try {
     }
   } else if (verb === 'admin' && args[0] === 'cron' && args[1] === 'run' && args[2]) {
     const result = await cmdAdminCron(db, { verb: 'run', taskType: args[2] });
-    process.stdout.write(`ccmem: enqueued ${result.type} as task#${result.task_id}\n`);
+    if (result.status === 'skipped') {
+      process.stdout.write(`ccmem: skipped ${result.type} (${result.reason})\n`);
+    } else {
+      process.stdout.write(`ccmem: enqueued ${result.type} as task#${result.task_id}\n`);
+    }
   } else if (verb === 'admin' && args[0] === 'diagnose') {
     const result = await cmdAdminDiagnose(db, {
       cwd: process.cwd(),

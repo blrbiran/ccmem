@@ -1,4 +1,6 @@
 import { isDaemonAlive } from '../../daemon/lock.mjs';
+import { dayKey, weeklyLeaseKey } from '../../daemon/loop.mjs';
+import { RAN_BY, tryClaimLease } from '../task-runs.mjs';
 
 const TRACKED_TYPES = ['daily_maintenance', 'summarize_pending', 'weekly_synthesis'];
 const QUEUE_OVERDUE_MS = 5 * 60 * 1000;
@@ -146,22 +148,49 @@ function resolveHistoryTask(taskType) {
   return typeof taskType === 'string' ? taskType : '';
 }
 
+function manualLeaseKey(taskType, now) {
+  if (taskType === 'daily_maintenance') {
+    return dayKey(now);
+  }
+
+  if (taskType === 'weekly_synthesis') {
+    return weeklyLeaseKey(now);
+  }
+
+  return null;
+}
+
 function runCronTask(db, taskType) {
   if (!TRACKED_TYPES.includes(taskType)) {
     throw new Error(`unsupported cron task: ${taskType}`);
   }
 
-  const now = Date.now();
+  const now = new Date();
+  const nowMs = now.getTime();
+  const leaseKey = manualLeaseKey(taskType, now);
+  const payload = leaseKey ? { lease_key: leaseKey } : {};
+
+  if (leaseKey && !tryClaimLease(db, taskType, leaseKey, RAN_BY.MANUAL)) {
+    return {
+      task_id: null,
+      type: taskType,
+      scheduled_for: nowMs,
+      enqueued_at: nowMs,
+      status: 'skipped',
+      reason: 'lease already claimed'
+    };
+  }
+
   const result = db.prepare(
     `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
-     VALUES (?, '{}', 0, ?, 'queued')`
-  ).run(taskType, now);
+     VALUES (?, ?, ?, ?, 'queued')`
+  ).run(taskType, JSON.stringify(payload), nowMs, nowMs);
 
   return {
     task_id: Number(result.lastInsertRowid),
     type: taskType,
-    scheduled_for: 0,
-    enqueued_at: now,
+    scheduled_for: nowMs,
+    enqueued_at: nowMs,
     status: 'queued'
   };
 }

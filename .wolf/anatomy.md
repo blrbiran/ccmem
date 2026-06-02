@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-02T16:54:01.206Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-02T17:45:20.139Z
 > Files: 100 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -61,7 +61,7 @@
 
 ## scripts/
 
-- `cli.mjs` — db: getOptionValue, createStdinLineReader (~3175 tok)
+- `cli.mjs` — db: getOptionValue, createStdinLineReader (~3212 tok)
 - `hook.mjs` — T_ENTRY: writeHookOutput, isBlacklistedSession (~595 tok)
 
 ## scripts/daemon/
@@ -108,18 +108,18 @@
 
 ## scripts/lib/admin/
 
-- `cron.mjs` — Exports cmdAdminCron (~1242 tok)
+- `cron.mjs` — Exports cmdAdminCron (~1447 tok)
 - `daemon.mjs` — Exports renderPlist, cmdAdminDaemon (~2180 tok)
 - `diagnose.mjs` — Exports cmdAdminDiagnose (~864 tok)
 
 ## scripts/lib/cmd/
 
 - `audit.mjs` — Exports cmdAuditShow (~32 tok)
-- `forget.mjs` — Exports cmdForget (~172 tok)
+- `forget.mjs` — Exports cmdForget (~197 tok)
 - `list.mjs` — Exports cmdList (~88 tok)
 - `mode.mjs` — Exports cmdMode (~55 tok)
-- `pin.mjs` — Exports cmdPin (~120 tok)
-- `promote.mjs` — Exports cmdPromote (~537 tok)
+- `pin.mjs` — Exports cmdPin (~145 tok)
+- `promote.mjs` — Exports cmdPromote (~562 tok)
 - `resurrect.mjs` — Exports cmdResurrect (~575 tok)
 - `save.mjs` — Exports cmdSave (~314 tok)
 - `show.mjs` — Exports cmdShow (~56 tok)
@@ -132,22 +132,22 @@
 
 ## tests/integration/
 
-- `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~2347 tok)
+- `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~6013 tok)
 - `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + 5 more (~2448 tok)
 - `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon (~2250 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)
-- `daemon-loop.test.mjs` — resetRuntimeTables: setClaudeBridgeEnv (~24650 tok)
-- `forget-pin-cache.test.mjs` — resetCommandTables: seedStaleMaintenanceState, assertPreludeCleanup, insertMemory + 13 more (~2308 tok)
+- `daemon-loop.test.mjs` — resetRuntimeTables: setClaudeBridgeEnv (~24657 tok)
+- `forget-pin-cache.test.mjs` — resetCommandTables: seedStaleMaintenanceState, assertPreludeCleanup, insertMemory + 13 more (~3197 tok)
 - `migration-v1-to-v2.test.mjs` — Declares db (~442 tok)
 - `mode-command.test.mjs` — Declares db (~238 tok)
-- `promote-command.test.mjs` — dataRoot: resetPromoteTables, insertPromoteMemory (~1689 tok)
+- `promote-command.test.mjs` — dataRoot: resetPromoteTables, seedStaleMaintenanceState, assertPreludeCleanup, insertPromoteMemory (~2394 tok)
 - `prompt-submit-retrieval.test.mjs` — API routes: GET (3 endpoints) (~3306 tok)
 - `resurrect-command.test.mjs` — dataRoot: resetResurrectTables, seedGreyZoneMemories (~1435 tok)
 - `save-list-session-start.test.mjs` — API routes: GET (2 endpoints) (~3375 tok)
 - `stats-command.test.mjs` — dataRoot: resetStatsTables, insertMemory, seedStatsFixture (~1775 tok)
 - `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 93 more (~8001 tok)
-- `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~2980 tok)
+- `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~3903 tok)
 - `tier15-feedback.test.mjs` — Declares db (~1780 tok)
 
 ## tests/unit/
@@ -158,7 +158,7 @@
 - `priority.test.mjs` — Declares score (~123 tok)
 - `project-key.test.mjs` (~174 tok)
 - `render.test.mjs` — Declares text (~154 tok)
-- `task-runs.test.mjs` — Declares db (~331 tok)
+- `task-runs.test.mjs` — Declares db (~714 tok)
 - `threat-scan.test.mjs` — Declares result (~98 tok)
 - `trust.test.mjs` (~77 tok)
 - `type-heuristic.test.mjs` (~121 tok)

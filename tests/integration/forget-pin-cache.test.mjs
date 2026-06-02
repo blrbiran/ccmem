@@ -131,6 +131,131 @@ test('pin, show, forget update records and cache', async () => {
   db.close();
 });
 
+test('cmdPin records the local calendar day lease at early-morning local times', async () => {
+  const db = openDb();
+  resetCommandTables(db);
+  const saved = await saveProjectRule(db, 'Pin-side local-day lease');
+  clearPreludeLease(db);
+  const fixedNow = new Date(2026, 5, 8, 2, 17, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    const result = await cmdPin(db, { id: Number(saved.id), remove: false });
+    const lease = db.prepare(
+      `SELECT date_key, status, completed_at
+       FROM task_runs
+       WHERE type = 'daily_maintenance'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+
+    assert.equal(result.pinned, 1);
+    assert.equal(lease.date_key, '2026-06-08');
+    assert.equal(lease.status, 'completed');
+    assert.equal(typeof lease.completed_at, 'number');
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('cmdPin runs Tier 1.5 prelude cleanup', async () => {
+  const db = openDb();
+  resetCommandTables(db);
+  const inserted = insertMemory(db, 'Pin-side prelude cleanup');
+  seedStaleMaintenanceState(db);
+
+  const result = await cmdPin(db, { id: memoryId(inserted), remove: false });
+
+  assert.equal(result.pinned, 1);
+  assertPreludeCleanup(db);
+  db.close();
+});
+
+test('cmdForget records the local calendar day lease at early-morning local times', async () => {
+  const db = openDb();
+  resetCommandTables(db);
+  const saved = await saveProjectRule(db, 'Forget-side local-day lease');
+  clearPreludeLease(db);
+  const fixedNow = new Date(2026, 5, 8, 2, 17, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    const forgotten = await cmdForget(db, { id: Number(saved.id) });
+    const lease = db.prepare(
+      `SELECT date_key, status, completed_at
+       FROM task_runs
+       WHERE type = 'daily_maintenance'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+
+    assert.equal(forgottenMemoryId(forgotten), Number(saved.id));
+    assert.equal(lease.date_key, '2026-06-08');
+    assert.equal(lease.status, 'completed');
+    assert.equal(typeof lease.completed_at, 'number');
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('cmdForget runs Tier 1.5 prelude cleanup', async () => {
+  const db = openDb();
+  resetCommandTables(db);
+  const saved = await saveProjectRule(db, 'Forget-side prelude cleanup');
+  clearPreludeLease(db);
+  seedStaleMaintenanceState(db);
+
+  const forgotten = await cmdForget(db, { id: Number(saved.id) });
+
+  assert.equal(forgottenMemoryId(forgotten), Number(saved.id));
+  assertPreludeCleanup(db);
+  db.close();
+});
+
 test('cmdSave runs Tier 1.5 prelude cleanup', async () => {
   const db = openDb();
   resetCommandTables(db);

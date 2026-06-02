@@ -38,6 +38,13 @@ export function refreshHeartbeat(db) {
   ).run(Date.now(), process.pid);
 }
 
+export function releaseDaemonLock(db) {
+  db.prepare(
+    `DELETE FROM daemon_lock
+     WHERE id = 1 AND holder_pid = ?`
+  ).run(process.pid);
+}
+
 export function isDaemonAlive(db) {
   const row = db.prepare(`SELECT heartbeat_at FROM daemon_lock WHERE id = 1`).get();
   return Boolean(row && (Date.now() - row.heartbeat_at) < 60000);

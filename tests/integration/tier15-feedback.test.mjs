@@ -8,7 +8,7 @@ process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-tier15-'));
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
-const { maybeRunTier15 } = await import('../../scripts/lib/tier15.mjs');
+const { maybeRunTier15, runSessionStartMiniPrelude } = await import('../../scripts/lib/tier15.mjs');
 const { inferPrevTurnOutcome } = await import('../../scripts/lib/feedback.mjs');
 
 test('maybeRunTier15 archives low-trust memories and records lease', () => {
@@ -34,6 +34,98 @@ test('maybeRunTier15 archives low-trust memories and records lease', () => {
   assert.equal(lease.status, 'completed');
 
   db.close();
+});
+
+test('maybeRunTier15 records the local calendar day lease at early-morning local times', () => {
+  const db = openDb();
+  db.prepare(`DELETE FROM task_runs`).run();
+  const fixedNow = new Date(2026, 5, 8, 2, 17, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    const ran = maybeRunTier15(db);
+    assert.equal(ran, true);
+
+    const lease = db.prepare(
+      `SELECT date_key, ran_by, status
+       FROM task_runs
+       WHERE type = 'daily_maintenance'`
+    ).get();
+
+    assert.equal(lease.date_key, '2026-06-08');
+    assert.equal(lease.ran_by, 'opportunistic');
+    assert.equal(lease.status, 'completed');
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('runSessionStartMiniPrelude records the local calendar day lease at early-morning local times', () => {
+  const db = openDb();
+  db.prepare(`DELETE FROM task_runs`).run();
+  const fixedNow = new Date(2026, 5, 8, 2, 17, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    const ran = runSessionStartMiniPrelude(db);
+    assert.equal(ran, true);
+
+    const lease = db.prepare(
+      `SELECT date_key, ran_by, status
+       FROM task_runs
+       WHERE type = 'tier1_5_mini_prelude'`
+    ).get();
+
+    assert.equal(lease.date_key, '2026-06-08');
+    assert.equal(lease.ran_by, 'opportunistic');
+    assert.equal(lease.status, 'completed');
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
 });
 
 test('inferPrevTurnOutcome marks unknown feedback as unhelpful on negative prompt', () => {
@@ -62,6 +154,51 @@ test('inferPrevTurnOutcome marks unknown feedback as unhelpful on negative promp
 
   const memory = db.prepare(`SELECT unhelpful_count FROM memories WHERE id = ?`).get(Number(inserted.lastInsertRowid));
   assert.equal(memory.unhelpful_count, 1);
+
+  db.close();
+});
+
+test('runSessionStartMiniPrelude prunes stale recent injections and old task leases', () => {
+  const db = openDb();
+  const now = Date.now();
+
+  db.prepare(
+    `INSERT INTO recent_injections (session_id, prompt_idx, inject_source, mem_ids, created_at)
+     VALUES ('s-old', 0, 'session_start', '[1]', ?)`
+  ).run(now - (15 * 86400000));
+
+  const insertRecent = db.prepare(
+    `INSERT INTO recent_injections (session_id, prompt_idx, inject_source, mem_ids, created_at)
+     VALUES ('s-many', ?, 'user_prompt_submit', '[1]', ?)`
+  );
+  for (let i = 1; i <= 22; i += 1) {
+    insertRecent.run(i, now - i);
+  }
+
+  db.prepare(
+    `INSERT INTO task_runs (type, date_key, started_at, status, ran_by)
+     VALUES ('summarize_pending', '2026-01-01', ?, 'completed', 'daemon')`
+  ).run(now);
+
+  const ran = runSessionStartMiniPrelude(db);
+  assert.equal(ran, true);
+
+  const stale = db.prepare(`SELECT COUNT(*) AS n FROM recent_injections WHERE session_id = 's-old'`).get();
+  const kept = db.prepare(`SELECT COUNT(*) AS n FROM recent_injections WHERE session_id = 's-many'`).get();
+  const oldestKept = db.prepare(
+    `SELECT MIN(prompt_idx) AS min_prompt_idx FROM recent_injections WHERE session_id = 's-many'`
+  ).get();
+  const oldTasks = db.prepare(`SELECT COUNT(*) AS n FROM task_runs WHERE type = 'summarize_pending'`).get();
+  const lease = db.prepare(
+    `SELECT ran_by, status FROM task_runs WHERE type = 'tier1_5_mini_prelude'`
+  ).get();
+
+  assert.equal(stale.n, 0);
+  assert.equal(kept.n, 20);
+  assert.equal(oldestKept.min_prompt_idx, 1);
+  assert.equal(oldTasks.n, 0);
+  assert.equal(lease.ran_by, 'opportunistic');
+  assert.equal(lease.status, 'completed');
 
   db.close();
 });

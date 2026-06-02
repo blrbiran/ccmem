@@ -1,3 +1,5 @@
+import { callClaudeP } from '../claude-p.mjs';
+import { weeklyLeaseKey } from '../loop.mjs';
 import { parseLlmJson } from '../../lib/llm-parse.mjs';
 import { markLeaseComplete } from '../../lib/task-runs.mjs';
 
@@ -8,18 +10,34 @@ function logAudit(db, action, details = null) {
   ).run(Date.now(), action, details ? JSON.stringify(details) : null);
 }
 
-function weekKey(date) {
-  const utc = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  const day = utc.getUTCDay() || 7;
-  utc.setUTCDate(utc.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
-  const week = Math.ceil((((utc - yearStart) / 86400000) + 1) / 7);
-  return `${utc.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+function buildWeeklySynthesisPrompt() {
+  return [
+    'You are a memory synthesis assistant.',
+    'Synthesize durable weekly memories as JSON.',
+    'Return an array or an object with a synthesized array.'
+  ].join('\n');
+}
+
+function shouldUseClaudeBridge(payload) {
+  return typeof payload.llm_output === 'string' || process.env.CCMEM_ENABLE_REAL_CLAUDE_P === '1';
 }
 
 export async function runWeeklySynthesis(db, task) {
   const payload = JSON.parse(task.payload ?? '{}');
-  const items = typeof payload.llm_output === 'string' ? parseLlmJson(payload.llm_output) : [];
+  let raw = null;
+
+  if (shouldUseClaudeBridge(payload)) {
+    raw = await callClaudeP(buildWeeklySynthesisPrompt(), {
+      taskType: 'weekly_synthesis',
+      mockOutput: payload.llm_output
+    });
+  }
+
+  const items = raw ? parseLlmJson(raw) : [];
+  const scheduledFor = Number(task?.scheduled_for);
+  const leaseKey = typeof payload.lease_key === 'string' && payload.lease_key
+    ? payload.lease_key
+    : weeklyLeaseKey(new Date(Number.isFinite(scheduledFor) ? scheduledFor : Date.now()));
 
   logAudit(db, 'weekly_synthesis_stub', {
     task_id: task.id,
@@ -27,5 +45,5 @@ export async function runWeeklySynthesis(db, task) {
     first_output_type: items[0]?.output_type ?? null
   });
 
-  markLeaseComplete(db, 'weekly_synthesis', weekKey(new Date()));
+  markLeaseComplete(db, 'weekly_synthesis', leaseKey);
 }

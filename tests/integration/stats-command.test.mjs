@@ -115,6 +115,55 @@ test('cmdStats aggregates runtime state and opportunistic maintenance', async ()
   db.close();
 });
 
+test('cmdStats records the local calendar day lease at early-morning local times', async () => {
+  const db = openDb();
+  resetStatsTables(db);
+  const fixedNow = new Date(2026, 5, 8, 2, 17, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    seedStatsFixture(db, fixedNowMs);
+
+    const result = await cmdStats(db, { buckets: true });
+    const lease = db.prepare(
+      `SELECT date_key, status, completed_at
+       FROM task_runs
+       WHERE type = 'daily_maintenance'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+
+    assert.equal(result.tier15.ran, true);
+    assert.equal(lease.date_key, '2026-06-08');
+    assert.equal(lease.status, 'completed');
+    assert.equal(typeof lease.completed_at, 'number');
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
+});
+
 test('cli stats prints human summary', () => {
   const db = openDb();
   resetStatsTables(db);

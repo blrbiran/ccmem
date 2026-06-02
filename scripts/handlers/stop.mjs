@@ -1,9 +1,19 @@
+import { touchWakeFile } from '../daemon/wake.mjs';
+import { inferFromTranscript, inferL25FromTranscript } from '../lib/feedback.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
 import { computeSessionStats, countTranscriptLines } from '../lib/transcript.mjs';
 
+const SHADOW_NOTICE = 'ccmem: mode=shadow (read-only diagnostic — no writes, no inject)\n';
+
 export async function handleStop(db, hookData) {
-  if (getMode(db) === 'off') {
+  const mode = getMode(db);
+  if (mode === 'off') {
+    return { additionalContext: '' };
+  }
+
+  if (mode === 'shadow') {
+    process.stderr.write(SHADOW_NOTICE);
     return { additionalContext: '' };
   }
 
@@ -49,6 +59,10 @@ export async function handleStop(db, hookData) {
     Date.now(),
     Date.now()
   );
+
+  inferFromTranscript(db, hookData.session_id, hookData.transcript_path);
+  inferL25FromTranscript(db, hookData.session_id, hookData.transcript_path);
+  touchWakeFile();
 
   return { additionalContext: '' };
 }

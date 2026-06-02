@@ -50,6 +50,36 @@ function seedCronFixture(db, now = Date.now()) {
   ).run(now - 300, now - 300, now - 200, now - 200, now - 100, now - 100);
 }
 
+function seedCronIssuesFixture(db, now = Date.now()) {
+  db.prepare(
+    `INSERT INTO task_runs (type, date_key, started_at, completed_at, status, ran_by)
+     VALUES
+     ('daily_maintenance', '2026-06-03', ?, ?, 'failed', 'manual'),
+     ('weekly_synthesis', '2026-W23', ?, NULL, 'running', 'daemon')`
+  ).run(now - 30000, now - 29000, now - 11 * 60 * 1000);
+
+  db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES
+     ('summarize_pending', '{}', ?, ?, 'queued'),
+     ('summarize_pending', '{}', ?, ?, 'queued')`
+  ).run(now - 6 * 60 * 1000, now - 6 * 60 * 1000, now - 7 * 60 * 1000, now - 7 * 60 * 1000);
+}
+
+function seedHealthyCronFixture(db, now = Date.now()) {
+  db.prepare(
+    `INSERT INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive)
+     VALUES (1, ?, ?, ?, ?, 1)`
+  ).run(9876, 'cron-host', now - 5000, now - 700);
+
+  db.prepare(
+    `INSERT INTO task_runs (type, date_key, started_at, completed_at, status, ran_by)
+     VALUES
+     ('daily_maintenance', '2026-06-02', ?, ?, 'completed', 'daemon'),
+     ('weekly_synthesis', '2026-W23', ?, ?, 'completed', 'daemon')`
+  ).run(now - 9000, now - 8000, now - 7000, now - 6000);
+}
+
 test('cmdAdminCron returns latest runs and queued counts', async () => {
   const db = openDb();
   resetCronTables(db);
@@ -100,6 +130,21 @@ test('cmdAdminCron list returns bounded history for one task type', async () => 
   db.close();
 });
 
+test('cmdAdminCron list --issues returns failed, zombie, and overdue problems', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  seedCronIssuesFixture(db);
+
+  const result = await cmdAdminCron(db, { verb: 'list', issues: true });
+
+  assert.equal(result.issues.length, 3);
+  assert.deepEqual(result.issues.map((issue) => issue.kind), ['failed', 'overdue', 'zombie']);
+  assert.equal(result.issues[0].type, 'daily_maintenance');
+  assert.equal(result.issues[1].type, 'summarize_pending');
+  assert.equal(result.issues[2].type, 'weekly_synthesis');
+  db.close();
+});
+
 test('cli admin cron list --history prints task history lines', () => {
   const db = openDb();
   resetCronTables(db);
@@ -133,6 +178,39 @@ test('cli admin cron list prints compact status lines', () => {
   assert.match(output, /daily_maintenance queued=0 last=completed@2026-06-02/);
   assert.match(output, /summarize_pending queued=2 last=none/);
   assert.match(output, /weekly_synthesis queued=1 last=running@2026-W23/);
+});
+
+test('cli admin cron list --issues prints only unhealthy cron lines', () => {
+  const db = openDb();
+  resetCronTables(db);
+  seedCronIssuesFixture(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'list', '--issues'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /ccmem: cron issues/);
+  assert.match(output, /failed daily_maintenance last=2026-06-03 by=manual/);
+  assert.match(output, /overdue summarize_pending queued=2 oldest_ms=/);
+  assert.match(output, /zombie weekly_synthesis last=2026-W23 age_ms=/);
+});
+
+test('cli admin cron list --issues stays silent when cron is healthy', () => {
+  const db = openDb();
+  resetCronTables(db);
+  seedHealthyCronFixture(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'list', '--issues'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.equal(output, '');
 });
 
 test('cli admin cron list prints not running daemon state', () => {

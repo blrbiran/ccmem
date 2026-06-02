@@ -1,10 +1,17 @@
+import { getMode } from '../lib/mode.mjs';
 import { RAN_BY, tryClaimLease } from '../lib/task-runs.mjs';
 import { wakeRecently } from './wake.mjs';
 
 const ERROR_EXCERPT_MAX = 200;
+const RETRY_DELAY_BASE_MS = 60_000;
+const RETRY_ATTEMPTS_MAX = 3;
 
 function dayKey(date) {
-  return date.toISOString().slice(0, 10);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
 }
 
 function weekKey(date) {
@@ -16,29 +23,86 @@ function weekKey(date) {
   return `${utc.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
+function weeklyLeaseAnchor(date) {
+  const anchor = new Date(date.getTime());
+  anchor.setDate(anchor.getDate() - anchor.getDay());
+  anchor.setHours(3, 17, 0, 0);
+
+  if (date < anchor) {
+    anchor.setDate(anchor.getDate() - 7);
+  }
+
+  return anchor;
+}
+
+export function weeklyLeaseKey(date) {
+  return weekKey(weeklyLeaseAnchor(date));
+}
+
 export function scheduleCronTasks(db, now = new Date()) {
   const nowMs = now.getTime();
 
   if (now.getHours() > 2 || (now.getHours() === 2 && now.getMinutes() >= 17)) {
-    if (tryClaimLease(db, 'daily_maintenance', dayKey(now), RAN_BY.DAEMON)) {
+    const leaseKey = dayKey(now);
+
+    if (tryClaimLease(db, 'daily_maintenance', leaseKey, RAN_BY.DAEMON)) {
       db.prepare(
         `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
-         VALUES ('daily_maintenance', '{}', ?, ?, 'queued')`
-      ).run(nowMs, nowMs);
+         VALUES ('daily_maintenance', ?, ?, ?, 'queued')`
+      ).run(JSON.stringify({ lease_key: leaseKey }), nowMs, nowMs);
     }
   }
 
-  if (now.getDay() === 0 && (now.getHours() > 3 || (now.getHours() === 3 && now.getMinutes() >= 17))) {
-    if (tryClaimLease(db, 'weekly_synthesis', weekKey(now), RAN_BY.DAEMON)) {
+  if (now.getHours() > 3 || (now.getHours() === 3 && now.getMinutes() >= 17)) {
+    const leaseKey = weeklyLeaseKey(now);
+
+    if (tryClaimLease(db, 'weekly_synthesis', leaseKey, RAN_BY.DAEMON)) {
       db.prepare(
         `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
-         VALUES ('weekly_synthesis', '{}', ?, ?, 'queued')`
-      ).run(nowMs, nowMs);
+         VALUES ('weekly_synthesis', ?, ?, ?, 'queued')`
+      ).run(JSON.stringify({ lease_key: leaseKey }), nowMs, nowMs);
     }
   }
 }
 
 export { dayKey, weekKey };
+
+function errorMessage(error) {
+  return String(error?.message ?? error);
+}
+
+function isRetryableTaskError(error) {
+  const retryAfter = Number(error?.retryAfter);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return true;
+  }
+
+  return /claude -p timeout after \d+ms/.test(errorMessage(error));
+}
+
+function resolveRetryDelayMs(task, error, currentAttempt) {
+  const retryAfter = Number(error?.retryAfter);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return retryAfter;
+  }
+
+  return Math.pow(2, currentAttempt - 1) * RETRY_DELAY_BASE_MS;
+}
+
+function scheduleRetry(db, task, error, currentAttempt) {
+  if (!isRetryableTaskError(error) || currentAttempt > RETRY_ATTEMPTS_MAX) {
+    return false;
+  }
+
+  const enqueuedAt = Date.now();
+  const delayMs = resolveRetryDelayMs(task, error, currentAttempt);
+  db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status, attempts)
+     VALUES (?, ?, ?, ?, 'queued', ?)`
+  ).run(task.type, task.payload ?? null, enqueuedAt + delayMs, enqueuedAt, currentAttempt);
+
+  return true;
+}
 
 export async function runTask(db, task, dispatch) {
   db.prepare(
@@ -55,22 +119,33 @@ export async function runTask(db, task, dispatch) {
        WHERE id = ? AND status = 'running'`
     ).run(Date.now(), task.id);
   } catch (error) {
+    const finishedAt = Date.now();
+    const message = errorMessage(error).slice(0, ERROR_EXCERPT_MAX);
+    const currentAttempt = Number(task.attempts ?? 0) + 1;
+
     db.prepare(
       `UPDATE tasks
        SET status = 'failed', finished_at = ?, error_excerpt = ?
        WHERE id = ?`
-    ).run(Date.now(), String(error?.message ?? error).slice(0, ERROR_EXCERPT_MAX), task.id);
+    ).run(finishedAt, message, task.id);
+
+    scheduleRetry(db, task, error, currentAttempt);
   }
 }
 
 export async function mainLoop(db, shouldStop, dispatch) {
   while (!shouldStop()) {
+    if (getMode(db) === 'off') {
+      await new Promise((resolve) => setTimeout(resolve, wakeRecently() ? 30000 : 300000));
+      continue;
+    }
+
     scheduleCronTasks(db);
 
     const due = db.prepare(
       `SELECT *
        FROM tasks
-       WHERE status = 'queued' AND scheduled_for < ?
+       WHERE status = 'queued' AND scheduled_for <= ?
        ORDER BY scheduled_for ASC`
     ).all(Date.now());
 

@@ -1,6 +1,24 @@
 const T_ENTRY = process.hrtime.bigint();
 const mode = process.argv[2];
 
+const HOOK_EVENT_NAMES = {
+  'session-start': 'SessionStart',
+  'prompt-submit': 'UserPromptSubmit',
+  stop: 'Stop',
+  'session-end': 'SessionEnd'
+};
+
+async function writeHookOutput(hookMode, additionalContext = '') {
+  const payload = JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: HOOK_EVENT_NAMES[hookMode],
+      additionalContext
+    }
+  });
+
+  await new Promise((resolve) => process.stdout.write(payload, resolve));
+}
+
 const hookData = JSON.parse(
   await new Promise((resolve) => {
     let raw = '';
@@ -10,6 +28,33 @@ const hookData = JSON.parse(
     process.stdin.on('end', () => resolve(raw || '{}'));
   })
 );
+
+async function isBlacklistedSession(sessionId) {
+  if (!sessionId) {
+    return false;
+  }
+
+  const { openDb } = await import('./lib/db.mjs');
+  const db = openDb();
+
+  try {
+    const row = db.prepare(
+      `SELECT 1
+       FROM ccmem_blacklisted_sessions
+       WHERE session_id = ?
+         AND expires_at > ?`
+    ).get(sessionId, Date.now());
+
+    return Boolean(row);
+  } finally {
+    db.close();
+  }
+}
+
+if (process.env.CCMEM_INTERNAL === '1' || await isBlacklistedSession(hookData.session_id)) {
+  await writeHookOutput(mode, '');
+  process.exit(0);
+}
 
 if (mode === 'session-start') {
   const { withHookSafety } = await import('./lib/hook-safety.mjs');

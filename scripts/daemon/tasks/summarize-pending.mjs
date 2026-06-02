@@ -1,3 +1,4 @@
+import { callClaudeP } from '../claude-p.mjs';
 import { rebuildInjectionCache } from '../../lib/injection-cache.mjs';
 import { parseLlmJson } from '../../lib/llm-parse.mjs';
 import { evaluateTier1 } from '../../lib/threat-scan.mjs';
@@ -41,6 +42,20 @@ function readTranscriptExcerpt(transcriptPath, lastMessageSeq) {
     entryCount: entries.length,
     excerpt: lines.join('\n').slice(0, TRANSCRIPT_EXCERPT_MAX)
   };
+}
+
+function buildSummarizePrompt(transcript) {
+  return [
+    'You are a memory extraction assistant.',
+    'Extract durable cross-session memories as JSON.',
+    'Return an array or an object with a synthesized array.',
+    '',
+    transcript
+  ].join('\n');
+}
+
+function shouldUseClaudeBridge(payload) {
+  return typeof payload.llm_output === 'string' || process.env.CCMEM_ENABLE_REAL_CLAUDE_P === '1';
 }
 
 export async function runSummarizePending(db, task) {
@@ -116,7 +131,14 @@ export async function runSummarizePending(db, task) {
     return;
   }
 
-  const llmOutput = typeof payload.llm_output === 'string' ? payload.llm_output : null;
+  let llmOutput = null;
+  if (shouldUseClaudeBridge(payload)) {
+    llmOutput = await callClaudeP(buildSummarizePrompt(transcript.excerpt), {
+      taskType: 'summarize_pending',
+      mockOutput: payload.llm_output
+    });
+  }
+
   if (!llmOutput) {
     logAudit(db, 'summarize_pending_stub', {
       task_id: task.id,

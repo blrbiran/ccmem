@@ -2,7 +2,7 @@
 
 > OpenWolf's learning memory. Updated automatically as the AI learns from interactions.
 > Do not edit manually unless correcting an error.
-> Last updated: 2026-05-30
+> Last updated: 2026-06-02
 
 ## User Preferences
 
@@ -48,11 +48,31 @@
   后续任务，导致多 dispatch 与测试/运行时语义偏差。
 - **[2026-06-02] 集成测试要显式清空共享 SQLite 运行时表**:`CCMEM_DATA_ROOT` 在同一测试文件内共用时，
   `tasks`/`task_runs`/`audit_log`/`session_context` 等残留会互相污染，导致计数、审计断言和调度 lease 误判。
-  daemon 集成测试开头应统一 reset runtime tables。
+  daemon 集成测试开头应统一 reset runtime tables；如果测试还会改 `mode`，也必须一起清掉 `config_kv.key='mode'`，否则像 `mode=off` 这类状态会泄漏到后续用例并把整组 loop 测试误打成 timeout。
+- **[2026-06-02] daemon `mode=off` 不只是跳过 dispatch，也不能先排 cron 再休眠**:主循环若先 `scheduleCronTasks()` 再检查 mode，会在 off 态下偷偷创建 `daily_maintenance` / `weekly_synthesis` 任务和 lease。正确语义是先看 `getMode(db)`；off 态直接按 wake/backoff 规则 sleep，既不 dispatch 已排队任务，也不新建 cron work。
+- **[2026-06-02] daemon idle sleep 分支要同时锁长睡与短睡**:`mainLoop()` 空队列时不是固定 300000ms；若 `wakeRecently()` 命中，应该走 30000ms 短睡。补 loop 回归时至少各锁一条：默认长睡和 recent wake 短睡，避免后续改动只保住其中一边；`mode=off` 分支也要复用同一 wake/backoff 规则，不能在 off 态退回固定长睡。
+- **[2026-06-02] `scheduleCronTasks()` 的时间门槛回归要用本地 wall-clock 构造 `Date`**:当前实现用 `getDay()` / `getHours()` / `getMinutes()` 按本地时区判断 daily/weekly cron；测试若写 `'2026-06-07T03:16:00.000Z'` 这类 UTC 时间戳，在非 UTC 环境会被解释成本地其它时刻，误把“边界未到”测成“边界已过”。锁 02:17 / 03:17 门槛时要用 `new Date(y, m, d, h, min)` 这类本地时间夹具。
+- **[2026-06-02] weekly catch-up 的“未到点”分支也要单独锁 Monday 03:16 这类工作日边界**:周日 03:16 只能证明首个触发日未到 weekly 窗口，不能防住后续把 catch-up 条件误写成“工作日全天都补跑”。至少要补一条工作日 `03:16` 回归，确保 Monday 在 `03:17` 前仍只排 daily、不抢跑 weekly。
+- **[2026-06-02] weekly catch-up 的 lease key 不能直接用“当前日期所在 ISO week”**:spec 要的是“周日 03:17 起 7 天窗口内最多补跑一次”，所以周一/周二 catch-up 仍应复用上一个周日窗口的 lease key。若调度端用 anchor-Sunday key，而 worker/test 仍用 `weekKey(new Date())`，就会出现重复周任务、完成态对不上 running lease 的问题。应抽出共享 `weeklyLeaseKey()`，由 scheduler / worker / test 共用。
+- **[2026-06-02] cron/tier1.5 的 daily lease key 必须按本地 calendar day 算，不要用 UTC `toISOString().slice(0, 10)`**:02:17 这种本地凌晨触发点在东八区会落到前一 UTC 日期；如果 `dayKey()` 用 UTC slice，daemon `daily_maintenance` 与 Tier 1.5 `daily_maintenance`/`tier1_5_mini_prelude` 都会把 lease 记到前一天。daily dayKey 要用本地 `getFullYear()/getMonth()/getDate()` 组装，回归至少锁 daemon 02:17 和 Tier 1.5 早晨触发各一条。
+- **[2026-06-02] cron 任务完成 lease 时不能按“完成时刻”重算 day/week key**:daily/weekly 任务若排队后跨天或跨周才执行完成，worker 再用 `new Date()` 计算 lease key 会把原来那条 running lease 留在未完成态。调度端应把 `lease_key` 随任务 payload 一起持久化；worker 完成时优先用 payload 里的 `lease_key`，缺省再回退到 `scheduled_for` 推导，而不是用完成时刻。
+- **[2026-06-03] 凡是命令面/SessionStart 入口里先调 `maybeRunTier15()` 的路径，都要各自锁一条本地 02:17 lease 回归**:`cmdStats` 绿了不代表 `cmdSave`/`cmdList`/`cmdShow`/`cmdResurrect`/`handleSessionStart` 全都被覆盖；这些入口各自有不同的前置数据与清理路径，后续很容易只在某一条命令里漏掉 Tier 1.5。回归模式统一用冻结 `global.Date` 的本地 `new Date(y, m, d, 2, 17)`，断言对应 `daily_maintenance` 或 `tier1_5_mini_prelude` lease 的 `date_key` 落在本地日窗且状态为 completed。
 - **[2026-06-02] 直接测 daily/weekly task route 的 lease 完成态时要先 seed `task_runs`**:如果测试只调用
   `dispatchTask()`/`mainLoop()` 跑单个 `daily_maintenance` 或 `weekly_synthesis` 任务，而没有先经过 `scheduleCronTasks()`，
   则必须先 `tryClaimLease(..., RAN_BY.DAEMON)` 创建 running lease，之后再断言 `markLeaseComplete()` 把它收敛到 completed。
 - **[2026-06-02] CLI 集成测试不要断言 macOS tmp 路径的字面形式**:同一个临时目录在测试进程里可能表现为 `/tmp/...`，但子进程/CLI 输出里会变成 `/private/tmp/...`。对 tmp 路径应断言形状或规范化后的等价关系，不要用硬编码字符串比较。
+- **[2026-06-02] `injection_cache` 的 SSOT 是 `scope -> rendered_text/member_ids`，不是拆列 project_key/topk_json**:`rebuildInjectionCache()` 只写两类 key：`global` 和 `project:${projectKey}`。给 promote/pin/forget 之类命令补缓存测试时，要按真实 schema 断言 `rendered_text/member_ids`，不要假设旧式 cache columns。
+- **[2026-06-02] 返回对象展开顺序会吞掉后写状态字段**:像 `{ status: 'restarted', ...started }` 这种写法会被 `started.status` 覆盖，导致 helper/CLI 明明走了 restart 路径却向外表现成 started。组装状态对象时要把最终状态字段放在 spread 之后，尤其是 admin command 这种直接驱动 CLI 文案的返回值。
+- **[2026-06-02] `admin diagnose --sessions` 的有效回归要走真实 hooks 产物，不要只 seed DB**:手填 `session_context`/`recent_injections` 只能验证 diagnose 聚合；要证明整条 v0.2 链路闭环，至少要补一条 `handleSessionStart()` + `handlePromptSubmit()` 产出后再跑 diagnose 的 e2e 覆盖。
+- **[2026-06-02] hook 的 `shadow` gate 必须在任何持久化/注入之前早返回**:`session-start`/`prompt-submit`/`stop` 在 shadow 模式下只能输出空 `additionalContext` + stderr 诊断提示，不能写 `recent_injections`、`memory_feedback`、`session_context`、`tasks`，也不能下调 trust。回归要同时断言“无写入”和“有 notice”。
+- **[2026-06-02] 同一测试文件里复用按天 lease 时，要显式清空 `task_runs` 或切换 date_key**:`tier1_5_mini_prelude`/`daily_maintenance` 这类一天一次 lease 会让后续测试误命中“已跑过”分支；如果同文件多条用例都想覆盖执行路径，先 reset `task_runs`，不要把失败误判成实现 bug。
+- **[2026-06-02] Node ESM 集成测试里不要把 `existsSync` 挂在 `path` 上，也不要混入裸 `require()`**:当前仓库测试默认是 ESM；文件存在性断言应直接 `import { existsSync } from 'node:fs'`。像 `path.existsSync` 或 CommonJS `require('node:fs')` 这类写法会让回归在实现正确时也因测试自身报错。
+- **[2026-06-02] daemon 调度 due task 要包含 `scheduled_for == now` 的边界**:`mainLoop()` 查询若用 `scheduled_for < Date.now()`，stop hook 刚 enqueue 的任务在同一毫秒内可能不被视为 due，随后因为 wake file 命中短睡眠分支而在测试/运行时表现成“明明已唤醒却没立刻 dispatch”。对“立即可跑”任务应使用 `<=`，并用精确边界回归锁住。
+- **[2026-06-02] rate-limit 错误即使没给 `retry-after` 也要回退到默认 60s**:`claude-p.mjs` 只要 stderr 命中 `429`/`rate limit` 就应视为可重试；若缺少明确 `retry-after`，当前约定回退到 60_000ms。回归应分别锁“显式 retry-after”与“默认 60s”两种分支，避免后续只覆盖其一。
+- **[2026-06-02] `retry-after` 的秒单位要在 bridge 层统一换算成毫秒**:daemon loop 只消费 `error.retryAfter` 数值，不关心原始文本单位；因此 `claude-p.mjs` 解析到 `retry-after: 2s` 这类 stderr 时必须先转成 `2000` 再抛给 loop。回归最好在 `summarize_pending` 与 `weekly_synthesis` 两条 LLM 路径各锁一条，避免只在单一路径上成立。
+- **[2026-06-02] `retry-after` 的分钟单位也要在 bridge 层先归一成毫秒**:像 `retry-after: 2m` 这种 stderr 文本不应把单位换算责任留给 daemon loop；bridge 层应直接抛 `error.retryAfter = 120_000`。桥接层至少要有一条分钟单位回归，任务层再补一条端到端回归会更稳。
+- **[2026-06-02] daily_maintenance 也要清理过期 `ccmem_blacklisted_sessions`**:防递归 blacklist 不是一次性测试夹具，而是有 TTL 的运行时表；如果 daily maintenance 不清理过期行，黑名单会无限堆积并让“30 分钟兜底”失真。维护回归应同时断言“过期行被删、未过期行保留”。
+- **[2026-06-02] daemon bridge 必须在缺省情况下自行生成并注入 `CLAUDE_CODE_SESSION_ID`，再先写 blacklist 再 spawn**:`CCMEM_INTERNAL=1` 只覆盖 env 直接透传的路径；要让 hook 侧 blacklist 兜底真正可用，`claude-p.mjs` 在 `opts.env?.CLAUDE_CODE_SESSION_ID` 缺失时也要先生成 child session id、写入 `ccmem_blacklisted_sessions`，再把同一个 id 注入子进程环境。回归至少要覆盖 `summarize_pending`、`weekly_synthesis` 两条生产桥接路径，以及 stop/session-start/prompt-submit 三个 hook 读端都能用该 id 早退的连通用例。
 - **[2026-05-28] 冗余字段反 SSOT**:数据已有 single source of truth 时不应在其它
   位置冗余存储(易失同步)。C-2:`parent_ids` 应是纯整数数组而非 `[{id, depth}]`,
   depth 由 `consolidation_depth` 列承担,不再 JSON 内嵌。
@@ -97,6 +117,12 @@
 
 ## Do-Not-Repeat
 
+- **[2026-06-02]** 不要让 daily lease key 用 UTC `toISOString().slice(0, 10)`。本地凌晨 02:17 这类触发点在非 UTC 时区会回落到前一 UTC 日期，daemon `daily_maintenance` 和 Tier 1.5 lease 都会记错天。统一用本地 `getFullYear()/getMonth()/getDate()` 组装 dayKey，并补 daemon + Tier 1.5 早晨回归。
+- **[2026-06-02]** 不要让 cron worker 在完成时用 `new Date()` 重算 daily/weekly lease key。任务可能跨天或跨周才完成；若完成键跟着 finish time 走，原始 running lease 会永远收不拢。把 `lease_key` 写进 task payload，完成时优先用 payload；没有 payload 再按 `scheduled_for` 推导。
+- **[2026-06-02]** 不要让 weekly catch-up 的 scheduler / worker / test 各自算不同的 lease key。周一/周二补跑仍属于上一个周日 03:17 打开的周窗口；若一边用 anchor-Sunday key、另一边用 `weekKey(new Date())`，会平白多出 queued weekly 任务，并让 completed/running 断言错位。统一走共享 `weeklyLeaseKey()` helper。
+- **[2026-06-02]** 不要用带 `Z` 的 ISO 时间串测试 `scheduleCronTasks()` 的 02:17 / 03:17 门槛。该函数当前按本地时区读取 `getDay()` / `getHours()` / `getMinutes()`；回归要用 `new Date(y, m, d, h, min)` 这类本地 wall-clock 夹具，否则在非 UTC 环境会把未到点误测成已到点。
+- **[2026-06-02]** 不要把 hook 子进程的 `stderr` 断言成空字符串。当前仓库用 `/usr/local/bin/node` 跑集成测试时，`node:sqlite` 的 ExperimentalWarning 可能写到 `stderr`；对 `mode=off`/黑名单早退这类用例，应断言“不出现 `ccmem:` 业务 notice”与“无持久化写入”，不要把 Node 自身 warning 误判成实现失败。
+- **[2026-06-02]** 不要对大段测试块做脆弱的整块编辑/结构化替换后直接提交。一次 malformed tool/edit payload 曾把 assistant 元文本写进 `tests/integration/daemon-loop.test.mjs`，造成语法错误并污染测试文件。先缩小替换范围；若文件已受损，优先按精确行或最小唯一片段修复，再立即跑受影响测试确认恢复。
 - **[2026-05-27]** 不要凭记忆回答 spec 内容。任何关于 spec 的事实陈述必须 grep
   当前文件验证。spec 在迭代,印象停留在旧版本。
 

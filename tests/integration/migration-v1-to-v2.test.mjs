@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -19,7 +19,7 @@ test('migration upgrades schema to version 2', () => {
   db.close();
 });
 
-test('stop hook writes session_context and summarize task', async () => {
+test('stop hook writes session_context, summarize task, and wake file', async () => {
   const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'session.jsonl');
   writeFileSync(transcript, '{"type":"user","message":{"content":[{"type":"text","text":"hello"}]}}\n');
   const db = openDb();
@@ -28,6 +28,7 @@ test('stop hook writes session_context and summarize task', async () => {
   const ctx = db.prepare("SELECT session_id FROM session_context WHERE session_id='s1'").get();
   assert.equal(task.type, 'summarize_pending');
   assert.equal(ctx.session_id, 's1');
+  assert.equal(existsSync(path.join(process.env.CCMEM_DATA_ROOT, 'daemon.wake')), true);
   db.close();
 });
 

@@ -10,7 +10,8 @@ const DEFAULT_CONFIG = {
       trigger_when_fts_below: 3,
       max_terms: 5
     }
-  }
+  },
+  recent_injections: { retention_days: 14, max_per_session: 20 }
 };
 
 export function loadConfig() {

@@ -1,9 +1,14 @@
 import { rebuildInjectionCache } from '../injection-cache.mjs';
 import { resolveProjectKey } from '../project-key.mjs';
 import { evaluateTier1 } from '../threat-scan.mjs';
+import { maybeRunTier15 } from '../tier15.mjs';
 import { inferType } from '../type-heuristic.mjs';
 
 export async function cmdSave(db, { cwd, content, scope = 'project', type = null }) {
+  try {
+    maybeRunTier15(db);
+  } catch {}
+
   const gate = evaluateTier1(content);
   if (!gate.ok) {
     throw Object.assign(new Error(`ccmem: rejected save (${gate.reason})`), { exitCode: 64 });

@@ -1,21 +1,34 @@
 import { isDaemonAlive } from '../../daemon/lock.mjs';
 
 const TRACKED_TYPES = ['daily_maintenance', 'summarize_pending', 'weekly_synthesis'];
+const QUEUE_OVERDUE_MS = 5 * 60 * 1000;
+const RUNNING_ZOMBIE_MS = 10 * 60 * 1000;
 
-function listCronState(db) {
+function loadQueuedStats(db) {
   const queuedRows = db.prepare(
-    `SELECT type, COUNT(*) AS n
+    `SELECT type, COUNT(*) AS queued, MIN(scheduled_for) AS oldest_scheduled_for
      FROM tasks
      WHERE status = 'queued'
      GROUP BY type`
   ).all();
+
+  return new Map(
+    queuedRows.map((row) => [
+      row.type,
+      {
+        queued: Number(row.queued ?? 0),
+        oldest_scheduled_for: row.oldest_scheduled_for ?? null
+      }
+    ])
+  );
+}
+
+function loadLatestRuns(db) {
   const latestRunRows = db.prepare(
     `SELECT id, type, date_key, started_at, completed_at, status, ran_by
      FROM task_runs
      ORDER BY type ASC, started_at DESC, id DESC`
   ).all();
-
-  const queuedByType = new Map(queuedRows.map((row) => [row.type, Number(row.n ?? 0)]));
   const latestByType = new Map();
 
   for (const row of latestRunRows) {
@@ -31,14 +44,67 @@ function listCronState(db) {
     }
   }
 
+  return latestByType;
+}
+
+function listCronState(db) {
+  const queuedByType = loadQueuedStats(db);
+  const latestByType = loadLatestRuns(db);
+
   return {
     daemon_alive: isDaemonAlive(db),
     items: TRACKED_TYPES.map((type) => ({
       type,
-      queued: queuedByType.get(type) ?? 0,
+      queued: queuedByType.get(type)?.queued ?? 0,
       last_run: latestByType.get(type) ?? null
     }))
   };
+}
+
+function listCronIssues(db) {
+  const daemonAlive = isDaemonAlive(db);
+  const queuedByType = loadQueuedStats(db);
+  const latestByType = loadLatestRuns(db);
+  const now = Date.now();
+  const issues = [];
+
+  for (const type of TRACKED_TYPES) {
+    const queued = queuedByType.get(type) ?? { queued: 0, oldest_scheduled_for: null };
+    const latest = latestByType.get(type) ?? null;
+
+    if (latest?.status === 'failed') {
+      issues.push({
+        type,
+        kind: 'failed',
+        date_key: latest.date_key,
+        ran_by: latest.ran_by
+      });
+    }
+
+    if (latest?.status === 'running' && (!daemonAlive || now - latest.started_at >= RUNNING_ZOMBIE_MS)) {
+      issues.push({
+        type,
+        kind: 'zombie',
+        date_key: latest.date_key,
+        age_ms: Math.max(0, now - latest.started_at)
+      });
+    }
+
+    if (
+      queued.queued > 0 &&
+      queued.oldest_scheduled_for !== null &&
+      now - queued.oldest_scheduled_for >= QUEUE_OVERDUE_MS
+    ) {
+      issues.push({
+        type,
+        kind: 'overdue',
+        queued: queued.queued,
+        oldest_age_ms: Math.max(0, now - queued.oldest_scheduled_for)
+      });
+    }
+  }
+
+  return { issues };
 }
 
 function listCronHistory(db, taskType, limit) {
@@ -100,8 +166,12 @@ function runCronTask(db, taskType) {
   };
 }
 
-export async function cmdAdminCron(db, { verb, taskType = null, history = null } = {}) {
+export async function cmdAdminCron(db, { verb, taskType = null, history = null, issues = false } = {}) {
   if (verb === 'list') {
+    if (issues) {
+      return listCronIssues(db);
+    }
+
     if (history) {
       return listCronHistory(db, resolveHistoryTask(taskType), clampHistoryLimit(history));
     }

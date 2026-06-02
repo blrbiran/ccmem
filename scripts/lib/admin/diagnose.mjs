@@ -2,6 +2,9 @@ import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { getDbPath, getSchemaVersion } from '../db.mjs';
 import { fallbackProjectKey, resolveProjectKey } from '../project-key.mjs';
 
+const SESSION_LIMIT = 10;
+const RECENT_INJECTION_LIMIT = 3;
+
 function firstValue(row) {
   if (!row) {
     return null;
@@ -11,7 +14,53 @@ function firstValue(row) {
   return key ? row[key] : null;
 }
 
-export async function cmdAdminDiagnose(db, { cwd = process.cwd(), migrations = false, key = false } = {}) {
+function parseMemIds(memIds) {
+  try {
+    const parsed = JSON.parse(memIds ?? '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadSessionDiagnostics(db) {
+  const sessions = db.prepare(
+    `SELECT session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at
+     FROM session_context
+     ORDER BY updated_at DESC, session_id ASC
+     LIMIT ?`
+  ).all(SESSION_LIMIT);
+
+  return sessions.map((session) => ({
+    session_id: session.session_id,
+    project_key: session.project_key,
+    tool_calls: session.tool_calls,
+    message_count: session.message_count,
+    duration_ms: session.duration_ms,
+    last_seq: session.last_seq,
+    updated_at: session.updated_at,
+    recent_injections: db
+      .prepare(
+        `SELECT prompt_idx, inject_source, mem_ids, created_at
+         FROM recent_injections
+         WHERE session_id = ?
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`
+      )
+      .all(session.session_id, RECENT_INJECTION_LIMIT)
+      .map((row) => ({
+        prompt_idx: row.prompt_idx,
+        inject_source: row.inject_source,
+        mem_ids: parseMemIds(row.mem_ids),
+        created_at: row.created_at
+      }))
+  }));
+}
+
+export async function cmdAdminDiagnose(
+  db,
+  { cwd = process.cwd(), migrations = false, key = false, sessions = false } = {}
+) {
   const quickCheck = db.prepare('PRAGMA quick_check').get();
   const lock = db.prepare(
     `SELECT holder_pid, hostname, heartbeat_at
@@ -50,6 +99,7 @@ export async function cmdAdminDiagnose(db, { cwd = process.cwd(), migrations = f
     tier2: {
       available: daemonAlive
     },
+    sessions: sessions ? loadSessionDiagnostics(db) : null,
     migrations: migrations
       ? migrationRows.map((row) => ({
           from_version: row.from_version,

@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-02T17:45:20.139Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-02T18:24:23.892Z
 > Files: 100 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -76,7 +76,7 @@
 ## scripts/daemon/tasks/
 
 - `daily-maintenance.mjs` — Exports runDailyMaintenance (~272 tok)
-- `summarize-pending.mjs` — Exports runSummarizePending (~1576 tok)
+- `summarize-pending.mjs` — Exports runSummarizePending (~1648 tok)
 - `weekly-synthesis.mjs` — Exports runWeeklySynthesis (~433 tok)
 
 ## scripts/handlers/
@@ -137,7 +137,7 @@
 - `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon (~2250 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)
-- `daemon-loop.test.mjs` — resetRuntimeTables: setClaudeBridgeEnv (~24657 tok)
+- `daemon-loop.test.mjs` — resetRuntimeTables: setClaudeBridgeEnv (~26075 tok)
 - `forget-pin-cache.test.mjs` — resetCommandTables: seedStaleMaintenanceState, assertPreludeCleanup, insertMemory + 13 more (~3197 tok)
 - `migration-v1-to-v2.test.mjs` — Declares db (~442 tok)
 - `mode-command.test.mjs` — Declares db (~238 tok)
@@ -146,8 +146,8 @@
 - `resurrect-command.test.mjs` — dataRoot: resetResurrectTables, seedGreyZoneMemories (~1435 tok)
 - `save-list-session-start.test.mjs` — API routes: GET (2 endpoints) (~3375 tok)
 - `stats-command.test.mjs` — dataRoot: resetStatsTables, insertMemory, seedStatsFixture (~1775 tok)
-- `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 93 more (~8001 tok)
-- `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~3903 tok)
+- `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 93 more (~9881 tok)
+- `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~4954 tok)
 - `tier15-feedback.test.mjs` — Declares db (~1780 tok)
 
 ## tests/unit/

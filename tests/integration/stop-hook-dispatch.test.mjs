@@ -373,6 +373,46 @@ test('hook.mjs stop dedupes summarize_pending for the same session and transcrip
   }
 });
 
+test('hook.mjs stop dedupes summarize_pending for the same session and transcript seq while the prior task is running', async () => {
+  await resetStopState();
+
+  const sessionId = 's-dedupe-running';
+  const first = runStopHook({ sessionId });
+
+  assert.equal(first.status, 0);
+
+  const db = await openStopDb();
+  try {
+    db.prepare(
+      `UPDATE tasks
+       SET status = 'running', started_at = ?
+       WHERE type = 'summarize_pending' AND json_extract(payload, '$.session_id') = ?`
+    ).run(Date.now(), sessionId);
+  } finally {
+    db.close();
+  }
+
+  const second = runStopHook({ sessionId });
+  assert.equal(second.status, 0);
+
+  const verifyDb = await openStopDb();
+  try {
+    const tasks = verifyDb.prepare(
+      `SELECT status, json_extract(payload, '$.last_message_seq') AS last_message_seq
+       FROM tasks
+       WHERE type = 'summarize_pending' AND json_extract(payload, '$.session_id') = ?
+       ORDER BY id ASC`
+    ).all(sessionId);
+
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0].status, 'running');
+    assert.equal(tasks[0].last_message_seq, 1);
+    assert.equal(existsSync(wakePath), true);
+  } finally {
+    verifyDb.close();
+  }
+});
+
 test('hook.mjs stop enqueues a fresh summarize_pending task after transcript seq advances', async () => {
   await resetStopState();
 
@@ -401,6 +441,53 @@ test('hook.mjs stop enqueues a fresh summarize_pending task after transcript seq
     assert.equal(tasks[1].last_message_seq, 2);
   } finally {
     db.close();
+    writeFileSync(transcript, '{"type":"user","message":{"content":[{"type":"text","text":"hello"}]}}\n');
+  }
+});
+
+test('hook.mjs stop enqueues a fresh summarize_pending task after transcript seq advances even if the prior seq is running', async () => {
+  await resetStopState();
+
+  const sessionId = 's-dedupe-running-advance';
+  const first = runStopHook({ sessionId });
+
+  assert.equal(first.status, 0);
+
+  const db = await openStopDb();
+  try {
+    db.prepare(
+      `UPDATE tasks
+       SET status = 'running', started_at = ?
+       WHERE type = 'summarize_pending' AND json_extract(payload, '$.session_id') = ?`
+    ).run(Date.now(), sessionId);
+  } finally {
+    db.close();
+  }
+
+  writeFileSync(
+    transcript,
+    '{"type":"user","message":{"content":[{"type":"text","text":"hello"}]}}\n{"type":"assistant","message":{"content":[{"type":"text","text":"world"}]}}\n'
+  );
+  const second = runStopHook({ sessionId });
+
+  assert.equal(second.status, 0);
+
+  const verifyDb = await openStopDb();
+  try {
+    const tasks = verifyDb.prepare(
+      `SELECT status, json_extract(payload, '$.last_message_seq') AS last_message_seq
+       FROM tasks
+       WHERE type = 'summarize_pending' AND json_extract(payload, '$.session_id') = ?
+       ORDER BY id ASC`
+    ).all(sessionId);
+
+    assert.equal(tasks.length, 2);
+    assert.equal(tasks[0].status, 'running');
+    assert.equal(tasks[0].last_message_seq, 1);
+    assert.equal(tasks[1].status, 'queued');
+    assert.equal(tasks[1].last_message_seq, 2);
+  } finally {
+    verifyDb.close();
     writeFileSync(transcript, '{"type":"user","message":{"content":[{"type":"text","text":"hello"}]}}\n');
   }
 });
@@ -438,6 +525,47 @@ test('hook.mjs stop re-enqueues the same summarize_pending seq after the prior t
 
     assert.equal(tasks.length, 2);
     assert.equal(tasks[0].status, 'completed');
+    assert.equal(tasks[0].last_message_seq, 1);
+    assert.equal(tasks[1].status, 'queued');
+    assert.equal(tasks[1].last_message_seq, 1);
+  } finally {
+    verifyDb.close();
+  }
+});
+
+test('hook.mjs stop re-enqueues the same summarize_pending seq after the prior task failed', async () => {
+  await resetStopState();
+
+  const sessionId = 's-dedupe-failed';
+  const first = runStopHook({ sessionId });
+
+  assert.equal(first.status, 0);
+
+  const db = await openStopDb();
+  try {
+    db.prepare(
+      `UPDATE tasks
+       SET status = 'failed', finished_at = ?, error_excerpt = 'boom'
+       WHERE type = 'summarize_pending' AND json_extract(payload, '$.session_id') = ?`
+    ).run(Date.now(), sessionId);
+  } finally {
+    db.close();
+  }
+
+  const second = runStopHook({ sessionId });
+  assert.equal(second.status, 0);
+
+  const verifyDb = await openStopDb();
+  try {
+    const tasks = verifyDb.prepare(
+      `SELECT status, json_extract(payload, '$.last_message_seq') AS last_message_seq
+       FROM tasks
+       WHERE type = 'summarize_pending' AND json_extract(payload, '$.session_id') = ?
+       ORDER BY id ASC`
+    ).all(sessionId);
+
+    assert.equal(tasks.length, 2);
+    assert.equal(tasks[0].status, 'failed');
     assert.equal(tasks[0].last_message_seq, 1);
     assert.equal(tasks[1].status, 'queued');
     assert.equal(tasks[1].last_message_seq, 1);

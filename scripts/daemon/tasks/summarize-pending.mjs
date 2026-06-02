@@ -58,6 +58,36 @@ function shouldUseClaudeBridge(payload) {
   return typeof payload.llm_output === 'string' || process.env.CCMEM_ENABLE_REAL_CLAUDE_P === '1';
 }
 
+function supersedeIfNewerTaskExists(db, taskId, sessionId, lastMessageSeq) {
+  const newer = db.prepare(
+    `SELECT id
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND status IN ('queued', 'running')
+       AND id <> ?
+       AND json_extract(payload, '$.session_id') = ?
+       AND json_extract(payload, '$.last_message_seq') > ?
+     LIMIT 1`
+  ).get(taskId, sessionId, lastMessageSeq);
+
+  if (!newer) {
+    return false;
+  }
+
+  db.prepare(
+    `UPDATE tasks
+     SET status = 'superseded', finished_at = ?
+     WHERE id = ?`
+  ).run(Date.now(), taskId);
+  logAudit(db, 'summarize_pending_superseded', {
+    task_id: taskId,
+    session_id: sessionId,
+    last_message_seq: lastMessageSeq,
+    newer_task_id: newer.id
+  });
+  return true;
+}
+
 export async function runSummarizePending(db, task) {
   const payload = JSON.parse(task.payload ?? '{}');
   const sessionId = payload.session_id;
@@ -80,29 +110,7 @@ export async function runSummarizePending(db, task) {
        AND json_extract(payload, '$.last_message_seq') < ?`
   ).run(now, task.id, sessionId, lastMessageSeq);
 
-  const newer = db.prepare(
-    `SELECT id
-     FROM tasks
-     WHERE type = 'summarize_pending'
-       AND status IN ('queued', 'running')
-       AND id <> ?
-       AND json_extract(payload, '$.session_id') = ?
-       AND json_extract(payload, '$.last_message_seq') > ?
-     LIMIT 1`
-  ).get(task.id, sessionId, lastMessageSeq);
-
-  if (newer) {
-    db.prepare(
-      `UPDATE tasks
-       SET status = 'superseded', finished_at = ?
-       WHERE id = ?`
-    ).run(now, task.id);
-    logAudit(db, 'summarize_pending_superseded', {
-      task_id: task.id,
-      session_id: sessionId,
-      last_message_seq: lastMessageSeq,
-      newer_task_id: newer.id
-    });
+  if (supersedeIfNewerTaskExists(db, task.id, sessionId, lastMessageSeq)) {
     return;
   }
 
@@ -137,6 +145,10 @@ export async function runSummarizePending(db, task) {
       taskType: 'summarize_pending',
       mockOutput: payload.llm_output
     });
+  }
+
+  if (supersedeIfNewerTaskExists(db, task.id, sessionId, lastMessageSeq)) {
+    return;
   }
 
   if (!llmOutput) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -577,6 +577,160 @@ test('dispatchTask can use configured claude bridge command', async () => {
   db.close();
 });
 
+
+test('dispatchTask supersedes a stale summarize_pending bridge result when a newer seq appears during the bridge wait and later applies the newer seq', async () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const now = Date.now();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'summarize-bridge-stale.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'claude-task-stale-bridge.mjs');
+  const release = path.join(process.env.CCMEM_DATA_ROOT, 'claude-task-stale-bridge.release');
+
+  writeFileSync(
+    script,
+    [
+      "import { existsSync } from 'node:fs';",
+      "const release = process.argv[2];",
+      "const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));",
+      "process.stdin.resume();",
+      "while (!existsSync(release)) {",
+      "  await sleep(10);",
+      "}",
+      "process.stdout.write(JSON.stringify([{content:'stale bridge result',type:'rule',scope:'project',tags:['stale-bridge']}]))"
+    ].join('\n')
+  );
+
+  writeFileSync(
+    transcript,
+    '{"type":"user","message":{"content":[{"type":"text","text":"remember this preference"}]}}\n' +
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+  );
+
+  db.prepare(
+    `INSERT INTO session_context (
+      session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run('s-bridge-stale', 'demo/repo', 1, 3, 0, 2, now);
+
+  const inserted = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-bridge-stale',
+    transcript_path: transcript,
+    last_message_seq: 2
+  }), now - 1000, now - 1000);
+
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script, release])
+  });
+
+  const queuedTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(inserted.lastInsertRowid));
+  const runPromise = runTask(db, queuedTask, dispatchTask);
+
+  await new Promise((resolve, reject) => {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      const running = db.prepare(`SELECT status FROM tasks WHERE id = ?`).get(queuedTask.id);
+      if (running?.status === 'running') {
+        clearInterval(timer);
+        resolve();
+        return;
+      }
+
+      if (Date.now() - started > 1000) {
+        clearInterval(timer);
+        reject(new Error('bridge task did not enter running state'));
+      }
+    }, 10);
+  });
+
+  db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-bridge-stale',
+    transcript_path: transcript,
+    last_message_seq: 3,
+    llm_output: JSON.stringify([{ content: 'fresh bridge result', type: 'rule', scope: 'project', tags: ['fresh-bridge'] }])
+  }), now + 1, now + 1);
+
+  writeFileSync(release, 'ok');
+
+  try {
+    await runPromise;
+
+    const freshTask = db.prepare(
+      `SELECT *
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND json_extract(payload, '$.session_id') = 's-bridge-stale'
+         AND json_extract(payload, '$.last_message_seq') = 3`
+    ).get();
+    await runTask(db, freshTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  const rows = db.prepare(
+    `SELECT status, json_extract(payload, '$.last_message_seq') AS last_message_seq
+     FROM tasks
+     WHERE type = 'summarize_pending' AND json_extract(payload, '$.session_id') = 's-bridge-stale'
+     ORDER BY id ASC`
+  ).all();
+  const stale = db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE source = 'auto_inferred' AND content = 'stale bridge result'`
+  ).get();
+  const fresh = db.prepare(
+    `SELECT content, source, tags
+     FROM memories
+     WHERE source = 'auto_inferred' AND content = 'fresh bridge result'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const applied = db.prepare(
+    `SELECT action, details
+     FROM audit_log
+     WHERE action = 'summarize_pending_applied'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const appliedDetails = JSON.parse(applied.details);
+  const audit = db.prepare(
+    `SELECT action, details
+     FROM audit_log
+     WHERE action = 'summarize_pending_superseded'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const details = JSON.parse(audit.details);
+
+  assert.equal(existsSync(release), true);
+  assert.deepEqual(rows.map((row) => [row.status, row.last_message_seq]), [
+    ['superseded', 2],
+    ['completed', 3]
+  ]);
+  assert.equal(stale.n, 0);
+  assert.equal(fresh.content, 'fresh bridge result');
+  assert.equal(fresh.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(fresh.tags), ['fresh-bridge']);
+  assert.equal(audit.action, 'summarize_pending_superseded');
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(applied.action, 'summarize_pending_applied');
+  assert.equal(appliedDetails.session_id, 's-bridge-stale');
+  assert.equal(appliedDetails.last_message_seq, 3);
+  assert.equal(appliedDetails.inserted_count, 1);
+
+  db.close();
+});
 
 test('dispatchTask registers generated child session ids in blacklist for summarize_pending bridge runs', async () => {
   const db = openDb();

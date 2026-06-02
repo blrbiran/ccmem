@@ -40,6 +40,19 @@
 - **[2026-05-30] CLI 集成测试必须与测试进程共享 `CCMEM_DATA_ROOT`**:如果测试里先
   用库 API 写 SQLite,再起子进程跑 CLI,必须让当前进程和 CLI 进程指向同一个 data root;
   否则 CLI 会读到另一份 DB,表现为查询结果 `undefined`。
+- **[2026-05-30] daemon 任务执行要先显式改 `tasks.status` 再 dispatch**:仅循环里直接
+  `dispatch(task)` 会导致任务重复执行、没有 attempts/finished_at/error_excerpt 轨迹。最小闭环应是
+  `queued -> running -> completed/failed`，并在进入运行时递增 attempts。
+- **[2026-06-02] daemon loop 在同一批 due task 间也要检查 `shouldStop()`**:如果只在 while
+  顶层检查 stop，而不在 `for (const task of due)` 内再检查，当前任务把 stop 置真后，循环仍会继续跑本批
+  后续任务，导致多 dispatch 与测试/运行时语义偏差。
+- **[2026-06-02] 集成测试要显式清空共享 SQLite 运行时表**:`CCMEM_DATA_ROOT` 在同一测试文件内共用时，
+  `tasks`/`task_runs`/`audit_log`/`session_context` 等残留会互相污染，导致计数、审计断言和调度 lease 误判。
+  daemon 集成测试开头应统一 reset runtime tables。
+- **[2026-06-02] 直接测 daily/weekly task route 的 lease 完成态时要先 seed `task_runs`**:如果测试只调用
+  `dispatchTask()`/`mainLoop()` 跑单个 `daily_maintenance` 或 `weekly_synthesis` 任务，而没有先经过 `scheduleCronTasks()`，
+  则必须先 `tryClaimLease(..., RAN_BY.DAEMON)` 创建 running lease，之后再断言 `markLeaseComplete()` 把它收敛到 completed。
+- **[2026-06-02] CLI 集成测试不要断言 macOS tmp 路径的字面形式**:同一个临时目录在测试进程里可能表现为 `/tmp/...`，但子进程/CLI 输出里会变成 `/private/tmp/...`。对 tmp 路径应断言形状或规范化后的等价关系，不要用硬编码字符串比较。
 - **[2026-05-28] 冗余字段反 SSOT**:数据已有 single source of truth 时不应在其它
   位置冗余存储(易失同步)。C-2:`parent_ids` 应是纯整数数组而非 `[{id, depth}]`,
   depth 由 `consolidation_depth` 列承担,不再 JSON 内嵌。

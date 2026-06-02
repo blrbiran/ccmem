@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-30T02:30:55.513Z
-> Files: 77 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-02T00:36:06.084Z
+> Files: 93 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
@@ -26,6 +26,7 @@
 
 ## commands/
 
+- `admin.md` (~49 tok)
 - `audit.md` (~36 tok)
 - `forget.md` (~39 tok)
 - `list.md` — Declares rule (~56 tok)
@@ -33,6 +34,7 @@
 - `pin.md` (~37 tok)
 - `save.md` — Declares rule (~52 tok)
 - `show.md` (~37 tok)
+- `stats.md` (~42 tok)
 
 ## docs/
 
@@ -57,15 +59,22 @@
 
 ## scripts/
 
-- `cli.mjs` — Declares db (~325 tok)
+- `cli.mjs` — Declares db (~1626 tok)
 - `hook.mjs` — Declares T_ENTRY (~327 tok)
 
 ## scripts/daemon/
 
+- `dispatch.mjs` — Exports dispatchTask (~154 tok)
 - `lock.mjs` — Exports acquireDaemonLock, refreshHeartbeat, isDaemonAlive (~332 tok)
-- `loop.mjs` — Exports mainLoop (~138 tok)
-- `main.mjs` — Declares db (~114 tok)
+- `loop.mjs` — Exports scheduleCronTasks, runTask, mainLoop (~719 tok)
+- `main.mjs` — Declares db (~126 tok)
 - `wake.mjs` — Exports touchWakeFile, wakeRecently (~135 tok)
+
+## scripts/daemon/tasks/
+
+- `daily-maintenance.mjs` — Exports runDailyMaintenance (~141 tok)
+- `summarize-pending.mjs` — Exports runSummarizePending (~1418 tok)
+- `weekly-synthesis.mjs` — Exports runWeeklySynthesis (~316 tok)
 
 ## scripts/handlers/
 
@@ -80,18 +89,25 @@
 - `feedback.mjs` — Exports inferPrevTurnOutcome, inferFromTranscript (~469 tok)
 - `hook-safety.mjs` — Exports withHookSafety (~329 tok)
 - `injection-cache.mjs` — Exports rebuildInjectionCache (~395 tok)
+- `llm-parse.mjs` — Exports parseLlmJson (~262 tok)
 - `metrics.mjs` — Exports recordMetric (~91 tok)
 - `mode.mjs` — Exports getMode, setMode (~104 tok)
 - `priority.mjs` — Exports recencyFactor, frequencyFactor, computePriority (~232 tok)
 - `project-key.mjs` — Exports normalizeRemoteUrl, fallbackProjectKey, resolveProjectKey (~229 tok)
 - `recent-injections.mjs` — Exports getNextPromptIdx, writeRecentInjection (~147 tok)
 - `render.mjs` — Exports renderStableContext (~172 tok)
-- `task-runs.mjs` — Exports RAN_BY, tryClaimLease (~110 tok)
+- `task-runs.mjs` — Exports RAN_BY, tryClaimLease, markLeaseComplete (~173 tok)
 - `threat-scan.mjs` — Exports evaluateTier1 (~118 tok)
 - `tier15.mjs` — Exports maybeRunTier15 (~193 tok)
 - `transcript.mjs` — Exports parseTranscript, countTranscriptLines, computeSessionStats, extractAssistantText (~224 tok)
 - `trust.mjs` — Exports getSourceInitialTrust, adjustTrust (~327 tok)
 - `type-heuristic.mjs` — Exports inferType (~117 tok)
+
+## scripts/lib/admin/
+
+- `cron.mjs` — Exports cmdAdminCron (~793 tok)
+- `daemon.mjs` — Exports cmdAdminDaemon (~254 tok)
+- `diagnose.mjs` — Exports cmdAdminDiagnose (~497 tok)
 
 ## scripts/lib/cmd/
 
@@ -102,6 +118,7 @@
 - `pin.mjs` — Exports cmdPin (~120 tok)
 - `save.mjs` — Exports cmdSave (~289 tok)
 - `show.mjs` — Exports cmdShow (~31 tok)
+- `stats.mjs` — Exports cmdStats (~866 tok)
 
 ## scripts/migrations/
 
@@ -110,14 +127,18 @@
 
 ## tests/integration/
 
+- `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture (~1608 tok)
+- `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon (~710 tok)
+- `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedAliveDaemon (~1253 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)
-- `daemon-loop.test.mjs` — Declares db (~293 tok)
+- `daemon-loop.test.mjs` — Declares resetRuntimeTables (~4884 tok)
 - `forget-pin-cache.test.mjs` — Declares db (~334 tok)
 - `migration-v1-to-v2.test.mjs` — Declares db (~412 tok)
 - `mode-command.test.mjs` — Declares db (~238 tok)
 - `prompt-submit-retrieval.test.mjs` — Declares db (~274 tok)
 - `save-list-session-start.test.mjs` — Declares db (~296 tok)
+- `stats-command.test.mjs` — dataRoot: resetStatsTables, insertMemory, seedStatsFixture (~1458 tok)
 - `stop-daemon-flow.test.mjs` — Declares db (~242 tok)
 - `stop-hook-dispatch.test.mjs` — Declares dataRoot (~438 tok)
 - `tier15-feedback.test.mjs` — Declares db (~736 tok)
@@ -125,11 +146,12 @@
 ## tests/unit/
 
 - `db.test.mjs` — Declares db (~256 tok)
+- `llm-parse.test.mjs` — Declares raw (~576 tok)
 - `plugin-manifest.test.mjs` — Declares readManifest (~198 tok)
 - `priority.test.mjs` — Declares score (~123 tok)
 - `project-key.test.mjs` (~174 tok)
 - `render.test.mjs` — Declares text (~154 tok)
-- `task-runs.test.mjs` (~78 tok)
+- `task-runs.test.mjs` — Declares db (~331 tok)
 - `threat-scan.test.mjs` — Declares result (~98 tok)
 - `trust.test.mjs` (~77 tok)
 - `type-heuristic.test.mjs` (~121 tok)

@@ -1,5 +1,6 @@
 import { openDb } from '../lib/db.mjs';
 import { acquireDaemonLock, refreshHeartbeat } from './lock.mjs';
+import { dispatchTask } from './dispatch.mjs';
 import { mainLoop } from './loop.mjs';
 
 const db = openDb();
@@ -14,4 +15,4 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-await mainLoop(db, () => stop, async () => {});
+await mainLoop(db, () => stop, dispatchTask);

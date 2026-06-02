@@ -1,0 +1,120 @@
+import { isDaemonAlive } from '../../daemon/lock.mjs';
+import { maybeRunTier15 } from '../tier15.mjs';
+
+const FEEDBACK_WINDOW_MS = 14 * 86400000;
+
+function toCount(value) {
+  return Number(value ?? 0);
+}
+
+function toFeedbackMap(rows) {
+  const counts = {
+    helpful: 0,
+    unhelpful: 0,
+    unknown: 0
+  };
+
+  for (const row of rows) {
+    if (row.outcome in counts) {
+      counts[row.outcome] = Number(row.n ?? 0);
+    }
+  }
+
+  return counts;
+}
+
+function toPendingMap(rows) {
+  const pending = {
+    daily_maintenance: 0,
+    summarize_pending: 0,
+    weekly_synthesis: 0,
+    total: 0
+  };
+
+  for (const row of rows) {
+    const n = Number(row.n ?? 0);
+    pending.total += n;
+    if (row.type in pending) {
+      pending[row.type] = n;
+    }
+  }
+
+  return pending;
+}
+
+export async function cmdStats(db, { buckets = false } = {}) {
+  const tier15Ran = maybeRunTier15(db);
+  const now = Date.now();
+
+  const memoryRow = db.prepare(
+    `SELECT
+       SUM(CASE WHEN decay_status = 'active' AND status = 'active' THEN 1 ELSE 0 END) AS active,
+       SUM(CASE WHEN decay_status = 'active' AND status = 'probation' THEN 1 ELSE 0 END) AS probation,
+       SUM(CASE WHEN decay_status = 'archived' THEN 1 ELSE 0 END) AS archived,
+       COUNT(*) AS total,
+       AVG(trust_score) AS avg_trust,
+       SUM(CASE WHEN decay_status = 'active' AND trust_score >= 0.1 AND trust_score < 0.2 THEN 1 ELSE 0 END) AS grey_zone
+     FROM memories`
+  ).get();
+  const feedbackRows = db.prepare(
+    `SELECT outcome, COUNT(*) AS n
+     FROM memory_feedback
+     WHERE recorded_at >= ?
+     GROUP BY outcome`
+  ).all(now - FEEDBACK_WINDOW_MS);
+  const pendingRows = db.prepare(
+    `SELECT type, COUNT(*) AS n
+     FROM tasks
+     WHERE status = 'queued'
+     GROUP BY type`
+  ).all();
+  const runningTask = db.prepare(
+    `SELECT id, type, started_at
+     FROM tasks
+     WHERE status = 'running'
+     ORDER BY started_at DESC, id DESC
+     LIMIT 1`
+  ).get();
+  const lock = db.prepare(
+    `SELECT holder_pid, hostname, heartbeat_at
+     FROM daemon_lock
+     WHERE id = 1`
+  ).get();
+  const bucketRows = buckets
+    ? db.prepare(
+        `SELECT decay_status, COUNT(*) AS n
+         FROM memories
+         GROUP BY decay_status
+         ORDER BY decay_status ASC`
+      ).all()
+    : [];
+
+  return {
+    tier1: { available: true },
+    tier15: { ran: tier15Ran },
+    tier2: {
+      alive: isDaemonAlive(db),
+      pid: lock?.holder_pid ?? null,
+      hostname: lock?.hostname ?? null,
+      heartbeat_age_ms: lock ? Math.max(0, now - lock.heartbeat_at) : null,
+      running_task: runningTask
+        ? { id: runningTask.id, type: runningTask.type, started_at: runningTask.started_at }
+        : null,
+      pending: toPendingMap(pendingRows)
+    },
+    memories: {
+      active: toCount(memoryRow?.active),
+      probation: toCount(memoryRow?.probation),
+      archived: toCount(memoryRow?.archived),
+      total: toCount(memoryRow?.total)
+    },
+    trust: {
+      avg: Number((Number(memoryRow?.avg_trust ?? 0)).toFixed(2)),
+      grey_zone: toCount(memoryRow?.grey_zone)
+    },
+    feedback: toFeedbackMap(feedbackRows),
+    buckets: buckets
+      ? Object.fromEntries(bucketRows.map((row) => [row.decay_status, Number(row.n ?? 0)]))
+      : null
+  };
+}

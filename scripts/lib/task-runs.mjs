@@ -15,3 +15,11 @@ export function tryClaimLease(db, type, dateKey, ranBy) {
     return false;
   }
 }
+
+export function markLeaseComplete(db, type, dateKey) {
+  db.prepare(
+    `UPDATE task_runs
+     SET status = 'completed', completed_at = ?
+     WHERE type = ? AND date_key = ? AND status = 'running'`
+  ).run(Date.now(), type, dateKey);
+}

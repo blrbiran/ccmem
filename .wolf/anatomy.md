@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-03T00:53:24.990Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-03T00:58:21.000Z
 > Files: 100 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -137,7 +137,7 @@
 - `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon (~2250 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)
-- `daemon-loop.test.mjs` — resetRuntimeTables: setClaudeBridgeEnv (~34080 tok)
+- `daemon-loop.test.mjs` — resetRuntimeTables: setClaudeBridgeEnv (~35707 tok)
 - `forget-pin-cache.test.mjs` — resetCommandTables: seedStaleMaintenanceState, assertPreludeCleanup, insertMemory + 13 more (~3197 tok)
 - `migration-v1-to-v2.test.mjs` — Declares db (~442 tok)
 - `mode-command.test.mjs` — Declares db (~238 tok)

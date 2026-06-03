@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -377,6 +377,126 @@ test('manual weekly admin cron run completes the claimed lease after dispatch', 
     assert.equal(typeof lease.completed_at, 'number');
   } finally {
     global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('manual weekly admin cron run completes the claimed lease after a timeout-scheduled retry succeeds', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const fixedNow = new Date(2026, 5, 8, 3, 18, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'admin-cron-weekly-timeout-retry.mjs');
+  const originalEnable = process.env.CCMEM_ENABLE_REAL_CLAUDE_P;
+  const originalCommand = process.env.CCMEM_CLAUDE_P_COMMAND;
+  const originalArgs = process.env.CCMEM_CLAUDE_P_ARGS_JSON;
+  const originalTimeout = process.env.CCMEM_CLAUDE_P_TIMEOUT_MS;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+  writeFileSync(script, "process.stdin.resume();setTimeout(() => {}, 1000);");
+  process.env.CCMEM_ENABLE_REAL_CLAUDE_P = '1';
+  process.env.CCMEM_CLAUDE_P_COMMAND = process.execPath;
+  process.env.CCMEM_CLAUDE_P_ARGS_JSON = JSON.stringify([script]);
+  process.env.CCMEM_CLAUDE_P_TIMEOUT_MS = '50';
+
+  try {
+    const result = await cmdAdminCron(db, { verb: 'run', taskType: 'weekly_synthesis' });
+    const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(result.task_id);
+
+    await runTask(db, firstTask, dispatchTask);
+
+    writeFileSync(
+      script,
+      "process.stdout.write(JSON.stringify({synthesized:[{content:'Manual weekly timeout retry rule',type:'fact',scope:'project',output_type:'rule'}]}));"
+    );
+    process.env.CCMEM_CLAUDE_P_TIMEOUT_MS = originalTimeout ?? undefined;
+
+    const retryTask = db.prepare(
+      `SELECT *
+       FROM tasks
+       WHERE type = 'weekly_synthesis'
+         AND status = 'queued'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    await runTask(db, retryTask, dispatchTask);
+
+    const tasks = db.prepare(
+      `SELECT status, error_excerpt, attempts
+       FROM tasks
+       WHERE type = 'weekly_synthesis'
+       ORDER BY id ASC`
+    ).all();
+    const lease = db.prepare(
+      `SELECT date_key, ran_by, status, completed_at
+       FROM task_runs
+       WHERE type = 'weekly_synthesis'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    const audit = db.prepare(
+      `SELECT action, details
+       FROM audit_log
+       WHERE action = 'weekly_synthesis_stub'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    const details = JSON.parse(audit.details);
+
+    assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
+      ['failed', 1],
+      ['completed', 2]
+    ]);
+    assert.match(tasks[0].error_excerpt, /claude -p timeout after 50ms/);
+    assert.equal(tasks[1].error_excerpt, null);
+    assert.equal(lease.date_key, weeklyLeaseKey(fixedNow));
+    assert.equal(lease.ran_by, 'manual');
+    assert.equal(lease.status, 'completed');
+    assert.equal(typeof lease.completed_at, 'number');
+    assert.equal(audit.action, 'weekly_synthesis_stub');
+    assert.equal(details.item_count, 1);
+    assert.equal(details.first_output_type, 'rule');
+  } finally {
+    global.Date = OriginalDate;
+    if (originalEnable === undefined) {
+      delete process.env.CCMEM_ENABLE_REAL_CLAUDE_P;
+    } else {
+      process.env.CCMEM_ENABLE_REAL_CLAUDE_P = originalEnable;
+    }
+    if (originalCommand === undefined) {
+      delete process.env.CCMEM_CLAUDE_P_COMMAND;
+    } else {
+      process.env.CCMEM_CLAUDE_P_COMMAND = originalCommand;
+    }
+    if (originalArgs === undefined) {
+      delete process.env.CCMEM_CLAUDE_P_ARGS_JSON;
+    } else {
+      process.env.CCMEM_CLAUDE_P_ARGS_JSON = originalArgs;
+    }
+    if (originalTimeout === undefined) {
+      delete process.env.CCMEM_CLAUDE_P_TIMEOUT_MS;
+    } else {
+      process.env.CCMEM_CLAUDE_P_TIMEOUT_MS = originalTimeout;
+    }
     db.close();
   }
 });

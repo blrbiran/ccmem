@@ -3091,6 +3091,103 @@ test('dispatchTask defaults weekly_synthesis rate-limit retry delay to 60 second
   db.close();
 });
 
+test('dispatchTask applies weekly_synthesis after a default-rate-limit retry later succeeds', async () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const now = Date.now();
+  const leaseKey = weeklyLeaseKey(new Date());
+  const claimed = tryClaimLease(db, 'weekly_synthesis', leaseKey, RAN_BY.DAEMON);
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'claude-weekly-rate-limit-default-retry.mjs');
+
+  assert.equal(claimed, true);
+
+  writeFileSync(script, "process.stderr.write('429 rate limit');process.exit(29);");
+
+  const first = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('weekly_synthesis', ?, ?, ?, 'queued')`
+  ).run('{}', now - 2000, now - 2000);
+
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
+    await runTask(db, firstTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  writeFileSync(
+    script,
+    "process.stdout.write(JSON.stringify({synthesized:[{content:'Weekly default retry rule',type:'fact',scope:'project',output_type:'rule'}]}));"
+  );
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const retryTask = db.prepare(
+      `SELECT *
+       FROM tasks
+       WHERE type = 'weekly_synthesis'
+         AND status = 'queued'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    await runTask(db, retryTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts
+     FROM tasks
+     WHERE type = 'weekly_synthesis'
+     ORDER BY id ASC`
+  ).all();
+  const lease = db.prepare(
+    `SELECT status, completed_at
+     FROM task_runs
+     WHERE type = 'weekly_synthesis' AND date_key = ?`
+  ).get(leaseKey);
+  const audit = db.prepare(
+    `SELECT action, details
+     FROM audit_log
+     WHERE action = 'weekly_synthesis_stub'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const details = JSON.parse(audit.details);
+
+  assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
+    ['failed', 1],
+    ['completed', 2]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(lease.status, 'completed');
+  assert.equal(typeof lease.completed_at, 'number');
+  assert.equal(audit.action, 'weekly_synthesis_stub');
+  assert.equal(details.item_count, 1);
+  assert.equal(details.first_output_type, 'rule');
+
+  db.close();
+});
+
 test('dispatchTask defaults weekly_synthesis too-many-requests retry delay to 60 seconds', async () => {
   const db = openDb();
   resetRuntimeTables(db);
@@ -3160,6 +3257,103 @@ test('dispatchTask defaults weekly_synthesis too-many-requests retry delay to 60
   assert.equal(lease.status, 'running');
   assert.equal(lease.completed_at, null);
   assert.equal(auditCount.n, 0);
+  db.close();
+});
+
+test('dispatchTask applies weekly_synthesis after a too-many-requests retry later succeeds', async () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const now = Date.now();
+  const leaseKey = weeklyLeaseKey(new Date());
+  const claimed = tryClaimLease(db, 'weekly_synthesis', leaseKey, RAN_BY.DAEMON);
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'claude-weekly-too-many-requests-retry.mjs');
+
+  assert.equal(claimed, true);
+
+  writeFileSync(script, "process.stderr.write('too many requests');process.exit(29);");
+
+  const first = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('weekly_synthesis', ?, ?, ?, 'queued')`
+  ).run('{}', now - 2000, now - 2000);
+
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
+    await runTask(db, firstTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  writeFileSync(
+    script,
+    "process.stdout.write(JSON.stringify({synthesized:[{content:'Weekly too many retry rule',type:'fact',scope:'project',output_type:'rule'}]}));"
+  );
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const retryTask = db.prepare(
+      `SELECT *
+       FROM tasks
+       WHERE type = 'weekly_synthesis'
+         AND status = 'queued'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    await runTask(db, retryTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts
+     FROM tasks
+     WHERE type = 'weekly_synthesis'
+     ORDER BY id ASC`
+  ).all();
+  const lease = db.prepare(
+    `SELECT status, completed_at
+     FROM task_runs
+     WHERE type = 'weekly_synthesis' AND date_key = ?`
+  ).get(leaseKey);
+  const audit = db.prepare(
+    `SELECT action, details
+     FROM audit_log
+     WHERE action = 'weekly_synthesis_stub'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const details = JSON.parse(audit.details);
+
+  assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
+    ['failed', 1],
+    ['completed', 2]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p exit 29: too many requests/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(lease.status, 'completed');
+  assert.equal(typeof lease.completed_at, 'number');
+  assert.equal(audit.action, 'weekly_synthesis_stub');
+  assert.equal(details.item_count, 1);
+  assert.equal(details.first_output_type, 'rule');
+
   db.close();
 });
 

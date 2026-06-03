@@ -134,11 +134,20 @@ try {
       }
     }
   } else if (verb === 'admin' && args[0] === 'cron' && args[1] === 'run' && args[2]) {
-    const result = await cmdAdminCron(db, { verb: 'run', taskType: args[2] });
-    if (result.status === 'skipped') {
-      process.stdout.write(`ccmem: skipped ${result.type} (${result.reason})\n`);
-    } else {
-      process.stdout.write(`ccmem: enqueued ${result.type} as task#${result.task_id}\n`);
+    try {
+      const result = await cmdAdminCron(db, { verb: 'run', taskType: args[2] });
+      if (result.status === 'skipped') {
+        process.stdout.write(`ccmem: skipped ${result.type} (${result.reason})\n`);
+      } else {
+        process.stdout.write(`ccmem: enqueued ${result.type} as task#${result.task_id}\n`);
+      }
+    } catch (error) {
+      if (error instanceof Error && /unsupported .*cron task:/.test(error.message)) {
+        process.stderr.write(`ccmem: ${error.message}\n`);
+        process.exitCode = 64;
+      } else {
+        throw error;
+      }
     }
   } else if (verb === 'admin' && args[0] === 'diagnose') {
     const result = await cmdAdminDiagnose(db, {

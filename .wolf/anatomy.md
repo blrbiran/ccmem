@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-03T01:36:07.000Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-03T13:20:12.000Z
 > Files: 100 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -61,7 +61,7 @@
 
 ## scripts/
 
-- `cli.mjs` — db: getOptionValue, createStdinLineReader (~3212 tok)
+- `cli.mjs` — db: getOptionValue, createStdinLineReader (~3284 tok)
 - `hook.mjs` — T_ENTRY: writeHookOutput, isBlacklistedSession (~595 tok)
 
 ## scripts/daemon/
@@ -108,7 +108,7 @@
 
 ## scripts/lib/admin/
 
-- `cron.mjs` — Exports cmdAdminCron (~1447 tok)
+- `cron.mjs` — Exports cmdAdminCron (~1496 tok)
 - `daemon.mjs` — Exports renderPlist, cmdAdminDaemon (~2180 tok)
 - `diagnose.mjs` — Exports cmdAdminDiagnose (~864 tok)
 
@@ -132,7 +132,7 @@
 
 ## tests/integration/
 
-- `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture; manual weekly retry closures incl 2s/2m (~12424 tok)
+- `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture; summarize_pending manual rejection (~12579 tok)
 - `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + 5 more (~2448 tok)
 - `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon (~2250 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)

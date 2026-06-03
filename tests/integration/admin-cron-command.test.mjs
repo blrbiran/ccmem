@@ -1100,27 +1100,27 @@ test('manual weekly admin cron run completes the claimed lease after a minutes r
   }
 });
 
-test('cmdAdminCron run keeps summarize_pending as a plain queued task without a manual lease', async () => {
+test('cmdAdminCron run rejects summarize_pending because manual payload cannot be constructed', async () => {
   const db = openDb();
   resetCronTables(db);
 
-  const result = await cmdAdminCron(db, { verb: 'run', taskType: 'summarize_pending' });
-  const task = db.prepare(
-    `SELECT type, payload, scheduled_for, status
+  await assert.rejects(
+    cmdAdminCron(db, { verb: 'run', taskType: 'summarize_pending' }),
+    /unsupported manual cron task: summarize_pending/
+  );
+
+  const tasks = db.prepare(
+    `SELECT COUNT(*) AS n
      FROM tasks
-     WHERE id = ?`
-  ).get(result.task_id);
+     WHERE type = 'summarize_pending'`
+  ).get();
   const leases = db.prepare(
     `SELECT COUNT(*) AS n
      FROM task_runs
      WHERE type = 'summarize_pending'`
   ).get();
 
-  assert.equal(result.type, 'summarize_pending');
-  assert.equal(task.type, 'summarize_pending');
-  assert.equal(task.status, 'queued');
-  assert.equal(typeof task.scheduled_for, 'number');
-  assert.deepEqual(JSON.parse(task.payload), {});
+  assert.equal(tasks.n, 0);
   assert.equal(leases.n, 0);
   db.close();
 });
@@ -1370,6 +1370,36 @@ test('cli admin cron run enqueues supported tasks', () => {
   assert.equal(typeof JSON.parse(task.payload).lease_key, 'string');
   assert.equal(lease.ran_by, 'manual');
   assert.equal(lease.status, 'running');
+});
+
+test('cli admin cron run rejects summarize_pending as a manual task', () => {
+  const db = openDb();
+  resetCronTables(db);
+  db.close();
+
+  assert.throws(
+    () =>
+      execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'run', 'summarize_pending'], {
+        cwd: '/Users/biran/code/skills/ccmem',
+        env,
+        encoding: 'utf8'
+      }),
+    (error) => {
+      assert.equal(error.status, 64);
+      assert.match(String(error.stderr), /ccmem: unsupported manual cron task: summarize_pending/);
+      return true;
+    }
+  );
+
+  const verifyDb = openDb();
+  const tasks = verifyDb.prepare(
+    `SELECT COUNT(*) AS n
+     FROM tasks
+     WHERE type = 'summarize_pending'`
+  ).get();
+  verifyDb.close();
+
+  assert.equal(tasks.n, 0);
 });
 
 test('cli admin cron run reports duplicate manual leases as skipped', () => {

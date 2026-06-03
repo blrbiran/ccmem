@@ -3,6 +3,7 @@ import { dayKey, weeklyLeaseKey } from '../../daemon/loop.mjs';
 import { RAN_BY, tryClaimLease } from '../task-runs.mjs';
 
 const TRACKED_TYPES = ['daily_maintenance', 'summarize_pending', 'weekly_synthesis'];
+const MANUAL_RUN_TYPES = ['daily_maintenance', 'weekly_synthesis'];
 const QUEUE_OVERDUE_MS = 5 * 60 * 1000;
 const RUNNING_ZOMBIE_MS = 10 * 60 * 1000;
 
@@ -163,6 +164,10 @@ function manualLeaseKey(taskType, now) {
 function runCronTask(db, taskType) {
   if (!TRACKED_TYPES.includes(taskType)) {
     throw new Error(`unsupported cron task: ${taskType}`);
+  }
+
+  if (!MANUAL_RUN_TYPES.includes(taskType)) {
+    throw new Error(`unsupported manual cron task: ${taskType}`);
   }
 
   const now = new Date();

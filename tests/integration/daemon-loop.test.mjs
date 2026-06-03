@@ -732,6 +732,90 @@ test('dispatchTask supersedes a stale summarize_pending bridge result when a new
   db.close();
 });
 
+test('dispatchTask re-applies the same summarize_pending seq after a prior bridge run completed', async () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const now = Date.now();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'summarize-bridge-completed-retry.jsonl');
+
+  writeFileSync(
+    transcript,
+    '{"type":"user","message":{"content":[{"type":"text","text":"remember this preference"}]}}\n' +
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+  );
+
+  db.prepare(
+    `INSERT INTO session_context (
+      session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run('s-bridge-completed-retry', 'demo/repo', 1, 3, 0, 2, now);
+
+  const first = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-bridge-completed-retry',
+    transcript_path: transcript,
+    last_message_seq: 2,
+    llm_output: JSON.stringify([{ content: 'bridge replay result', type: 'rule', scope: 'project', tags: ['bridge-retry'] }])
+  }), now - 2000, now - 2000);
+
+  const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
+  await runTask(db, firstTask, dispatchTask);
+
+  const second = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-bridge-completed-retry',
+    transcript_path: transcript,
+    last_message_seq: 2,
+    llm_output: JSON.stringify([{ content: 'bridge replay result', type: 'rule', scope: 'project', tags: ['bridge-retry'] }])
+  }), now - 1000, now - 1000);
+
+  const secondTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(second.lastInsertRowid));
+  await runTask(db, secondTask, dispatchTask);
+
+  const rows = db.prepare(
+    `SELECT status, json_extract(payload, '$.last_message_seq') AS last_message_seq
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-bridge-completed-retry'
+     ORDER BY id ASC`
+  ).all();
+  const memories = db.prepare(
+    `SELECT content, source, tags
+     FROM memories
+     WHERE source = 'auto_inferred' AND content = 'bridge replay result'
+     ORDER BY id ASC`
+  ).all();
+  const audits = db.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'summarize_pending_applied'
+       AND json_extract(details, '$.session_id') = 's-bridge-completed-retry'
+     ORDER BY id ASC`
+  ).all();
+
+  assert.deepEqual(rows.map((row) => [row.status, row.last_message_seq]), [
+    ['completed', 2],
+    ['completed', 2]
+  ]);
+  assert.equal(memories.length, 2);
+  for (const memory of memories) {
+    assert.equal(memory.source, 'auto_inferred');
+    assert.deepEqual(JSON.parse(memory.tags), ['bridge-retry']);
+  }
+  assert.equal(audits.length, 2);
+  for (const audit of audits) {
+    const details = JSON.parse(audit.details);
+    assert.equal(details.last_message_seq, 2);
+    assert.equal(details.inserted_count, 1);
+  }
+
+  db.close();
+});
+
 test('dispatchTask registers generated child session ids in blacklist for summarize_pending bridge runs', async () => {
   const db = openDb();
   resetRuntimeTables(db);
@@ -882,6 +966,101 @@ test('dispatchTask marks task failed when configured claude bridge exits non-zer
   db.close();
 });
 
+test('dispatchTask re-applies the same summarize_pending seq after a prior bridge failure', async () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const now = Date.now();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'summarize-bridge-fail-retry.jsonl');
+  const failScript = path.join(process.env.CCMEM_DATA_ROOT, 'claude-task-fail-retry-fail.mjs');
+
+  writeFileSync(failScript, "process.stderr.write('task bridge failed');process.exit(9);");
+  writeFileSync(
+    transcript,
+    '{"type":"user","message":{"content":[{"type":"text","text":"remember this preference"}]}}\n' +
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+  );
+
+  db.prepare(
+    `INSERT INTO session_context (
+      session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run('s-bridge-fail-retry', 'demo/repo', 1, 3, 0, 2, now);
+
+  const first = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-bridge-fail-retry',
+    transcript_path: transcript,
+    last_message_seq: 2
+  }), now - 2000, now - 2000);
+
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([failScript])
+  });
+
+  try {
+    const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
+    await runTask(db, firstTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  const second = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-bridge-fail-retry',
+    transcript_path: transcript,
+    last_message_seq: 2,
+    llm_output: JSON.stringify([{ content: 'bridge retry result', type: 'rule', scope: 'project', tags: ['bridge-retry'] }])
+  }), now - 1000, now - 1000);
+
+  const secondTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(second.lastInsertRowid));
+  await runTask(db, secondTask, dispatchTask);
+
+  const rows = db.prepare(
+    `SELECT status, json_extract(payload, '$.last_message_seq') AS last_message_seq
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-bridge-fail-retry'
+     ORDER BY id ASC`
+  ).all();
+  const memories = db.prepare(
+    `SELECT content, source, tags
+     FROM memories
+     WHERE source = 'auto_inferred' AND content = 'bridge retry result'
+     ORDER BY id ASC`
+  ).all();
+  const audits = db.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'summarize_pending_applied'
+       AND json_extract(details, '$.session_id') = 's-bridge-fail-retry'
+     ORDER BY id ASC`
+  ).all();
+
+  assert.deepEqual(rows.map((row) => [row.status, row.last_message_seq]), [
+    ['failed', 2],
+    ['completed', 2]
+  ]);
+  assert.equal(memories.length, 1);
+  assert.equal(memories[0].source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memories[0].tags), ['bridge-retry']);
+  assert.equal(audits.length, 1);
+  const details = JSON.parse(audits[0].details);
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(details.inserted_count, 1);
+
+  db.close();
+});
+
 test('dispatchTask schedules retry when configured claude bridge is rate limited', async () => {
   const db = openDb();
   resetRuntimeTables(db);
@@ -957,6 +1136,120 @@ test('dispatchTask schedules retry when configured claude bridge is rate limited
   assert.equal(tasks[1].error_excerpt, null);
   assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 1234);
   assert.equal(memory.n, 0);
+  db.close();
+});
+
+test('dispatchTask applies summarize_pending after a rate-limit-scheduled retry later succeeds', async () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const now = Date.now();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'summarize-bridge-rate-limit-retry.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'claude-task-rate-limit-retry.mjs');
+
+  writeFileSync(script, "process.stderr.write('429 rate limit; retry-after: 1234ms');process.exit(29);");
+  writeFileSync(
+    transcript,
+    '{"type":"user","message":{"content":[{"type":"text","text":"remember this preference"}]}}\n' +
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+  );
+
+  db.prepare(
+    `INSERT INTO session_context (
+      session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run('s-bridge-rate-retry', 'demo/repo', 1, 3, 0, 2, now);
+
+  const first = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-bridge-rate-retry',
+    transcript_path: transcript,
+    last_message_seq: 2
+  }), now - 2000, now - 2000);
+
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
+    await runTask(db, firstTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  writeFileSync(
+    script,
+    "process.stdout.write(JSON.stringify([{content:'rate limit retry result',type:'rule',scope:'project',tags:['rate-limit-retry']}]))"
+  );
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const retryTask = db.prepare(
+      `SELECT *
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = 's-bridge-rate-retry'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    await runTask(db, retryTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-bridge-rate-retry'
+     ORDER BY id ASC`
+  ).all();
+  const memory = db.prepare(
+    `SELECT content, source, tags
+     FROM memories
+     WHERE source = 'auto_inferred' AND content = 'rate limit retry result'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const audit = db.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'summarize_pending_applied'
+       AND json_extract(details, '$.session_id') = 's-bridge-rate-retry'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const details = JSON.parse(audit.details);
+
+  assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
+    ['failed', 1],
+    ['completed', 2]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 1234ms/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(memory.content, 'rate limit retry result');
+  assert.equal(memory.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memory.tags), ['rate-limit-retry']);
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(details.inserted_count, 1);
+
   db.close();
 });
 
@@ -1349,6 +1642,122 @@ test('dispatchTask marks task failed when configured claude bridge times out', a
   assert.equal(tasks[1].error_excerpt, null);
   assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 60_000);
   assert.equal(memory.n, 0);
+  db.close();
+});
+
+test('dispatchTask applies summarize_pending after a timeout-scheduled retry later succeeds', async () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const now = Date.now();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'summarize-bridge-timeout-retry.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'claude-task-timeout-retry.mjs');
+
+  writeFileSync(script, "process.stdin.resume();setTimeout(() => {}, 1000);");
+  writeFileSync(
+    transcript,
+    '{"type":"user","message":{"content":[{"type":"text","text":"remember this preference"}]}}\n' +
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+  );
+
+  db.prepare(
+    `INSERT INTO session_context (
+      session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run('s-bridge-timeout-retry', 'demo/repo', 1, 3, 0, 2, now);
+
+  const first = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-bridge-timeout-retry',
+    transcript_path: transcript,
+    last_message_seq: 2
+  }), now - 2000, now - 2000);
+
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
+    CCMEM_CLAUDE_P_TIMEOUT_MS: '50'
+  });
+
+  try {
+    const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
+    await runTask(db, firstTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null,
+      CCMEM_CLAUDE_P_TIMEOUT_MS: null
+    });
+  }
+
+  writeFileSync(
+    script,
+    "process.stdout.write(JSON.stringify([{content:'timeout retry result',type:'rule',scope:'project',tags:['timeout-retry']}]))"
+  );
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const retryTask = db.prepare(
+      `SELECT *
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = 's-bridge-timeout-retry'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    await runTask(db, retryTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-bridge-timeout-retry'
+     ORDER BY id ASC`
+  ).all();
+  const memory = db.prepare(
+    `SELECT content, source, tags
+     FROM memories
+     WHERE source = 'auto_inferred' AND content = 'timeout retry result'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const audit = db.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'summarize_pending_applied'
+       AND json_extract(details, '$.session_id') = 's-bridge-timeout-retry'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const details = JSON.parse(audit.details);
+
+  assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
+    ['failed', 1],
+    ['completed', 2]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p timeout after 50ms/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(memory.content, 'timeout retry result');
+  assert.equal(memory.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memory.tags), ['timeout-retry']);
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(details.inserted_count, 1);
+
   db.close();
 });
 

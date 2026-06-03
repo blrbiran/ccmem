@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-03T13:20:12.000Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-03T13:22:44.401Z
 > Files: 100 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -61,7 +61,7 @@
 
 ## scripts/
 
-- `cli.mjs` — db: getOptionValue, createStdinLineReader (~3284 tok)
+- `cli.mjs` — db: getOptionValue, createStdinLineReader; admin cron history unsupported-task exit 64 (~3363 tok)
 - `hook.mjs` — T_ENTRY: writeHookOutput, isBlacklistedSession (~595 tok)
 
 ## scripts/daemon/
@@ -132,7 +132,7 @@
 
 ## tests/integration/
 
-- `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture; summarize_pending manual rejection (~12579 tok)
+- `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture; history unsupported-task CLI rejection (~12731 tok)
 - `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + 5 more (~2448 tok)
 - `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon (~2250 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)

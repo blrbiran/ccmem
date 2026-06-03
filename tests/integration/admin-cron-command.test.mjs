@@ -1271,6 +1271,27 @@ test('cli admin cron list --history prints task history lines', () => {
   assert.match(output, /failed@2026-06-01 by=manual/);
 });
 
+test('cli admin cron list --history rejects unsupported tasks', () => {
+  const db = openDb();
+  resetCronTables(db);
+  seedCronFixture(db);
+  db.close();
+
+  assert.throws(
+    () =>
+      execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'list', '--history', '2', '--task', 'security_audit'], {
+        cwd: '/Users/biran/code/skills/ccmem',
+        env,
+        encoding: 'utf8'
+      }),
+    (error) => {
+      assert.equal(error.status, 64);
+      assert.match(String(error.stderr), /ccmem: unsupported cron task: security_audit/);
+      return true;
+    }
+  );
+});
+
 test('cli admin cron list prints compact status lines', () => {
   const db = openDb();
   resetCronTables(db);

@@ -114,15 +114,24 @@ try {
         }
       }
     } else if (historyIdx >= 0 && taskIdx >= 0 && args[taskIdx + 1]) {
-      const result = await cmdAdminCron(db, {
-        verb: 'list',
-        taskType: args[taskIdx + 1],
-        history: args[historyIdx + 1] ?? '10'
-      });
-      process.stdout.write(`ccmem: cron history ${result.type}\n`);
+      try {
+        const result = await cmdAdminCron(db, {
+          verb: 'list',
+          taskType: args[taskIdx + 1],
+          history: args[historyIdx + 1] ?? '10'
+        });
+        process.stdout.write(`ccmem: cron history ${result.type}\n`);
 
-      for (const row of result.history) {
-        process.stdout.write(`${row.status}@${row.date_key} by=${row.ran_by}\n`);
+        for (const row of result.history) {
+          process.stdout.write(`${row.status}@${row.date_key} by=${row.ran_by}\n`);
+        }
+      } catch (error) {
+        if (error instanceof Error && /unsupported .*cron task:/.test(error.message)) {
+          process.stderr.write(`ccmem: ${error.message}\n`);
+          process.exitCode = 64;
+        } else {
+          throw error;
+        }
       }
     } else {
       const result = await cmdAdminCron(db, { verb: 'list' });

@@ -2,7 +2,7 @@
 
 > OpenWolf's learning memory. Updated automatically as the AI learns from interactions.
 > Do not edit manually unless correcting an error.
-> Last updated: 2026-06-02
+> Last updated: 2026-06-03
 
 ## User Preferences
 
@@ -60,6 +60,7 @@
 - **[2026-06-03] `promote`/`pin`/`forget` 这类“修改已有 memory”的命令也必须跑 `maybeRunTier15()`**:不要只在 `save`/`list`/`show`/`stats`/`resurrect` 这类更显眼的入口上接 opportunistic maintenance；修改现有 memory 的命令同样是高频用户入口，如果漏掉，daily cleanup/lease 语义就会只在部分命令上成立。最小回归可直接锁命令执行后的 `daily_maintenance` local-day lease。
 - **[2026-06-03] `admin cron run` 的 daily/weekly 手动触发也必须先 claim lease，再把同一个 `lease_key` 带进 queued task payload**:如果手动入队还是塞 `scheduled_for=0` 的裸任务，worker 侧虽然有 lease 完成逻辑，也无法知道这次运行属于哪个本地日/周窗口；重复手动触发还会在 CLI 上冒出 `task#null` 之类假成功。最小闭环是 `cmdAdminCron(run)` 对 daily/weekly 先 `tryClaimLease(..., RAN_BY.MANUAL)`，payload 写 `{ lease_key }`，CLI 在 duplicate lease 时明确输出 skipped。
 - **[2026-06-03] `admin cron run summarize_pending` 应明确拒绝，而不是排一个空 payload 坏任务**:`summarize_pending` 运行依赖 `session_id` / `transcript_path` / `last_message_seq`，admin cron 没法凭空构造这组 payload；继续手动入队只会在 worker 里落到 `summarize_pending_bad_payload`。正确语义是 `cmdAdminCron(run)` 直接拒绝该 task，CLI 用 exit 64 明确报 `unsupported manual cron task: summarize_pending`，同时不写任何 task / lease。
+- **[2026-06-03] `cli admin cron list --history --task <unsupported>` 也必须走 CLI 级 exit 64，而不是把 `cmdAdminCron()` 异常裸抛出来**:历史查询分支和 `admin cron run` 一样都会直达用户终端；如果少了 try/catch，unsupported task 会显示为未处理异常，破坏 CLI 错误语义一致性。最小回归是 `security_audit` 这类非法 task 在 `--history` 分支下 stderr 输出 `ccmem: unsupported cron task: ...` 且进程以 64 退出。
 - **[2026-06-03] `stop` hook 的 `summarize_pending` 去重键是 `(session_id, last_message_seq)`，不是单纯按 session 去重**:同一 transcript seq 上重复触发 stop 只能保留一条 queued/running summarize 任务；但 transcript 继续增长后，新的 seq 必须允许再入队，否则后续 stop 永远不会触发新的总结。最小回归要成对出现：一条锁“同 seq 不重复入队”，一条锁“seq+1 后重新入队”。
 - **[2026-06-03] `summarize_pending` 的去重只屏蔽 `queued/running`，不应阻止已完成同 seq 再次入队**:唯一索引 `uniq_tasks_summarize_session_seq` 明确只覆盖 `status IN ('queued', 'running')`；因此旧任务一旦 completed，同一 `(session_id, last_message_seq)` 的 stop 重试必须能重新排队。否则 stop 重放/重试会被历史 completed 任务永久吞掉。回归不要只停在 hook 入队层；至少要成对锁 worker dispatch 与 stop→daemon bridge e2e，证明 completed 后同 seq 既能再次 dispatch，也能再次 `summarize_pending_applied`。
 - **[2026-06-03] `summarize_pending` 的同 seq 重试也不应被历史 failed 任务永久挡住**:partial unique index 只覆盖 `queued/running`，所以某个 summarize 任务若已经 `failed`，后续同一 `(session_id, last_message_seq)` 的 stop 重试必须允许重新入队；否则一次 bridge/LLM 暂时失败就会把该 seq 永久卡死。回归不要只锁 stop hook 入队；至少还要覆盖 worker dispatch 与 stop→daemon e2e，证明 failed 后同 seq 既能再次执行，也能随后 `summarize_pending_applied`。

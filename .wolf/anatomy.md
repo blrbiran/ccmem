@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-03T16:50:44.214Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-03T16:59:17.373Z
 > Files: 100 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -146,7 +146,7 @@
 - `resurrect-command.test.mjs` — dataRoot: resetResurrectTables, seedGreyZoneMemories (~1435 tok)
 - `save-list-session-start.test.mjs` — API routes: GET (2 endpoints) (~3375 tok)
 - `stats-command.test.mjs` — dataRoot: resetStatsTables, insertMemory, seedStatsFixture (~1775 tok)
-- `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 93 more; too-many-requests stale retry supersede e2e (~20018 tok)
+- `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 96 more; second-based stale retry supersede e2e (~21363 tok)
 - `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~4954 tok)
 - `tier15-feedback.test.mjs` — Declares db (~1780 tok)
 

@@ -1186,6 +1186,124 @@ test('stop hook wake applies summarize_pending after a timeout-scheduled retry l
   db.close();
 });
 
+test('stop hook wake supersedes a stale timeout-scheduled retry when a newer stop seq arrives before rerun', async () => {
+  const db = openDb();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-timeout-stale-retry.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-timeout-stale-retry.mjs');
+
+  resetStopDaemonState(db);
+  writeFileSync(script, "process.stdin.resume();setTimeout(() => {}, 1000);");
+  writeTranscript(transcript, 'remember my preference', 'ok');
+  await handleStop(db, {
+    session_id: 's-flow-bridge-timeout-stale-retry',
+    transcript_path: transcript,
+    cwd: process.cwd()
+  });
+
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
+    CCMEM_CLAUDE_P_TIMEOUT_MS: '50'
+  });
+
+  try {
+    await runUntilFailure(db);
+
+    writeFileSync(
+      transcript,
+      '{"type":"user","message":{"content":[{"type":"text","text":"remember my preference"}]}}\n' +
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n' +
+        '{"type":"user","message":{"content":[{"type":"text","text":"and this follow-up too"}]}}\n'
+    );
+    await handleStop(db, {
+      session_id: 's-flow-bridge-timeout-stale-retry',
+      transcript_path: transcript,
+      cwd: process.cwd()
+    });
+
+    db.prepare(
+      `UPDATE tasks
+       SET scheduled_for = ?
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = ?
+         AND json_extract(payload, '$.last_message_seq') = 2`
+    ).run(Date.now() - 1, 's-flow-bridge-timeout-stale-retry');
+
+    writeFileSync(script, buildBridgeScriptSuccess('Bridge stale timeout retry result'));
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+      CCMEM_CLAUDE_P_COMMAND: process.execPath,
+      CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
+      CCMEM_CLAUDE_P_TIMEOUT_MS: null
+    });
+
+    let stop = false;
+    await Promise.race([
+      mainLoop(db, () => stop, async (loopDb, task) => {
+        await dispatchTask(loopDb, task);
+        const payload = JSON.parse(task.payload ?? '{}');
+        if (task.type !== 'summarize_pending' || payload.session_id !== 's-flow-bridge-timeout-stale-retry') {
+          return;
+        }
+
+        if (payload.last_message_seq === 2) {
+          writeFileSync(script, buildBridgeScriptSuccess('Bridge fresh timeout retry result'));
+          return;
+        }
+
+        if (payload.last_message_seq === 3) {
+          stop = true;
+        }
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
+    ]);
+  } finally {
+    clearClaudeBridgeEnv();
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts, json_extract(payload, '$.last_message_seq') AS last_message_seq
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-flow-bridge-timeout-stale-retry'
+     ORDER BY id ASC`
+  ).all();
+  const stale = db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE source = 'auto_inferred' AND content = 'Bridge stale timeout retry result'`
+  ).get();
+  const memory = getLatestAutoMemory(db);
+  const audit = getLatestAudit(db, 'summarize_pending_superseded');
+  const details = JSON.parse(audit.details);
+  const applied = getLatestAudit(db, 'summarize_pending_applied');
+  const appliedDetails = JSON.parse(applied.details);
+
+  assert.equal(existsSync(wakePath), true);
+  assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
+    ['failed', 2, 1],
+    ['superseded', 2, 2],
+    ['completed', 3, 1]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p timeout after 50ms/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(stale.n, 0);
+  assert.equal(memory.content, 'Bridge fresh timeout retry result');
+  assert.equal(memory.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memory.tags), ['stop-bridge']);
+  assert.equal(audit.action, 'summarize_pending_superseded');
+  assert.equal(details.session_id, 's-flow-bridge-timeout-stale-retry');
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(applied.action, 'summarize_pending_applied');
+  assert.equal(appliedDetails.session_id, 's-flow-bridge-timeout-stale-retry');
+  assert.equal(appliedDetails.last_message_seq, 3);
+  assert.equal(appliedDetails.inserted_count, 1);
+
+  db.close();
+});
+
 test('stop hook wake preserves rate-limit retry scheduling for configured claude bridge', async () => {
   const db = openDb();
   const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-rate-limit.jsonl');

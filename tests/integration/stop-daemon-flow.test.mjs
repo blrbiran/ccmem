@@ -1355,6 +1355,83 @@ test('stop hook wake defaults rate-limit retry scheduling to 60 seconds when ret
   db.close();
 });
 
+test('stop hook wake applies summarize_pending after a default-rate-limit retry later succeeds', async () => {
+  const db = openDb();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-rate-limit-default-retry.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-rate-limit-default-retry.mjs');
+
+  resetStopDaemonState(db);
+  writeFileSync(script, "process.stderr.write('429 rate limit');process.exit(29);");
+  writeTranscript(transcript, 'remember my preference', 'ok');
+  await handleStop(db, {
+    session_id: 's-flow-bridge-rate-limit-default-retry',
+    transcript_path: transcript,
+    cwd: process.cwd()
+  });
+
+  setBridgeCommand(script);
+  try {
+    await runUntilFailure(db);
+
+    writeFileSync(script, buildBridgeScriptSuccess('Bridge remembered after default rate-limit retry'));
+    setBridgeCommand(script);
+
+    db.prepare(
+      `UPDATE tasks
+       SET scheduled_for = ?
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = ?`
+    ).run(Date.now() - 1, 's-flow-bridge-rate-limit-default-retry');
+
+    let stop = false;
+    await Promise.race([
+      mainLoop(db, () => stop, async (loopDb, task) => {
+        await dispatchTask(loopDb, task);
+        const payload = JSON.parse(task.payload ?? '{}');
+        if (
+          task.type === 'summarize_pending' &&
+          payload.session_id === 's-flow-bridge-rate-limit-default-retry' &&
+          payload.last_message_seq === 2
+        ) {
+          stop = true;
+        }
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
+    ]);
+  } finally {
+    clearClaudeBridgeEnv();
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts, json_extract(payload, '$.last_message_seq') AS last_message_seq
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-flow-bridge-rate-limit-default-retry'
+     ORDER BY id ASC`
+  ).all();
+  const memory = getLatestAutoMemory(db);
+  const audit = getLatestAudit(db, 'summarize_pending_applied');
+  const details = JSON.parse(audit.details);
+
+  assert.equal(existsSync(wakePath), true);
+  assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
+    ['failed', 2, 1],
+    ['completed', 2, 2]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(memory.content, 'Bridge remembered after default rate-limit retry');
+  assert.equal(memory.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memory.tags), ['stop-bridge']);
+  assert.equal(audit.action, 'summarize_pending_applied');
+  assert.equal(details.session_id, 's-flow-bridge-rate-limit-default-retry');
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(details.inserted_count, 1);
+
+  db.close();
+});
+
 test('stop hook wake converts second-based retry-after into milliseconds for configured claude bridge', async () => {
   const db = openDb();
   const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-rate-limit-seconds.jsonl');
@@ -1397,6 +1474,83 @@ test('stop hook wake converts second-based retry-after into milliseconds for con
   assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 2_000);
   assert.equal(memory.n, 0);
   assert.equal(audit, undefined);
+
+  db.close();
+});
+
+test('stop hook wake applies summarize_pending after a second-based retry-after retry later succeeds', async () => {
+  const db = openDb();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-rate-limit-seconds-retry.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-rate-limit-seconds-retry.mjs');
+
+  resetStopDaemonState(db);
+  writeFileSync(script, "process.stderr.write('429 rate limit; retry-after: 2s');process.exit(29);");
+  writeTranscript(transcript, 'remember my preference', 'ok');
+  await handleStop(db, {
+    session_id: 's-flow-bridge-rate-limit-seconds-retry',
+    transcript_path: transcript,
+    cwd: process.cwd()
+  });
+
+  setBridgeCommand(script);
+  try {
+    await runUntilFailure(db);
+
+    writeFileSync(script, buildBridgeScriptSuccess('Bridge remembered after second-based retry'));
+    setBridgeCommand(script);
+
+    db.prepare(
+      `UPDATE tasks
+       SET scheduled_for = ?
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = ?`
+    ).run(Date.now() - 1, 's-flow-bridge-rate-limit-seconds-retry');
+
+    let stop = false;
+    await Promise.race([
+      mainLoop(db, () => stop, async (loopDb, task) => {
+        await dispatchTask(loopDb, task);
+        const payload = JSON.parse(task.payload ?? '{}');
+        if (
+          task.type === 'summarize_pending' &&
+          payload.session_id === 's-flow-bridge-rate-limit-seconds-retry' &&
+          payload.last_message_seq === 2
+        ) {
+          stop = true;
+        }
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
+    ]);
+  } finally {
+    clearClaudeBridgeEnv();
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts, json_extract(payload, '$.last_message_seq') AS last_message_seq
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-flow-bridge-rate-limit-seconds-retry'
+     ORDER BY id ASC`
+  ).all();
+  const memory = getLatestAutoMemory(db);
+  const audit = getLatestAudit(db, 'summarize_pending_applied');
+  const details = JSON.parse(audit.details);
+
+  assert.equal(existsSync(wakePath), true);
+  assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
+    ['failed', 2, 1],
+    ['completed', 2, 2]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2s/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(memory.content, 'Bridge remembered after second-based retry');
+  assert.equal(memory.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memory.tags), ['stop-bridge']);
+  assert.equal(audit.action, 'summarize_pending_applied');
+  assert.equal(details.session_id, 's-flow-bridge-rate-limit-seconds-retry');
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(details.inserted_count, 1);
 
   db.close();
 });
@@ -1447,6 +1601,83 @@ test('stop hook wake converts minute-based retry-after into milliseconds for con
   db.close();
 });
 
+test('stop hook wake applies summarize_pending after a minute-based retry-after retry later succeeds', async () => {
+  const db = openDb();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-rate-limit-minutes-retry.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-rate-limit-minutes-retry.mjs');
+
+  resetStopDaemonState(db);
+  writeFileSync(script, "process.stderr.write('429 rate limit; retry-after: 2m');process.exit(29);");
+  writeTranscript(transcript, 'remember my preference', 'ok');
+  await handleStop(db, {
+    session_id: 's-flow-bridge-rate-limit-minutes-retry',
+    transcript_path: transcript,
+    cwd: process.cwd()
+  });
+
+  setBridgeCommand(script);
+  try {
+    await runUntilFailure(db);
+
+    writeFileSync(script, buildBridgeScriptSuccess('Bridge remembered after minute-based retry'));
+    setBridgeCommand(script);
+
+    db.prepare(
+      `UPDATE tasks
+       SET scheduled_for = ?
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = ?`
+    ).run(Date.now() - 1, 's-flow-bridge-rate-limit-minutes-retry');
+
+    let stop = false;
+    await Promise.race([
+      mainLoop(db, () => stop, async (loopDb, task) => {
+        await dispatchTask(loopDb, task);
+        const payload = JSON.parse(task.payload ?? '{}');
+        if (
+          task.type === 'summarize_pending' &&
+          payload.session_id === 's-flow-bridge-rate-limit-minutes-retry' &&
+          payload.last_message_seq === 2
+        ) {
+          stop = true;
+        }
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
+    ]);
+  } finally {
+    clearClaudeBridgeEnv();
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts, json_extract(payload, '$.last_message_seq') AS last_message_seq
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-flow-bridge-rate-limit-minutes-retry'
+     ORDER BY id ASC`
+  ).all();
+  const memory = getLatestAutoMemory(db);
+  const audit = getLatestAudit(db, 'summarize_pending_applied');
+  const details = JSON.parse(audit.details);
+
+  assert.equal(existsSync(wakePath), true);
+  assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
+    ['failed', 2, 1],
+    ['completed', 2, 2]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2m/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(memory.content, 'Bridge remembered after minute-based retry');
+  assert.equal(memory.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memory.tags), ['stop-bridge']);
+  assert.equal(audit.action, 'summarize_pending_applied');
+  assert.equal(details.session_id, 's-flow-bridge-rate-limit-minutes-retry');
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(details.inserted_count, 1);
+
+  db.close();
+});
+
 test('stop hook wake defaults too-many-requests retry scheduling to 60 seconds for configured claude bridge', async () => {
   const db = openDb();
   const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-too-many-requests.jsonl');
@@ -1489,6 +1720,83 @@ test('stop hook wake defaults too-many-requests retry scheduling to 60 seconds f
   assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 60_000);
   assert.equal(memory.n, 0);
   assert.equal(audit, undefined);
+
+  db.close();
+});
+
+test('stop hook wake applies summarize_pending after a too-many-requests retry later succeeds', async () => {
+  const db = openDb();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-too-many-requests-retry.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-too-many-requests-retry.mjs');
+
+  resetStopDaemonState(db);
+  writeFileSync(script, "process.stderr.write('too many requests');process.exit(29);");
+  writeTranscript(transcript, 'remember my preference', 'ok');
+  await handleStop(db, {
+    session_id: 's-flow-bridge-too-many-requests-retry',
+    transcript_path: transcript,
+    cwd: process.cwd()
+  });
+
+  setBridgeCommand(script);
+  try {
+    await runUntilFailure(db);
+
+    writeFileSync(script, buildBridgeScriptSuccess('Bridge remembered after too-many-requests retry'));
+    setBridgeCommand(script);
+
+    db.prepare(
+      `UPDATE tasks
+       SET scheduled_for = ?
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = ?`
+    ).run(Date.now() - 1, 's-flow-bridge-too-many-requests-retry');
+
+    let stop = false;
+    await Promise.race([
+      mainLoop(db, () => stop, async (loopDb, task) => {
+        await dispatchTask(loopDb, task);
+        const payload = JSON.parse(task.payload ?? '{}');
+        if (
+          task.type === 'summarize_pending' &&
+          payload.session_id === 's-flow-bridge-too-many-requests-retry' &&
+          payload.last_message_seq === 2
+        ) {
+          stop = true;
+        }
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
+    ]);
+  } finally {
+    clearClaudeBridgeEnv();
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts, json_extract(payload, '$.last_message_seq') AS last_message_seq
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-flow-bridge-too-many-requests-retry'
+     ORDER BY id ASC`
+  ).all();
+  const memory = getLatestAutoMemory(db);
+  const audit = getLatestAudit(db, 'summarize_pending_applied');
+  const details = JSON.parse(audit.details);
+
+  assert.equal(existsSync(wakePath), true);
+  assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
+    ['failed', 2, 1],
+    ['completed', 2, 2]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p exit 29: too many requests/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(memory.content, 'Bridge remembered after too-many-requests retry');
+  assert.equal(memory.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memory.tags), ['stop-bridge']);
+  assert.equal(audit.action, 'summarize_pending_applied');
+  assert.equal(details.session_id, 's-flow-bridge-too-many-requests-retry');
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(details.inserted_count, 1);
 
   db.close();
 });

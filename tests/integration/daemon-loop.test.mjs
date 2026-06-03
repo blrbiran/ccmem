@@ -1331,6 +1331,120 @@ test('dispatchTask defaults rate-limit retry delay to 60 seconds when retry-afte
   db.close();
 });
 
+test('dispatchTask applies summarize_pending after a default-rate-limit retry later succeeds', async () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const now = Date.now();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'summarize-bridge-rate-limit-default-retry.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'claude-task-rate-limit-default-retry.mjs');
+
+  writeFileSync(script, "process.stderr.write('429 rate limit');process.exit(29);");
+  writeFileSync(
+    transcript,
+    '{"type":"user","message":{"content":[{"type":"text","text":"remember this preference"}]}}\n' +
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+  );
+
+  db.prepare(
+    `INSERT INTO session_context (
+      session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run('s-bridge-rate-default-retry', 'demo/repo', 1, 3, 0, 2, now);
+
+  const first = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-bridge-rate-default-retry',
+    transcript_path: transcript,
+    last_message_seq: 2
+  }), now - 2000, now - 2000);
+
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
+    await runTask(db, firstTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  writeFileSync(
+    script,
+    "process.stdout.write(JSON.stringify([{content:'default rate limit retry result',type:'rule',scope:'project',tags:['rate-limit-default-retry']}]))"
+  );
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const retryTask = db.prepare(
+      `SELECT *
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = 's-bridge-rate-default-retry'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    await runTask(db, retryTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-bridge-rate-default-retry'
+     ORDER BY id ASC`
+  ).all();
+  const memory = db.prepare(
+    `SELECT content, source, tags
+     FROM memories
+     WHERE source = 'auto_inferred' AND content = 'default rate limit retry result'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const audit = db.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'summarize_pending_applied'
+       AND json_extract(details, '$.session_id') = 's-bridge-rate-default-retry'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const details = JSON.parse(audit.details);
+
+  assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
+    ['failed', 1],
+    ['completed', 2]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(memory.content, 'default rate limit retry result');
+  assert.equal(memory.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memory.tags), ['rate-limit-default-retry']);
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(details.inserted_count, 1);
+
+  db.close();
+});
+
 test('dispatchTask defaults too-many-requests retry delay to 60 seconds', async () => {
   const db = openDb();
   resetRuntimeTables(db);
@@ -1406,6 +1520,120 @@ test('dispatchTask defaults too-many-requests retry delay to 60 seconds', async 
   assert.equal(tasks[1].error_excerpt, null);
   assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 60_000);
   assert.equal(memory.n, 0);
+  db.close();
+});
+
+test('dispatchTask applies summarize_pending after a too-many-requests retry later succeeds', async () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const now = Date.now();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'summarize-too-many-requests-retry.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'claude-task-too-many-requests-retry.mjs');
+
+  writeFileSync(script, "process.stderr.write('too many requests');process.exit(29);");
+  writeFileSync(
+    transcript,
+    '{"type":"user","message":{"content":[{"type":"text","text":"remember this preference"}]}}\n' +
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+  );
+
+  db.prepare(
+    `INSERT INTO session_context (
+      session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run('s-bridge-too-many-requests-retry', 'demo/repo', 1, 3, 0, 2, now);
+
+  const first = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-bridge-too-many-requests-retry',
+    transcript_path: transcript,
+    last_message_seq: 2
+  }), now - 2000, now - 2000);
+
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
+    await runTask(db, firstTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  writeFileSync(
+    script,
+    "process.stdout.write(JSON.stringify([{content:'too many requests retry result',type:'rule',scope:'project',tags:['too-many-requests-retry']}]))"
+  );
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const retryTask = db.prepare(
+      `SELECT *
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = 's-bridge-too-many-requests-retry'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    await runTask(db, retryTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-bridge-too-many-requests-retry'
+     ORDER BY id ASC`
+  ).all();
+  const memory = db.prepare(
+    `SELECT content, source, tags
+     FROM memories
+     WHERE source = 'auto_inferred' AND content = 'too many requests retry result'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const audit = db.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'summarize_pending_applied'
+       AND json_extract(details, '$.session_id') = 's-bridge-too-many-requests-retry'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const details = JSON.parse(audit.details);
+
+  assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
+    ['failed', 1],
+    ['completed', 2]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p exit 29: too many requests/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(memory.content, 'too many requests retry result');
+  assert.equal(memory.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memory.tags), ['too-many-requests-retry']);
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(details.inserted_count, 1);
+
   db.close();
 });
 
@@ -1487,6 +1715,120 @@ test('dispatchTask converts second-based retry-after into milliseconds', async (
   db.close();
 });
 
+test('dispatchTask applies summarize_pending after a second-based retry-after retry later succeeds', async () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const now = Date.now();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'summarize-bridge-rate-limit-seconds-retry.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'claude-task-rate-limit-seconds-retry.mjs');
+
+  writeFileSync(script, "process.stderr.write('429 rate limit; retry-after: 2s');process.exit(29);");
+  writeFileSync(
+    transcript,
+    '{"type":"user","message":{"content":[{"type":"text","text":"remember this preference"}]}}\n' +
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+  );
+
+  db.prepare(
+    `INSERT INTO session_context (
+      session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run('s-bridge-rate-seconds-retry', 'demo/repo', 1, 3, 0, 2, now);
+
+  const first = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-bridge-rate-seconds-retry',
+    transcript_path: transcript,
+    last_message_seq: 2
+  }), now - 2000, now - 2000);
+
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
+    await runTask(db, firstTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  writeFileSync(
+    script,
+    "process.stdout.write(JSON.stringify([{content:'second-based retry result',type:'rule',scope:'project',tags:['rate-limit-seconds-retry']}]))"
+  );
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const retryTask = db.prepare(
+      `SELECT *
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = 's-bridge-rate-seconds-retry'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    await runTask(db, retryTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-bridge-rate-seconds-retry'
+     ORDER BY id ASC`
+  ).all();
+  const memory = db.prepare(
+    `SELECT content, source, tags
+     FROM memories
+     WHERE source = 'auto_inferred' AND content = 'second-based retry result'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const audit = db.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'summarize_pending_applied'
+       AND json_extract(details, '$.session_id') = 's-bridge-rate-seconds-retry'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const details = JSON.parse(audit.details);
+
+  assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
+    ['failed', 1],
+    ['completed', 2]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2s/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(memory.content, 'second-based retry result');
+  assert.equal(memory.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memory.tags), ['rate-limit-seconds-retry']);
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(details.inserted_count, 1);
+
+  db.close();
+});
+
 test('dispatchTask converts minute-based retry-after into milliseconds', async () => {
   const db = openDb();
   resetRuntimeTables(db);
@@ -1562,6 +1904,120 @@ test('dispatchTask converts minute-based retry-after into milliseconds', async (
   assert.equal(tasks[1].error_excerpt, null);
   assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 120_000);
   assert.equal(memory.n, 0);
+  db.close();
+});
+
+test('dispatchTask applies summarize_pending after a minute-based retry-after retry later succeeds', async () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const now = Date.now();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'summarize-bridge-rate-limit-minutes-retry.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'claude-task-rate-limit-minutes-retry.mjs');
+
+  writeFileSync(script, "process.stderr.write('429 rate limit; retry-after: 2m');process.exit(29);");
+  writeFileSync(
+    transcript,
+    '{"type":"user","message":{"content":[{"type":"text","text":"remember this preference"}]}}\n' +
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+  );
+
+  db.prepare(
+    `INSERT INTO session_context (
+      session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run('s-bridge-rate-minutes-retry', 'demo/repo', 1, 3, 0, 2, now);
+
+  const first = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-bridge-rate-minutes-retry',
+    transcript_path: transcript,
+    last_message_seq: 2
+  }), now - 2000, now - 2000);
+
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
+    await runTask(db, firstTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  writeFileSync(
+    script,
+    "process.stdout.write(JSON.stringify([{content:'minute-based retry result',type:'rule',scope:'project',tags:['rate-limit-minutes-retry']}]))"
+  );
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
+  });
+
+  try {
+    const retryTask = db.prepare(
+      `SELECT *
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = 's-bridge-rate-minutes-retry'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    await runTask(db, retryTask, dispatchTask);
+  } finally {
+    setClaudeBridgeEnv({
+      CCMEM_ENABLE_REAL_CLAUDE_P: null,
+      CCMEM_CLAUDE_P_COMMAND: null,
+      CCMEM_CLAUDE_P_ARGS_JSON: null
+    });
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, error_excerpt, attempts
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-bridge-rate-minutes-retry'
+     ORDER BY id ASC`
+  ).all();
+  const memory = db.prepare(
+    `SELECT content, source, tags
+     FROM memories
+     WHERE source = 'auto_inferred' AND content = 'minute-based retry result'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const audit = db.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'summarize_pending_applied'
+       AND json_extract(details, '$.session_id') = 's-bridge-rate-minutes-retry'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const details = JSON.parse(audit.details);
+
+  assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
+    ['failed', 1],
+    ['completed', 2]
+  ]);
+  assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2m/);
+  assert.equal(tasks[1].error_excerpt, null);
+  assert.equal(memory.content, 'minute-based retry result');
+  assert.equal(memory.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memory.tags), ['rate-limit-minutes-retry']);
+  assert.equal(details.last_message_seq, 2);
+  assert.equal(details.inserted_count, 1);
+
   db.close();
 });
 

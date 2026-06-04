@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T17:21:52.729Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T17:49:12.300Z
 > Files: 136 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
@@ -151,7 +151,7 @@
 ## scripts/lib/admin/
 
 - `cron.mjs` — Exports cmdAdminCron (~1515 tok)
-- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon with install-time Claude capability probe (~3281 tok)
+- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon with launchd bootstrap fallback after bootout (~3369 tok)
 - `diagnose.mjs` — Exports cmdAdminDiagnose (~1553 tok)
 
 ## scripts/lib/cmd/
@@ -180,7 +180,7 @@
 ## tests/integration/
 
 - `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~13206 tok)
-- `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + install-time Claude capability regressions (~4085 tok)
+- `admin-daemon-command.test.mjs` — dataRoot: fake launchctl/claude helpers plus launchd install/capability/restart CLI regressions (~5839 tok)
 - `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedSecurityDiagnostics (~3334 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)

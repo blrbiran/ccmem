@@ -9,12 +9,183 @@ const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-admin-daemon-'));
 const launchAgentDir = path.join(dataRoot, 'LaunchAgents');
 const fakeLaunchctlPath = path.join(dataRoot, 'fake-launchctl.sh');
 const fakeLaunchctlLog = path.join(dataRoot, 'fake-launchctl.log');
+const fakeLaunchctlStatePath = path.join(dataRoot, 'fake-launchctl.loaded');
+const DEFAULT_FAKE_LAUNCHCTL_SCRIPT = "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$CCMEM_LAUNCHCTL_LOG\"\nexit 0\n";
 mkdirSync(launchAgentDir, { recursive: true });
-writeFileSync(
-  fakeLaunchctlPath,
-  "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$CCMEM_LAUNCHCTL_LOG\"\nexit 0\n"
-);
+writeFileSync(fakeLaunchctlPath, DEFAULT_FAKE_LAUNCHCTL_SCRIPT);
 chmodSync(fakeLaunchctlPath, 0o755);
+
+function writeFakeLaunchctlScript(script) {
+  writeFileSync(fakeLaunchctlPath, script);
+  chmodSync(fakeLaunchctlPath, 0o755);
+}
+
+function resetFakeLaunchctlScript() {
+  writeFakeLaunchctlScript(DEFAULT_FAKE_LAUNCHCTL_SCRIPT);
+}
+
+function createFakeClaudeBinary(dirName, helpText = '--json-schema') {
+  const fakeClaudeDir = path.join(dataRoot, dirName);
+  const fakeClaudePath = path.join(fakeClaudeDir, 'claude');
+  mkdirSync(fakeClaudeDir, { recursive: true });
+  writeFileSync(fakeClaudePath, `#!/bin/sh\nif [ \"$1\" = \"-p\" ] && [ \"$2\" = \"--help\" ]; then\n  printf %s\\n ${JSON.stringify(helpText)}\n  exit 0\nfi\nexit 0\n`);
+  chmodSync(fakeClaudePath, 0o755);
+  return { fakeClaudeDir, fakeClaudePath };
+}
+
+function withPrependedPath(dir, run) {
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${dir}:${process.env.PATH ?? ''}`;
+
+  try {
+    return run();
+  } finally {
+    if (previousPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = previousPath;
+    }
+  }
+}
+
+function withDaemonInstallEnv(run) {
+  const previousApiKey = process.env.ANTHROPIC_API_KEY;
+  const previousSonnet = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+  const previousFoundry = process.env.CLAUDE_CODE_USE_FOUNDRY;
+  process.env.ANTHROPIC_API_KEY = 'test-api-key';
+  process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'claude-sonnet-test';
+  process.env.CLAUDE_CODE_USE_FOUNDRY = '1';
+
+  try {
+    return run();
+  } finally {
+    if (previousApiKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else {
+      process.env.ANTHROPIC_API_KEY = previousApiKey;
+    }
+    if (previousSonnet === undefined) {
+      delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+    } else {
+      process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = previousSonnet;
+    }
+    if (previousFoundry === undefined) {
+      delete process.env.CLAUDE_CODE_USE_FOUNDRY;
+    } else {
+      process.env.CLAUDE_CODE_USE_FOUNDRY = previousFoundry;
+    }
+  }
+}
+
+function launchdLifecycleScript() {
+  return [
+    '#!/bin/sh',
+    'printf \'%s\\n\' "$@" >> "$CCMEM_LAUNCHCTL_LOG"',
+    'DB="$CCMEM_DATA_ROOT/global.db"',
+    `STATE=${JSON.stringify(fakeLaunchctlStatePath)}`,
+    'NOW=$(($(date +%s) * 1000))',
+    'set_lock() {',
+    '  sqlite3 "$DB" "INSERT OR REPLACE INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive) VALUES (1, 9876, \'launchd-test-host\', $NOW, $NOW, 1);" >/dev/null 2>&1',
+    '}',
+    'case "$1" in',
+    '  bootout)',
+    '    rm -f "$STATE"',
+    '    sqlite3 "$DB" "DELETE FROM daemon_lock; DELETE FROM tasks WHERE status = \'running\';" >/dev/null 2>&1',
+    '    ;;',
+    '  bootstrap)',
+    '    : > "$STATE"',
+    '    set_lock',
+    '    ;;',
+    '  kickstart)',
+    '    if [ ! -f "$STATE" ]; then',
+    '      printf %s\\n "service not loaded" >&2',
+    '      exit 1',
+    '    fi',
+    '    set_lock',
+    '    ;;',
+    'esac',
+    'exit 0',
+    ''
+  ].join('\n');
+}
+
+function clearLaunchctlLog() {
+  rmSync(fakeLaunchctlLog, { force: true });
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function restoreDaemonInstallEnv(previous) {
+  if (previous.apiKey === undefined) {
+    delete process.env.ANTHROPIC_API_KEY;
+  } else {
+    process.env.ANTHROPIC_API_KEY = previous.apiKey;
+  }
+
+  if (previous.sonnet === undefined) {
+    delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+  } else {
+    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = previous.sonnet;
+  }
+
+  if (previous.foundry === undefined) {
+    delete process.env.CLAUDE_CODE_USE_FOUNDRY;
+  } else {
+    process.env.CLAUDE_CODE_USE_FOUNDRY = previous.foundry;
+  }
+}
+
+function saveDaemonInstallEnv() {
+  return {
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    sonnet: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+    foundry: process.env.CLAUDE_CODE_USE_FOUNDRY
+  };
+}
+
+function applyDaemonInstallEnv() {
+  process.env.ANTHROPIC_API_KEY = 'test-api-key';
+  process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'claude-sonnet-test';
+  process.env.CLAUDE_CODE_USE_FOUNDRY = '1';
+}
+
+function withConfiguredDaemonInstallEnv(run) {
+  const previous = saveDaemonInstallEnv();
+  applyDaemonInstallEnv();
+
+  try {
+    return run();
+  } finally {
+    restoreDaemonInstallEnv(previous);
+  }
+}
+
+function withPrependedPathEnv(dir, run) {
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${dir}:${process.env.PATH ?? ''}`;
+
+  try {
+    return run();
+  } finally {
+    if (previousPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = previousPath;
+    }
+  }
+}
+
+function escapedPathPattern(value) {
+  return new RegExp(escapeRegExp(value));
+}
+
+function setDefaultFakeLaunchctlScript() {
+  resetFakeLaunchctlScript();
+}
+
+setDefaultFakeLaunchctlScript();
 
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = dataRoot;
@@ -136,6 +307,8 @@ test.afterEach(async () => {
   await stopRunningDaemon();
   rmSync(getLaunchAgentPath(), { force: true });
   rmSync(fakeLaunchctlLog, { force: true });
+  rmSync(fakeLaunchctlStatePath, { force: true });
+  resetFakeLaunchctlScript();
   const db = openDb();
   resetAdminTables(db);
   db.close();
@@ -365,6 +538,57 @@ test('cli admin daemon install and uninstall manage a launchd plist', () => {
   assert.match(log, /bootstrap/);
   assert.match(log, /bootout/);
 });
+
+test('cli admin daemon restart reboots a launchd service after bootout unloads it', () => {
+  clearLaunchctlLog();
+  writeFakeLaunchctlScript(launchdLifecycleScript());
+  const { fakeClaudeDir } = createFakeClaudeBinary('fake-restart-claude-bin');
+
+  const cliEnv = {
+    ...env,
+    PATH: `${fakeClaudeDir}:${env.PATH ?? process.env.PATH ?? ''}`,
+    ANTHROPIC_API_KEY: 'test-api-key',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-test',
+    CLAUDE_CODE_USE_FOUNDRY: '1',
+    CCMEM_LAUNCHCTL_BIN: fakeLaunchctlPath,
+    CCMEM_LAUNCHCTL_LOG: fakeLaunchctlLog
+  };
+
+  const installOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'install'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(installOutput, /ccmem: daemon installed /);
+
+  const statusBefore = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'status'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(statusBefore, /ccmem: daemon alive pid=9876/);
+
+  const restartResult = spawnSync(NODE, [CLI, 'admin', '--', 'daemon', 'restart'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.equal(restartResult.status, 0);
+  assert.match(restartResult.stdout, /ccmem: daemon restarted pid=9876/);
+
+  const statusAfter = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'status'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(statusAfter, /ccmem: daemon alive pid=9876/);
+
+  const log = readLaunchctlLog();
+  assert.match(log, /bootout/);
+  assert.match(log, /kickstart/);
+  assert.match(log, /bootstrap/);
+});
+
 
 test('cli admin daemon install blocks claude binaries without json-schema support', () => {
   rmSync(fakeLaunchctlLog, { force: true });

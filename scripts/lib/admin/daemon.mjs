@@ -280,6 +280,18 @@ function kickstartDaemon() {
   return null;
 }
 
+function bootstrapDaemon() {
+  const result = runLaunchctl(['bootstrap', getLaunchDomain(), getLaunchAgentPath()]);
+  if (result.status !== 0) {
+    return {
+      status: 'start_failed',
+      reason: launchctlError(result)
+    };
+  }
+
+  return null;
+}
+
 function bootoutDaemon() {
   const result = runLaunchctl(['bootout', getLaunchDomain(), getLaunchAgentPath()]);
   if (![0, 3].includes(result.status ?? 1)) {
@@ -318,12 +330,12 @@ function installDaemon() {
   mkdirSync(getLaunchAgentDir(), { recursive: true });
   writeFileSync(plistPath, renderDaemonPlist(dataRoot, daemonEnv));
 
-  const result = runLaunchctl(['bootstrap', getLaunchDomain(), plistPath]);
-  if (result.status !== 0) {
+  const bootstrapError = bootstrapDaemon();
+  if (bootstrapError) {
     return {
       status: 'install_failed',
       plist_path: plistPath,
-      reason: launchctlError(result)
+      reason: bootstrapError.reason
     };
   }
 
@@ -360,9 +372,12 @@ async function startDaemon(db) {
   }
 
   if (isLaunchdInstalled()) {
-    const error = kickstartDaemon();
-    if (error) {
-      return error;
+    const kickstartError = kickstartDaemon();
+    if (kickstartError) {
+      const bootstrapError = bootstrapDaemon();
+      if (bootstrapError) {
+        return bootstrapError;
+      }
     }
 
     const started = await waitFor(() => {

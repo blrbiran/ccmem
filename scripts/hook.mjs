@@ -1,21 +1,21 @@
 const T_ENTRY = process.hrtime.bigint();
 const mode = process.argv[2];
 
-const HOOK_EVENT_NAMES = {
-  'session-start': 'SessionStart',
-  'prompt-submit': 'UserPromptSubmit',
-  stop: 'Stop',
-  'session-end': 'SessionEnd'
-};
+function buildHookOutput(hookMode, additionalContext = '') {
+  if (hookMode === 'stop' || hookMode === 'session-end') {
+    return {};
+  }
 
-async function writeHookOutput(hookMode, additionalContext = '') {
-  const payload = JSON.stringify({
+  return {
     hookSpecificOutput: {
-      hookEventName: HOOK_EVENT_NAMES[hookMode],
+      hookEventName: hookMode === 'session-start' ? 'SessionStart' : 'UserPromptSubmit',
       additionalContext
     }
-  });
+  };
+}
 
+async function writeHookOutput(hookMode, additionalContext = '') {
+  const payload = JSON.stringify(buildHookOutput(hookMode, additionalContext));
   await new Promise((resolve) => process.stdout.write(payload, resolve));
 }
 

@@ -2,10 +2,21 @@ import { recordMetric } from './metrics.mjs';
 
 const HOOK_EVENT_NAMES = {
   session_start: 'SessionStart',
-  prompt_submit: 'UserPromptSubmit',
-  stop: 'Stop',
-  session_end: 'SessionEnd'
+  prompt_submit: 'UserPromptSubmit'
 };
+
+function buildHookPayload(hookName, result) {
+  if (hookName === 'stop' || hookName === 'session_end') {
+    return {};
+  }
+
+  return {
+    hookSpecificOutput: {
+      hookEventName: HOOK_EVENT_NAMES[hookName],
+      additionalContext: result.additionalContext ?? ''
+    }
+  };
+}
 
 export async function withHookSafety(hookName, timeoutMs, fn, tEntry = process.hrtime.bigint()) {
   const tBusinessStart = process.hrtime.bigint();
@@ -22,12 +33,7 @@ export async function withHookSafety(hookName, timeoutMs, fn, tEntry = process.h
   }
 
   const tBusinessEnd = process.hrtime.bigint();
-  const payload = JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: HOOK_EVENT_NAMES[hookName],
-      additionalContext: result.additionalContext ?? ''
-    }
-  });
+  const payload = JSON.stringify(buildHookPayload(hookName, result));
 
   await new Promise((resolve) => process.stdout.write(payload, resolve));
   const tStdoutDone = process.hrtime.bigint();

@@ -11,6 +11,7 @@
 - **Code, comments, and git commit messages**: English
 - **User-facing message strings in code output**: English, including stderr/stdout notices, prompts, thrown errors, logs, and audit-facing reason/action fields.
 - **Workflow**: docs-first then PoC. When the user says “先 X 再 Y”, execute sequentially rather than parallelizing.
+- **Implementation workflow**: default to TDD. Write or adjust a failing test first, then implement the minimal code to make it pass, then refactor if needed.
 - **Housekeeping**: when slimming `.wolf` operational files, prefer archival compaction over deletion, and keep a short recent raw tail in `memory.md` for active debugging context.
 
 ## Key Learnings
@@ -27,8 +28,12 @@
 - **`summarize_pending` supersede rule**: delayed retries must still yield to a newer `last_message_seq` before rerun, both in daemon-worker tests and stop→daemon end-to-end tests.
 - **Admin-cron boundary**: unsupported tasks must fail at the CLI boundary with consistent exit semantics instead of enqueueing impossible payloads.
 - **Task-layer verification**: cron/admin surface coverage is not enough for complex tasks; task behavior itself needs direct regression coverage (for example `security_audit`).
-- **Packaging invariants**: user-facing launcher, hook, and daemon entrypoints must stay aligned on real-path resolution, sqlite flags, and warning behavior.
+- **Packaging invariants**: user-facing launcher, hook, and daemon entrypoints must stay aligned on real-path resolution, sqlite flags, warning behavior, and bridge-enabling environment.
+- **Real daemon extraction**: a `summarize_pending` task can show `completed` while `memories` stays empty if the daemon runs without `CCMEM_ENABLE_REAL_CLAUDE_P=1`; that path emits `summarize_pending_stub` audit rows instead of `summarize_pending_applied` inserts.
 - **External install docs**: do not invent unverified official marketplace slugs; point users to the exact plugin entry shown by Claude Code.
+- **Real transcript shape**: Claude transcripts include many non-message meta rows, and `message.content` may be either an array of parts or a plain string. Shared transcript helpers must tolerate both shapes before task or feedback code reads text.
+- **Hook output contract**: `hookSpecificOutput.additionalContext` is only for SessionStart/UserPromptSubmit-style injection. Stop hooks should return an empty JSON object instead of emitting `hookSpecificOutput` with `hookEventName: "Stop"`.
+- **Timeout test fixtures**: timeout regressions must use `CCMEM_CONFIG_PATH` / `claude_p_timeout_per_task` once task-specific config takes precedence; the legacy `CCMEM_CLAUDE_P_TIMEOUT_MS` env no longer reliably drives `summarize_pending` timeout paths.
 
 ## Do-Not-Repeat
 

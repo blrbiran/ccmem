@@ -135,7 +135,7 @@ test('hook.mjs stop writes hook output and DB side effects', async () => {
   const result = runStopHook({ sessionId: 's-hook' });
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /"hookEventName":"Stop"/);
+  assert.equal(result.stdout, '{}');
 
   const counts = await loadStopCounts('s-hook');
   assert.equal(counts.task.n, 1);
@@ -150,7 +150,7 @@ test('hook.mjs stop in off mode stays read-only and emits no notice', async () =
   const result = runStopHook({ sessionId: 's-off' });
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /"hookEventName":"Stop"/);
+  assert.equal(result.stdout, '{}');
   assert.doesNotMatch(result.stderr, /ccmem:/);
 
   const counts = await loadStopCounts('s-off');
@@ -167,7 +167,7 @@ test('hook.mjs stop in shadow mode stays read-only and emits diagnostic notice',
   const result = runStopHook({ sessionId: 's-shadow' });
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /"hookEventName":"Stop"/);
+  assert.equal(result.stdout, '{}');
   assert.match(result.stderr, /ccmem: mode=shadow \(read-only diagnostic — no writes, no inject\)/);
 
   const counts = await loadStopCounts('s-shadow');
@@ -186,7 +186,7 @@ test('hook.mjs stop exits early under CCMEM_INTERNAL and stays read-only', async
   });
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /"hookEventName":"Stop"/);
+  assert.equal(result.stdout, '{}');
   assert.equal(result.stderr, '');
 
   const counts = await loadStopCounts('s-internal');
@@ -203,7 +203,7 @@ test('hook.mjs stop exits early for blacklisted sessions and stays read-only', a
   const result = runStopHook({ sessionId: 's-blacklisted' });
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /"hookEventName":"Stop"/);
+  assert.equal(result.stdout, '{}');
   assert.doesNotMatch(result.stderr, /ccmem:/);
 
   const counts = await loadStopCounts('s-blacklisted');
@@ -221,7 +221,7 @@ test('hook.mjs stop ignores expired blacklisted sessions and proceeds normally',
   const result = runStopHook({ sessionId: 's-expired' });
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /"hookEventName":"Stop"/);
+  assert.equal(result.stdout, '{}');
   assert.doesNotMatch(result.stderr, /ccmem:/);
 
   const counts = await loadStopCounts('s-expired');
@@ -250,7 +250,7 @@ test('hook.mjs stop exits early for sessions blacklisted by daemon bridge child 
 
   assert.match(childSessionId, /^[0-9a-f-]{36}$/i);
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /"hookEventName":"Stop"/);
+  assert.equal(result.stdout, '{}');
   assert.doesNotMatch(result.stderr, /ccmem:/);
 
   const counts = await loadStopCounts(childSessionId);

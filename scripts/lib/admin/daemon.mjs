@@ -11,6 +11,85 @@ const LAUNCHD_LABEL = 'com.ccmem.daemon';
 const WAIT_INTERVAL_MS = 50;
 const WAIT_TIMEOUT_MS = 2000;
 const DEFAULT_PATH = '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin';
+const DAEMON_ENV_PASSTHROUGH = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_FOUNDRY_API_KEY',
+  'ANTHROPIC_FOUNDRY_BASE_URL',
+  'ANTHROPIC_SMALL_FAST_MODEL',
+  'CLAUDE_CODE_USE_FOUNDRY'
+];
+
+function buildDaemonEnv(baseEnv = process.env) {
+  const dataRoot = getDataRoot();
+  const daemonEnv = {
+    PATH: baseEnv.PATH ?? DEFAULT_PATH,
+    CCMEM_DATA_ROOT: baseEnv.CCMEM_DATA_ROOT ?? dataRoot,
+    CCMEM_ENABLE_REAL_CLAUDE_P: baseEnv.CCMEM_ENABLE_REAL_CLAUDE_P ?? '1'
+  };
+
+  for (const key of DAEMON_ENV_PASSTHROUGH) {
+    const value = baseEnv[key];
+    if (typeof value === 'string' && value) {
+      daemonEnv[key] = value;
+    }
+  }
+
+  return daemonEnv;
+}
+
+function renderEnvDict(env) {
+  return Object.entries(env)
+    .map(([key, value]) => `    <key>${escapeXml(key)}</key><string>${escapeXml(value)}</string>`)
+    .join('\n');
+}
+
+function buildLaunchdDaemonEnv(dataRoot) {
+  return buildDaemonEnv({
+    ...process.env,
+    PATH: DEFAULT_PATH,
+    CCMEM_DATA_ROOT: dataRoot
+  });
+}
+
+function buildSpawnDaemonEnv() {
+  return buildDaemonEnv(process.env);
+}
+
+function getDaemonPlistPaths(dataRoot) {
+  return {
+    stderrPath: path.join(dataRoot, 'daemon.err.log'),
+    stdoutPath: path.join(dataRoot, 'daemon.out.log')
+  };
+}
+
+function renderDaemonPlist(dataRoot, daemonEnv) {
+  const paths = getDaemonPlistPaths(dataRoot);
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>${LAUNCHD_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${escapeXml(process.execPath)}</string>
+    <string>--no-warnings</string>
+    <string>--experimental-sqlite</string>
+    <string>${escapeXml(DAEMON_MAIN)}</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>${escapeXml(paths.stderrPath)}</string>
+  <key>StandardOutPath</key><string>${escapeXml(paths.stdoutPath)}</string>
+  <key>EnvironmentVariables</key><dict>
+${renderEnvDict(daemonEnv)}
+  </dict>
+</dict></plist>
+`;
+}
 
 function getLaunchAgentDir() {
   return process.env.CCMEM_LAUNCHAGENT_DIR ?? path.join(os.homedir(), 'Library', 'LaunchAgents');
@@ -39,28 +118,9 @@ function escapeXml(value) {
 
 export function renderPlist() {
   const dataRoot = getDataRoot();
+  const daemonEnv = buildLaunchdDaemonEnv(dataRoot);
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>${LAUNCHD_LABEL}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${escapeXml(process.execPath)}</string>
-    <string>--no-warnings</string>
-    <string>--experimental-sqlite</string>
-    <string>${escapeXml(DAEMON_MAIN)}</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardErrorPath</key><string>${escapeXml(path.join(dataRoot, 'daemon.err.log'))}</string>
-  <key>StandardOutPath</key><string>${escapeXml(path.join(dataRoot, 'daemon.out.log'))}</string>
-  <key>EnvironmentVariables</key><dict>
-    <key>PATH</key><string>${escapeXml(DEFAULT_PATH)}</string>
-    <key>CCMEM_DATA_ROOT</key><string>${escapeXml(dataRoot)}</string>
-  </dict>
-</dict></plist>
-`;
+  return renderDaemonPlist(dataRoot, daemonEnv);
 }
 
 export { getLaunchAgentPath };
@@ -219,7 +279,7 @@ async function startDaemon(db) {
   const child = spawn(process.execPath, ['--no-warnings', '--experimental-sqlite', DAEMON_MAIN], {
     detached: true,
     stdio: 'ignore',
-    env: process.env
+    env: buildSpawnDaemonEnv()
   });
   child.unref();
 

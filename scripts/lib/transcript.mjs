@@ -11,6 +11,25 @@ export function parseTranscript(transcriptPath) {
     .map((line) => JSON.parse(line));
 }
 
+function extractContentText(content) {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return '';
+  }
+
+  return content
+    .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text)
+    .join('\n');
+}
+
+export function extractEntryText(entry) {
+  return extractContentText(entry?.message?.content);
+}
+
 export function countTranscriptLines(transcriptPath) {
   return parseTranscript(transcriptPath).length;
 }
@@ -25,8 +44,5 @@ export function computeSessionStats(transcriptPath) {
 }
 
 export function extractAssistantText(entry) {
-  return entry?.message?.content
-    ?.filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n') ?? '';
+  return extractEntryText(entry);
 }

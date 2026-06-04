@@ -185,26 +185,58 @@ test('cmdAdminDaemon start, restart, and stop manage the daemon lifecycle', asyn
 
 test('cmdAdminDaemon install and uninstall manage a launchd plist', async () => {
   await withFakeLaunchctl(async () => {
+    const previousApiKey = process.env.ANTHROPIC_API_KEY;
+    const previousSonnet = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+    const previousFoundry = process.env.CLAUDE_CODE_USE_FOUNDRY;
+    process.env.ANTHROPIC_API_KEY = 'test-api-key';
+    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'claude-sonnet-test';
+    process.env.CLAUDE_CODE_USE_FOUNDRY = '1';
+
     const db = openDb();
     resetAdminTables(db);
 
-    const installed = await cmdAdminDaemon(db, { verb: 'install' });
-    assert.equal(installed.status, 'installed');
-    assert.equal(existsSync(installed.plist_path), true);
-    assert.match(installed.plist, /com\.ccmem\.daemon/);
-    assert.match(installed.plist, /--no-warnings/);
-    assert.match(installed.plist, /--experimental-sqlite/);
-    assert.match(installed.plist, /CCMEM_DATA_ROOT/);
-    assert.match(installed.plist, new RegExp(dataRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    try {
+      const installed = await cmdAdminDaemon(db, { verb: 'install' });
+      assert.equal(installed.status, 'installed');
+      assert.equal(existsSync(installed.plist_path), true);
+      assert.match(installed.plist, /com\.ccmem\.daemon/);
+      assert.match(installed.plist, /--no-warnings/);
+      assert.match(installed.plist, /--experimental-sqlite/);
+      assert.match(installed.plist, /CCMEM_DATA_ROOT/);
+      assert.match(installed.plist, /CCMEM_ENABLE_REAL_CLAUDE_P/);
+      assert.match(installed.plist, />1</);
+      assert.match(installed.plist, /ANTHROPIC_API_KEY/);
+      assert.match(installed.plist, /test-api-key/);
+      assert.match(installed.plist, /ANTHROPIC_DEFAULT_SONNET_MODEL/);
+      assert.match(installed.plist, /claude-sonnet-test/);
+      assert.match(installed.plist, /CLAUDE_CODE_USE_FOUNDRY/);
+      assert.match(installed.plist, new RegExp(dataRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
-    const uninstalled = await cmdAdminDaemon(db, { verb: 'uninstall' });
-    assert.equal(uninstalled.status, 'uninstalled');
-    assert.equal(existsSync(installed.plist_path), false);
-    db.close();
+      const uninstalled = await cmdAdminDaemon(db, { verb: 'uninstall' });
+      assert.equal(uninstalled.status, 'uninstalled');
+      assert.equal(existsSync(installed.plist_path), false);
 
-    const log = readLaunchctlLog();
-    assert.match(log, /bootstrap/);
-    assert.match(log, /bootout/);
+      const log = readLaunchctlLog();
+      assert.match(log, /bootstrap/);
+      assert.match(log, /bootout/);
+    } finally {
+      db.close();
+      if (previousApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = previousApiKey;
+      }
+      if (previousSonnet === undefined) {
+        delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+      } else {
+        process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = previousSonnet;
+      }
+      if (previousFoundry === undefined) {
+        delete process.env.CLAUDE_CODE_USE_FOUNDRY;
+      } else {
+        process.env.CLAUDE_CODE_USE_FOUNDRY = previousFoundry;
+      }
+    }
   });
 });
 
@@ -281,6 +313,9 @@ test('cli admin daemon install and uninstall manage a launchd plist', () => {
 
   const cliEnv = {
     ...env,
+    ANTHROPIC_API_KEY: 'test-api-key',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-test',
+    CLAUDE_CODE_USE_FOUNDRY: '1',
     CCMEM_LAUNCHCTL_BIN: fakeLaunchctlPath,
     CCMEM_LAUNCHCTL_LOG: fakeLaunchctlLog
   };
@@ -292,6 +327,7 @@ test('cli admin daemon install and uninstall manage a launchd plist', () => {
   });
   assert.match(installOutput, /ccmem: daemon installed /);
   assert.equal(existsSync(getLaunchAgentPath()), true);
+  assert.match(readFileSync(getLaunchAgentPath(), 'utf8'), /CCMEM_ENABLE_REAL_CLAUDE_P/);
 
   const uninstallOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'uninstall'], {
     cwd: ROOT,
@@ -315,6 +351,9 @@ test('bin ccmem resolves the real script path when invoked through a symlink', (
   const cliEnv = {
     ...env,
     PATH: `/usr/local/bin:${process.env.PATH ?? ''}`,
+    ANTHROPIC_API_KEY: 'test-api-key',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-test',
+    CLAUDE_CODE_USE_FOUNDRY: '1',
     CCMEM_LAUNCHCTL_BIN: fakeLaunchctlPath,
     CCMEM_LAUNCHCTL_LOG: fakeLaunchctlLog
   };
@@ -327,6 +366,9 @@ test('bin ccmem resolves the real script path when invoked through a symlink', (
   assert.doesNotMatch(installOutput, /ExperimentalWarning/);
   assert.match(installOutput, /ccmem: daemon installed /);
   assert.equal(existsSync(getLaunchAgentPath()), true);
+  assert.match(readFileSync(getLaunchAgentPath(), 'utf8'), /CCMEM_ENABLE_REAL_CLAUDE_P/);
+  assert.match(readFileSync(getLaunchAgentPath(), 'utf8'), /ANTHROPIC_API_KEY/);
+  assert.match(readFileSync(getLaunchAgentPath(), 'utf8'), /ANTHROPIC_DEFAULT_SONNET_MODEL/);
 
   const uninstallOutput = execFileSync(symlinkPath, ['admin', 'daemon', 'uninstall'], {
     cwd: ROOT,

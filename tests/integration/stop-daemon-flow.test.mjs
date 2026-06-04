@@ -48,6 +48,32 @@ function clearClaudeBridgeEnv() {
   });
 }
 
+function setTaskTimeoutConfig(taskType, timeoutMs, name) {
+  const configPath = path.join(process.env.CCMEM_DATA_ROOT, `${name}-config.json`);
+  const originalConfigPath = process.env.CCMEM_CONFIG_PATH;
+
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      llm: {
+        claude_p_timeout_per_task: {
+          [taskType]: timeoutMs
+        }
+      }
+    })
+  );
+
+  process.env.CCMEM_CONFIG_PATH = configPath;
+
+  return () => {
+    if (originalConfigPath === undefined) {
+      delete process.env.CCMEM_CONFIG_PATH;
+    } else {
+      process.env.CCMEM_CONFIG_PATH = originalConfigPath;
+    }
+  };
+}
+
 function buildBridgeScriptSuccess(outputText) {
   return "process.stdin.setEncoding('utf8');let input='';process.stdin.on('data',(chunk)=>{input+=chunk;});process.stdin.on('end',()=>{process.stdout.write(JSON.stringify([{content: input.includes('remember my preference') ? '" + outputText + "' : 'Wrong prompt', type: 'rule', scope: 'project', tags: ['stop-bridge']}]))});";
 }
@@ -726,6 +752,47 @@ test('stop hook wake can drive configured claude bridge end to end', async () =>
   db.close();
 });
 
+test('stop hook wake handles string user transcript content', async () => {
+  const db = openDb();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-string-user.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-string-user.mjs');
+
+  resetStopDaemonState(db);
+  writeFileSync(script, buildBridgeScriptSuccess('Bridge remembered string transcript'));
+  writeFileSync(
+    transcript,
+    '{"type":"user","message":{"content":"remember my preference via string payload"}}\n'
+      + '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+  );
+  await handleStop(db, {
+    session_id: 's-flow-bridge-string-user',
+    transcript_path: transcript,
+    cwd: process.cwd()
+  });
+
+  setBridgeCommand(script);
+  try {
+    await runUntilFirstTask(db);
+  } finally {
+    clearClaudeBridgeEnv();
+  }
+
+  const task = getStopTask(db, 's-flow-bridge-string-user');
+  const memory = getLatestAutoMemory(db);
+  const audit = getLatestAudit(db, 'summarize_pending_applied');
+  const details = JSON.parse(audit.details);
+
+  assert.equal(existsSync(wakePath), true);
+  assert.equal(task.status, 'completed');
+  assert.equal(memory.content, 'Bridge remembered string transcript');
+  assert.equal(memory.source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memory.tags), ['stop-bridge']);
+  assert.equal(details.session_id, 's-flow-bridge-string-user');
+  assert.equal(details.inserted_count, 1);
+
+  db.close();
+});
+
 test('stop hook wake re-enqueues the same seq after a completed bridge run and later applies successfully', async () => {
   const db = openDb();
   const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-completed-retry.jsonl');
@@ -1159,17 +1226,18 @@ test('stop hook wake preserves task failure when configured claude bridge times 
     cwd: process.cwd()
   });
 
+  const restoreTimeoutConfig = setTaskTimeoutConfig('summarize_pending', 50, 'stop-bridge-timeout');
   setClaudeBridgeEnv({
     CCMEM_ENABLE_REAL_CLAUDE_P: '1',
     CCMEM_CLAUDE_P_COMMAND: process.execPath,
-    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
-    CCMEM_CLAUDE_P_TIMEOUT_MS: '50'
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
   });
 
   try {
     await runUntilFailure(db);
   } finally {
     clearClaudeBridgeEnv();
+    restoreTimeoutConfig();
   }
 
   const tasks = db.prepare(
@@ -1211,22 +1279,22 @@ test('stop hook wake applies summarize_pending after a timeout-scheduled retry l
     cwd: process.cwd()
   });
 
+  const restoreTimeoutConfig = setTaskTimeoutConfig('summarize_pending', 50, 'stop-bridge-timeout-retry');
   setClaudeBridgeEnv({
     CCMEM_ENABLE_REAL_CLAUDE_P: '1',
     CCMEM_CLAUDE_P_COMMAND: process.execPath,
-    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
-    CCMEM_CLAUDE_P_TIMEOUT_MS: '50'
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
   });
 
   try {
     await runUntilFailure(db);
 
     writeFileSync(script, buildBridgeScriptSuccess('Bridge remembered after timeout retry'));
+    restoreTimeoutConfig();
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: '1',
       CCMEM_CLAUDE_P_COMMAND: process.execPath,
-      CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
-      CCMEM_CLAUDE_P_TIMEOUT_MS: null
+      CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
     });
 
     db.prepare(
@@ -1299,11 +1367,11 @@ test('stop hook wake supersedes a stale timeout-scheduled retry when a newer sto
     cwd: process.cwd()
   });
 
+  const restoreTimeoutConfig = setTaskTimeoutConfig('summarize_pending', 50, 'stop-bridge-timeout-stale-retry');
   setClaudeBridgeEnv({
     CCMEM_ENABLE_REAL_CLAUDE_P: '1',
     CCMEM_CLAUDE_P_COMMAND: process.execPath,
-    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
-    CCMEM_CLAUDE_P_TIMEOUT_MS: '50'
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
   });
 
   try {
@@ -1331,11 +1399,11 @@ test('stop hook wake supersedes a stale timeout-scheduled retry when a newer sto
     ).run(Date.now() - 1, 's-flow-bridge-timeout-stale-retry');
 
     writeFileSync(script, buildBridgeScriptSuccess('Bridge stale timeout retry result'));
+    restoreTimeoutConfig();
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: '1',
       CCMEM_CLAUDE_P_COMMAND: process.execPath,
-      CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
-      CCMEM_CLAUDE_P_TIMEOUT_MS: null
+      CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
     });
 
     let stop = false;

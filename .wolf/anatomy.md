@@ -1,7 +1,12 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last compacted: 2026-06-04T09:04:00+08:00
-> Files: 109 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T14:32:08.688Z
+> Files: 136 tracked | Anatomy hits: 0 | Misses: 0
+
+## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
+
+- `feedback-tdd-workflow.md` (~157 tok)
+- `MEMORY.md` (~35 tok)
 
 ## ./
 
@@ -23,20 +28,20 @@
 
 ## .wolf/
 
-- `OPENWOLF.md` — OpenWolf operating protocol and maintenance rules (~1200 tok)
 - `anatomy.md` — Project file index with token estimates (~350 tok)
-- `buglog.json` — Compacted bug pattern log; verbose history moved to dated archive snapshot (~2600 tok)
 - `buglog.archive.2026-06-04.json` — Full pre-compaction bug history snapshot (~18000 tok)
-- `cerebrum.md` — Long-term user preferences, constraints, and durable lessons (~1400 tok)
+- `buglog.json` — Compacted bug pattern log; verbose history moved to dated archive snapshot (~2600 tok)
 - `cerebrum.archive.2026-06-04.md` — Full pre-compaction cerebrum snapshot (~7000 tok)
-- `memory.md` — Compacted operational history with recent raw session tail (~2600 tok)
-- `memory.archive.2026-06-04.md` — Full pre-compaction memory log snapshot (~14000 tok)
-- `identity.md` — Project identity note for OpenWolf (~120 tok)
+- `cerebrum.md` — Long-term user preferences, constraints, and durable lessons (~1400 tok)
 - `config.json` — OpenWolf local configuration (~220 tok)
 - `cron-manifest.json` — Cron task metadata snapshot (~350 tok)
 - `cron-state.json` — Cron runtime state snapshot (~60 tok)
 - `daemon.log` — OpenWolf daemon log output (~1800 tok)
 - `designqc-report.json` — Most recent design QC summary (~40 tok)
+- `identity.md` — Project identity note for OpenWolf (~120 tok)
+- `memory.archive.2026-06-04.md` — Full pre-compaction memory log snapshot (~14000 tok)
+- `memory.md` — Compacted operational history with recent raw session tail (~2600 tok)
+- `OPENWOLF.md` — OpenWolf operating protocol and maintenance rules (~1200 tok)
 - `reframe-frameworks.md` — UI framework selection matrix and migration prompts (~3500 tok)
 - `suggestions.json` — Lightweight suggestion state (~30 tok)
 - `token-ledger.json` — Token accounting ledger for OpenWolf activity (~5000 tok)
@@ -97,7 +102,7 @@
 ## scripts/
 
 - `cli.mjs` — db: getOptionValue, createStdinLineReader, formatAgeDays (~4600 tok)
-- `hook.mjs` — T_ENTRY: writeHookOutput, isBlacklistedSession (~595 tok)
+- `hook.mjs` — T_ENTRY: buildHookOutput, writeHookOutput, isBlacklistedSession (~618 tok)
 
 ## scripts/daemon/
 
@@ -112,7 +117,7 @@
 
 - `daily-maintenance.mjs` — Exports runDailyMaintenance (~562 tok)
 - `security-audit.mjs` — Exports selectAuditCandidates, runSecurityAudit (~2167 tok)
-- `summarize-pending.mjs` — Exports runSummarizePending (~2043 tok)
+- `summarize-pending.mjs` — Exports runSummarizePending (~1975 tok)
 - `weekly-synthesis.mjs` — Exports runWeeklySynthesis (~433 tok)
 
 ## scripts/handlers/
@@ -127,7 +132,7 @@
 - `config.mjs` — Exports loadConfig (~605 tok)
 - `db.mjs` — Exports getDataRoot, getDbPath, getSchemaVersion, runMigration + 2 more (~435 tok)
 - `feedback.mjs` — NEGATIVE_FEEDBACK: getLastAssistantText, parseJsonArray, getLastUnknownFeedback + 76 more (~8407 tok)
-- `hook-safety.mjs` — Exports withHookSafety (~329 tok)
+- `hook-safety.mjs` — Exports withHookSafety (~363 tok)
 - `injection-cache.mjs` — Exports rebuildInjectionCache (~424 tok)
 - `llm-parse.mjs` — Exports parseLlmJson (~262 tok)
 - `metrics.mjs` — Exports recordMetric (~91 tok)
@@ -139,14 +144,14 @@
 - `task-runs.mjs` — Exports RAN_BY, tryClaimLease, markLeaseComplete (~173 tok)
 - `threat-scan.mjs` — Exports evaluateTier1, evaluateTier2, evaluateTier3 (~583 tok)
 - `tier15.mjs` — Exports runSessionStartMiniPrelude, maybeRunTier15 (~1143 tok)
-- `transcript.mjs` — Exports parseTranscript, countTranscriptLines, computeSessionStats, extractAssistantText (~224 tok)
+- `transcript.mjs` — Exports parseTranscript, extractEntryText, countTranscriptLines, computeSessionStats, extractAssista (~304 tok)
 - `trust.mjs` — Exports getSourceInitialTrust, adjustTrust (~327 tok)
 - `type-heuristic.mjs` — Exports inferType (~117 tok)
 
 ## scripts/lib/admin/
 
 - `cron.mjs` — Exports cmdAdminCron (~1515 tok)
-- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon (~2212 tok)
+- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon (~2591 tok)
 - `diagnose.mjs` — Exports cmdAdminDiagnose (~1553 tok)
 
 ## scripts/lib/cmd/
@@ -175,7 +180,7 @@
 ## tests/integration/
 
 - `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~13206 tok)
-- `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + 5 more (~2905 tok)
+- `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + 5 more (~3439 tok)
 - `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedSecurityDiagnostics (~3334 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)
@@ -189,8 +194,8 @@
 - `save-list-session-start.test.mjs` — NODE: resetSaveListTables, seedQuarantinedListFixture (~4193 tok)
 - `security-audit-task.test.mjs` — dataRoot: resetSecurityAuditTables, saveProjectMemory, saveGlobalMemory, markPoolCCandidate (~2250 tok)
 - `stats-command.test.mjs` — dataRoot: resetStatsTables, insertMemory, seedStatsFixture, seedSecurityStatsFixture (~2406 tok)
-- `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 99 more; running same-seq bridge dedupe e2e (~24150 tok)
-- `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~4954 tok)
+- `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 87 more (~23825 tok)
+- `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~4917 tok)
 - `tier15-feedback.test.mjs` — Declares db (~1780 tok)
 
 ## tests/unit/

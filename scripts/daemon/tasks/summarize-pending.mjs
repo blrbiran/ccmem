@@ -3,7 +3,7 @@ import { writeAudit } from '../../lib/audit.mjs';
 import { rebuildInjectionCache } from '../../lib/injection-cache.mjs';
 import { parseLlmJson } from '../../lib/llm-parse.mjs';
 import { evaluateTier1, evaluateTier2, evaluateTier3 } from '../../lib/threat-scan.mjs';
-import { extractAssistantText, parseTranscript } from '../../lib/transcript.mjs';
+import { extractEntryText, parseTranscript } from '../../lib/transcript.mjs';
 import { getSourceInitialTrust } from '../../lib/trust.mjs';
 import { loadConfig } from '../../lib/config.mjs';
 
@@ -14,17 +14,6 @@ function logAudit(db, action, details = null) {
     `INSERT INTO audit_log (ts, action, affected_ids, details)
      VALUES (?, ?, NULL, ?)`
   ).run(Date.now(), action, details ? JSON.stringify(details) : null);
-}
-
-function extractEntryText(entry) {
-  if (entry?.type === 'assistant') {
-    return extractAssistantText(entry);
-  }
-
-  return entry?.message?.content
-    ?.filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n') ?? '';
 }
 
 function readTranscriptExcerpt(transcriptPath, lastMessageSeq) {

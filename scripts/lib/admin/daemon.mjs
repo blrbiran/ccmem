@@ -23,6 +23,26 @@ const DAEMON_ENV_PASSTHROUGH = [
   'CLAUDE_CODE_USE_FOUNDRY'
 ];
 
+function resolveCommandFromPath(command, envPath) {
+  const pathValue = String(envPath ?? '').trim();
+  if (!pathValue) {
+    return null;
+  }
+
+  for (const dir of pathValue.split(path.delimiter)) {
+    if (!dir) {
+      continue;
+    }
+
+    const candidate = path.join(dir, command);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 function buildDaemonEnv(baseEnv = process.env) {
   const dataRoot = getDataRoot();
   const daemonEnv = {
@@ -30,6 +50,29 @@ function buildDaemonEnv(baseEnv = process.env) {
     CCMEM_DATA_ROOT: baseEnv.CCMEM_DATA_ROOT ?? dataRoot,
     CCMEM_ENABLE_REAL_CLAUDE_P: baseEnv.CCMEM_ENABLE_REAL_CLAUDE_P ?? '1'
   };
+
+  const claudeCommand = baseEnv.CCMEM_CLAUDE_P_COMMAND
+    ?? resolveCommandFromPath('claude', daemonEnv.PATH);
+  if (claudeCommand) {
+    daemonEnv.CCMEM_CLAUDE_P_COMMAND = claudeCommand;
+
+    const claudeBinDir = path.dirname(claudeCommand);
+    if (!daemonEnv.PATH.split(path.delimiter).includes(claudeBinDir)) {
+      daemonEnv.PATH = `${claudeBinDir}${path.delimiter}${daemonEnv.PATH}`;
+    }
+  }
+
+  const passthroughKeys = [
+    'CCMEM_CLAUDE_P_ARGS_JSON',
+    'CCMEM_CLAUDE_P_TIMEOUT_MS'
+  ];
+
+  for (const key of passthroughKeys) {
+    const value = baseEnv[key];
+    if (typeof value === 'string' && value) {
+      daemonEnv[key] = value;
+    }
+  }
 
   for (const key of DAEMON_ENV_PASSTHROUGH) {
     const value = baseEnv[key];
@@ -41,22 +84,55 @@ function buildDaemonEnv(baseEnv = process.env) {
   return daemonEnv;
 }
 
-function renderEnvDict(env) {
-  return Object.entries(env)
-    .map(([key, value]) => `    <key>${escapeXml(key)}</key><string>${escapeXml(value)}</string>`)
-    .join('\n');
-}
-
 function buildLaunchdDaemonEnv(dataRoot) {
   return buildDaemonEnv({
     ...process.env,
-    PATH: DEFAULT_PATH,
     CCMEM_DATA_ROOT: dataRoot
   });
 }
 
+function probeClaudeJsonSchemaSupport(command, daemonEnv) {
+  const result = spawnSync(command, ['-p', '--help'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ...daemonEnv
+    }
+  });
+
+  if (result.error) {
+    return {
+      ok: false,
+      reason: `resolved Claude Code binary at ${command} but could not inspect \`claude -p --help\` (${result.error.message})`
+    };
+  }
+
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      reason: `resolved Claude Code binary at ${command} but capability check failed: \`claude -p --help\` exited ${result.status}`
+    };
+  }
+
+  const helpText = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  if (!helpText.includes('--json-schema')) {
+    return {
+      ok: false,
+      reason: `resolved Claude Code binary at ${command} does not support --json-schema; reinstall from a shell where \`claude\` points to a newer Claude Code build`
+    };
+  }
+
+  return { ok: true };
+}
+
 function buildSpawnDaemonEnv() {
   return buildDaemonEnv(process.env);
+}
+
+function renderEnvDict(env) {
+  return Object.entries(env)
+    .map(([key, value]) => `    <key>${escapeXml(key)}</key><string>${escapeXml(value)}</string>`)
+    .join('\n');
 }
 
 function getDaemonPlistPaths(dataRoot) {
@@ -218,8 +294,29 @@ function bootoutDaemon() {
 
 function installDaemon() {
   const plistPath = getLaunchAgentPath();
+  const dataRoot = getDataRoot();
+  const daemonEnv = buildLaunchdDaemonEnv(dataRoot);
+  const claudeCommand = daemonEnv.CCMEM_CLAUDE_P_COMMAND;
+
+  if (!claudeCommand) {
+    return {
+      status: 'version_check_failed',
+      plist_path: plistPath,
+      reason: 'could not resolve `claude` from the install shell PATH; install from a shell where Claude Code is available'
+    };
+  }
+
+  const capability = probeClaudeJsonSchemaSupport(claudeCommand, daemonEnv);
+  if (!capability.ok) {
+    return {
+      status: 'version_check_failed',
+      plist_path: plistPath,
+      reason: capability.reason
+    };
+  }
+
   mkdirSync(getLaunchAgentDir(), { recursive: true });
-  writeFileSync(plistPath, renderPlist());
+  writeFileSync(plistPath, renderDaemonPlist(dataRoot, daemonEnv));
 
   const result = runLaunchctl(['bootstrap', getLaunchDomain(), plistPath]);
   if (result.status !== 0) {

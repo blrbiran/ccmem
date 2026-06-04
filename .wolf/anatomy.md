@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T15:44:26.223Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T17:04:09.142Z
 > Files: 136 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
@@ -79,8 +79,8 @@
 ## docs/
 
 - `ccmem-design.md` — Claude Code 记忆插件设计方案 v3.0 (~37417 tok)
-- `ccmem-v0.4-dogfood.md` — v0.4 dogfood planning / notes document (~2600 tok)
-- `ccmem-v0.4-spec.md` — v0.4 specification draft (~12000 tok)
+- `ccmem-v0.4-dogfood.md` — ccmem v0.4 dogfood / 验证清单 (~3731 tok)
+- `ccmem-v0.4-spec.md` — ccmem v0.4 实施 spec (~18395 tok)
 - `claude-code-behavior-uncertainties.md` — Claude Code 行为验证清单 (~2337 tok)
 - `design-deep-analysis.md` — ccmem 设计深入分析 (~5248 tok)
 - `design-motivation.md` — 设计初衷：为什么要做这个记忆系统 (~523 tok)
@@ -101,7 +101,7 @@
 
 ## scripts/
 
-- `cli.mjs` — db: getOptionValue, createStdinLineReader, formatAgeDays (~4600 tok)
+- `cli.mjs` — db: getOptionValue, createStdinLineReader, formatAgeDays (~4697 tok)
 - `hook.mjs` — T_ENTRY: buildHookOutput, writeHookOutput, isBlacklistedSession (~618 tok)
 
 ## scripts/daemon/
@@ -151,7 +151,7 @@
 ## scripts/lib/admin/
 
 - `cron.mjs` — Exports cmdAdminCron (~1515 tok)
-- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon (~2591 tok)
+- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon with install-time Claude capability probe (~3281 tok)
 - `diagnose.mjs` — Exports cmdAdminDiagnose (~1553 tok)
 
 ## scripts/lib/cmd/
@@ -180,7 +180,7 @@
 ## tests/integration/
 
 - `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~13206 tok)
-- `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + 5 more (~3439 tok)
+- `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + install-time Claude capability regressions (~4085 tok)
 - `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedSecurityDiagnostics (~3334 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)

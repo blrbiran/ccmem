@@ -109,6 +109,12 @@ try {
           'Tier 2 (summarize / synthesis / L4) requires the daemon.\n'
       );
       process.exitCode = 1;
+    } else if (result.status === 'install_warn') {
+      process.stdout.write(`ccmem: daemon installed ${result.plist_path}\n`);
+      process.stderr.write(`ccmem: WARNING — ${result.reason}\n`);
+    } else if (result.status === 'version_check_failed') {
+      process.stderr.write(`ccmem: daemon install blocked (${result.reason})\n`);
+      process.exitCode = 1;
     } else if (result.status === 'uninstall_failed') {
       process.stderr.write(`ccmem: daemon uninstall failed (${result.reason})\n`);
       process.exitCode = 1;

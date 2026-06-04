@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -185,12 +185,20 @@ test('cmdAdminDaemon start, restart, and stop manage the daemon lifecycle', asyn
 
 test('cmdAdminDaemon install and uninstall manage a launchd plist', async () => {
   await withFakeLaunchctl(async () => {
+    const fakeClaudeDir = path.join(dataRoot, 'fake-claude-bin');
+    const fakeClaudePath = path.join(fakeClaudeDir, 'claude');
+    mkdirSync(fakeClaudeDir, { recursive: true });
+    writeFileSync(fakeClaudePath, '#!/bin/sh\nif [ "$1" = "-p" ] && [ "$2" = "--help" ]; then\n  printf %s\\n "--json-schema"\n  exit 0\nfi\nexit 0\n');
+    chmodSync(fakeClaudePath, 0o755);
+
     const previousApiKey = process.env.ANTHROPIC_API_KEY;
     const previousSonnet = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
     const previousFoundry = process.env.CLAUDE_CODE_USE_FOUNDRY;
+    const previousPath = process.env.PATH;
     process.env.ANTHROPIC_API_KEY = 'test-api-key';
     process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'claude-sonnet-test';
     process.env.CLAUDE_CODE_USE_FOUNDRY = '1';
+    process.env.PATH = `${fakeClaudeDir}:${process.env.PATH ?? ''}`;
 
     const db = openDb();
     resetAdminTables(db);
@@ -204,6 +212,8 @@ test('cmdAdminDaemon install and uninstall manage a launchd plist', async () => 
       assert.match(installed.plist, /--experimental-sqlite/);
       assert.match(installed.plist, /CCMEM_DATA_ROOT/);
       assert.match(installed.plist, /CCMEM_ENABLE_REAL_CLAUDE_P/);
+      assert.match(installed.plist, /CCMEM_CLAUDE_P_COMMAND/);
+      assert.match(installed.plist, new RegExp(fakeClaudePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
       assert.match(installed.plist, />1</);
       assert.match(installed.plist, /ANTHROPIC_API_KEY/);
       assert.match(installed.plist, /test-api-key/);
@@ -235,6 +245,11 @@ test('cmdAdminDaemon install and uninstall manage a launchd plist', async () => 
         delete process.env.CLAUDE_CODE_USE_FOUNDRY;
       } else {
         process.env.CLAUDE_CODE_USE_FOUNDRY = previousFoundry;
+      }
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
       }
     }
   });
@@ -310,9 +325,15 @@ test('cli admin daemon start, restart, and stop manage a detached daemon', async
 
 test('cli admin daemon install and uninstall manage a launchd plist', () => {
   rmSync(fakeLaunchctlLog, { force: true });
+  const fakeClaudeDir = path.join(dataRoot, 'fake-cli-claude-bin');
+  const fakeClaudePath = path.join(fakeClaudeDir, 'claude');
+  mkdirSync(fakeClaudeDir, { recursive: true });
+  writeFileSync(fakeClaudePath, '#!/bin/sh\nif [ "$1" = "-p" ] && [ "$2" = "--help" ]; then\n  printf %s\\n "--json-schema"\n  exit 0\nfi\nexit 0\n');
+  chmodSync(fakeClaudePath, 0o755);
 
   const cliEnv = {
     ...env,
+    PATH: `${fakeClaudeDir}:${env.PATH ?? process.env.PATH ?? ''}`,
     ANTHROPIC_API_KEY: 'test-api-key',
     ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-test',
     CLAUDE_CODE_USE_FOUNDRY: '1',
@@ -327,7 +348,10 @@ test('cli admin daemon install and uninstall manage a launchd plist', () => {
   });
   assert.match(installOutput, /ccmem: daemon installed /);
   assert.equal(existsSync(getLaunchAgentPath()), true);
-  assert.match(readFileSync(getLaunchAgentPath(), 'utf8'), /CCMEM_ENABLE_REAL_CLAUDE_P/);
+  const plist = readFileSync(getLaunchAgentPath(), 'utf8');
+  assert.match(plist, /CCMEM_ENABLE_REAL_CLAUDE_P/);
+  assert.match(plist, /CCMEM_CLAUDE_P_COMMAND/);
+  assert.match(plist, new RegExp(fakeClaudePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
   const uninstallOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'uninstall'], {
     cwd: ROOT,
@@ -340,6 +364,33 @@ test('cli admin daemon install and uninstall manage a launchd plist', () => {
   const log = readLaunchctlLog();
   assert.match(log, /bootstrap/);
   assert.match(log, /bootout/);
+});
+
+test('cli admin daemon install blocks claude binaries without json-schema support', () => {
+  rmSync(fakeLaunchctlLog, { force: true });
+  const fakeClaudeDir = path.join(dataRoot, 'fake-old-claude-bin');
+  const fakeClaudePath = path.join(fakeClaudeDir, 'claude');
+  mkdirSync(fakeClaudeDir, { recursive: true });
+  writeFileSync(fakeClaudePath, '#!/bin/sh\nif [ "$1" = "-p" ] && [ "$2" = "--help" ]; then\n  printf %s\\n "Usage: claude -p [options]"\n  exit 0\nfi\nexit 0\n');
+  chmodSync(fakeClaudePath, 0o755);
+
+  const cliEnv = {
+    ...env,
+    PATH: `${fakeClaudeDir}:${env.PATH ?? process.env.PATH ?? ''}`,
+    CCMEM_LAUNCHCTL_BIN: fakeLaunchctlPath,
+    CCMEM_LAUNCHCTL_LOG: fakeLaunchctlLog
+  };
+
+  const result = spawnSync(NODE, [CLI, 'admin', '--', 'daemon', 'install'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /json-schema/i);
+  assert.equal(existsSync(getLaunchAgentPath()), false);
+  assert.equal(readLaunchctlLog(), '');
 });
 
 test('bin ccmem resolves the real script path when invoked through a symlink', () => {

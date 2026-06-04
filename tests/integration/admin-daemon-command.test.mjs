@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -27,8 +27,10 @@ const env = {
   CCMEM_LAUNCHAGENT_DIR: launchAgentDir
 };
 
+const ROOT = '/Users/biran/code/skills/ccmem';
 const NODE = '/usr/local/bin/node';
-const CLI = '/Users/biran/code/skills/ccmem/scripts/cli.mjs';
+const CLI = `${ROOT}/scripts/cli.mjs`;
+const BIN = `${ROOT}/bin/ccmem`;
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { cmdAdminDaemon, getLaunchAgentPath } = await import('../../scripts/lib/admin/daemon.mjs');
@@ -265,7 +267,7 @@ test('cli admin daemon install and uninstall manage a launchd plist', () => {
   };
 
   const installOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'install'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: ROOT,
     env: cliEnv,
     encoding: 'utf8'
   });
@@ -273,7 +275,41 @@ test('cli admin daemon install and uninstall manage a launchd plist', () => {
   assert.equal(existsSync(getLaunchAgentPath()), true);
 
   const uninstallOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'uninstall'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(uninstallOutput, /ccmem: daemon uninstalled /);
+  assert.equal(existsSync(getLaunchAgentPath()), false);
+
+  const log = readLaunchctlLog();
+  assert.match(log, /bootstrap/);
+  assert.match(log, /bootout/);
+});
+
+test('bin ccmem resolves the real script path when invoked through a symlink', () => {
+  rmSync(fakeLaunchctlLog, { force: true });
+  const symlinkPath = path.join(dataRoot, 'ccmem');
+  rmSync(symlinkPath, { force: true });
+  symlinkSync(BIN, symlinkPath);
+
+  const cliEnv = {
+    ...env,
+    PATH: `/usr/local/bin:${process.env.PATH ?? ''}`,
+    CCMEM_LAUNCHCTL_BIN: fakeLaunchctlPath,
+    CCMEM_LAUNCHCTL_LOG: fakeLaunchctlLog
+  };
+
+  const installOutput = execFileSync(symlinkPath, ['admin', 'daemon', 'install'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(installOutput, /ccmem: daemon installed /);
+  assert.equal(existsSync(getLaunchAgentPath()), true);
+
+  const uninstallOutput = execFileSync(symlinkPath, ['admin', 'daemon', 'uninstall'], {
+    cwd: ROOT,
     env: cliEnv,
     encoding: 'utf8'
   });

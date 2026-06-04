@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T00:02:49.843Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T00:31:01.307Z
 > Files: 105 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -22,7 +22,7 @@
 
 ## bin/
 
-- `ccmem` (~30 tok)
+- `ccmem` (~102 tok)
 
 ## commands/
 
@@ -140,7 +140,7 @@
 ## tests/integration/
 
 - `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~13206 tok)
-- `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + 5 more (~2448 tok)
+- `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + 5 more (~2736 tok)
 - `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedSecurityDiagnostics (~3334 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)

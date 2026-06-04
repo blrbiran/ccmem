@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T00:31:01.307Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T00:37:05.866Z
 > Files: 105 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
@@ -111,7 +111,7 @@
 ## scripts/lib/admin/
 
 - `cron.mjs` — Exports cmdAdminCron (~1515 tok)
-- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon (~2180 tok)
+- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon (~2198 tok)
 - `diagnose.mjs` — Exports cmdAdminDiagnose (~1553 tok)
 
 ## scripts/lib/cmd/
@@ -140,7 +140,7 @@
 ## tests/integration/
 
 - `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~13206 tok)
-- `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + 5 more (~2736 tok)
+- `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + 5 more (~2752 tok)
 - `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedSecurityDiagnostics (~3334 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)

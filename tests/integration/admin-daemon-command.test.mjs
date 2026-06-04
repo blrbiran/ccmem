@@ -192,6 +192,7 @@ test('cmdAdminDaemon install and uninstall manage a launchd plist', async () => 
     assert.equal(installed.status, 'installed');
     assert.equal(existsSync(installed.plist_path), true);
     assert.match(installed.plist, /com\.ccmem\.daemon/);
+    assert.match(installed.plist, /--experimental-sqlite/);
     assert.match(installed.plist, /CCMEM_DATA_ROOT/);
     assert.match(installed.plist, new RegExp(dataRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 

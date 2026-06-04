@@ -47,6 +47,7 @@ export function renderPlist() {
   <key>ProgramArguments</key>
   <array>
     <string>${escapeXml(process.execPath)}</string>
+    <string>--experimental-sqlite</string>
     <string>${escapeXml(DAEMON_MAIN)}</string>
   </array>
   <key>RunAtLoad</key><true/>
@@ -214,7 +215,7 @@ async function startDaemon(db) {
     return started ? { status: 'started', via: 'launchctl', ...started } : { status: 'start_timeout', via: 'launchctl' };
   }
 
-  const child = spawn(process.execPath, [DAEMON_MAIN], {
+  const child = spawn(process.execPath, ['--experimental-sqlite', DAEMON_MAIN], {
     detached: true,
     stdio: 'ignore',
     env: process.env

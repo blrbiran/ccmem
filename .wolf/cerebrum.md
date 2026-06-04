@@ -38,6 +38,7 @@
   但当前实现依赖 `node:sqlite`; `/usr/local/bin/node` 是 v24.13.0,可以稳定跑测试。
   在这个仓库里执行 sqlite 相关测试/脚本时,不要假设 PATH 上的 `node` 可用。
 - **[2026-06-04] 不要把仓库内 `bin/ccmem` 直接 symlink 到 `/usr/local/bin/ccmem` 作为安装方式**:`bin/ccmem` 目前用 `$(dirname "$0")/../scripts/cli.mjs` 解析 CLI 入口；经 `/usr/local/bin/ccmem -> <repo>/bin/ccmem` 运行时，`$0` 仍是 symlink 路径，最终会错误解析成 `/usr/local/scripts/cli.mjs`。CLI launcher 要么先 realpath 自身、再拼相对路径，要么使用保持 `bin/` 与 `scripts/` 相邻的打包/安装布局。
+- **[2026-06-04] daemon 的 launchd / detached spawn 两条启动路径都必须显式带 `--experimental-sqlite`**:`scripts/daemon/main.mjs` 最终会经 `openDb()` 进入 `node:sqlite`；如果只有 `bin/ccmem` 带 flag，而 `renderPlist()` 或 `startDaemon()` 漏掉，`admin daemon install` / `admin daemon start` 修完上一层 launcher 后仍会在 daemon 真正启动时失败。最小回归至少要锁 launchd plist 文本里含该 flag，并覆盖 detached start path。
 - **[2026-05-30] CLI 集成测试必须与测试进程共享 `CCMEM_DATA_ROOT`**:如果测试里先
   用库 API 写 SQLite,再起子进程跑 CLI,必须让当前进程和 CLI 进程指向同一个 data root;
   否则 CLI 会读到另一份 DB,表现为查询结果 `undefined`。

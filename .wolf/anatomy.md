@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T17:49:12.300Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T23:27:51.078Z
 > Files: 136 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
@@ -117,8 +117,8 @@
 
 - `daily-maintenance.mjs` — Exports runDailyMaintenance (~562 tok)
 - `security-audit.mjs` — Exports selectAuditCandidates, runSecurityAudit (~2167 tok)
-- `summarize-pending.mjs` — Exports runSummarizePending with tail-prioritized transcript excerpt for long sessions (~2170 tok)
-- `weekly-synthesis.mjs` — Exports runWeeklySynthesis (~433 tok)
+- `summarize-pending.mjs` — Exports runSummarizePending with configured-bridge detection instead of env-gated real-bridge execution (~2235 tok)
+- `weekly-synthesis.mjs` — Exports runWeeklySynthesis with configured-bridge detection instead of env-gated real-bridge execution (~498 tok)
 
 ## scripts/handlers/
 
@@ -151,7 +151,7 @@
 ## scripts/lib/admin/
 
 - `cron.mjs` — Exports cmdAdminCron (~1515 tok)
-- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon with launchd bootstrap fallback after bootout (~3369 tok)
+- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon without injecting CCMEM_ENABLE_REAL_CLAUDE_P into daemon env (~3349 tok)
 - `diagnose.mjs` — Exports cmdAdminDiagnose (~1553 tok)
 
 ## scripts/lib/cmd/
@@ -180,11 +180,11 @@
 ## tests/integration/
 
 - `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~13206 tok)
-- `admin-daemon-command.test.mjs` — dataRoot: fake launchctl/claude helpers plus launchd install/capability/restart CLI regressions (~5839 tok)
+- `admin-daemon-command.test.mjs` — dataRoot: writeFakeLaunchctlScript, resetFakeLaunchctlScript, createFakeClaudeBinary + 20 more (~5783 tok)
 - `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedSecurityDiagnostics (~3334 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)
-- `daemon-loop.test.mjs` — resetRuntimeTables: setClaudeBridgeEnv, setTaskTimeoutConfig (~49723 tok)
+- `daemon-loop.test.mjs` — resetRuntimeTables: setClaudeBridgeEnv, setTaskTimeoutConfig (~49732 tok)
 - `forget-pin-cache.test.mjs` — resetCommandTables: seedStaleMaintenanceState, assertPreludeCleanup, insertMemory + 13 more (~3197 tok)
 - `migration-v1-to-v2.test.mjs` — Declares db (~442 tok)
 - `mode-command.test.mjs` — Declares db (~238 tok)
@@ -194,7 +194,7 @@
 - `save-list-session-start.test.mjs` — NODE: resetSaveListTables, seedQuarantinedListFixture (~4193 tok)
 - `security-audit-task.test.mjs` — dataRoot: resetSecurityAuditTables, saveProjectMemory, saveGlobalMemory, markPoolCCandidate (~2250 tok)
 - `stats-command.test.mjs` — dataRoot: resetStatsTables, insertMemory, seedStatsFixture, seedSecurityStatsFixture (~2406 tok)
-- `stop-daemon-flow.test.mjs` — stop→daemon e2e regressions incl. schema-output and long-session tail excerpt coverage (~25130 tok)
+- `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 62 more (~25515 tok)
 - `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~4917 tok)
 - `tier15-feedback.test.mjs` — Declares db (~1780 tok)
 

@@ -47,8 +47,7 @@ function buildDaemonEnv(baseEnv = process.env) {
   const dataRoot = getDataRoot();
   const daemonEnv = {
     PATH: baseEnv.PATH ?? DEFAULT_PATH,
-    CCMEM_DATA_ROOT: baseEnv.CCMEM_DATA_ROOT ?? dataRoot,
-    CCMEM_ENABLE_REAL_CLAUDE_P: baseEnv.CCMEM_ENABLE_REAL_CLAUDE_P ?? '1'
+    CCMEM_DATA_ROOT: baseEnv.CCMEM_DATA_ROOT ?? dataRoot
   };
 
   const claudeCommand = baseEnv.CCMEM_CLAUDE_P_COMMAND

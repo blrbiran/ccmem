@@ -384,7 +384,6 @@ test('cmdAdminDaemon install and uninstall manage a launchd plist', async () => 
       assert.match(installed.plist, /--no-warnings/);
       assert.match(installed.plist, /--experimental-sqlite/);
       assert.match(installed.plist, /CCMEM_DATA_ROOT/);
-      assert.match(installed.plist, /CCMEM_ENABLE_REAL_CLAUDE_P/);
       assert.match(installed.plist, /CCMEM_CLAUDE_P_COMMAND/);
       assert.match(installed.plist, new RegExp(fakeClaudePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
       assert.match(installed.plist, />1</);
@@ -522,7 +521,6 @@ test('cli admin daemon install and uninstall manage a launchd plist', () => {
   assert.match(installOutput, /ccmem: daemon installed /);
   assert.equal(existsSync(getLaunchAgentPath()), true);
   const plist = readFileSync(getLaunchAgentPath(), 'utf8');
-  assert.match(plist, /CCMEM_ENABLE_REAL_CLAUDE_P/);
   assert.match(plist, /CCMEM_CLAUDE_P_COMMAND/);
   assert.match(plist, new RegExp(fakeClaudePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
@@ -641,7 +639,6 @@ test('bin ccmem resolves the real script path when invoked through a symlink', (
   assert.doesNotMatch(installOutput, /ExperimentalWarning/);
   assert.match(installOutput, /ccmem: daemon installed /);
   assert.equal(existsSync(getLaunchAgentPath()), true);
-  assert.match(readFileSync(getLaunchAgentPath(), 'utf8'), /CCMEM_ENABLE_REAL_CLAUDE_P/);
   assert.match(readFileSync(getLaunchAgentPath(), 'utf8'), /ANTHROPIC_API_KEY/);
   assert.match(readFileSync(getLaunchAgentPath(), 'utf8'), /ANTHROPIC_DEFAULT_SONNET_MODEL/);
 

@@ -73,8 +73,20 @@ function buildSummarizePrompt(transcript) {
   ].join('\n');
 }
 
+function hasConfiguredClaudeBridge() {
+  return typeof process.env.CCMEM_CLAUDE_P_COMMAND === 'string' || typeof process.env.CCMEM_CLAUDE_P_ARGS_JSON === 'string';
+}
+
 function shouldUseClaudeBridge(payload) {
-  return typeof payload.llm_output === 'string' || process.env.CCMEM_ENABLE_REAL_CLAUDE_P === '1';
+  if (typeof payload.llm_output === 'string') {
+    return true;
+  }
+
+  if (hasConfiguredClaudeBridge()) {
+    return true;
+  }
+
+  return process.env.CCMEM_TEST_MODE !== '1';
 }
 
 function supersedeIfNewerTaskExists(db, taskId, sessionId, lastMessageSeq) {

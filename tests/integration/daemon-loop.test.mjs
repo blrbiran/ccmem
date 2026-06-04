@@ -3664,7 +3664,7 @@ test('dispatchTask keeps weekly completion on the originally claimed lease even 
 });
 
 
-test('dispatchTask can use configured claude bridge command for weekly_synthesis', async () => {
+test('dispatchTask can use configured claude bridge command for weekly_synthesis without CCMEM_ENABLE_REAL_CLAUDE_P', async () => {
   const db = openDb();
   resetRuntimeTables(db);
   const now = Date.now();
@@ -3685,7 +3685,7 @@ test('dispatchTask can use configured claude bridge command for weekly_synthesis
   ).run('{}', now - 1000, now - 1000);
 
   setClaudeBridgeEnv({
-    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_ENABLE_REAL_CLAUDE_P: null,
     CCMEM_CLAUDE_P_COMMAND: process.execPath,
     CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
   });

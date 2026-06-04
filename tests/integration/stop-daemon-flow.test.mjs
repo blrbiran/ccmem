@@ -134,6 +134,14 @@ function setBridgeCommand(scriptPath) {
   });
 }
 
+function setBridgeCommandWithoutEnable(scriptPath) {
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: null,
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([scriptPath])
+  });
+}
+
 function getStopTask(db, sessionId) {
   return db.prepare(
     `SELECT status, error_excerpt
@@ -783,6 +791,40 @@ test('stop hook wake can drive configured claude bridge end to end', async () =>
   assert.equal(memory.source, 'auto_inferred');
   assert.deepEqual(JSON.parse(memory.tags), ['stop-bridge']);
   assert.equal(details.session_id, 's-flow-bridge');
+  assert.equal(details.inserted_count, 1);
+
+  db.close();
+});
+
+test('stop hook wake uses a configured bridge even without CCMEM_ENABLE_REAL_CLAUDE_P', async () => {
+  const db = openDb();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-no-enable.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-no-enable.mjs');
+
+  resetStopDaemonState(db);
+  writeFileSync(script, buildBridgeScriptSuccess('Bridge remembered without enable gate'));
+  writeTranscript(transcript, 'remember my preference', 'ok');
+  await handleStop(db, {
+    session_id: 's-flow-bridge-no-enable',
+    transcript_path: transcript,
+    cwd: process.cwd()
+  });
+
+  setBridgeCommandWithoutEnable(script);
+  try {
+    await runUntilFirstTask(db);
+  } finally {
+    clearClaudeBridgeEnv();
+  }
+
+  const task = getStopTask(db, 's-flow-bridge-no-enable');
+  const memory = getLatestAutoMemory(db);
+  const audit = getLatestAudit(db, 'summarize_pending_applied');
+  const details = JSON.parse(audit.details);
+
+  assert.equal(task.status, 'completed');
+  assert.equal(memory.content, 'Bridge remembered without enable gate');
+  assert.equal(details.session_id, 's-flow-bridge-no-enable');
   assert.equal(details.inserted_count, 1);
 
   db.close();

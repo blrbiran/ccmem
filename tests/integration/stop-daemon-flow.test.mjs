@@ -78,6 +78,24 @@ function buildBridgeScriptSuccess(outputText) {
   return "process.stdin.setEncoding('utf8');let input='';process.stdin.on('data',(chunk)=>{input+=chunk;});process.stdin.on('end',()=>{process.stdout.write(JSON.stringify([{content: input.includes('remember my preference') ? '" + outputText + "' : 'Wrong prompt', type: 'rule', scope: 'project', tags: ['stop-bridge']}]))});";
 }
 
+function buildBridgeScriptSchemaOnly(outputText) {
+  return [
+    "process.stdin.setEncoding('utf8');",
+    "let input='';",
+    "process.stdin.on('data',(chunk)=>{input+=chunk;});",
+    "process.stdin.on('end',()=>{",
+    "const args=process.argv.slice(2);",
+    "const outputFormatIndex=args.indexOf('--output-format');",
+    "const schemaIndex=args.indexOf('--json-schema');",
+    "const hasStructuredOutput=outputFormatIndex!==-1&&args[outputFormatIndex+1]==='json'&&schemaIndex!==-1&&args[schemaIndex+1];",
+    "if(!hasStructuredOutput){process.stdout.write('Saved 1 new memories.');return;}",
+    "const schema=JSON.parse(args[schemaIndex+1]);",
+    "if(schema?.type!=='object'||schema?.properties?.synthesized?.type!=='array'){process.stdout.write('Wrong schema');return;}",
+    `process.stdout.write(JSON.stringify({synthesized:[{content: input.includes('remember my preference') ? ${JSON.stringify(outputText)} : 'Wrong prompt', type: 'rule', scope: 'project', tags: ['stop-bridge']}]}));`,
+    '});'
+  ].join('');
+}
+
 function buildBridgeScriptFailure(stderrText, exitCode) {
   return `process.stderr.write(${JSON.stringify(stderrText)});process.exit(${exitCode});`;
 }
@@ -748,6 +766,41 @@ test('stop hook wake can drive configured claude bridge end to end', async () =>
   assert.deepEqual(JSON.parse(memory.tags), ['stop-bridge']);
   assert.equal(details.session_id, 's-flow-bridge');
   assert.equal(details.inserted_count, 1);
+
+  db.close();
+});
+
+test('stop hook wake requests schema-structured bridge output so summarize_pending does not complete with zero inserts', async () => {
+  const db = openDb();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-schema.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-schema-stub.mjs');
+
+  resetStopDaemonState(db);
+  writeFileSync(script, buildBridgeScriptSchemaOnly('Bridge remembered via schema'));
+  writeTranscript(transcript, 'remember my preference', 'ok');
+  await handleStop(db, {
+    session_id: 's-flow-bridge-schema',
+    transcript_path: transcript,
+    cwd: process.cwd()
+  });
+
+  setBridgeCommand(script);
+  try {
+    await runUntilFirstTask(db);
+  } finally {
+    clearClaudeBridgeEnv();
+  }
+
+  const task = getStopTask(db, 's-flow-bridge-schema');
+  const memory = getLatestAutoMemory(db);
+  const audit = getLatestAudit(db, 'summarize_pending_applied');
+  const details = JSON.parse(audit.details);
+
+  assert.equal(task.status, 'completed');
+  assert.equal(memory.content, 'Bridge remembered via schema');
+  assert.equal(details.session_id, 's-flow-bridge-schema');
+  assert.equal(details.inserted_count, 1);
+  assert.equal(details.skipped_count, 0);
 
   db.close();
 });

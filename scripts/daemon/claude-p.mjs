@@ -21,12 +21,32 @@ function parseArgsEnv(raw) {
   }
 }
 
+function withStructuredOutputArgs(args, jsonSchema) {
+  if (!jsonSchema) {
+    return args;
+  }
+
+  const nextArgs = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === '--output-format' || arg === '--json-schema') {
+      i += 1;
+      continue;
+    }
+    nextArgs.push(arg);
+  }
+
+  nextArgs.push('--output-format', 'json', '--json-schema', JSON.stringify(jsonSchema));
+  return nextArgs;
+}
+
 function resolveCommand(opts) {
   const envArgs = parseArgsEnv(process.env.CCMEM_CLAUDE_P_ARGS_JSON);
+  const baseArgs = Array.isArray(opts.args) ? opts.args : (envArgs ?? ['-p', '--output-format', 'text']);
 
   return {
     command: opts.command ?? process.env.CCMEM_CLAUDE_P_COMMAND ?? 'claude',
-    args: Array.isArray(opts.args) ? opts.args : (envArgs ?? ['-p', '--output-format', 'text'])
+    args: withStructuredOutputArgs(baseArgs, opts.jsonSchema)
   };
 }
 

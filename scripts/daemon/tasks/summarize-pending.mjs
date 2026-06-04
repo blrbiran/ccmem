@@ -8,6 +8,30 @@ import { getSourceInitialTrust } from '../../lib/trust.mjs';
 import { loadConfig } from '../../lib/config.mjs';
 
 const TRANSCRIPT_EXCERPT_MAX = 1000;
+const SUMMARIZE_PENDING_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['synthesized'],
+  properties: {
+    synthesized: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['content', 'type', 'scope', 'tags'],
+        properties: {
+          content: { type: 'string' },
+          type: { enum: ['rule', 'fact', 'episode'] },
+          scope: { enum: ['project', 'global'] },
+          tags: {
+            type: 'array',
+            items: { type: 'string' }
+          }
+        }
+      }
+    }
+  }
+};
 
 function logAudit(db, action, details = null) {
   db.prepare(
@@ -139,6 +163,7 @@ export async function runSummarizePending(db, task) {
   if (shouldUseClaudeBridge(payload)) {
     llmOutput = await callClaudeP(buildSummarizePrompt(transcript.excerpt), {
       taskType: 'summarize_pending',
+      jsonSchema: SUMMARIZE_PENDING_JSON_SCHEMA,
       mockOutput: payload.llm_output
     });
   }

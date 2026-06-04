@@ -30,6 +30,7 @@
 - **Task-layer verification**: cron/admin surface coverage is not enough for complex tasks; task behavior itself needs direct regression coverage (for example `security_audit`).
 - **Packaging invariants**: user-facing launcher, hook, and daemon entrypoints must stay aligned on real-path resolution, sqlite flags, warning behavior, and bridge-enabling environment.
 - **Real daemon extraction**: a `summarize_pending` task can show `completed` while `memories` stays empty if the daemon runs without `CCMEM_ENABLE_REAL_CLAUDE_P=1`; that path emits `summarize_pending_stub` audit rows instead of `summarize_pending_applied` inserts.
+- **Structured bridge output**: if a daemon task parses `claude -p` output as JSON, the bridge call must enforce `--output-format json --json-schema`; otherwise the task can complete successfully while prose output parses to zero inserted rows.
 - **External install docs**: do not invent unverified official marketplace slugs; point users to the exact plugin entry shown by Claude Code.
 - **Real transcript shape**: Claude transcripts include many non-message meta rows, and `message.content` may be either an array of parts or a plain string. Shared transcript helpers must tolerate both shapes before task or feedback code reads text.
 - **Hook output contract**: `hookSpecificOutput.additionalContext` is only for SessionStart/UserPromptSubmit-style injection. Stop hooks should return an empty JSON object instead of emitting `hookSpecificOutput` with `hookEventName: "Stop"`.

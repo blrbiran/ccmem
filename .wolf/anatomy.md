@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T14:32:08.688Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T15:44:26.223Z
 > Files: 136 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
@@ -106,7 +106,7 @@
 
 ## scripts/daemon/
 
-- `claude-p.mjs` — Exports callClaudeP (~1121 tok)
+- `claude-p.mjs` — Exports callClaudeP with optional structured-output schema args (~1450 tok)
 - `dispatch.mjs` — Exports dispatchTask (~194 tok)
 - `lock.mjs` — Exports acquireDaemonLock, refreshHeartbeat, releaseDaemonLock, isDaemonAlive (~371 tok)
 - `loop.mjs` — Exports weeklyLeaseKey, securityAuditLeaseKey, scheduleCronTasks, runTask, mainLoop (~1570 tok)
@@ -117,7 +117,7 @@
 
 - `daily-maintenance.mjs` — Exports runDailyMaintenance (~562 tok)
 - `security-audit.mjs` — Exports selectAuditCandidates, runSecurityAudit (~2167 tok)
-- `summarize-pending.mjs` — Exports runSummarizePending (~1975 tok)
+- `summarize-pending.mjs` — Exports runSummarizePending with schema-enforced bridge extraction (~2330 tok)
 - `weekly-synthesis.mjs` — Exports runWeeklySynthesis (~433 tok)
 
 ## scripts/handlers/
@@ -194,7 +194,7 @@
 - `save-list-session-start.test.mjs` — NODE: resetSaveListTables, seedQuarantinedListFixture (~4193 tok)
 - `security-audit-task.test.mjs` — dataRoot: resetSecurityAuditTables, saveProjectMemory, saveGlobalMemory, markPoolCCandidate (~2250 tok)
 - `stats-command.test.mjs` — dataRoot: resetStatsTables, insertMemory, seedStatsFixture, seedSecurityStatsFixture (~2406 tok)
-- `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 87 more (~23825 tok)
+- `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeEnv + schema-output stop→daemon regressions (~24800 tok)
 - `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~4917 tok)
 - `tier15-feedback.test.mjs` — Declares db (~1780 tok)
 

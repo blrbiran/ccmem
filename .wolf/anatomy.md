@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T00:51:47.751Z
-> Files: 106 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last compacted: 2026-06-04T09:04:00+08:00
+> Files: 109 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
@@ -20,6 +20,38 @@
 ## .claude/rules/
 
 - `openwolf.md` (~313 tok)
+
+## .wolf/
+
+- `OPENWOLF.md` — OpenWolf operating protocol and maintenance rules (~1200 tok)
+- `anatomy.md` — Project file index with token estimates (~350 tok)
+- `buglog.json` — Compacted bug pattern log; verbose history moved to dated archive snapshot (~2600 tok)
+- `buglog.archive.2026-06-04.json` — Full pre-compaction bug history snapshot (~18000 tok)
+- `cerebrum.md` — Long-term user preferences, constraints, and durable lessons (~1400 tok)
+- `cerebrum.archive.2026-06-04.md` — Full pre-compaction cerebrum snapshot (~7000 tok)
+- `memory.md` — Compacted operational history with recent raw session tail (~2600 tok)
+- `memory.archive.2026-06-04.md` — Full pre-compaction memory log snapshot (~14000 tok)
+- `identity.md` — Project identity note for OpenWolf (~120 tok)
+- `config.json` — OpenWolf local configuration (~220 tok)
+- `cron-manifest.json` — Cron task metadata snapshot (~350 tok)
+- `cron-state.json` — Cron runtime state snapshot (~60 tok)
+- `daemon.log` — OpenWolf daemon log output (~1800 tok)
+- `designqc-report.json` — Most recent design QC summary (~40 tok)
+- `reframe-frameworks.md` — UI framework selection matrix and migration prompts (~3500 tok)
+- `suggestions.json` — Lightweight suggestion state (~30 tok)
+- `token-ledger.json` — Token accounting ledger for OpenWolf activity (~5000 tok)
+
+## .wolf/hooks/
+
+- `_session.json` — OpenWolf hook session state (~80 tok)
+- `package.json` — Hook package manifest (~80 tok)
+- `post-read.js` — Post-read hook (~180 tok)
+- `post-write.js` — Post-write hook (~180 tok)
+- `pre-read.js` — Pre-read hook (~180 tok)
+- `pre-write.js` — Pre-write hook (~180 tok)
+- `session-start.js` — Session-start hook (~220 tok)
+- `shared.js` — Shared OpenWolf hook utilities (~260 tok)
+- `stop.js` — Stop hook (~220 tok)
 
 ## bin/
 
@@ -42,6 +74,8 @@
 ## docs/
 
 - `ccmem-design.md` — Claude Code 记忆插件设计方案 v3.0 (~37417 tok)
+- `ccmem-v0.4-dogfood.md` — v0.4 dogfood planning / notes document (~2600 tok)
+- `ccmem-v0.4-spec.md` — v0.4 specification draft (~12000 tok)
 - `claude-code-behavior-uncertainties.md` — Claude Code 行为验证清单 (~2337 tok)
 - `design-deep-analysis.md` — ccmem 设计深入分析 (~5248 tok)
 - `design-motivation.md` — 设计初衷：为什么要做这个记忆系统 (~523 tok)

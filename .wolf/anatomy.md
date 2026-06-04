@@ -1,12 +1,13 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T00:37:05.866Z
-> Files: 105 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T00:51:47.751Z
+> Files: 106 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
 - `CLAUDE.md` — OpenWolf (~57 tok)
 - `package.json` — Node.js package manifest (~99 tok)
+- `README.md` — Project documentation (~757 tok)
 
 ## .claude-plugin/
 
@@ -22,7 +23,7 @@
 
 ## bin/
 
-- `ccmem` (~102 tok)
+- `ccmem` (~105 tok)
 
 ## commands/
 
@@ -57,7 +58,7 @@
 
 ## hooks/
 
-- `hooks.json` (~249 tok)
+- `hooks.json` (~261 tok)
 
 ## scripts/
 
@@ -111,7 +112,7 @@
 ## scripts/lib/admin/
 
 - `cron.mjs` — Exports cmdAdminCron (~1515 tok)
-- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon (~2198 tok)
+- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon (~2212 tok)
 - `diagnose.mjs` — Exports cmdAdminDiagnose (~1553 tok)
 
 ## scripts/lib/cmd/
@@ -140,7 +141,7 @@
 ## tests/integration/
 
 - `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~13206 tok)
-- `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + 5 more (~2752 tok)
+- `admin-daemon-command.test.mjs` — dataRoot: resetAdminTables, seedAliveDaemon, sleep + 5 more (~2905 tok)
 - `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedSecurityDiagnostics (~3334 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)

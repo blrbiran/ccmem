@@ -192,6 +192,7 @@ test('cmdAdminDaemon install and uninstall manage a launchd plist', async () => 
     assert.equal(installed.status, 'installed');
     assert.equal(existsSync(installed.plist_path), true);
     assert.match(installed.plist, /com\.ccmem\.daemon/);
+    assert.match(installed.plist, /--no-warnings/);
     assert.match(installed.plist, /--experimental-sqlite/);
     assert.match(installed.plist, /CCMEM_DATA_ROOT/);
     assert.match(installed.plist, new RegExp(dataRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
@@ -221,6 +222,23 @@ test('cli admin daemon status prints live daemon summary', () => {
 
   assert.match(output, /ccmem: daemon alive pid=4321/);
   assert.match(output, /host=test-host/);
+  assert.match(output, /running=summarize_pending#\d+/);
+});
+
+test('bin ccmem suppresses sqlite experimental warning for daemon status', () => {
+  const db = openDb();
+  resetAdminTables(db);
+  seedAliveDaemon(db);
+  db.close();
+
+  const output = execFileSync(BIN, ['admin', 'daemon', 'status'], {
+    cwd: ROOT,
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.doesNotMatch(output, /ExperimentalWarning/);
+  assert.match(output, /ccmem: daemon alive pid=4321/);
   assert.match(output, /running=summarize_pending#\d+/);
 });
 
@@ -306,6 +324,7 @@ test('bin ccmem resolves the real script path when invoked through a symlink', (
     env: cliEnv,
     encoding: 'utf8'
   });
+  assert.doesNotMatch(installOutput, /ExperimentalWarning/);
   assert.match(installOutput, /ccmem: daemon installed /);
   assert.equal(existsSync(getLaunchAgentPath()), true);
 

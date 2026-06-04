@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node --experimental-sqlite \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" session-start",
+            "command": "node --no-warnings --experimental-sqlite \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" session-start",
             "timeout": 1
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node --experimental-sqlite \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" prompt-submit",
+            "command": "node --no-warnings --experimental-sqlite \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" prompt-submit",
             "timeout": 2
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node --experimental-sqlite \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" stop",
+            "command": "node --no-warnings --experimental-sqlite \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" stop",
             "timeout": 1
           }
         ]

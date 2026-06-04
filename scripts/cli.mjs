@@ -33,6 +33,15 @@ function createStdinLineReader() {
   };
 }
 
+function formatAgeDays(ts) {
+  if (!ts) {
+    return 'unknown';
+  }
+
+  const days = Math.max(0, Math.floor((Date.now() - ts) / 86400000));
+  return `${days}d ago`;
+}
+
 try {
   if (verb === 'save') {
     const content = args.filter((arg) => !arg.startsWith('--')).join(' ');
@@ -40,9 +49,23 @@ try {
     const result = await cmdSave(db, { cwd: process.cwd(), content, scope });
     process.stdout.write(`ccmem: saved memory #${result.id} (${result.scope} ${result.type})\n`);
   } else if (verb === 'list') {
-    const rows = await cmdList(db, {});
-    for (const row of rows) {
-      process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}\n`);
+    const rows = await cmdList(db, {
+      limit: Number(getOptionValue('--limit') ?? 20),
+      quarantined: args.includes('--quarantined')
+    });
+
+    if (!rows.length) {
+      process.stdout.write(args.includes('--quarantined') ? 'ccmem: no quarantined memories\n' : 'ccmem: no memories\n');
+    } else if (args.includes('--quarantined')) {
+      for (const row of rows) {
+        process.stdout.write(
+          `[m${row.id}] ${row.type} | ${row.scope} | ${row.source} trust=${Number(row.trust_score ?? 0).toFixed(2)} quarantined=${formatAgeDays(row.quarantined_at)} reason=${row.reason ?? 'unknown'}\n`
+        );
+      }
+    } else {
+      for (const row of rows) {
+        process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}\n`);
+      }
     }
   } else if (verb === 'mode') {
     const result = await cmdMode(db, { mode: args[0] ?? null });
@@ -163,7 +186,8 @@ try {
       cwd: process.cwd(),
       migrations: args.includes('--migrations'),
       key: args.includes('--key'),
-      sessions: args.includes('--sessions')
+      sessions: args.includes('--sessions'),
+      security: args.includes('--security')
     });
 
     if (args.includes('--key')) {
@@ -184,6 +208,31 @@ try {
           );
         }
       }
+    } else if (args.includes('--security')) {
+      const security = result.security;
+      process.stdout.write('Security audit:\n');
+      process.stdout.write(`  last run         : ${security.last_run_at ?? 'never'}\n`);
+      process.stdout.write(`  pattern version  : ${security.pattern_version ?? 'unknown'}\n`);
+      if (security.last_run) {
+        process.stdout.write(
+          `  last scan stats  : ${security.last_run.candidates_scanned} candidates / ${security.last_run.quarantined} quarantined / ${security.last_run.alerts_emitted} alerts / ${security.last_run.llm_calls} LLM calls / ${security.last_run.duration_ms}ms\n`
+        );
+        process.stdout.write(
+          `  pool yields      : A=${security.last_run.pool_a} B=${security.last_run.pool_b} C=${security.last_run.pool_c}\n`
+        );
+      }
+      process.stdout.write(`Quarantine pool   : ${security.quarantine_pool.total} memories\n`);
+      for (const row of security.quarantine_pool.by_reason) {
+        process.stdout.write(`  ${row.reason} : ${row.count}\n`);
+      }
+      if (security.quarantine_pool.oldest) {
+        process.stdout.write(
+          `  oldest quarantined: m${security.quarantine_pool.oldest.id} (${security.quarantine_pool.oldest.age_days} days)\n`
+        );
+      }
+      process.stdout.write(
+        `Cross-scope alerts: ${security.alerts.pending} pending / ${security.alerts.acknowledged} acknowledged\n`
+      );
     } else {
       process.stdout.write(`ccmem: db ${result.db.health} schema=${result.db.schema_version} path=${result.db.path}\n`);
 
@@ -223,14 +272,19 @@ try {
         );
       } else {
         process.stdout.write(
-          `Tier 2   : warn daemon not running pending summarize=${result.tier2.pending.summarize_pending} synthesis=${result.tier2.pending.weekly_synthesis}\n`
+          `Tier 2   : warn daemon not running pending summarize=${result.tier2.pending.summarize_pending} synthesis=${result.tier2.pending.weekly_synthesis} security_audit=${result.tier2.pending.security_audit}\n`
         );
       }
 
       process.stdout.write(
-        `Memories : ${result.memories.active} active / ${result.memories.probation} probation / ${result.memories.archived} archived\n`
+        `Memories : ${result.memories.active} active / ${result.memories.probation} probation / ${result.memories.quarantined} quarantine / ${result.memories.archived} archived\n`
       );
       process.stdout.write(`Trust    : avg ${result.trust.avg.toFixed(2)} | grey-zone ${result.trust.grey_zone}\n`);
+      if (result.security.quarantined > 0 || result.security.alerts_pending > 0) {
+        process.stdout.write(
+          `Security : ${result.security.quarantined} quarantined (${result.security.pending_sunset} pending sunset) | ${result.security.alerts_pending} cross-scope alerts pending\n`
+        );
+      }
       process.stdout.write(
         `Feedback : helpful ${result.feedback.helpful} / unhelpful ${result.feedback.unhelpful} / unknown ${result.feedback.unknown} (last 14d)\n`
       );
@@ -274,7 +328,31 @@ try {
     const result = await cmdResurrect(db, {
       bottom: getOptionValue('--bottom') ?? 10,
       tag: getOptionValue('--tag'),
+      limit: getOptionValue('--limit'),
+      quarantined: args.includes('--quarantined'),
+      alerts: args.includes('--alerts'),
       decide: (row) => {
+        if (args.includes('--alerts')) {
+          process.stdout.write(
+            `[alert#${row.id}] similarity=${Number(row.similarity ?? 0).toFixed(2)} detected ${formatAgeDays(row.detected_at)}\n` +
+            `  GLOBAL  [m${row.global_mem_id}] ${row.global_type} trust=${Number(row.global_trust_score ?? 0).toFixed(2)} ${row.global_content ?? ''}\n` +
+            `  PROJECT [m${row.project_mem_id}] ${row.project_type} trust=${Number(row.project_trust_score ?? 0).toFixed(2)} (${row.project_key}) ${row.project_content ?? ''}\n` +
+            `  evidence: ${row.evidence ?? ''}\n` +
+            '  [G]keep-global / [P]keep-project / [B]keep-both / [X]forget-both / [s]kip: '
+          );
+          return readLine();
+        }
+
+        if (args.includes('--quarantined')) {
+          process.stdout.write(
+            `[m${row.id}] ${row.type}|${row.scope} trust=${Number(row.trust_score ?? 0).toFixed(2)} quarantined ${formatAgeDays(row.quarantined_at)}\n` +
+            `  reason: ${row.reason ?? 'unknown'}\n` +
+            `  ${row.content}\n` +
+            '  [k]eep / [f]orget / [s]kip: '
+          );
+          return readLine();
+        }
+
         process.stdout.write(
           `[m${row.id}] ${row.type}|${row.scope} trust=${row.trust_score.toFixed(2)}\n  ${row.content}\n  [k]eep / [f]orget / [s]kip: `
         );
@@ -283,7 +361,21 @@ try {
     });
 
     if (!result.items.length) {
-      process.stdout.write('ccmem: no grey-zone memories\n');
+      if (result.mode === 'quarantined') {
+        process.stdout.write('ccmem: no quarantined memories\n');
+      } else if (result.mode === 'alerts') {
+        process.stdout.write('ccmem: no pending cross-scope alerts\n');
+      } else {
+        process.stdout.write('ccmem: no grey-zone memories\n');
+      }
+    } else if (result.mode === 'alerts') {
+      const counts = result.items.reduce((acc, item) => {
+        acc[item.action] = (acc[item.action] ?? 0) + 1;
+        return acc;
+      }, {});
+      process.stdout.write(
+        `ccmem: alerts keep_global=${counts.keep_global ?? 0} keep_project=${counts.keep_project ?? 0} keep_both=${counts.keep_both ?? 0} forget_both=${counts.forget_both ?? 0} skipped=${counts.skip ?? 0}\n`
+      );
     } else {
       const kept = result.items.filter((item) => item.action === 'keep').length;
       const forgotten = result.items.filter((item) => item.action === 'forget').length;

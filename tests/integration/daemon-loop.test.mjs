@@ -11,7 +11,7 @@ const { openDb } = await import('../../scripts/lib/db.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { callClaudeP } = await import('../../scripts/daemon/claude-p.mjs');
 const { dispatchTask } = await import('../../scripts/daemon/dispatch.mjs');
-const { dayKey, mainLoop, runTask, scheduleCronTasks, weekKey, weeklyLeaseKey } = await import('../../scripts/daemon/loop.mjs');
+const { dayKey, mainLoop, runTask, scheduleCronTasks, securityAuditLeaseKey, weekKey, weeklyLeaseKey } = await import('../../scripts/daemon/loop.mjs');
 const { RAN_BY, tryClaimLease } = await import('../../scripts/lib/task-runs.mjs');
 
 function resetRuntimeTables(db) {
@@ -35,6 +35,32 @@ function setClaudeBridgeEnv(vars) {
       process.env[key] = value;
     }
   }
+}
+
+function setTaskTimeoutConfig(taskType, timeoutMs, name) {
+  const configPath = path.join(process.env.CCMEM_DATA_ROOT, `${name}-config.json`);
+  const originalConfigPath = process.env.CCMEM_CONFIG_PATH;
+
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      llm: {
+        claude_p_timeout_per_task: {
+          [taskType]: timeoutMs
+        }
+      }
+    })
+  );
+
+  process.env.CCMEM_CONFIG_PATH = configPath;
+
+  return () => {
+    if (originalConfigPath === undefined) {
+      delete process.env.CCMEM_CONFIG_PATH;
+    } else {
+      process.env.CCMEM_CONFIG_PATH = originalConfigPath;
+    }
+  };
 }
 
 test('mainLoop dispatches queued tasks and marks them completed', async () => {
@@ -2848,11 +2874,12 @@ test('dispatchTask marks task failed when configured claude bridge times out', a
     last_message_seq: 2
   }), now - 1000, now - 1000);
 
+  const restoreTimeoutConfig = setTaskTimeoutConfig('summarize_pending', 50, 'claude-task-timeout');
+
   setClaudeBridgeEnv({
     CCMEM_ENABLE_REAL_CLAUDE_P: '1',
     CCMEM_CLAUDE_P_COMMAND: process.execPath,
-    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
-    CCMEM_CLAUDE_P_TIMEOUT_MS: '50'
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
   });
 
   let stop = false;
@@ -2866,11 +2893,11 @@ test('dispatchTask marks task failed when configured claude bridge times out', a
       new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
     ]);
   } finally {
+    restoreTimeoutConfig();
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
       CCMEM_CLAUDE_P_COMMAND: null,
-      CCMEM_CLAUDE_P_ARGS_JSON: null,
-      CCMEM_CLAUDE_P_TIMEOUT_MS: null
+      CCMEM_CLAUDE_P_ARGS_JSON: null
     });
   }
 
@@ -2928,22 +2955,23 @@ test('dispatchTask applies summarize_pending after a timeout-scheduled retry lat
     last_message_seq: 2
   }), now - 2000, now - 2000);
 
+  const restoreTimeoutConfig = setTaskTimeoutConfig('summarize_pending', 50, 'claude-task-timeout-retry');
+
   setClaudeBridgeEnv({
     CCMEM_ENABLE_REAL_CLAUDE_P: '1',
     CCMEM_CLAUDE_P_COMMAND: process.execPath,
-    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
-    CCMEM_CLAUDE_P_TIMEOUT_MS: '50'
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
   });
 
   try {
     const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
     await runTask(db, firstTask, dispatchTask);
   } finally {
+    restoreTimeoutConfig();
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
       CCMEM_CLAUDE_P_COMMAND: null,
-      CCMEM_CLAUDE_P_ARGS_JSON: null,
-      CCMEM_CLAUDE_P_TIMEOUT_MS: null
+      CCMEM_CLAUDE_P_ARGS_JSON: null
     });
   }
 
@@ -3044,22 +3072,23 @@ test('dispatchTask supersedes a stale timeout-scheduled summarize_pending retry 
     last_message_seq: 2
   }), now - 2000, now - 2000);
 
+  const restoreTimeoutConfig = setTaskTimeoutConfig('summarize_pending', 50, 'claude-task-timeout-stale-retry');
+
   setClaudeBridgeEnv({
     CCMEM_ENABLE_REAL_CLAUDE_P: '1',
     CCMEM_CLAUDE_P_COMMAND: process.execPath,
-    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
-    CCMEM_CLAUDE_P_TIMEOUT_MS: '50'
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
   });
 
   try {
     const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
     await runTask(db, firstTask, dispatchTask);
   } finally {
+    restoreTimeoutConfig();
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
       CCMEM_CLAUDE_P_COMMAND: null,
-      CCMEM_CLAUDE_P_ARGS_JSON: null,
-      CCMEM_CLAUDE_P_TIMEOUT_MS: null
+      CCMEM_CLAUDE_P_ARGS_JSON: null
     });
   }
 
@@ -3098,8 +3127,7 @@ test('dispatchTask supersedes a stale timeout-scheduled summarize_pending retry 
   setClaudeBridgeEnv({
     CCMEM_ENABLE_REAL_CLAUDE_P: '1',
     CCMEM_CLAUDE_P_COMMAND: process.execPath,
-    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
-    CCMEM_CLAUDE_P_TIMEOUT_MS: null
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
   });
 
   try {
@@ -3116,8 +3144,7 @@ test('dispatchTask supersedes a stale timeout-scheduled summarize_pending retry 
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
       CCMEM_CLAUDE_P_COMMAND: null,
-      CCMEM_CLAUDE_P_ARGS_JSON: null,
-      CCMEM_CLAUDE_P_TIMEOUT_MS: null
+      CCMEM_CLAUDE_P_ARGS_JSON: null
     });
   }
 
@@ -3852,11 +3879,12 @@ test('dispatchTask marks weekly_synthesis failed when configured claude bridge t
      VALUES ('weekly_synthesis', ?, ?, ?, 'queued')`
   ).run('{}', now - 1000, now - 1000);
 
+  const restoreTimeoutConfig = setTaskTimeoutConfig('weekly_synthesis', 50, 'claude-weekly-timeout');
+
   setClaudeBridgeEnv({
     CCMEM_ENABLE_REAL_CLAUDE_P: '1',
     CCMEM_CLAUDE_P_COMMAND: process.execPath,
-    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
-    CCMEM_CLAUDE_P_TIMEOUT_MS: '50'
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
   });
 
   let stop = false;
@@ -3870,11 +3898,11 @@ test('dispatchTask marks weekly_synthesis failed when configured claude bridge t
       new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
     ]);
   } finally {
+    restoreTimeoutConfig();
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
       CCMEM_CLAUDE_P_COMMAND: null,
-      CCMEM_CLAUDE_P_ARGS_JSON: null,
-      CCMEM_CLAUDE_P_TIMEOUT_MS: null
+      CCMEM_CLAUDE_P_ARGS_JSON: null
     });
   }
 
@@ -3926,22 +3954,23 @@ test('dispatchTask applies weekly_synthesis after a timeout-scheduled retry late
      VALUES ('weekly_synthesis', ?, ?, ?, 'queued')`
   ).run('{}', now - 2000, now - 2000);
 
+  const restoreTimeoutConfig = setTaskTimeoutConfig('weekly_synthesis', 50, 'claude-weekly-timeout-retry');
+
   setClaudeBridgeEnv({
     CCMEM_ENABLE_REAL_CLAUDE_P: '1',
     CCMEM_CLAUDE_P_COMMAND: process.execPath,
-    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script]),
-    CCMEM_CLAUDE_P_TIMEOUT_MS: '50'
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script])
   });
 
   try {
     const firstTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(first.lastInsertRowid));
     await runTask(db, firstTask, dispatchTask);
   } finally {
+    restoreTimeoutConfig();
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
       CCMEM_CLAUDE_P_COMMAND: null,
-      CCMEM_CLAUDE_P_ARGS_JSON: null,
-      CCMEM_CLAUDE_P_TIMEOUT_MS: null
+      CCMEM_CLAUDE_P_ARGS_JSON: null
     });
   }
 
@@ -4860,7 +4889,7 @@ test('dispatchTask fails unknown task types and preserves error excerpt', async 
 
   db.prepare(
     `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
-     VALUES ('security_audit', '{}', ?, ?, 'queued')`
+     VALUES ('unknown_task', '{}', ?, ?, 'queued')`
   ).run(now - 1000, now - 1000);
 
   let stop = false;
@@ -4876,11 +4905,11 @@ test('dispatchTask fails unknown task types and preserves error excerpt', async 
   const task = db.prepare(
     `SELECT status, error_excerpt, attempts
      FROM tasks
-     WHERE type = 'security_audit'`
+     WHERE type = 'unknown_task'`
   ).get();
 
   assert.equal(task.status, 'failed');
-  assert.equal(task.error_excerpt, 'unknown task type: security_audit');
+  assert.equal(task.error_excerpt, 'unknown task type: unknown_task');
   assert.equal(task.attempts, 1);
   db.close();
 });
@@ -5405,6 +5434,141 @@ test('scheduleCronTasks persists the anchored Sunday lease key in cron task payl
   assert.deepEqual(tasks, [
     { type: 'daily_maintenance', payload: { lease_key: dayKey(tuesdayAfterIsoRollover) } },
     { type: 'weekly_synthesis', payload: { lease_key: weeklyLeaseKey(tuesdayAfterIsoRollover) } }
+  ]);
+
+  db.close();
+});
+
+test('scheduleCronTasks at local 03:47 on Sunday enqueues security_audit once per lease window', () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const sundayAuditBoundary = new Date(2026, 5, 7, 3, 47, 0, 0);
+
+  scheduleCronTasks(db, sundayAuditBoundary);
+  scheduleCronTasks(db, sundayAuditBoundary);
+
+  const taskCounts = db.prepare(
+    `SELECT type, COUNT(*) AS n
+     FROM tasks
+     WHERE type IN ('daily_maintenance', 'weekly_synthesis', 'security_audit')
+     GROUP BY type
+     ORDER BY type ASC`
+  ).all().map((row) => ({ type: row.type, n: row.n }));
+  const leases = db.prepare(
+    `SELECT type, date_key, ran_by, status
+     FROM task_runs
+     WHERE type IN ('daily_maintenance', 'weekly_synthesis', 'security_audit')
+     ORDER BY type ASC`
+  ).all().map((row) => ({
+    type: row.type,
+    date_key: row.date_key,
+    ran_by: row.ran_by,
+    status: row.status
+  }));
+  const tasks = db.prepare(
+    `SELECT type, payload
+     FROM tasks
+     WHERE type IN ('daily_maintenance', 'weekly_synthesis', 'security_audit')
+     ORDER BY type ASC`
+  ).all().map((row) => ({
+    type: row.type,
+    payload: JSON.parse(row.payload)
+  }));
+
+  assert.deepEqual(taskCounts, [
+    { type: 'daily_maintenance', n: 1 },
+    { type: 'security_audit', n: 1 },
+    { type: 'weekly_synthesis', n: 1 }
+  ]);
+  assert.deepEqual(leases, [
+    { type: 'daily_maintenance', date_key: dayKey(sundayAuditBoundary), ran_by: 'daemon', status: 'running' },
+    { type: 'security_audit', date_key: securityAuditLeaseKey(sundayAuditBoundary), ran_by: 'daemon', status: 'running' },
+    { type: 'weekly_synthesis', date_key: weeklyLeaseKey(sundayAuditBoundary), ran_by: 'daemon', status: 'running' }
+  ]);
+  assert.deepEqual(tasks, [
+    { type: 'daily_maintenance', payload: { lease_key: dayKey(sundayAuditBoundary) } },
+    { type: 'security_audit', payload: { lease_key: securityAuditLeaseKey(sundayAuditBoundary) } },
+    { type: 'weekly_synthesis', payload: { lease_key: weeklyLeaseKey(sundayAuditBoundary) } }
+  ]);
+
+  db.close();
+});
+
+test('scheduleCronTasks on Monday before local 03:47 does not catch up security_audit yet', () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const mondayBeforeAuditHour = new Date(2026, 5, 8, 3, 46, 0, 0);
+
+  scheduleCronTasks(db, mondayBeforeAuditHour);
+  scheduleCronTasks(db, mondayBeforeAuditHour);
+
+  const taskCounts = db.prepare(
+    `SELECT type, COUNT(*) AS n
+     FROM tasks
+     WHERE type IN ('daily_maintenance', 'weekly_synthesis', 'security_audit')
+     GROUP BY type
+     ORDER BY type ASC`
+  ).all().map((row) => ({ type: row.type, n: row.n }));
+  const leases = db.prepare(
+    `SELECT type, date_key, ran_by, status
+     FROM task_runs
+     WHERE type IN ('daily_maintenance', 'weekly_synthesis', 'security_audit')
+     ORDER BY type ASC`
+  ).all().map((row) => ({
+    type: row.type,
+    date_key: row.date_key,
+    ran_by: row.ran_by,
+    status: row.status
+  }));
+
+  assert.deepEqual(taskCounts, [
+    { type: 'daily_maintenance', n: 1 },
+    { type: 'weekly_synthesis', n: 1 }
+  ]);
+  assert.deepEqual(leases, [
+    { type: 'daily_maintenance', date_key: dayKey(mondayBeforeAuditHour), ran_by: 'daemon', status: 'running' },
+    { type: 'weekly_synthesis', date_key: weeklyLeaseKey(mondayBeforeAuditHour), ran_by: 'daemon', status: 'running' }
+  ]);
+
+  db.close();
+});
+
+test('scheduleCronTasks at local 03:47 on Monday catches up security_audit once per week lease window', () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const mondayAuditBoundary = new Date(2026, 5, 8, 3, 47, 0, 0);
+
+  scheduleCronTasks(db, mondayAuditBoundary);
+  scheduleCronTasks(db, mondayAuditBoundary);
+
+  const taskCounts = db.prepare(
+    `SELECT type, COUNT(*) AS n
+     FROM tasks
+     WHERE type IN ('daily_maintenance', 'weekly_synthesis', 'security_audit')
+     GROUP BY type
+     ORDER BY type ASC`
+  ).all().map((row) => ({ type: row.type, n: row.n }));
+  const leases = db.prepare(
+    `SELECT type, date_key, ran_by, status
+     FROM task_runs
+     WHERE type IN ('daily_maintenance', 'weekly_synthesis', 'security_audit')
+     ORDER BY type ASC`
+  ).all().map((row) => ({
+    type: row.type,
+    date_key: row.date_key,
+    ran_by: row.ran_by,
+    status: row.status
+  }));
+
+  assert.deepEqual(taskCounts, [
+    { type: 'daily_maintenance', n: 1 },
+    { type: 'security_audit', n: 1 },
+    { type: 'weekly_synthesis', n: 1 }
+  ]);
+  assert.deepEqual(leases, [
+    { type: 'daily_maintenance', date_key: dayKey(mondayAuditBoundary), ran_by: 'daemon', status: 'running' },
+    { type: 'security_audit', date_key: securityAuditLeaseKey(mondayAuditBoundary), ran_by: 'daemon', status: 'running' },
+    { type: 'weekly_synthesis', date_key: weeklyLeaseKey(mondayAuditBoundary), ran_by: 'daemon', status: 'running' }
   ]);
 
   db.close();

@@ -5,6 +5,7 @@ export function rebuildInjectionCache(db, projectKey = null) {
     `SELECT id, scope, content, pinned
      FROM memories
      WHERE scope = 'global'
+       AND decay_status IN ('active', 'probation')
      ORDER BY pinned DESC, last_touched_at DESC`
   ).all();
 
@@ -25,7 +26,9 @@ export function rebuildInjectionCache(db, projectKey = null) {
   const projectRows = db.prepare(
     `SELECT id, scope, content, pinned
      FROM memories
-     WHERE scope = 'project' AND project_key = ?
+     WHERE scope = 'project'
+       AND project_key = ?
+       AND decay_status IN ('active', 'probation')
      ORDER BY pinned DESC, last_touched_at DESC`
   ).all(projectKey);
 

@@ -22,6 +22,13 @@
 5. **双层作用域**:全局通用记忆 + 项目专属记忆
 6. **强投毒防御**:三层意图判别 + 强制降级 + 周期复核
 7. **可观测、可控制**:用户可查可改可禁用,系统有反馈指标
+   - **每个 cron 任务必须 emit `<task>_run` 总结 audit**(2026-06-02 dogfood 教训):
+     无论本次跑了什么(空批跳过 / LLM 失败 / 正常完成),`runWeeklySynthesis` /
+     `runSecurityAudit` / `runDailyMaintenance` 等都在 `finally{}` 写一行
+     `audit_log` 含 `{duration_ms, key_counters, error}`。这是用户能看见 cron
+     是否真在工作的唯一可靠信号——v0.2 weekly_synthesis 漏写,导致 dogfood 第一天
+     就出现"task status=success 但 audit 全空"的盲区。详见
+     [`ccmem-v0.3-dogfood.md`](./ccmem-v0.3-dogfood.md) §六"2026-06-02 首日"。
 8. **跨平台运行**:macOS / Linux / Windows 同等行为
 
 ### 1.1 工程现实校准
@@ -996,17 +1003,26 @@ cron 任务通过 `claude -p` 启动子进程时,该子进程会再次触发 Cla
 // scripts/hook.mjs (top of every entry)
 async function entryGate(hookData) {
   if (process.env.CCMEM_INTERNAL === '1') {
-    process.stdout.write(JSON.stringify({ hookSpecificOutput: { additionalContext: '' } }));
+    process.stdout.write('{}');   // 静默 gate 一律 '{}'(见下方 Hook 输出契约)
     process.exit(0);  // 完全沉默,不写 audit,不写 metrics
   }
   const sid = hookData.session_id;
   if (sid && await isBlacklisted(sid)) {
-    process.stdout.write(JSON.stringify({ hookSpecificOutput: { additionalContext: '' } }));
+    process.stdout.write('{}');
     process.exit(0);
   }
   // CCMEM_TEST_MODE 不在此拦截 —— 它只重定向 DB/audit 路径,控制流照常走.
 }
 ```
+
+> **⚠ Hook 输出契约(dogfood 实测修正,2026-05-31)**:Claude Code **按事件类型分别校验**
+> hook 输出。**只有** PreToolUse / UserPromptSubmit / PostToolUse / PostToolBatch 接受
+> `hookSpecificOutput`;**Stop / SessionEnd 没有该变体**,发它会被拒(`Invalid input`)。
+> 故:注入型 hook(SessionStart / UserPromptSubmit)发 `hookSpecificOutput.additionalContext`;
+> 非注入型 hook(Stop / SessionEnd)与所有静默 gate(CCMEM_INTERNAL / blacklist / 缺
+> PLUGIN_ROOT / crash / unknown)一律发 **`{}`**(空对象,顶层字段全可选,对每种事件都合法)。
+> `withHookSafety` 按 `INJECTING_HOOKS = {session_start, prompt_submit}` 分流。详见
+> [v0.2-spec §4.0](./ccmem-v0.2-spec.md)。
 
 `isBlacklisted` 是单 SELECT 查询,< 5ms,不计入 hook 预算。
 黑名单表 schema:
@@ -1282,6 +1298,12 @@ Claude Code 不把所有 plugin 都装到 `~/.claude/plugins/<slug>/`。实际�
 | L2(self-correct) | Stop(读 transcript) | assistant 在响应里自我修正 → unhelpful | 全部 |
 | **L2.5(reference detection,T-3)** | Stop(读 transcript) | assistant 显式引用了上轮 mem 的 shortId / 高 token 重叠 / 完整短语 → **helpful_implicit (+0.025)** | 全部 |
 | L4(LLM 抽样) | weekly_synthesis cron | LLM 看 transcript 上下文判别 | 全部(SessionStart 注入主靠此) |
+
+> **Tier 2.5 dedup-on-write 不是反馈层**(§10 + v0.2-spec §8.1.1):dedup 在命中时 UPDATE 的
+> `last_touched_at` **不**是 helpful_implicit,**不**调 `trust_score`,**不**增 `helpful_count`。
+> 它的语义是 "这个 fact 仍在被讨论"(recency 信号),与 L2.5 "assistant 文本里引用了 mem
+> content"(usage 信号)是两个独立维度。把 dedup touch 等同于 helpful_implicit 会让所有
+> 反复被抽出的 fact trust 虚高,违反 §4.4 "惩罚优先于奖励" 的基调。
 
 #### 关键设计:SessionStart 注入不走 L1
 
@@ -2042,6 +2064,20 @@ function extractAssistantText(message) {
 > **v0.2**: 3 task type:summarize_pending(on-demand)+ daily_maintenance(每日)+ weekly_synthesis(每周)
 > **v0.3+**: + security_audit + revalidation_audit
 > **永不**: 5 个独立 cron 各自带 cron_task_state / task_runs / 复杂锁
+
+### 整合机制的两个时间尺度(Tier 2.5 ↔ Tier 3)
+
+ccmem 的"去重 / 整合"分层落在两个不同的时间尺度上,互不重叠:
+
+| 层 | 时机 | 范围 | 算法 | Touch trust? |
+|---|---|---|---|---|
+| **Tier 2.5 write-time dedup** | `insertMemory` 内同步 | 字面级近重复(同 scope/type/14d) | FTS5 BM25 + 字符 trigram Jaccard ≥ 0.30 | ❌ 仅 `last_touched_at` |
+| **Tier 3 periodic consolidation** | `weekly_synthesis` cron | 语义级整合 + 主题合并 + lineage | `claude -p` LLM 跨主题提炼 → consolidated/rule | ✅ 整合保留 +0.03 / 淘汰 = 0 |
+
+Tier 2.5 解决"daemon 每 turn 把同一事实反复抽出"的字面堆积问题(止血);Tier 3 解决"多条
+不同表述讲同一抽象"的语义合并问题(提炼)。**实测 Tier 2.5 lexical recall 上限 ~79%**
+(详见 v0.2-spec §6 calibration);剩余 21% 的"同事实不同视角"由 Tier 3 LLM 整合接管。
+Tier 2.5 详见 §10 与 v0.2-spec §8.1.1。
 
 ### 7.0 Tier 1.5 Lazy SQL Maintenance 总览(B7)
 
@@ -3282,14 +3318,23 @@ schema 上过早冻结。
 ## 十、安全防护(三层意图判别 + 强制降级)
 
 > **v0.1**: Tier 1 + secret-in-global 拦截
-> **v0.2**: + Tier 2 (match → force_demote) + 反馈 L2/L4(L3 沉默通过已废弃)
+> **v0.2**: + Tier 2 (match → force_demote) + **Tier 2.5 写入前查重**(`source='auto_inferred'`) + 反馈 L2/L4(L3 沉默通过已废弃)
 > **永不**: Tier 2 加权评分 / quarantine 状态 / path-escape realpath
+
+> **Tier 2.5(redundancy gate,不是安全 gate)**:与 Tier 1/Tier 2 同管线,但 intent 不同 —
+> Tier 1/2 是 "threat → block/demote",Tier 2.5 是 "redundancy → skip + touch"。位置:Tier 2
+> evaluate 之后、INSERT 之前;只对 `source='auto_inferred'`(daemon summarize 路径)启用。
+> 算法 FTS5 BM25 + 字符 trigram Jaccard,默认 threshold=0.30,详见 `docs/ccmem-v0.2-spec.md
+> §8.1.1` 与 `docs/superpowers/specs/2026-06-02-dedup-on-write-design.md`。
+>
+> **scope 严格隔离**(L-2 正例):dedup 只在同 scope + 同 type + 同 project_key 内召回 —
+> global rule 与 project rule 不会被 dedup 错误合并,符合"双层作用域是安全边界"的设计。
 
 
 ### 10.1 写入闸门
 
 > **v0.1**: Tier 1 + secret + length + insert + cache regen
-> **v0.2**: + Tier 2 (match → force_demote) + capacity warn + 反馈系统接入
+> **v0.2**: + Tier 2 (match → force_demote) + **Tier 2.5 dedup-on-write** + capacity warn + 反馈系统接入
 > **永不**: quarantine 状态 / 语义矛盾检测 / 容量软硬上限分离 / strictMode 原子 INSERT
 
 #### v0.1 流程

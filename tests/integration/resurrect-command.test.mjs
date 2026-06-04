@@ -19,10 +19,14 @@ const NODE = '/usr/local/bin/node';
 const CLI = '/Users/biran/code/skills/ccmem/scripts/cli.mjs';
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
+const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
 const { cmdResurrect } = await import('../../scripts/lib/cmd/resurrect.mjs');
 
 function resetResurrectTables(db) {
   db.prepare(`DELETE FROM task_runs`).run();
+  db.prepare(`DELETE FROM cross_scope_alerts`).run();
+  db.prepare(`DELETE FROM audit_log_targets`).run();
+  db.prepare(`DELETE FROM audit_log`).run();
   db.prepare(`DELETE FROM injection_cache`).run();
   db.prepare(`DELETE FROM memories`).run();
 }
@@ -37,6 +41,65 @@ function seedGreyZoneMemories(db, now = Date.now()) {
       ('project', 'demo/repo', 'rule', 'grey two', 0, 'user_explicit', 0.15, 'active', 'active', 0, 0, ?, ?, ?, '["ops","cli"]'),
       ('project', 'demo/repo', 'fact', 'stable three', 0, 'user_explicit', 0.45, 'active', 'active', 0, 0, ?, ?, ?, '["other"]')`
   ).run(now - 30, now - 30, now - 30, now - 20, now - 20, now - 20, now - 10, now - 10, now - 10);
+}
+
+async function seedQuarantinedMemory(db, now = Date.now()) {
+  const saved = await cmdSave(db, {
+    cwd: '/Users/biran/code/skills/ccmem',
+    content: 'Quarantined project note',
+    scope: 'project'
+  });
+  const quarantinedAt = now - (26 * 86400000);
+
+  db.prepare(
+    `UPDATE memories
+     SET decay_status = 'quarantine', quarantined_at = ?, trust_score = ?
+     WHERE id = ?`
+  ).run(quarantinedAt, 0.12, saved.id);
+
+  const audit = db.prepare(
+    `INSERT INTO audit_log (ts, action, affected_ids, details)
+     VALUES (?, 'security_quarantine_in', ?, ?)`
+  ).run(
+    quarantinedAt,
+    JSON.stringify([saved.id]),
+    JSON.stringify({ reason: 'tier3_auto' })
+  );
+
+  db.prepare(
+    `INSERT INTO audit_log_targets (audit_id, mem_id)
+     VALUES (?, ?)`
+  ).run(Number(audit.lastInsertRowid), saved.id);
+
+  return saved.id;
+}
+
+async function seedCrossScopeAlert(db, now = Date.now()) {
+  const globalMem = await cmdSave(db, {
+    cwd: '/Users/biran/code/skills/ccmem',
+    content: 'Global safety rule',
+    scope: 'global'
+  });
+  const projectMem = await cmdSave(db, {
+    cwd: '/Users/biran/code/skills/ccmem',
+    content: 'Project shell alias note',
+    scope: 'project'
+  });
+
+  db.prepare(`UPDATE memories SET trust_score = ? WHERE id = ?`).run(0.9, globalMem.id);
+  db.prepare(`UPDATE memories SET trust_score = ? WHERE id = ?`).run(0.6, projectMem.id);
+
+  const alert = db.prepare(
+    `INSERT INTO cross_scope_alerts (
+      global_mem_id, project_mem_id, project_key, similarity, evidence, detected_at
+     ) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(globalMem.id, projectMem.id, 'demo/repo', 0.91, 'shared shell command', now - 3600000);
+
+  return {
+    alertId: Number(alert.lastInsertRowid),
+    globalMemId: globalMem.id,
+    projectMemId: projectMem.id
+  };
 }
 
 test('cmdResurrect keeps and forgets grey-zone memories', async () => {
@@ -132,6 +195,84 @@ test('cmdResurrect records the local calendar day lease at early-morning local t
     global.Date = OriginalDate;
     db.close();
   }
+});
+
+test('cli resurrect --quarantined restores quarantined memories', async () => {
+  const db = openDb();
+  resetResurrectTables(db);
+  const memId = await seedQuarantinedMemory(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'resurrect', '--quarantined', '--limit', '1'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8',
+    input: 'k\n'
+  });
+
+  const verifyDb = openDb();
+  const row = verifyDb.prepare(
+    `SELECT decay_status, quarantined_at, trust_score
+     FROM memories
+     WHERE id = ?`
+  ).get(memId);
+  const audit = verifyDb.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'security_quarantine_resurrect'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  verifyDb.close();
+
+  assert.match(output, /reason: tier3_auto/);
+  assert.match(output, /ccmem: resurrected 1, archived 0, skipped 0/);
+  assert.equal(row.decay_status, 'active');
+  assert.equal(row.quarantined_at, null);
+  assert.ok(row.trust_score > 0.12);
+  assert.equal(JSON.parse(audit.details).user_action, 'keep');
+});
+
+test('cli resurrect --alerts acknowledges alerts and keeps the global memory', async () => {
+  const db = openDb();
+  resetResurrectTables(db);
+  const { alertId, projectMemId } = await seedCrossScopeAlert(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'resurrect', '--alerts', '--limit', '1'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8',
+    input: 'g\n'
+  });
+
+  const verifyDb = openDb();
+  const alert = verifyDb.prepare(
+    `SELECT acknowledged_at, acknowledged_action
+     FROM cross_scope_alerts
+     WHERE id = ?`
+  ).get(alertId);
+  const projectRow = verifyDb.prepare(
+    `SELECT decay_status
+     FROM memories
+     WHERE id = ?`
+  ).get(projectMemId);
+  const audit = verifyDb.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'security_alert_acknowledged'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  verifyDb.close();
+
+  assert.match(output, /shared shell command/);
+  assert.match(output, /ccmem: alerts keep_global=1 keep_project=0 keep_both=0 forget_both=0 skipped=0/);
+  assert.equal(typeof alert.acknowledged_at, 'number');
+  assert.equal(alert.acknowledged_action, 'keep_global');
+  assert.equal(projectRow.decay_status, 'archived');
+  assert.equal(JSON.parse(audit.details).alert_id, alertId);
+  assert.equal(JSON.parse(audit.details).action, 'keep_global');
 });
 
 test('cli resurrect prints prompts and applies typed decisions', () => {

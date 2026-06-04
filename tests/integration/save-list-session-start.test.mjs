@@ -9,6 +9,7 @@ process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-flow-'));
 
 const NODE = '/usr/local/bin/node';
+const CLI = '/Users/biran/code/skills/ccmem/scripts/cli.mjs';
 const HOOK = '/Users/biran/code/skills/ccmem/scripts/hook.mjs';
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
@@ -17,6 +18,48 @@ const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
 const { cmdList } = await import('../../scripts/lib/cmd/list.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
+
+function resetSaveListTables(db) {
+  db.prepare(`DELETE FROM daemon_lock`).run();
+  db.prepare(`DELETE FROM task_runs`).run();
+  db.prepare(`DELETE FROM tasks`).run();
+  db.prepare(`DELETE FROM recent_injections`).run();
+  db.prepare(`DELETE FROM session_context`).run();
+  db.prepare(`DELETE FROM memory_feedback`).run();
+  db.prepare(`DELETE FROM cross_scope_alerts`).run();
+  db.prepare(`DELETE FROM audit_log_targets`).run();
+  db.prepare(`DELETE FROM audit_log`).run();
+  db.prepare(`DELETE FROM injection_cache`).run();
+  db.prepare(`DELETE FROM ccmem_blacklisted_sessions`).run();
+  db.prepare(`DELETE FROM memories`).run();
+  db.prepare(`DELETE FROM config_kv WHERE key = 'mode'`).run();
+}
+
+async function seedQuarantinedListFixture(db, now = Date.now()) {
+  await cmdSave(db, { cwd: '/Users/biran/code/skills/ccmem', content: 'Visible list memory', scope: 'project' });
+  const quarantined = await cmdSave(db, { cwd: '/Users/biran/code/skills/ccmem', content: 'Quarantined list memory', scope: 'project' });
+  const quarantinedAt = now - (26 * 86400000);
+
+  db.prepare(
+    `UPDATE memories
+     SET decay_status = 'quarantine', quarantined_at = ?, trust_score = ?
+     WHERE id = ?`
+  ).run(quarantinedAt, 0.2, quarantined.id);
+
+  const audit = db.prepare(
+    `INSERT INTO audit_log (ts, action, affected_ids, details)
+     VALUES (?, 'security_quarantine_in', ?, ?)`
+  ).run(
+    quarantinedAt,
+    JSON.stringify([quarantined.id]),
+    JSON.stringify({ reason: 'tier3_auto' })
+  );
+
+  db.prepare(
+    `INSERT INTO audit_log_targets (audit_id, mem_id)
+     VALUES (?, ?)`
+  ).run(Number(audit.lastInsertRowid), quarantined.id);
+}
 
 test('save -> list -> session start inject works and records session diagnostics', async () => {
   const db = openDb();
@@ -48,6 +91,42 @@ test('save -> list -> session start inject works and records session diagnostics
   db.close();
 });
 
+
+test('cmdList excludes quarantined memories by default and returns them with reason when requested', async () => {
+  const db = openDb();
+  resetSaveListTables(db);
+  await seedQuarantinedListFixture(db);
+
+  const visibleRows = await cmdList(db, { limit: 10 });
+  const quarantinedRows = await cmdList(db, { limit: 10, quarantined: true });
+
+  assert.equal(visibleRows.some((row) => row.content === 'Visible list memory'), true);
+  assert.equal(visibleRows.some((row) => row.content === 'Quarantined list memory'), false);
+  assert.equal(quarantinedRows.length, 1);
+  assert.equal(quarantinedRows[0].content, 'Quarantined list memory');
+  assert.equal(quarantinedRows[0].reason, 'tier3_auto');
+  db.close();
+});
+
+test('cli list --quarantined prints quarantined memories with reason', async () => {
+  const db = openDb();
+  resetSaveListTables(db);
+  await seedQuarantinedListFixture(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'list', '--quarantined', '--limit', '10'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env: {
+      ...process.env,
+      CCMEM_TEST_MODE: '1',
+      CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT
+    },
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /^\[m\d+\] fact \| project \| user_explicit trust=0\.20 quarantined=\d+d ago reason=tier3_auto\n$/);
+  assert.doesNotMatch(output, /Visible list memory/);
+});
 
 test('session-start in off mode stays read-only and returns no injected context', async () => {
   const db = openDb();

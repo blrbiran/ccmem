@@ -1,4 +1,5 @@
 import { isDaemonAlive } from '../../daemon/lock.mjs';
+import { loadConfig } from '../config.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
 
 const FEEDBACK_WINDOW_MS = 14 * 86400000;
@@ -28,6 +29,7 @@ function toPendingMap(rows) {
     daily_maintenance: 0,
     summarize_pending: 0,
     weekly_synthesis: 0,
+    security_audit: 0,
     total: 0
   };
 
@@ -45,11 +47,13 @@ function toPendingMap(rows) {
 export async function cmdStats(db, { buckets = false } = {}) {
   const tier15Ran = maybeRunTier15(db);
   const now = Date.now();
+  const cfg = loadConfig();
 
   const memoryRow = db.prepare(
     `SELECT
        SUM(CASE WHEN decay_status = 'active' AND status = 'active' THEN 1 ELSE 0 END) AS active,
        SUM(CASE WHEN decay_status = 'active' AND status = 'probation' THEN 1 ELSE 0 END) AS probation,
+       SUM(CASE WHEN decay_status = 'quarantine' THEN 1 ELSE 0 END) AS quarantined,
        SUM(CASE WHEN decay_status = 'archived' THEN 1 ELSE 0 END) AS archived,
        COUNT(*) AS total,
        AVG(trust_score) AS avg_trust,
@@ -88,6 +92,20 @@ export async function cmdStats(db, { buckets = false } = {}) {
          ORDER BY decay_status ASC`
       ).all()
     : [];
+  const alertsRow = db.prepare(
+    `SELECT
+       SUM(CASE WHEN acknowledged_at IS NULL THEN 1 ELSE 0 END) AS pending,
+       SUM(CASE WHEN acknowledged_at IS NOT NULL THEN 1 ELSE 0 END) AS acknowledged
+     FROM cross_scope_alerts`
+  ).get();
+  const pendingSunsetCutoff = now - ((cfg.security.quarantine.sunset_days - 5) * 86400000);
+  const pendingSunsetRow = db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE decay_status = 'quarantine'
+       AND quarantined_at IS NOT NULL
+       AND quarantined_at < ?`
+  ).get(pendingSunsetCutoff);
 
   return {
     tier1: { available: true },
@@ -105,12 +123,19 @@ export async function cmdStats(db, { buckets = false } = {}) {
     memories: {
       active: toCount(memoryRow?.active),
       probation: toCount(memoryRow?.probation),
+      quarantined: toCount(memoryRow?.quarantined),
       archived: toCount(memoryRow?.archived),
       total: toCount(memoryRow?.total)
     },
     trust: {
       avg: Number((Number(memoryRow?.avg_trust ?? 0)).toFixed(2)),
       grey_zone: toCount(memoryRow?.grey_zone)
+    },
+    security: {
+      quarantined: toCount(memoryRow?.quarantined),
+      pending_sunset: toCount(pendingSunsetRow?.n),
+      alerts_pending: toCount(alertsRow?.pending),
+      alerts_acknowledged: toCount(alertsRow?.acknowledged)
     },
     feedback: toFeedbackMap(feedbackRows),
     buckets: buckets

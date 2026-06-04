@@ -28,10 +28,14 @@ const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submi
 
 function resetDiagnoseTables(db) {
   db.prepare(`DELETE FROM daemon_lock`).run();
+  db.prepare(`DELETE FROM tasks`).run();
   db.prepare(`DELETE FROM memory_feedback`).run();
   db.prepare(`DELETE FROM recent_injections`).run();
   db.prepare(`DELETE FROM session_context`).run();
   db.prepare(`DELETE FROM injection_cache`).run();
+  db.prepare(`DELETE FROM cross_scope_alerts`).run();
+  db.prepare(`DELETE FROM audit_log_targets`).run();
+  db.prepare(`DELETE FROM audit_log`).run();
   db.prepare(`DELETE FROM memories`).run();
 }
 
@@ -60,6 +64,82 @@ function seedAliveDaemon(db, now = Date.now()) {
   ).run(2468, 'diagnose-host', now - 4000, now - 600);
 }
 
+async function seedSecurityDiagnostics(db, now = Date.now()) {
+  const globalMem = await cmdSave(db, {
+    cwd: diagnoseCwd,
+    content: 'Global safety rule',
+    scope: 'global',
+    type: 'rule'
+  });
+  const projectMem = await cmdSave(db, {
+    cwd: diagnoseCwd,
+    content: 'Project shell alias note',
+    scope: 'project',
+    type: 'fact'
+  });
+
+  db.prepare(
+    `UPDATE memories
+     SET decay_status = 'quarantine', quarantined_at = ?, trust_score = ?
+     WHERE id = ?`
+  ).run(now - (26 * 86400000), 0.2, projectMem.id);
+
+  const quarantineAudit = db.prepare(
+    `INSERT INTO audit_log (ts, action, affected_ids, details)
+     VALUES (?, 'security_quarantine_in', ?, ?)`
+  ).run(
+    now - (26 * 86400000),
+    JSON.stringify([projectMem.id]),
+    JSON.stringify({ reason: 'tier3_auto' })
+  );
+  db.prepare(
+    `INSERT INTO audit_log_targets (audit_id, mem_id)
+     VALUES (?, ?)`
+  ).run(Number(quarantineAudit.lastInsertRowid), projectMem.id);
+
+  db.prepare(
+    `INSERT INTO cross_scope_alerts (
+      global_mem_id, project_mem_id, project_key, similarity, evidence, detected_at
+     ) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(globalMem.id, projectMem.id, 'demo/repo', 0.91, 'shared shell command', now - 3600000);
+
+  db.prepare(
+    `INSERT INTO cross_scope_alerts (
+      global_mem_id, project_mem_id, project_key, similarity, evidence, detected_at,
+      acknowledged_at, acknowledged_action
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    globalMem.id,
+    projectMem.id,
+    'demo/repo',
+    0.88,
+    'older duplicate',
+    now - 7200000,
+    now - 1800000,
+    'keep_global'
+  );
+
+  db.prepare(
+    `INSERT INTO audit_log (ts, action, affected_ids, details)
+     VALUES (?, 'security_audit_run', NULL, ?)`
+  ).run(
+    now - 600000,
+    JSON.stringify({
+      pattern_version: '2026-06-04-v03',
+      candidates_scanned: 4,
+      quarantined: 1,
+      alerts_emitted: 2,
+      llm_calls: 1,
+      duration_ms: 1234,
+      pool_a: 1,
+      pool_b: 2,
+      pool_c: 1
+    })
+  );
+
+  return { globalMem, projectMem };
+}
+
 test('cmdAdminDiagnose returns db health, daemon status, and fallback project key', async () => {
   const db = openDb();
   resetDiagnoseTables(db);
@@ -68,7 +148,7 @@ test('cmdAdminDiagnose returns db health, daemon status, and fallback project ke
   const result = await cmdAdminDiagnose(db, { cwd: diagnoseCwd });
 
   assert.equal(result.db.health, 'ok');
-  assert.equal(result.db.schema_version, 2);
+  assert.equal(result.db.schema_version, 3);
   assert.equal(result.daemon.alive, true);
   assert.equal(result.daemon.pid, 2468);
   assert.equal(result.project_key.value, fallbackProjectKey(diagnoseCwd));
@@ -87,7 +167,7 @@ test('cmdAdminDiagnose returns migration history when requested', async () => {
   const result = await cmdAdminDiagnose(db, { cwd: diagnoseCwd, migrations: true });
 
   assert.equal(Array.isArray(result.migrations), true);
-  assert.equal(result.migrations.length >= 2, true);
+  assert.equal(result.migrations.length >= 3, true);
   assert.deepEqual(result.migrations[0], {
     from_version: 0,
     to_version: 1,
@@ -95,7 +175,7 @@ test('cmdAdminDiagnose returns migration history when requested', async () => {
     applied_at: result.migrations[0].applied_at,
     applied_by: 'ccmem-cli'
   });
-  assert.equal(result.migrations.at(-1).to_version, 2);
+  assert.equal(result.migrations.at(-1).to_version, 3);
   db.close();
 });
 
@@ -117,6 +197,33 @@ test('cmdAdminDiagnose returns session diagnostics when requested', async () => 
   db.close();
 });
 
+test('cmdAdminDiagnose returns security diagnostics when requested', async () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  const { projectMem } = await seedSecurityDiagnostics(db);
+
+  const result = await cmdAdminDiagnose(db, { cwd: diagnoseCwd, security: true });
+
+  assert.equal(result.security.pattern_version, '2026-06-04-v03');
+  assert.equal(typeof result.security.last_run_at, 'number');
+  assert.deepEqual(result.security.last_run, {
+    candidates_scanned: 4,
+    quarantined: 1,
+    alerts_emitted: 2,
+    llm_calls: 1,
+    duration_ms: 1234,
+    pool_a: 1,
+    pool_b: 2,
+    pool_c: 1
+  });
+  assert.equal(result.security.quarantine_pool.total, 1);
+  assert.deepEqual(result.security.quarantine_pool.by_reason, [{ reason: 'tier3_auto', count: 1 }]);
+  assert.equal(result.security.quarantine_pool.oldest.id, projectMem.id);
+  assert.equal(result.security.alerts.pending, 1);
+  assert.equal(result.security.alerts.acknowledged, 1);
+  db.close();
+});
+
 test('cli admin diagnose prints default diagnostics', () => {
   const db = openDb();
   resetDiagnoseTables(db);
@@ -129,7 +236,7 @@ test('cli admin diagnose prints default diagnostics', () => {
     encoding: 'utf8'
   });
 
-  assert.match(output, /ccmem: db ok schema=2/);
+  assert.match(output, /ccmem: db ok schema=3/);
   assert.match(output, /ccmem: daemon alive pid=2468 host=diagnose-host/);
   assert.match(output, /ccmem: project_key path:/);
   assert.match(output, /ccmem: tier2 available/);
@@ -163,6 +270,7 @@ test('cli admin diagnose --migrations prints schema migration history', () => {
 
   assert.match(output, /migration 0->1 by=ccmem-cli desc=v0\.1 initial schema/);
   assert.match(output, /migration 1->2 by=ccmem-cli desc=v0\.2 schema/);
+  assert.match(output, /migration 2->3 by=ccmem-cli desc=v0\.3 schema/);
 });
 
 test('cli admin diagnose --key prints focused project key diagnostics', () => {
@@ -237,6 +345,27 @@ test('cli admin diagnose --sessions reflects hook-produced session diagnostics',
   assert.match(output, /session s-hook msgs=0 tools=0 duration_ms=0 last_seq=0/);
   assert.match(output, new RegExp(`inject prompt=1 source=user_prompt_submit mems=${projectMem.id}`));
   assert.match(output, new RegExp(`inject prompt=0 source=session_start mems=${globalMem.id},${projectMem.id}`));
+});
+
+test('cli admin diagnose --security prints security diagnostics', async () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  await seedSecurityDiagnostics(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--security'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /Security audit:/);
+  assert.match(output, /pattern version\s+: 2026-06-04-v03/);
+  assert.match(output, /last scan stats\s+: 4 candidates \/ 1 quarantined \/ 2 alerts \/ 1 LLM calls \/ 1234ms/);
+  assert.match(output, /pool yields\s+: A=1 B=2 C=1/);
+  assert.match(output, /Quarantine pool\s+: 1 memories/);
+  assert.match(output, /tier3_auto : 1/);
+  assert.match(output, /Cross-scope alerts: 1 pending \/ 1 acknowledged/);
 });
 
 test.after(() => {

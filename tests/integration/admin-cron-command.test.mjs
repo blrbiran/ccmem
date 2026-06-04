@@ -388,10 +388,11 @@ test('manual weekly admin cron run completes the claimed lease after a timeout-s
   const fixedNowMs = fixedNow.getTime();
   const OriginalDate = global.Date;
   const script = path.join(process.env.CCMEM_DATA_ROOT, 'admin-cron-weekly-timeout-retry.mjs');
+  const configPath = path.join(process.env.CCMEM_DATA_ROOT, 'admin-cron-weekly-timeout-retry-config.json');
   const originalEnable = process.env.CCMEM_ENABLE_REAL_CLAUDE_P;
   const originalCommand = process.env.CCMEM_CLAUDE_P_COMMAND;
   const originalArgs = process.env.CCMEM_CLAUDE_P_ARGS_JSON;
-  const originalTimeout = process.env.CCMEM_CLAUDE_P_TIMEOUT_MS;
+  const originalConfigPath = process.env.CCMEM_CONFIG_PATH;
 
   class FixedDate extends OriginalDate {
     constructor(...args) {
@@ -413,10 +414,20 @@ test('manual weekly admin cron run completes the claimed lease after a timeout-s
 
   global.Date = FixedDate;
   writeFileSync(script, "process.stdin.resume();setTimeout(() => {}, 1000);");
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      llm: {
+        claude_p_timeout_per_task: {
+          weekly_synthesis: 50
+        }
+      }
+    })
+  );
   process.env.CCMEM_ENABLE_REAL_CLAUDE_P = '1';
   process.env.CCMEM_CLAUDE_P_COMMAND = process.execPath;
   process.env.CCMEM_CLAUDE_P_ARGS_JSON = JSON.stringify([script]);
-  process.env.CCMEM_CLAUDE_P_TIMEOUT_MS = '50';
+  process.env.CCMEM_CONFIG_PATH = configPath;
 
   try {
     const result = await cmdAdminCron(db, { verb: 'run', taskType: 'weekly_synthesis' });
@@ -428,7 +439,11 @@ test('manual weekly admin cron run completes the claimed lease after a timeout-s
       script,
       "process.stdout.write(JSON.stringify({synthesized:[{content:'Manual weekly timeout retry rule',type:'fact',scope:'project',output_type:'rule'}]}));"
     );
-    process.env.CCMEM_CLAUDE_P_TIMEOUT_MS = originalTimeout ?? undefined;
+    if (originalConfigPath === undefined) {
+      delete process.env.CCMEM_CONFIG_PATH;
+    } else {
+      process.env.CCMEM_CONFIG_PATH = originalConfigPath;
+    }
 
     const retryTask = db.prepare(
       `SELECT *
@@ -492,10 +507,10 @@ test('manual weekly admin cron run completes the claimed lease after a timeout-s
     } else {
       process.env.CCMEM_CLAUDE_P_ARGS_JSON = originalArgs;
     }
-    if (originalTimeout === undefined) {
-      delete process.env.CCMEM_CLAUDE_P_TIMEOUT_MS;
+    if (originalConfigPath === undefined) {
+      delete process.env.CCMEM_CONFIG_PATH;
     } else {
-      process.env.CCMEM_CLAUDE_P_TIMEOUT_MS = originalTimeout;
+      process.env.CCMEM_CONFIG_PATH = originalConfigPath;
     }
     db.close();
   }
@@ -1271,25 +1286,25 @@ test('cli admin cron list --history prints task history lines', () => {
   assert.match(output, /failed@2026-06-01 by=manual/);
 });
 
-test('cli admin cron list --history rejects unsupported tasks', () => {
+test('cli admin cron list --history prints security_audit history lines', () => {
   const db = openDb();
   resetCronTables(db);
   seedCronFixture(db);
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO task_runs (type, date_key, started_at, completed_at, status, ran_by)
+     VALUES ('security_audit', '2026-W23', ?, ?, 'completed', 'manual')`
+  ).run(now - 2000, now - 1000);
   db.close();
 
-  assert.throws(
-    () =>
-      execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'list', '--history', '2', '--task', 'security_audit'], {
-        cwd: '/Users/biran/code/skills/ccmem',
-        env,
-        encoding: 'utf8'
-      }),
-    (error) => {
-      assert.equal(error.status, 64);
-      assert.match(String(error.stderr), /ccmem: unsupported cron task: security_audit/);
-      return true;
-    }
-  );
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'list', '--history', '2', '--task', 'security_audit'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /ccmem: cron history security_audit/);
+  assert.match(output, /completed@2026-W23 by=manual/);
 });
 
 test('cli admin cron list prints compact status lines', () => {
@@ -1510,16 +1525,60 @@ test('cli admin cron run reports daemon-held weekly leases as skipped', () => {
   assert.equal(tasks.n, 0);
 });
 
-test('cmdAdminCron run rejects unsupported tasks', async () => {
+test('cmdAdminCron run enqueues security_audit with the anchored manual week lease key', async () => {
   const db = openDb();
   resetCronTables(db);
+  const fixedNow = new Date(2026, 5, 8, 3, 18, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
 
-  await assert.rejects(
-    cmdAdminCron(db, { verb: 'run', taskType: 'security_audit' }),
-    /unsupported cron task: security_audit/
-  );
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
 
-  db.close();
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    const result = await cmdAdminCron(db, { verb: 'run', taskType: 'security_audit' });
+    const task = db.prepare(
+      `SELECT type, payload, scheduled_for, status
+       FROM tasks
+       WHERE id = ?`
+    ).get(result.task_id);
+    const lease = db.prepare(
+      `SELECT date_key, ran_by, status
+       FROM task_runs
+       WHERE type = 'security_audit'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+
+    assert.equal(result.type, 'security_audit');
+    assert.equal(task.type, 'security_audit');
+    assert.equal(task.scheduled_for, fixedNowMs);
+    assert.equal(task.status, 'queued');
+    assert.deepEqual(JSON.parse(task.payload), { lease_key: weeklyLeaseKey(fixedNow) });
+    assert.equal(lease.date_key, weeklyLeaseKey(fixedNow));
+    assert.equal(lease.ran_by, 'manual');
+    assert.equal(lease.status, 'running');
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
 });
 
 test.after(() => rmSync(dataRoot, { recursive: true, force: true }));

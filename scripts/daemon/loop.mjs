@@ -1,3 +1,4 @@
+import { loadConfig } from '../lib/config.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { RAN_BY, tryClaimLease } from '../lib/task-runs.mjs';
 import { wakeRecently } from './wake.mjs';
@@ -23,10 +24,10 @@ function weekKey(date) {
   return `${utc.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
-function weeklyLeaseAnchor(date) {
+function weeklyLeaseAnchor(date, hour, minute) {
   const anchor = new Date(date.getTime());
   anchor.setDate(anchor.getDate() - anchor.getDay());
-  anchor.setHours(3, 17, 0, 0);
+  anchor.setHours(hour, minute, 0, 0);
 
   if (date < anchor) {
     anchor.setDate(anchor.getDate() - 7);
@@ -36,13 +37,26 @@ function weeklyLeaseAnchor(date) {
 }
 
 export function weeklyLeaseKey(date) {
-  return weekKey(weeklyLeaseAnchor(date));
+  return weekKey(weeklyLeaseAnchor(date, 3, 17));
+}
+
+export function securityAuditLeaseKey(date) {
+  return weekKey(weeklyLeaseAnchor(date, 3, 47));
+}
+
+function timeReached(date, hour, minute) {
+  return date.getHours() > hour || (date.getHours() === hour && date.getMinutes() >= minute);
 }
 
 export function scheduleCronTasks(db, now = new Date()) {
   const nowMs = now.getTime();
+  const cfg = loadConfig();
+  const auditCfg = cfg.security?.audit ?? {};
+  const auditHour = Number(auditCfg.schedule_hour ?? 3);
+  const auditMinute = Number(auditCfg.schedule_minute ?? 47);
+  const catchUpDays = Number(auditCfg.catch_up_days ?? 7);
 
-  if (now.getHours() > 2 || (now.getHours() === 2 && now.getMinutes() >= 17)) {
+  if (timeReached(now, 2, 17)) {
     const leaseKey = dayKey(now);
 
     if (tryClaimLease(db, 'daily_maintenance', leaseKey, RAN_BY.DAEMON)) {
@@ -53,13 +67,29 @@ export function scheduleCronTasks(db, now = new Date()) {
     }
   }
 
-  if (now.getHours() > 3 || (now.getHours() === 3 && now.getMinutes() >= 17)) {
+  if (timeReached(now, 3, 17)) {
     const leaseKey = weeklyLeaseKey(now);
 
     if (tryClaimLease(db, 'weekly_synthesis', leaseKey, RAN_BY.DAEMON)) {
       db.prepare(
         `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
          VALUES ('weekly_synthesis', ?, ?, ?, 'queued')`
+      ).run(JSON.stringify({ lease_key: leaseKey }), nowMs, nowMs);
+    }
+  }
+
+  const securityAnchor = weeklyLeaseAnchor(now, auditHour, auditMinute);
+  const withinCatchUpWindow = !Number.isFinite(catchUpDays)
+    || catchUpDays <= 0
+    || (nowMs - securityAnchor.getTime()) < (catchUpDays * 86400000);
+
+  if (timeReached(now, auditHour, auditMinute) && withinCatchUpWindow) {
+    const leaseKey = securityAuditLeaseKey(now);
+
+    if (tryClaimLease(db, 'security_audit', leaseKey, RAN_BY.DAEMON)) {
+      db.prepare(
+        `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+         VALUES ('security_audit', ?, ?, ?, 'queued')`
       ).run(JSON.stringify({ lease_key: leaseKey }), nowMs, nowMs);
     }
   }

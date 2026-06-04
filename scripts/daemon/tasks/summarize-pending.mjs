@@ -1,9 +1,11 @@
 import { callClaudeP } from '../claude-p.mjs';
+import { writeAudit } from '../../lib/audit.mjs';
 import { rebuildInjectionCache } from '../../lib/injection-cache.mjs';
 import { parseLlmJson } from '../../lib/llm-parse.mjs';
-import { evaluateTier1 } from '../../lib/threat-scan.mjs';
+import { evaluateTier1, evaluateTier2, evaluateTier3 } from '../../lib/threat-scan.mjs';
 import { extractAssistantText, parseTranscript } from '../../lib/transcript.mjs';
 import { getSourceInitialTrust } from '../../lib/trust.mjs';
+import { loadConfig } from '../../lib/config.mjs';
 
 const TRANSCRIPT_EXCERPT_MAX = 1000;
 
@@ -88,12 +90,17 @@ function supersedeIfNewerTaskExists(db, taskId, sessionId, lastMessageSeq) {
   return true;
 }
 
+function uniqueTags(tags) {
+  return [...new Set((tags ?? []).map((tag) => String(tag)))];
+}
+
 export async function runSummarizePending(db, task) {
   const payload = JSON.parse(task.payload ?? '{}');
   const sessionId = payload.session_id;
   const transcriptPath = payload.transcript_path;
   const lastMessageSeq = Number(payload.last_message_seq ?? 0);
   const now = Date.now();
+  const cfg = loadConfig();
 
   if (!sessionId || !transcriptPath || !Number.isFinite(lastMessageSeq)) {
     logAudit(db, 'summarize_pending_bad_payload', { task_id: task.id });
@@ -176,9 +183,33 @@ export async function runSummarizePending(db, task) {
       continue;
     }
 
-    const scope = item.scope === 'global' ? 'global' : 'project';
-    const projectKey = scope === 'global' ? null : (ctx?.project_key ?? null);
+    const source = 'auto_inferred';
+    let scope = item.scope === 'global' ? 'global' : 'project';
+    let projectKey = scope === 'global' ? null : (ctx?.project_key ?? null);
+    let memoryType = item.type;
+    let trustScore = getSourceInitialTrust(source);
+    let tags = uniqueTags(item.tags);
+    let decayStatus = 'active';
+    let quarantinedAt = null;
+    const t2 = evaluateTier2(item.content, source, memoryType);
+    const t3 = cfg.security.tier3.enabled ? evaluateTier3(t2, source) : { action: 'allow' };
     const timestamp = Date.now();
+
+    if (t3.action === 'force_demote') {
+      memoryType = 'episode';
+      scope = 'project';
+      projectKey = ctx?.project_key ?? null;
+      trustScore = Math.min(trustScore, 0.6);
+      tags = uniqueTags([...tags, 'dangerous_command']);
+    }
+
+    if (t3.action === 'quarantine') {
+      decayStatus = 'quarantine';
+      quarantinedAt = timestamp;
+      trustScore = Math.min(trustScore, 0.3);
+      tags = uniqueTags([...tags, 'quarantine_at_write']);
+    }
+
     const result = db.prepare(
       `INSERT INTO memories (
         scope,
@@ -189,23 +220,39 @@ export async function runSummarizePending(db, task) {
         source,
         trust_score,
         tags,
+        decay_status,
+        quarantined_at,
         last_touched_at,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, 0, 'auto_inferred', ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       scope,
       projectKey,
-      item.type,
+      memoryType,
       item.content,
-      getSourceInitialTrust('auto_inferred'),
-      JSON.stringify(item.tags),
+      source,
+      trustScore,
+      JSON.stringify(tags),
+      decayStatus,
+      quarantinedAt,
       timestamp,
       timestamp,
       timestamp
     );
 
-    insertedIds.push(Number(result.lastInsertRowid));
+    const memId = Number(result.lastInsertRowid);
+    insertedIds.push(memId);
+
+    if (decayStatus === 'quarantine') {
+      writeAudit(db, 'security_quarantine_in', memId, {
+        reason: 'tier3_at_write',
+        suspicion_score: t2.score,
+        evidence: t2.evidence,
+        source: 'heuristic',
+        pattern_version: cfg.security.scan_patterns_version
+      });
+    }
   }
 
   if (insertedIds.length) {

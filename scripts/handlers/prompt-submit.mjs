@@ -72,7 +72,8 @@ export async function handlePromptSubmit(hookData) {
     const candidates = db.prepare(
       `SELECT id, type, content, scope, pinned, last_touched_at
        FROM memories
-       WHERE scope = 'global' OR project_key = ?
+       WHERE (scope = 'global' OR project_key = ?)
+         AND decay_status IN ('active', 'probation')
        ORDER BY pinned DESC, last_touched_at DESC`
     ).all(projectKey);
 

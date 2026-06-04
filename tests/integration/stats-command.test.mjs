@@ -27,6 +27,10 @@ function resetStatsTables(db) {
   db.prepare(`DELETE FROM tasks`).run();
   db.prepare(`DELETE FROM recent_injections`).run();
   db.prepare(`DELETE FROM memory_feedback`).run();
+  db.prepare(`DELETE FROM cross_scope_alerts`).run();
+  db.prepare(`DELETE FROM audit_log_targets`).run();
+  db.prepare(`DELETE FROM audit_log`).run();
+  db.prepare(`DELETE FROM injection_cache`).run();
   db.prepare(`DELETE FROM memories`).run();
 }
 
@@ -35,14 +39,16 @@ function insertMemory(db, {
   decayStatus = 'active',
   trust = 0.5,
   content,
+  quarantinedAt = null,
   now
 }) {
   db.prepare(
     `INSERT INTO memories (
       scope, project_key, type, content, pinned, source, trust_score,
-      status, decay_status, helpful_count, unhelpful_count, last_touched_at, created_at, updated_at, tags
-    ) VALUES ('project', 'demo/repo', 'fact', ?, 0, 'user_explicit', ?, ?, ?, 0, 0, ?, ?, ?, '[]')`
-  ).run(content, trust, status, decayStatus, now, now, now);
+      status, decay_status, helpful_count, unhelpful_count, last_touched_at,
+      created_at, updated_at, tags, quarantined_at
+    ) VALUES ('project', 'demo/repo', 'fact', ?, 0, 'user_explicit', ?, ?, ?, 0, 0, ?, ?, ?, '[]', ?)`
+  ).run(content, trust, status, decayStatus, now, now, now, quarantinedAt);
 }
 
 function seedStatsFixture(db, now = Date.now()) {
@@ -79,6 +85,30 @@ function seedStatsFixture(db, now = Date.now()) {
   ).run(now - 500, now - 500, now - 400, now - 400, now - 300, now - 300);
 }
 
+function seedSecurityStatsFixture(db, now = Date.now()) {
+  insertMemory(db, {
+    content: 'quarantined item',
+    trust: 0.1,
+    decayStatus: 'quarantine',
+    quarantinedAt: now - (26 * 86400000),
+    now
+  });
+  insertMemory(db, { content: 'stable item', trust: 0.8, now });
+
+  db.prepare(
+    `INSERT INTO cross_scope_alerts (
+      global_mem_id, project_mem_id, project_key, similarity, evidence, detected_at
+     ) VALUES (1, 2, 'demo/repo', 0.84, 'pending duplicate', ?)`
+  ).run(now - 2000);
+
+  db.prepare(
+    `INSERT INTO cross_scope_alerts (
+      global_mem_id, project_mem_id, project_key, similarity, evidence, detected_at,
+      acknowledged_at, acknowledged_action
+     ) VALUES (1, 2, 'demo/repo', 0.79, 'ack duplicate', ?, ?, 'keep_global')`
+  ).run(now - 4000, now - 1000);
+}
+
 test('cmdStats aggregates runtime state and opportunistic maintenance', async () => {
   const db = openDb();
   resetStatsTables(db);
@@ -102,16 +132,37 @@ test('cmdStats aggregates runtime state and opportunistic maintenance', async ()
   assert.equal(result.tier2.pending.weekly_synthesis, 1);
   assert.equal(result.memories.active, 1);
   assert.equal(result.memories.probation, 1);
+  assert.equal(result.memories.quarantined, 0);
   assert.equal(result.memories.archived, 2);
   assert.equal(result.memories.total, 4);
   assert.equal(result.trust.grey_zone, 1);
   assert.equal(result.feedback.helpful, 2);
   assert.equal(result.feedback.unhelpful, 1);
   assert.equal(result.feedback.unknown, 1);
+  assert.equal(result.security.quarantined, 0);
+  assert.equal(result.security.alerts_pending, 0);
   assert.equal(result.buckets.active, 2);
   assert.equal(result.buckets.archived, 2);
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
+  db.close();
+});
+
+test('cmdStats reports security quarantine and cross-scope alert counts', async () => {
+  const db = openDb();
+  resetStatsTables(db);
+  const now = Date.now();
+  seedSecurityStatsFixture(db, now);
+
+  const result = await cmdStats(db, { buckets: true });
+
+  assert.equal(result.memories.quarantined, 1);
+  assert.equal(result.memories.active, 1);
+  assert.equal(result.security.quarantined, 1);
+  assert.equal(result.security.pending_sunset, 1);
+  assert.equal(result.security.alerts_pending, 1);
+  assert.equal(result.security.alerts_acknowledged, 1);
+  assert.equal(result.buckets.quarantine, 1);
   db.close();
 });
 
@@ -179,9 +230,24 @@ test('cli stats prints human summary', () => {
   assert.match(output, /Tier 1   : ok injecting \/ retrieving/);
   assert.match(output, /Tier 1\.5 : ok opportunistic maintenance/);
   assert.match(output, /Tier 2   : ok daemon alive pid=4321 host=stats-host/);
-  assert.match(output, /Memories : 1 active \/ 1 probation \/ 2 archived/);
+  assert.match(output, /Memories : 1 active \/ 1 probation \/ 0 quarantine \/ 2 archived/);
   assert.match(output, /Trust    : avg 0\.33 \| grey-zone 1/);
   assert.match(output, /Feedback : helpful 2 \/ unhelpful 1 \/ unknown 1/);
+});
+
+test('cli stats prints the security line when quarantine or alerts exist', () => {
+  const db = openDb();
+  resetStatsTables(db);
+  seedSecurityStatsFixture(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'stats'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /Security : 1 quarantined \(1 pending sunset\) \| 1 cross-scope alerts pending/);
 });
 
 test('cli stats --json returns structured stats', () => {
@@ -199,7 +265,9 @@ test('cli stats --json returns structured stats', () => {
 
   assert.equal(parsed.tier2.alive, true);
   assert.equal(parsed.memories.archived, 2);
+  assert.equal(parsed.memories.quarantined, 0);
   assert.equal(parsed.feedback.helpful, 2);
+  assert.equal(parsed.security.alerts_pending, 0);
   assert.equal(parsed.buckets.archived, 2);
 });
 

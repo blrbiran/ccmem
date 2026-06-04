@@ -23,6 +23,14 @@ function parseMemIds(memIds) {
   }
 }
 
+function parseDetails(details) {
+  try {
+    return JSON.parse(details ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
 function loadSessionDiagnostics(db) {
   const sessions = db.prepare(
     `SELECT session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at
@@ -57,9 +65,81 @@ function loadSessionDiagnostics(db) {
   }));
 }
 
+function loadSecurityDiagnostics(db) {
+  const lastRun = db.prepare(
+    `SELECT ts, details
+     FROM audit_log
+     WHERE action = 'security_audit_run'
+     ORDER BY ts DESC, id DESC
+     LIMIT 1`
+  ).get();
+  const details = parseDetails(lastRun?.details);
+  const byReasonRows = db.prepare(
+    `SELECT json_extract(a.details, '$.reason') AS reason, COUNT(*) AS n
+     FROM audit_log a
+     JOIN audit_log_targets t ON t.audit_id = a.id
+     JOIN memories m ON m.id = t.mem_id
+     WHERE a.action = 'security_quarantine_in'
+       AND m.decay_status = 'quarantine'
+     GROUP BY reason
+     ORDER BY n DESC, reason ASC`
+  ).all();
+  const oldest = db.prepare(
+    `SELECT id, quarantined_at
+     FROM memories
+     WHERE decay_status = 'quarantine' AND quarantined_at IS NOT NULL
+     ORDER BY quarantined_at ASC, id ASC
+     LIMIT 1`
+  ).get();
+  const alertCounts = db.prepare(
+    `SELECT
+       SUM(CASE WHEN acknowledged_at IS NULL THEN 1 ELSE 0 END) AS pending,
+       SUM(CASE WHEN acknowledged_at IS NOT NULL THEN 1 ELSE 0 END) AS acknowledged
+     FROM cross_scope_alerts`
+  ).get();
+  const quarantineCount = db.prepare(
+    `SELECT COUNT(*) AS n FROM memories WHERE decay_status = 'quarantine'`
+  ).get();
+
+  return {
+    last_run_at: lastRun?.ts ?? null,
+    pattern_version: details.pattern_version ?? null,
+    last_run: lastRun
+      ? {
+          candidates_scanned: Number(details.candidates_scanned ?? 0),
+          quarantined: Number(details.quarantined ?? 0),
+          alerts_emitted: Number(details.alerts_emitted ?? 0),
+          llm_calls: Number(details.llm_calls ?? 0),
+          duration_ms: Number(details.duration_ms ?? 0),
+          pool_a: Number(details.pool_a ?? 0),
+          pool_b: Number(details.pool_b ?? 0),
+          pool_c: Number(details.pool_c ?? 0)
+        }
+      : null,
+    quarantine_pool: {
+      total: Number(quarantineCount?.n ?? 0),
+      by_reason: byReasonRows.map((row) => ({
+        reason: row.reason ?? 'unknown',
+        count: Number(row.n ?? 0)
+      })),
+      oldest: oldest
+        ? {
+            id: oldest.id,
+            quarantined_at: oldest.quarantined_at,
+            age_days: Math.floor((Date.now() - oldest.quarantined_at) / 86400000)
+          }
+        : null
+    },
+    alerts: {
+      pending: Number(alertCounts?.pending ?? 0),
+      acknowledged: Number(alertCounts?.acknowledged ?? 0)
+    }
+  };
+}
+
 export async function cmdAdminDiagnose(
   db,
-  { cwd = process.cwd(), migrations = false, key = false, sessions = false } = {}
+  { cwd = process.cwd(), migrations = false, key = false, sessions = false, security = false } = {}
 ) {
   const quickCheck = db.prepare('PRAGMA quick_check').get();
   const lock = db.prepare(
@@ -100,6 +180,7 @@ export async function cmdAdminDiagnose(
       available: daemonAlive
     },
     sessions: sessions ? loadSessionDiagnostics(db) : null,
+    security: security ? loadSecurityDiagnostics(db) : null,
     migrations: migrations
       ? migrationRows.map((row) => ({
           from_version: row.from_version,

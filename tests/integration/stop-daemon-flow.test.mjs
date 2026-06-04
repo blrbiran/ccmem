@@ -810,6 +810,105 @@ test('stop hook wake re-enqueues the same seq after a completed bridge run and l
   db.close();
 });
 
+test('stop hook wake dedupes the same seq while the prior bridge run is still running', async () => {
+  const db = openDb();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-running-dedupe.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-running-dedupe.mjs');
+  const release = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-running-dedupe.release');
+
+  resetStopDaemonState(db);
+  writeFileSync(
+    script,
+    [
+      "import { existsSync } from 'node:fs';",
+      "const release = process.argv[2];",
+      "const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));",
+      'process.stdin.resume();',
+      'while (!existsSync(release)) {',
+      '  await sleep(10);',
+      '}',
+      "process.stdout.write(JSON.stringify([{content:'Bridge deduped while running',type:'rule',scope:'project',tags:['stop-bridge']}]))"
+    ].join('\n')
+  );
+  writeTranscript(transcript, 'remember my preference', 'ok');
+  await handleStop(db, {
+    session_id: 's-flow-bridge-running-dedupe',
+    transcript_path: transcript,
+    cwd: process.cwd()
+  });
+
+  setClaudeBridgeEnv({
+    CCMEM_ENABLE_REAL_CLAUDE_P: '1',
+    CCMEM_CLAUDE_P_COMMAND: process.execPath,
+    CCMEM_CLAUDE_P_ARGS_JSON: JSON.stringify([script, release])
+  });
+
+  const loopPromise = runUntilFirstTask(db);
+
+  await new Promise((resolve, reject) => {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      const task = getStopTask(db, 's-flow-bridge-running-dedupe');
+      if (task?.status === 'running') {
+        clearInterval(timer);
+        resolve();
+        return;
+      }
+
+      if (Date.now() - started > 1000) {
+        clearInterval(timer);
+        reject(new Error('stop bridge task did not enter running state'));
+      }
+    }, 10);
+  });
+
+  await handleStop(db, {
+    session_id: 's-flow-bridge-running-dedupe',
+    transcript_path: transcript,
+    cwd: process.cwd()
+  });
+
+  writeFileSync(release, 'ok');
+
+  try {
+    await loopPromise;
+  } finally {
+    clearClaudeBridgeEnv();
+  }
+
+  const tasks = db.prepare(
+    `SELECT status, json_extract(payload, '$.last_message_seq') AS last_message_seq
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND json_extract(payload, '$.session_id') = 's-flow-bridge-running-dedupe'
+     ORDER BY id ASC`
+  ).all();
+  const memories = db.prepare(
+    `SELECT content, source, tags
+     FROM memories
+     WHERE source = 'auto_inferred' AND content = 'Bridge deduped while running'
+     ORDER BY id ASC`
+  ).all();
+  const audits = db.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'summarize_pending_applied'
+       AND json_extract(details, '$.session_id') = 's-flow-bridge-running-dedupe'
+     ORDER BY id ASC`
+  ).all();
+
+  assert.equal(existsSync(wakePath), true);
+  assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq]), [['completed', 2]]);
+  assert.equal(memories.length, 1);
+  assert.equal(memories[0].source, 'auto_inferred');
+  assert.deepEqual(JSON.parse(memories[0].tags), ['stop-bridge']);
+  assert.equal(audits.length, 1);
+  assert.equal(JSON.parse(audits[0].details).last_message_seq, 2);
+  assert.equal(JSON.parse(audits[0].details).inserted_count, 1);
+
+  db.close();
+});
+
 test('stop hook wake supersedes a stale bridge result when a newer stop seq arrives during the bridge wait and later applies the newer seq', async () => {
   const db = openDb();
   const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-stale.jsonl');

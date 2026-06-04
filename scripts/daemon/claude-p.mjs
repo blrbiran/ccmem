@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 import { openDb } from '../lib/db.mjs';
+import { loadConfig } from '../lib/config.mjs';
 
 const BLACKLIST_TTL_MS = 30 * 60 * 1000;
 
@@ -30,7 +31,11 @@ function resolveCommand(opts) {
 }
 
 function resolveTimeoutMs(opts) {
-  const raw = opts.timeoutMs ?? process.env.CCMEM_CLAUDE_P_TIMEOUT_MS ?? 60000;
+  const cfg = loadConfig();
+  const raw = opts.timeoutMs
+    ?? cfg.llm?.claude_p_timeout_per_task?.[opts.taskType]
+    ?? process.env.CCMEM_CLAUDE_P_TIMEOUT_MS
+    ?? 60000;
   const value = Number(raw);
   return Number.isFinite(value) && value > 0 ? value : 60000;
 }

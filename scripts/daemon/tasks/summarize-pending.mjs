@@ -53,9 +53,13 @@ function readTranscriptExcerpt(transcriptPath, lastMessageSeq) {
     })
     .filter(Boolean);
 
+  const joined = lines.join('\n');
+
   return {
     entryCount: entries.length,
-    excerpt: lines.join('\n').slice(0, TRANSCRIPT_EXCERPT_MAX)
+    excerpt: joined.length <= TRANSCRIPT_EXCERPT_MAX
+      ? joined
+      : joined.slice(-TRANSCRIPT_EXCERPT_MAX)
   };
 }
 

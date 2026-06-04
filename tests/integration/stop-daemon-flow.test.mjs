@@ -96,6 +96,24 @@ function buildBridgeScriptSchemaOnly(outputText) {
   ].join('');
 }
 
+function buildBridgeScriptSchemaTailOnly(outputText) {
+  return [
+    "process.stdin.setEncoding('utf8');",
+    "let input='';",
+    "process.stdin.on('data',(chunk)=>{input+=chunk;});",
+    "process.stdin.on('end',()=>{",
+    "const args=process.argv.slice(2);",
+    "const outputFormatIndex=args.indexOf('--output-format');",
+    "const schemaIndex=args.indexOf('--json-schema');",
+    "const hasStructuredOutput=outputFormatIndex!==-1&&args[outputFormatIndex+1]==='json'&&schemaIndex!==-1&&args[schemaIndex+1];",
+    "if(!hasStructuredOutput){process.stdout.write('Saved 1 new memories.');return;}",
+    "const schema=JSON.parse(args[schemaIndex+1]);",
+    "if(schema?.type!=='object'||schema?.properties?.synthesized?.type!=='array'){process.stdout.write('Wrong schema');return;}",
+    `process.stdout.write(JSON.stringify({synthesized: input.includes('remember my preference') ? [{content: ${JSON.stringify(outputText)}, type: 'rule', scope: 'project', tags: ['stop-bridge']}] : []}));`,
+    '});'
+  ].join('');
+}
+
 function buildBridgeScriptFailure(stderrText, exitCode) {
   return `process.stderr.write(${JSON.stringify(stderrText)});process.exit(${exitCode});`;
 }
@@ -801,6 +819,49 @@ test('stop hook wake requests schema-structured bridge output so summarize_pendi
   assert.equal(details.session_id, 's-flow-bridge-schema');
   assert.equal(details.inserted_count, 1);
   assert.equal(details.skipped_count, 0);
+
+  db.close();
+});
+
+test('stop hook wake summarizes from the transcript tail so long sessions still insert memories', async () => {
+  const db = openDb();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-tail.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-tail.mjs');
+  const filler = 'x'.repeat(80);
+
+  resetStopDaemonState(db);
+  writeFileSync(script, buildBridgeScriptSchemaTailOnly('Bridge remembered from tail'));
+  writeFileSync(
+    transcript,
+    Array.from({ length: 20 }, (_, index) =>
+      `{"type":"user","message":{"content":[{"type":"text","text":"filler-${index}-${filler}"}]}}\n`
+    ).join('') +
+      '{"type":"user","message":{"content":[{"type":"text","text":"remember my preference"}]}}\n' +
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+  );
+  await handleStop(db, {
+    session_id: 's-flow-bridge-tail',
+    transcript_path: transcript,
+    cwd: process.cwd()
+  });
+
+  setBridgeCommand(script);
+  try {
+    await runUntilFirstTask(db);
+  } finally {
+    clearClaudeBridgeEnv();
+  }
+
+  const task = getStopTask(db, 's-flow-bridge-tail');
+  const audit = getLatestAudit(db, 'summarize_pending_applied');
+  const details = JSON.parse(audit.details);
+  const memory = getLatestAutoMemory(db);
+
+  assert.equal(task.status, 'completed');
+  assert.equal(details.session_id, 's-flow-bridge-tail');
+  assert.equal(details.inserted_count, 1);
+  assert.match(details.transcript_excerpt, /remember my preference/);
+  assert.equal(memory.content, 'Bridge remembered from tail');
 
   db.close();
 });

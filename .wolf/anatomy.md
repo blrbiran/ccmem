@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T17:04:09.142Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T17:21:52.729Z
 > Files: 136 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
@@ -117,7 +117,7 @@
 
 - `daily-maintenance.mjs` — Exports runDailyMaintenance (~562 tok)
 - `security-audit.mjs` — Exports selectAuditCandidates, runSecurityAudit (~2167 tok)
-- `summarize-pending.mjs` — Exports runSummarizePending with schema-enforced bridge extraction (~2330 tok)
+- `summarize-pending.mjs` — Exports runSummarizePending with tail-prioritized transcript excerpt for long sessions (~2170 tok)
 - `weekly-synthesis.mjs` — Exports runWeeklySynthesis (~433 tok)
 
 ## scripts/handlers/
@@ -194,7 +194,7 @@
 - `save-list-session-start.test.mjs` — NODE: resetSaveListTables, seedQuarantinedListFixture (~4193 tok)
 - `security-audit-task.test.mjs` — dataRoot: resetSecurityAuditTables, saveProjectMemory, saveGlobalMemory, markPoolCCandidate (~2250 tok)
 - `stats-command.test.mjs` — dataRoot: resetStatsTables, insertMemory, seedStatsFixture, seedSecurityStatsFixture (~2406 tok)
-- `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeEnv + schema-output stop→daemon regressions (~24800 tok)
+- `stop-daemon-flow.test.mjs` — stop→daemon e2e regressions incl. schema-output and long-session tail excerpt coverage (~25130 tok)
 - `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~4917 tok)
 - `tier15-feedback.test.mjs` — Declares db (~1780 tok)
 

@@ -10,10 +10,10 @@ process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-db-'));
 const { openDb, getDbPath, getSchemaVersion } = await import('../../scripts/lib/db.mjs');
 const { getMode, setMode } = await import('../../scripts/lib/mode.mjs');
 
-test('openDb creates DB file and applies schema 001', () => {
+test('openDb creates DB file and applies the latest schema', () => {
   const db = openDb();
   assert.equal(existsSync(getDbPath()), true);
-  assert.equal(getSchemaVersion(db), 1);
+  assert.equal(getSchemaVersion(db), 4);
   db.close();
 });
 

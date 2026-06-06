@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-06T02:37:33.382Z
-> Files: 136 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-06T14:10:36.803Z
+> Files: 140 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
 
@@ -64,17 +64,17 @@
 
 ## commands/
 
-- `admin.md` (~70 tok)
+- `admin.md` (~100 tok)
 - `audit.md` (~36 tok)
 - `forget.md` (~39 tok)
 - `list.md` — Declares rule (~56 tok)
 - `mode.md` (~43 tok)
 - `pin.md` (~37 tok)
 - `promote.md` (~44 tok)
-- `resurrect.md` (~49 tok)
+- `resurrect.md` (~63 tok)
 - `save.md` — Declares rule (~52 tok)
 - `show.md` (~37 tok)
-- `stats.md` (~42 tok)
+- `stats.md` (~46 tok)
 
 ## docs/
 
@@ -101,13 +101,13 @@
 
 ## scripts/
 
-- `cli.mjs` — db: getOptionValue, createStdinLineReader, formatAgeDays (~4697 tok)
+- `cli.mjs` — db: getOptionValue, createStdinLineReader, formatAgeDays + 4 more (~6148 tok)
 - `hook.mjs` — T_ENTRY: buildHookOutput, writeHookOutput, isBlacklistedSession (~618 tok)
 
 ## scripts/daemon/
 
 - `claude-p.mjs` — Exports callClaudeP with optional structured-output schema args (~1450 tok)
-- `dispatch.mjs` — Exports dispatchTask (~194 tok)
+- `dispatch.mjs` — Exports dispatchTask (~237 tok)
 - `lock.mjs` — Exports acquireDaemonLock, refreshHeartbeat, releaseDaemonLock, isDaemonAlive (~371 tok)
 - `loop.mjs` — Exports weeklyLeaseKey, securityAuditLeaseKey, scheduleCronTasks, runTask, mainLoop (~1570 tok)
 - `main.mjs` — Declares db (~160 tok)
@@ -115,8 +115,9 @@
 
 ## scripts/daemon/tasks/
 
-- `daily-maintenance.mjs` — Exports runDailyMaintenance (~562 tok)
-- `security-audit.mjs` — Exports selectAuditCandidates, runSecurityAudit (~2167 tok)
+- `daily-maintenance.mjs` — Exports runDailyMaintenance (~790 tok)
+- `revalidation-audit.mjs` — Exports runRevalidationAudit (~108 tok)
+- `security-audit.mjs` — Exports selectAuditCandidates, runSecurityAudit (~2174 tok)
 - `summarize-pending.mjs` — Exports runSummarizePending with configured-bridge detection instead of env-gated real-bridge execution (~2235 tok)
 - `weekly-synthesis.mjs` — Exports runWeeklySynthesis with configured-bridge detection instead of env-gated real-bridge execution (~498 tok)
 
@@ -129,30 +130,32 @@
 ## scripts/lib/
 
 - `audit.mjs` — Exports writeAudit, writeAuditMany (~390 tok)
-- `config.mjs` — Exports loadConfig (~605 tok)
+- `config.mjs` — Exports loadConfig (~778 tok)
 - `db.mjs` — Exports getDataRoot, getDbPath, getSchemaVersion, runMigration + 2 more (~435 tok)
 - `feedback.mjs` — NEGATIVE_FEEDBACK: getLastAssistantText, parseJsonArray, getLastUnknownFeedback + 76 more (~8407 tok)
 - `hook-safety.mjs` — Exports withHookSafety (~363 tok)
 - `injection-cache.mjs` — Exports rebuildInjectionCache (~424 tok)
 - `llm-parse.mjs` — Exports parseLlmJson with Claude `result` envelope unwrapping before synthesized-array normalization (~366 tok)
+- `metrics-rollup.mjs` — Exports aggregateHookLatencies, detectLLMDeadLetters, writeMetricsDailyRollup (~1621 tok)
 - `metrics.mjs` — Exports recordMetric (~91 tok)
 - `mode.mjs` — Exports getMode, setMode (~104 tok)
 - `priority.mjs` — Exports recencyFactor, frequencyFactor, computePriority (~232 tok)
 - `project-key.mjs` — Exports normalizeRemoteUrl, fallbackProjectKey, resolveProjectKey (~229 tok)
 - `recent-injections.mjs` — Exports getNextPromptIdx, writeRecentInjection (~147 tok)
 - `render.mjs` — Exports renderStableContext (~172 tok)
+- `revalidation.mjs` — Exports revalidationAuditCore (~1494 tok)
 - `task-runs.mjs` — Exports RAN_BY, tryClaimLease, markLeaseComplete (~173 tok)
-- `threat-scan.mjs` — Exports evaluateTier1, evaluateTier2, evaluateTier3 (~583 tok)
-- `tier15.mjs` — Exports runSessionStartMiniPrelude, maybeRunTier15 (~1143 tok)
+- `threat-scan.mjs` — Exports tier1Scan, secretScan, evaluateTier1, evaluateTier2, evaluateTier3 (~820 tok)
+- `tier15.mjs` — Exports runSessionStartMiniPrelude, maybeRunTier15 (~1389 tok)
 - `transcript.mjs` — Exports parseTranscript, extractEntryText, countTranscriptLines, computeSessionStats, extractAssista (~304 tok)
 - `trust.mjs` — Exports getSourceInitialTrust, adjustTrust (~327 tok)
 - `type-heuristic.mjs` — Exports inferType (~117 tok)
 
 ## scripts/lib/admin/
 
-- `cron.mjs` — Exports cmdAdminCron (~1515 tok)
+- `cron.mjs` — Exports cmdAdminCron (~1527 tok)
 - `daemon.mjs` — Exports renderPlist, cmdAdminDaemon without injecting CCMEM_ENABLE_REAL_CLAUDE_P into daemon env (~3349 tok)
-- `diagnose.mjs` — Exports cmdAdminDiagnose (~1553 tok)
+- `diagnose.mjs` — SESSION_LIMIT: firstValue, parseMemIds, parseDetails + 16 more (~6190 tok)
 
 ## scripts/lib/cmd/
 
@@ -162,10 +165,10 @@
 - `mode.mjs` — Exports cmdMode (~55 tok)
 - `pin.mjs` — Exports cmdPin (~145 tok)
 - `promote.mjs` — Exports cmdPromote (~562 tok)
-- `resurrect.mjs` — Exports cmdResurrect (~2290 tok)
+- `resurrect.mjs` — Exports cmdResurrect (~3371 tok)
 - `save.mjs` — Exports cmdSave (~755 tok)
 - `show.mjs` — Exports cmdShow (~56 tok)
-- `stats.mjs` — Exports cmdStats (~1140 tok)
+- `stats.mjs` — Exports cmdStats (~1221 tok)
 
 ## scripts/lib/llm-prompts/
 
@@ -176,31 +179,32 @@
 - `001_initial.sql` — SQL: tables: schema_meta, schema_migrations, memories, injection_cache (~731 tok)
 - `002_v02.sql` — SQL: tables: memory_feedback, recent_injections, daemon_lock, ccmem_blacklisted_sessions (~573 tok)
 - `003_v03.sql` — SQL: tables: cross_scope_alerts (~304 tok)
+- `004_v04.sql` — SQL: tables: metrics_daily_rollup (~337 tok)
 
 ## tests/integration/
 
-- `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~13206 tok)
+- `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~13610 tok)
 - `admin-daemon-command.test.mjs` — dataRoot: writeFakeLaunchctlScript, resetFakeLaunchctlScript, createFakeClaudeBinary + 20 more (~5783 tok)
-- `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedSecurityDiagnostics (~3334 tok)
+- `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedRollupRow, seedSecurityD (~4634 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)
 - `daemon-loop.test.mjs` — resetRuntimeTables: setClaudeBridgeEnv, setTaskTimeoutConfig (~49732 tok)
-- `forget-pin-cache.test.mjs` — resetCommandTables: seedStaleMaintenanceState, assertPreludeCleanup, insertMemory + 13 more (~3197 tok)
-- `migration-v1-to-v2.test.mjs` — Declares db (~442 tok)
+- `forget-pin-cache.test.mjs` — resetCommandTables: seedStaleMaintenanceState, assertPreludeCleanup, insertMemory + 13 more (~3200 tok)
+- `migration-v1-to-v2.test.mjs` — Declares db (~443 tok)
 - `mode-command.test.mjs` — Declares db (~238 tok)
-- `promote-command.test.mjs` — dataRoot: resetPromoteTables, seedStaleMaintenanceState, assertPreludeCleanup, insertPromoteMemory (~2394 tok)
+- `promote-command.test.mjs` — dataRoot: resetPromoteTables, seedStaleMaintenanceState, assertPreludeCleanup, insertPromoteMemory (~2395 tok)
 - `prompt-submit-retrieval.test.mjs` — API routes: GET (3 endpoints) (~3306 tok)
-- `resurrect-command.test.mjs` — dataRoot: resetResurrectTables, seedGreyZoneMemories, seedQuarantinedMemory, seedCrossScopeAlert (~2611 tok)
+- `resurrect-command.test.mjs` — dataRoot: resetResurrectTables, seedGreyZoneMemories, seedQuarantinedMemory, seedCrossScopeAlert, se (~3228 tok)
 - `save-list-session-start.test.mjs` — NODE: resetSaveListTables, seedQuarantinedListFixture (~4193 tok)
 - `security-audit-task.test.mjs` — dataRoot: resetSecurityAuditTables, saveProjectMemory, saveGlobalMemory, markPoolCCandidate (~2250 tok)
-- `stats-command.test.mjs` — dataRoot: resetStatsTables, insertMemory, seedStatsFixture, seedSecurityStatsFixture (~2406 tok)
+- `stats-command.test.mjs` — dataRoot: seedRollupRow, resetStatsTables, insertMemory, seedStatsFixture, seedSecurityStatsFixture (~3062 tok)
 - `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 50 more, including Claude JSON envelope bridge regression (~26143 tok)
 - `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~4917 tok)
-- `tier15-feedback.test.mjs` — Declares db (~1780 tok)
+- `tier15-feedback.test.mjs` — Declares db (~1799 tok)
 
 ## tests/unit/
 
-- `db.test.mjs` — Declares db (~256 tok)
+- `db.test.mjs` — Declares db (~258 tok)
 - `llm-parse.test.mjs` — Declares raw, including Claude JSON envelope parsing regression (~758 tok)
 - `plugin-manifest.test.mjs` — Declares readManifest (~198 tok)
 - `priority.test.mjs` — Declares score (~123 tok)

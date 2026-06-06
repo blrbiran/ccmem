@@ -1,5 +1,15 @@
-const ROLE_INJECTION = /<system>|<assistant>|^system:|^assistant:/im;
-const HIDDEN_UNICODE = /[​‌‍﻿]/;
+const TIER1_PATTERNS = [
+  { re: /<system>|<assistant>|^system:|^assistant:/im, reason: 'role injection pattern detected', pattern: 'role_injection' },
+  { re: /[​‌‍﻿]/, reason: 'hidden unicode detected', pattern: 'hidden_unicode' }
+];
+
+const SECRET_PATTERNS = [
+  { re: /sk-[A-Za-z0-9_-]{10,}/g, name: 'openai_key' },
+  { re: /gh[pousr]_[A-Za-z0-9]{20,}/g, name: 'github_token' },
+  { re: /AIza[0-9A-Za-z_-]{20,}/g, name: 'google_api_key' },
+  { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g, name: 'private_key' },
+  { re: /(?:api[_ -]?key|secret|token|password).{0,20}[:=].{0,40}/gi, name: 'credential_assignment' }
+];
 
 const TIER2_PATTERNS = [
   { re: /ignore (all |the )?(previous|prior) instructions/i, score: 0.45, evidence: 'ignore_previous_instructions' },
@@ -10,24 +20,42 @@ const TIER2_PATTERNS = [
   { re: /(?:bypass|disable)\b.{0,60}\b(?:sandbox|guardrail|security|safety)/i, score: 0.4, evidence: 'security_bypass' }
 ];
 
-export function evaluateTier1(content) {
-  if (ROLE_INJECTION.test(content)) {
-    return {
-      ok: false,
-      reason: 'role injection pattern detected'
-    };
-  }
-
-  if (HIDDEN_UNICODE.test(content)) {
-    return {
-      ok: false,
-      reason: 'hidden unicode detected'
-    };
+export function tier1Scan(content) {
+  for (const pattern of TIER1_PATTERNS) {
+    if (pattern.re.test(content)) {
+      return {
+        matched: true,
+        reason: pattern.reason,
+        pattern: pattern.pattern
+      };
+    }
   }
 
   return {
-    ok: true,
-    reason: null
+    matched: false,
+    reason: null,
+    pattern: null
+  };
+}
+
+export function secretScan(content) {
+  const matches = [];
+
+  for (const pattern of SECRET_PATTERNS) {
+    pattern.re.lastIndex = 0;
+    if (pattern.re.test(content)) {
+      matches.push(pattern.name);
+    }
+  }
+
+  return [...new Set(matches)];
+}
+
+export function evaluateTier1(content) {
+  const result = tier1Scan(content);
+  return {
+    ok: !result.matched,
+    reason: result.reason
   };
 }
 

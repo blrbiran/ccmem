@@ -39,6 +39,7 @@
 - **Real transcript shape**: Claude transcripts include many non-message meta rows, and `message.content` may be either an array of parts or a plain string. Shared transcript helpers must tolerate both shapes before task or feedback code reads text.
 - **Hook output contract**: `hookSpecificOutput.additionalContext` is only for SessionStart/UserPromptSubmit-style injection. Stop hooks should return an empty JSON object instead of emitting `hookSpecificOutput` with `hookEventName: "Stop"`.
 - **Timeout test fixtures**: timeout regressions must use `CCMEM_CONFIG_PATH` / `claude_p_timeout_per_task` once task-specific config takes precedence; the legacy `CCMEM_CLAUDE_P_TIMEOUT_MS` env no longer reliably drives `summarize_pending` timeout paths.
+- **Full-suite closure discipline**: targeted green runs can still miss stale migration/version assertions in older suites. When schema advances, re-check legacy migration/integration tests for hard-coded version numbers and platform-specific temp-path assumptions before claiming completion.
 
 ## Do-Not-Repeat
 

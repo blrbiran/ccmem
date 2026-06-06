@@ -23,13 +23,14 @@ test('maybeRunTier15 archives low-trust memories and records lease', () => {
       'active', 0, 0, ?, ?, ?)`
   ).run(now, now, now);
 
-  const ran = maybeRunTier15(db);
-  assert.equal(ran, true);
+  const result = maybeRunTier15(db);
+  assert.equal(result.ran, true);
+  assert.equal(result.skipped ?? null, null);
 
   const row = db.prepare(`SELECT decay_status FROM memories WHERE content = 'stale memory'`).get();
   assert.equal(row.decay_status, 'archived');
 
-  const lease = db.prepare(`SELECT ran_by, status FROM task_runs WHERE type = 'daily_maintenance'`).get();
+  const lease = db.prepare(`SELECT ran_by, status FROM task_runs WHERE type = 'tier1_5_maintenance'`).get();
   assert.equal(lease.ran_by, 'opportunistic');
   assert.equal(lease.status, 'completed');
 
@@ -64,13 +65,13 @@ test('maybeRunTier15 records the local calendar day lease at early-morning local
   global.Date = FixedDate;
 
   try {
-    const ran = maybeRunTier15(db);
-    assert.equal(ran, true);
+    const result = maybeRunTier15(db);
+    assert.equal(result.ran, true);
 
     const lease = db.prepare(
       `SELECT date_key, ran_by, status
        FROM task_runs
-       WHERE type = 'daily_maintenance'`
+       WHERE type = 'tier1_5_maintenance'`
     ).get();
 
     assert.equal(lease.date_key, '2026-06-08');

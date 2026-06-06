@@ -21,6 +21,81 @@ const CLI = '/Users/biran/code/skills/ccmem/scripts/cli.mjs';
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { cmdStats } = await import('../../scripts/lib/cmd/stats.mjs');
 
+function seedRollupRow(db, {
+  dayKey,
+  sessionStartP50 = 40,
+  sessionStartP95 = 120,
+  promptSubmitP50 = 30,
+  promptSubmitP95 = 70,
+  stopP50 = 35,
+  stopP95 = 90,
+  llmCalls = 4,
+  llmTotalDurationMs = 8000,
+  llmFailures = 0,
+  llmDeadLetters = 0,
+  secQuarantined = 0,
+  secAlertsEmitted = 0,
+  revalQuarantined = 0,
+  revalFlagged = 0,
+  revalScanned = 0,
+  tier15Clusters = 0,
+  memsActive = 5,
+  memsProbation = 1,
+  memsQuarantine = 0,
+  memsArchived = 1,
+  writtenAt = Date.now()
+} = {}) {
+  db.prepare(
+    `INSERT INTO metrics_daily_rollup (
+      day_key,
+      hook_session_start_p50,
+      hook_session_start_p95,
+      hook_prompt_submit_p50,
+      hook_prompt_submit_p95,
+      hook_stop_p50,
+      hook_stop_p95,
+      llm_calls,
+      llm_total_duration_ms,
+      llm_failures,
+      llm_dead_letters,
+      sec_quarantined,
+      sec_alerts_emitted,
+      reval_quarantined,
+      reval_flagged,
+      reval_scanned,
+      tier15_clusters,
+      mems_active,
+      mems_probation,
+      mems_quarantine,
+      mems_archived,
+      written_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    dayKey,
+    sessionStartP50,
+    sessionStartP95,
+    promptSubmitP50,
+    promptSubmitP95,
+    stopP50,
+    stopP95,
+    llmCalls,
+    llmTotalDurationMs,
+    llmFailures,
+    llmDeadLetters,
+    secQuarantined,
+    secAlertsEmitted,
+    revalQuarantined,
+    revalFlagged,
+    revalScanned,
+    tier15Clusters,
+    memsActive,
+    memsProbation,
+    memsQuarantine,
+    memsArchived,
+    writtenAt
+  );
+}
+
 function resetStatsTables(db) {
   db.prepare(`DELETE FROM daemon_lock`).run();
   db.prepare(`DELETE FROM task_runs`).run();
@@ -30,6 +105,7 @@ function resetStatsTables(db) {
   db.prepare(`DELETE FROM cross_scope_alerts`).run();
   db.prepare(`DELETE FROM audit_log_targets`).run();
   db.prepare(`DELETE FROM audit_log`).run();
+  db.prepare(`DELETE FROM metrics_daily_rollup`).run();
   db.prepare(`DELETE FROM injection_cache`).run();
   db.prepare(`DELETE FROM memories`).run();
 }
@@ -119,7 +195,7 @@ test('cmdStats aggregates runtime state and opportunistic maintenance', async ()
   const lease = db.prepare(
     `SELECT status, completed_at
      FROM task_runs
-     WHERE type = 'daily_maintenance'
+     WHERE type = 'tier1_5_maintenance'
      ORDER BY id DESC
      LIMIT 1`
   ).get();
@@ -200,7 +276,7 @@ test('cmdStats records the local calendar day lease at early-morning local times
     const lease = db.prepare(
       `SELECT date_key, status, completed_at
        FROM task_runs
-       WHERE type = 'daily_maintenance'
+       WHERE type = 'tier1_5_maintenance'
        ORDER BY id DESC
        LIMIT 1`
     ).get();
@@ -269,6 +345,33 @@ test('cli stats --json returns structured stats', () => {
   assert.equal(parsed.feedback.helpful, 2);
   assert.equal(parsed.security.alerts_pending, 0);
   assert.equal(parsed.buckets.archived, 2);
+});
+
+test('cli stats prints the tuning hint when suggestions are available', () => {
+  const db = openDb();
+  resetStatsTables(db);
+  seedStatsFixture(db);
+  for (let day = 1; day <= 7; day += 1) {
+    seedRollupRow(db, { dayKey: `2026-06-0${day}` });
+  }
+  for (let i = 0; i < 10; i += 1) {
+    db.prepare(
+      `INSERT INTO audit_log (ts, action, affected_ids, details)
+       VALUES (?, 'security_audit_run', NULL, ?)`
+    ).run(
+      Date.parse(`2026-06-${String((i % 7) + 1).padStart(2, '0')}T12:00:00Z`),
+      JSON.stringify({ pool_b: 10, pool_a: 0, pool_c: 0 })
+    );
+  }
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'stats'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /Tuning  : \d+ suggestions available — run \/ccmem:admin diagnose --tuning/);
 });
 
 test.after(() => rmSync(dataRoot, { recursive: true, force: true }));

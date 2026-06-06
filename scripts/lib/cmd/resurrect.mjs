@@ -1,4 +1,5 @@
 import { loadConfig } from '../config.mjs';
+import { resolveProjectKey } from '../project-key.mjs';
 import { writeAudit } from '../audit.mjs';
 import { rebuildInjectionCache } from '../injection-cache.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
@@ -41,6 +42,23 @@ function normalizeAlertDecision(input) {
 
   if (value === 'x') {
     return 'forget_both';
+  }
+
+  return 'skip';
+}
+
+function normalizeRevalidationDecision(input) {
+  const value = String(input ?? '').trim().toLowerCase();
+  if (value === 'k') {
+    return 'keep';
+  }
+
+  if (value === 'f') {
+    return 'forget';
+  }
+
+  if (value === 'q') {
+    return 'quarantine';
   }
 
   return 'skip';
@@ -272,32 +290,140 @@ function resurrectAlerts(db, { limit, decide }) {
   return { mode: 'alerts', items };
 }
 
+function resurrectRevalidation(db, { cwd, limit, decide }) {
+  const cutoffTs = Date.now() - (30 * 86400000);
+  const projectKey = resolveProjectKey(cwd);
+  const rows = db.prepare(
+    `WITH latest_flag AS (
+       SELECT t.mem_id, MAX(a.ts) AS flag_ts
+       FROM audit_log a
+       JOIN audit_log_targets t ON t.audit_id = a.id
+       WHERE a.action = 'revalidation_flagged' AND a.ts > ?
+       GROUP BY t.mem_id
+     ),
+     latest_resurrect AS (
+       SELECT t.mem_id, MAX(a.ts) AS resurrect_ts
+       FROM audit_log a
+       JOIN audit_log_targets t ON t.audit_id = a.id
+       WHERE a.action = 'revalidation_resurrect'
+       GROUP BY t.mem_id
+     )
+     SELECT m.id, m.type, m.scope, m.project_key, m.content, m.trust_score, m.pinned,
+            lf.flag_ts, lr.resurrect_ts,
+            (
+              SELECT json_extract(a.details, '$.trigger_pattern')
+              FROM audit_log a
+              JOIN audit_log_targets t ON t.audit_id = a.id
+              WHERE t.mem_id = m.id AND a.action = 'revalidation_flagged'
+              ORDER BY a.ts DESC, a.id DESC
+              LIMIT 1
+            ) AS trigger_pattern,
+            (
+              SELECT json_extract(a.details, '$.reason')
+              FROM audit_log a
+              JOIN audit_log_targets t ON t.audit_id = a.id
+              WHERE t.mem_id = m.id AND a.action = 'revalidation_flagged'
+              ORDER BY a.ts DESC, a.id DESC
+              LIMIT 1
+            ) AS flag_reason
+     FROM memories m
+     JOIN latest_flag lf ON lf.mem_id = m.id
+     LEFT JOIN latest_resurrect lr ON lr.mem_id = m.id
+     WHERE m.decay_status IN ('active', 'probation')
+       AND (m.scope = 'global' OR m.project_key = ?)
+       AND lf.flag_ts > COALESCE(lr.resurrect_ts, 0)
+     ORDER BY m.trust_score ASC, lf.flag_ts DESC, m.id ASC
+     LIMIT ?`
+  ).all(cutoffTs, projectKey, clampLimit(limit, 10));
+
+  const touched = [];
+  const items = [];
+
+  for (const row of rows) {
+    const now = Date.now();
+    const action = normalizeRevalidationDecision(decide(row));
+
+    if (action === 'keep') {
+      db.prepare(
+        `UPDATE memories
+         SET last_touched_at = ?, updated_at = ?
+         WHERE id = ?`
+      ).run(now, now, row.id);
+      writeAudit(db, 'revalidation_resurrect', row.id, { user_action: 'keep' });
+      touched.push({ scope: row.scope, project_key: row.project_key ?? null });
+    } else if (action === 'forget') {
+      db.prepare(
+        `UPDATE memories
+         SET decay_status = 'archived', updated_at = ?
+         WHERE id = ?`
+      ).run(now, row.id);
+      writeAudit(db, 'revalidation_resurrect', row.id, { user_action: 'forget' });
+      touched.push({ scope: row.scope, project_key: row.project_key ?? null });
+    } else if (action === 'quarantine') {
+      db.prepare(
+        `UPDATE memories
+         SET decay_status = 'quarantine', quarantined_at = ?, updated_at = ?
+         WHERE id = ?`
+      ).run(now, now, row.id);
+      writeAudit(db, 'revalidation_resurrect', row.id, { user_action: 'quarantine' });
+      touched.push({ scope: row.scope, project_key: row.project_key ?? null });
+    }
+
+    items.push({
+      id: row.id,
+      type: row.type,
+      scope: row.scope,
+      project_key: row.project_key,
+      content: row.content,
+      trust_score: row.trust_score,
+      pinned: row.pinned,
+      flag_ts: row.flag_ts,
+      resurrect_ts: row.resurrect_ts,
+      trigger_pattern: row.trigger_pattern,
+      flag_reason: row.flag_reason,
+      action
+    });
+  }
+
+  rebuildTouchedCaches(db, touched);
+  return { mode: 'revalidation', items };
+}
+
 export async function cmdResurrect(db, {
+  cwd = process.cwd(),
   bottom = 10,
   tag = null,
   decide = () => 's',
   quarantined = false,
   alerts = false,
+  revalidation = false,
   limit = null
 } = {}) {
-  const tier15Ran = alerts ? false : maybeRunTier15(db);
+  const tier15 = alerts ? { ran: false, skipped: 'alerts_mode' } : maybeRunTier15(db);
 
   if (alerts) {
     return {
-      tier15: { ran: tier15Ran },
+      tier15,
       ...resurrectAlerts(db, { limit: limit ?? bottom, decide })
+    };
+  }
+
+  if (revalidation) {
+    return {
+      tier15,
+      ...resurrectRevalidation(db, { cwd, limit: limit ?? bottom, decide })
     };
   }
 
   if (quarantined) {
     return {
-      tier15: { ran: tier15Ran },
+      tier15,
       ...resurrectQuarantined(db, { limit: limit ?? bottom, decide })
     };
   }
 
   return {
-    tier15: { ran: tier15Ran },
+    tier15,
     ...resurrectGreyZone(db, { bottom, tag, decide })
   };
 }

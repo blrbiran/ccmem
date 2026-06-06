@@ -102,6 +102,33 @@ async function seedCrossScopeAlert(db, now = Date.now()) {
   };
 }
 
+async function seedRevalidationFlaggedMemory(db, now = Date.now()) {
+  const saved = await cmdSave(db, {
+    cwd: '/Users/biran/code/skills/ccmem',
+    content: 'Potentially stale SSH note',
+    scope: 'project',
+    type: 'fact'
+  });
+
+  db.prepare(`UPDATE memories SET trust_score = ?, pinned = ? WHERE id = ?`).run(0.72, 1, saved.id);
+
+  const audit = db.prepare(
+    `INSERT INTO audit_log (ts, action, affected_ids, details)
+     VALUES (?, 'revalidation_flagged', ?, ?)`
+  ).run(
+    now - 3600000,
+    JSON.stringify([saved.id]),
+    JSON.stringify({ trigger_pattern: 'ssh-key', reason: 'pattern changed meaning' })
+  );
+
+  db.prepare(
+    `INSERT INTO audit_log_targets (audit_id, mem_id)
+     VALUES (?, ?)`
+  ).run(Number(audit.lastInsertRowid), saved.id);
+
+  return saved.id;
+}
+
 test('cmdResurrect keeps and forgets grey-zone memories', async () => {
   const db = openDb();
   resetResurrectTables(db);
@@ -182,7 +209,7 @@ test('cmdResurrect records the local calendar day lease at early-morning local t
     const lease = db.prepare(
       `SELECT date_key, status, completed_at
        FROM task_runs
-       WHERE type = 'daily_maintenance'
+       WHERE type = 'tier1_5_maintenance'
        ORDER BY id DESC
        LIMIT 1`
     ).get();
@@ -317,6 +344,57 @@ test('cli resurrect prints no grey-zone memories when none match', () => {
   });
 
   assert.equal(output, 'ccmem: no grey-zone memories\n');
+});
+
+test('cli resurrect --revalidation applies keep and quarantine decisions', async () => {
+  const db = openDb();
+  resetResurrectTables(db);
+  const memId = await seedRevalidationFlaggedMemory(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'resurrect', '--revalidation', '--limit', '1'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8',
+    input: 'q\n'
+  });
+
+  const verifyDb = openDb();
+  const row = verifyDb.prepare(
+    `SELECT decay_status, quarantined_at
+     FROM memories
+     WHERE id = ?`
+  ).get(memId);
+  const audit = verifyDb.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'revalidation_resurrect'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  verifyDb.close();
+
+  assert.match(output, /flagged .* — ssh-key/);
+  assert.match(output, /\[k\]eep \/ \[f\]orget \/ \[q\]uarantine \/ \[s\]kip:/);
+  assert.match(output, /ccmem: revalidation keep=0 forget=0 quarantine=1 skipped=0/);
+  assert.equal(row.decay_status, 'quarantine');
+  assert.equal(typeof row.quarantined_at, 'number');
+  assert.equal(JSON.parse(audit.details).user_action, 'quarantine');
+});
+
+test('cli resurrect --revalidation prints no pending flags when empty', () => {
+  const db = openDb();
+  resetResurrectTables(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'resurrect', '--revalidation'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8',
+    input: ''
+  });
+
+  assert.equal(output, 'ccmem: no revalidation flags pending\n');
 });
 
 test.after(() => rmSync(dataRoot, { recursive: true, force: true }));

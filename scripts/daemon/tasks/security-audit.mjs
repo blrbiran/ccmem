@@ -146,6 +146,7 @@ function applySecurityAuditVerdict(db, batch, verdict, totals, cfg, scanVersion)
       reason: 'security_audit_llm',
       llm_reason: item.reason,
       source: 'llm',
+      pool: item.pool,
       pattern_version: scanVersion
     });
     totals.quarantined += 1;

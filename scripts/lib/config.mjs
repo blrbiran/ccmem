@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 const DEFAULT_CONFIG = {
-  version: '0.3',
+  version: '0.4',
   inject: { max_chars: 4000, max_per_prompt: 6 },
   save: { max_chars_per_memory: 300 },
   retrieval: {
@@ -20,8 +20,13 @@ const DEFAULT_CONFIG = {
       security_audit: 180000
     }
   },
+  hook_budget_ms: {
+    session_start: { p50: 50, p95: 300 },
+    prompt_submit: { p50: 50, p95: 100 },
+    stop: { p50: 50, p95: 200 }
+  },
   security: {
-    scan_patterns_version: '2026-06-04-v03',
+    scan_patterns_version: '2026.07',
     tier3: {
       enabled: true,
       block_user_explicit: false
@@ -65,7 +70,30 @@ const DEFAULT_CONFIG = {
       sunset_days: 30,
       hard_delete_days: 14,
       resurrect_trust: 0.4
+    },
+    revalidation: {
+      lazy_enabled: true,
+      daily_enabled: true,
+      batch_size: 100,
+      flag_trust_threshold: 0.6
     }
+  },
+  metrics_rollup: {
+    enabled: true,
+    retention_days: 90,
+    min_days_for_tuning: 7
+  },
+  tuning_suggest: {
+    pool_b_zero_quarantine_ratio: 0.7,
+    dedup_window_p90_ratio: 0.5,
+    sunset_resurrect_high_rate: 0.5
+  },
+  daemon: {
+    platform_install_fallback_node_paths: [
+      '/usr/local/bin/node',
+      '/opt/homebrew/bin/node',
+      '/usr/bin/node'
+    ]
   }
 };
 

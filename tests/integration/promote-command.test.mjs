@@ -43,7 +43,7 @@ function seedStaleMaintenanceState(db, now = Date.now()) {
 function assertPreludeCleanup(db) {
   const stale = db.prepare(`SELECT COUNT(*) AS n FROM recent_injections`).get();
   const oldTasks = db.prepare(`SELECT COUNT(*) AS n FROM task_runs WHERE type = 'summarize_pending'`).get();
-  const lease = db.prepare(`SELECT status FROM task_runs WHERE type = 'daily_maintenance'`).get();
+  const lease = db.prepare(`SELECT status FROM task_runs WHERE type = 'tier1_5_maintenance'`).get();
 
   assert.equal(stale.n, 0);
   assert.equal(oldTasks.n, 0);
@@ -191,7 +191,7 @@ test('cmdPromote records the local calendar day lease at early-morning local tim
     const lease = db.prepare(
       `SELECT date_key, status, completed_at
        FROM task_runs
-       WHERE type = 'daily_maintenance'
+       WHERE type = 'tier1_5_maintenance'
        ORDER BY id DESC
        LIMIT 1`
     ).get();

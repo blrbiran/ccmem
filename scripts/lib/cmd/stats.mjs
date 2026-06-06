@@ -1,5 +1,6 @@
 import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
+import { getTuningDiagnostics } from '../admin/diagnose.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
 
 const FEEDBACK_WINDOW_MS = 14 * 86400000;
@@ -30,6 +31,7 @@ function toPendingMap(rows) {
     summarize_pending: 0,
     weekly_synthesis: 0,
     security_audit: 0,
+    revalidation_audit: 0,
     total: 0
   };
 
@@ -45,7 +47,7 @@ function toPendingMap(rows) {
 }
 
 export async function cmdStats(db, { buckets = false } = {}) {
-  const tier15Ran = maybeRunTier15(db);
+  const tier15 = maybeRunTier15(db);
   const now = Date.now();
   const cfg = loadConfig();
 
@@ -106,10 +108,11 @@ export async function cmdStats(db, { buckets = false } = {}) {
        AND quarantined_at IS NOT NULL
        AND quarantined_at < ?`
   ).get(pendingSunsetCutoff);
+  const tuning = getTuningDiagnostics(db, cfg);
 
   return {
     tier1: { available: true },
-    tier15: { ran: tier15Ran },
+    tier15,
     tier2: {
       alive: isDaemonAlive(db),
       pid: lock?.holder_pid ?? null,
@@ -138,6 +141,12 @@ export async function cmdStats(db, { buckets = false } = {}) {
       alerts_acknowledged: toCount(alertsRow?.acknowledged)
     },
     feedback: toFeedbackMap(feedbackRows),
+    tuning: {
+      insufficient: tuning.insufficient,
+      suggestion_count: tuning.suggestion_count,
+      days_available: tuning.days_available,
+      min_days: tuning.min_days
+    },
     buckets: buckets
       ? Object.fromEntries(bucketRows.map((row) => [row.decay_status, Number(row.n ?? 0)]))
       : null

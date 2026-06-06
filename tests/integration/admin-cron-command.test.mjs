@@ -381,6 +381,53 @@ test('manual weekly admin cron run completes the claimed lease after dispatch', 
   }
 });
 
+test('manual revalidation admin cron run dispatches successfully and records manual audit', async () => {
+  const db = openDb();
+  resetCronTables(db);
+
+  db.prepare(
+    `INSERT INTO memories (
+      project_key, scope, type, content, source,
+      trust_score, pinned, decay_status,
+      created_at, updated_at, last_touched_at
+     ) VALUES (?, 'project', 'fact', ?, 'user_explicit', ?, 1, 'active', ?, ?, ?)`
+  ).run('demo/repo', 'ssh key rotation note', 0.92, Date.now() - 1000, Date.now() - 1000, Date.now() - 1000);
+
+  try {
+    const result = await cmdAdminCron(db, { verb: 'run', taskType: 'revalidation_audit' });
+    const task = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(result.task_id);
+
+    await runTask(db, task, dispatchTask);
+
+    const storedTask = db.prepare(
+      `SELECT status, finished_at
+       FROM tasks
+       WHERE id = ?`
+    ).get(result.task_id);
+    const audit = db.prepare(
+      `SELECT details
+       FROM audit_log
+       WHERE action = 'revalidation_audit_run'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    const runs = db.prepare(
+      `SELECT COUNT(*) AS n
+       FROM task_runs
+       WHERE type = 'revalidation_audit'`
+    ).get();
+
+    assert.equal(storedTask.status, 'completed');
+    assert.equal(typeof storedTask.finished_at, 'number');
+    assert.equal(runs.n, 0);
+    assert.equal(JSON.parse(task.payload ?? '{}').lease_key ?? null, null);
+    assert.equal(JSON.parse(audit.details).trigger, 'manual');
+  } finally {
+    db.close();
+  }
+});
+
+
 test('manual weekly admin cron run completes the claimed lease after a timeout-scheduled retry succeeds', async () => {
   const db = openDb();
   resetCronTables(db);

@@ -42,6 +42,95 @@ function formatAgeDays(ts) {
   return `${days}d ago`;
 }
 
+function formatSettingValue(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return String(value);
+  }
+
+  return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, '');
+}
+
+function formatMinutes(ms) {
+  return (Number(ms ?? 0) / 60000).toFixed(1).replace(/\.0$/, '.0');
+}
+
+function printTuning(result) {
+  const tuning = result.tuning;
+
+  if (tuning.insufficient) {
+    process.stdout.write(`ccmem: insufficient data (have ${tuning.days_available} days, need >=${tuning.min_days})\n`);
+    return;
+  }
+
+  process.stdout.write(`Tuning suggestions (based on last 30 days, ${tuning.days_available} days of data)\n\n`);
+
+  for (const suggestion of tuning.suggestions) {
+    const suffix = suggestion.action === 'keep' ? ' (keep)' : '';
+    process.stdout.write(
+      `  ${suggestion.key.padEnd(44)} current: ${formatSettingValue(suggestion.current)}  suggest: ${formatSettingValue(suggestion.suggest)}${suffix}\n`
+    );
+    process.stdout.write(`    rationale: ${suggestion.rationale}\n`);
+    process.stdout.write(`    impact:    ${suggestion.impact}\n\n`);
+  }
+
+  if (tuning.audit_id != null) {
+    process.stdout.write(`(use /ccmem:audit show ${tuning.audit_id} for full signal breakdown)\n`);
+  }
+}
+
+function printMetrics(result) {
+  const metrics = result.metrics;
+
+  if (metrics.no_data) {
+    process.stdout.write(`ccmem: no metrics data in last ${metrics.days} days\n`);
+    return;
+  }
+
+  const hooks = [
+    ['SessionStart', metrics.hooks.session_start],
+    ['UserPromptSubmit', metrics.hooks.prompt_submit],
+    ['Stop', metrics.hooks.stop]
+  ];
+
+  process.stdout.write(`Metrics (last ${metrics.days} days)\n\n`);
+  process.stdout.write('  Hook latency (ms, p50 / p95)\n');
+  for (const [label, hook] of hooks) {
+    process.stdout.write(
+      `    ${label.padEnd(16)} ${String(hook.p50 ?? '-').padStart(3)} / ${String(hook.p95 ?? '-').padEnd(4)}  (budget: ${hook.budget.p50}/${hook.budget.p95})  ${hook.status}\n`
+    );
+    if (hook.trend) {
+      const delta = hook.trend.delta_ms >= 0 ? `+${hook.trend.delta_ms}` : `${hook.trend.delta_ms}`;
+      process.stdout.write(
+        `                                                  ${hook.trend.arrow} trend: ${delta}ms vs prior ${hook.trend.compare_days}d\n`
+      );
+    }
+  }
+
+  process.stdout.write('\n  LLM calls\n');
+  process.stdout.write(`    total:        ${metrics.llm.total}        (avg ${metrics.llm.avg_per_day}/day)\n`);
+  process.stdout.write(`    duration:     ${formatMinutes(metrics.llm.duration_ms)} min total (avg ${metrics.llm.avg_duration_s}s/call)\n`);
+  process.stdout.write(
+    `    failures:     ${metrics.llm.failures}         (${metrics.llm.total ? ((metrics.llm.failures / metrics.llm.total) * 100).toFixed(1) : '0.0'}%)\n`
+  );
+  process.stdout.write(`    dead-letters: ${metrics.llm.dead_letters}         ${metrics.llm.dead_letters > 0 ? 'WARN' : 'OK'}\n`);
+
+  process.stdout.write('\n  Pool flow\n');
+  process.stdout.write(`    Tier 1.5 clusters quarantined: ${metrics.flow.tier15_clusters}\n`);
+  process.stdout.write(`    security_audit quarantined:    ${metrics.flow.security_quarantined}\n`);
+  process.stdout.write(
+    `    revalidation quarantined:      ${metrics.flow.revalidation_quarantined}   flagged: ${metrics.flow.revalidation_flagged}\n`
+  );
+  process.stdout.write(
+    `    cross-scope alerts emitted:    ${metrics.flow.cross_scope_alerts_emitted}   acknowledged: ${metrics.flow.cross_scope_alerts_acknowledged}\n`
+  );
+
+  process.stdout.write(`\n  Memory pool (end of ${metrics.memory_pool.day_key})\n`);
+  process.stdout.write(
+    `    active: ${metrics.memory_pool.active}  probation: ${metrics.memory_pool.probation}  quarantine: ${metrics.memory_pool.quarantine}  archived: ${metrics.memory_pool.archived}\n`
+  );
+}
+
 try {
   if (verb === 'save') {
     const content = args.filter((arg) => !arg.startsWith('--')).join(' ');
@@ -193,7 +282,10 @@ try {
       migrations: args.includes('--migrations'),
       key: args.includes('--key'),
       sessions: args.includes('--sessions'),
-      security: args.includes('--security')
+      security: args.includes('--security'),
+      tuning: args.includes('--tuning'),
+      metrics: args.includes('--metrics'),
+      days: Number(getOptionValue('--days') ?? 14)
     });
 
     if (args.includes('--key')) {
@@ -239,6 +331,10 @@ try {
       process.stdout.write(
         `Cross-scope alerts: ${security.alerts.pending} pending / ${security.alerts.acknowledged} acknowledged\n`
       );
+    } else if (args.includes('--tuning')) {
+      printTuning(result);
+    } else if (args.includes('--metrics')) {
+      printMetrics(result);
     } else {
       process.stdout.write(`ccmem: db ${result.db.health} schema=${result.db.schema_version} path=${result.db.path}\n`);
 
@@ -294,6 +390,11 @@ try {
       process.stdout.write(
         `Feedback : helpful ${result.feedback.helpful} / unhelpful ${result.feedback.unhelpful} / unknown ${result.feedback.unknown} (last 14d)\n`
       );
+      if (!result.tuning.insufficient && result.tuning.suggestion_count > 0) {
+        process.stdout.write(
+          `Tuning  : ${result.tuning.suggestion_count} suggestions available — run /ccmem:admin diagnose --tuning\n`
+        );
+      }
     }
   } else if (verb === 'promote') {
     const readLine = createStdinLineReader();
@@ -332,11 +433,13 @@ try {
   } else if (verb === 'resurrect') {
     const readLine = createStdinLineReader();
     const result = await cmdResurrect(db, {
+      cwd: process.cwd(),
       bottom: getOptionValue('--bottom') ?? 10,
       tag: getOptionValue('--tag'),
       limit: getOptionValue('--limit'),
       quarantined: args.includes('--quarantined'),
       alerts: args.includes('--alerts'),
+      revalidation: args.includes('--revalidation'),
       decide: (row) => {
         if (args.includes('--alerts')) {
           process.stdout.write(
@@ -345,6 +448,17 @@ try {
             `  PROJECT [m${row.project_mem_id}] ${row.project_type} trust=${Number(row.project_trust_score ?? 0).toFixed(2)} (${row.project_key}) ${row.project_content ?? ''}\n` +
             `  evidence: ${row.evidence ?? ''}\n` +
             '  [G]keep-global / [P]keep-project / [B]keep-both / [X]forget-both / [s]kip: '
+          );
+          return readLine();
+        }
+
+        if (args.includes('--revalidation')) {
+          process.stdout.write(
+            `[m${row.id}] ${row.type}|${row.scope} trust=${Number(row.trust_score ?? 0).toFixed(2)}${Number(row.pinned ?? 0) === 1 ? ' ★pinned' : ''}\n` +
+            `  flagged ${formatAgeDays(row.flag_ts)} — ${row.trigger_pattern ?? 'unknown pattern'}\n` +
+            `  flag reason: ${row.flag_reason ?? 'unknown'}\n` +
+            `  content: ${row.content}\n` +
+            '  [k]eep / [f]orget / [q]uarantine / [s]kip: '
           );
           return readLine();
         }
@@ -371,6 +485,8 @@ try {
         process.stdout.write('ccmem: no quarantined memories\n');
       } else if (result.mode === 'alerts') {
         process.stdout.write('ccmem: no pending cross-scope alerts\n');
+      } else if (result.mode === 'revalidation') {
+        process.stdout.write('ccmem: no revalidation flags pending\n');
       } else {
         process.stdout.write('ccmem: no grey-zone memories\n');
       }
@@ -381,6 +497,14 @@ try {
       }, {});
       process.stdout.write(
         `ccmem: alerts keep_global=${counts.keep_global ?? 0} keep_project=${counts.keep_project ?? 0} keep_both=${counts.keep_both ?? 0} forget_both=${counts.forget_both ?? 0} skipped=${counts.skip ?? 0}\n`
+      );
+    } else if (result.mode === 'revalidation') {
+      const counts = result.items.reduce((acc, item) => {
+        acc[item.action] = (acc[item.action] ?? 0) + 1;
+        return acc;
+      }, {});
+      process.stdout.write(
+        `ccmem: revalidation keep=${counts.keep ?? 0} forget=${counts.forget ?? 0} quarantine=${counts.quarantine ?? 0} skipped=${counts.skip ?? 0}\n`
       );
     } else {
       const kept = result.items.filter((item) => item.action === 'keep').length;

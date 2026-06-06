@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-04T23:27:51.078Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-06T02:37:33.382Z
 > Files: 136 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
@@ -134,7 +134,7 @@
 - `feedback.mjs` — NEGATIVE_FEEDBACK: getLastAssistantText, parseJsonArray, getLastUnknownFeedback + 76 more (~8407 tok)
 - `hook-safety.mjs` — Exports withHookSafety (~363 tok)
 - `injection-cache.mjs` — Exports rebuildInjectionCache (~424 tok)
-- `llm-parse.mjs` — Exports parseLlmJson (~262 tok)
+- `llm-parse.mjs` — Exports parseLlmJson with Claude `result` envelope unwrapping before synthesized-array normalization (~366 tok)
 - `metrics.mjs` — Exports recordMetric (~91 tok)
 - `mode.mjs` — Exports getMode, setMode (~104 tok)
 - `priority.mjs` — Exports recencyFactor, frequencyFactor, computePriority (~232 tok)
@@ -194,14 +194,14 @@
 - `save-list-session-start.test.mjs` — NODE: resetSaveListTables, seedQuarantinedListFixture (~4193 tok)
 - `security-audit-task.test.mjs` — dataRoot: resetSecurityAuditTables, saveProjectMemory, saveGlobalMemory, markPoolCCandidate (~2250 tok)
 - `stats-command.test.mjs` — dataRoot: resetStatsTables, insertMemory, seedStatsFixture, seedSecurityStatsFixture (~2406 tok)
-- `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 62 more (~25515 tok)
+- `stop-daemon-flow.test.mjs` — wakePath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 50 more, including Claude JSON envelope bridge regression (~26143 tok)
 - `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~4917 tok)
 - `tier15-feedback.test.mjs` — Declares db (~1780 tok)
 
 ## tests/unit/
 
 - `db.test.mjs` — Declares db (~256 tok)
-- `llm-parse.test.mjs` — Declares raw (~576 tok)
+- `llm-parse.test.mjs` — Declares raw, including Claude JSON envelope parsing regression (~758 tok)
 - `plugin-manifest.test.mjs` — Declares readManifest (~198 tok)
 - `priority.test.mjs` — Declares score (~123 tok)
 - `project-key.test.mjs` (~174 tok)

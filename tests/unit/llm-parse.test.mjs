@@ -58,6 +58,36 @@ test('parseLlmJson returns synthesized array from object payloads', () => {
   ]);
 });
 
+test('parseLlmJson unwraps Claude json result envelopes', () => {
+  const parsed = parseLlmJson(JSON.stringify({
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    result: JSON.stringify({
+      synthesized: [
+        {
+          content: 'Bridge output arrived inside Claude envelope',
+          type: 'fact',
+          scope: 'project',
+          tags: ['bridge'],
+          source_ids: [5]
+        }
+      ]
+    })
+  }));
+
+  assert.deepEqual(parsed, [
+    {
+      content: 'Bridge output arrived inside Claude envelope',
+      type: 'fact',
+      scope: 'project',
+      tags: ['bridge'],
+      source_ids: [5],
+      output_type: 'consolidated'
+    }
+  ]);
+});
+
 test('parseLlmJson falls back safely on invalid JSON and empty content', () => {
   assert.deepEqual(parseLlmJson('not json'), []);
   assert.deepEqual(parseLlmJson(JSON.stringify([{ content: '', type: 'rule', scope: 'global' }])), []);

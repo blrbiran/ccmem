@@ -96,6 +96,24 @@ function buildBridgeScriptSchemaOnly(outputText) {
   ].join('');
 }
 
+function buildBridgeScriptSchemaEnvelopeOnly(outputText) {
+  return [
+    "process.stdin.setEncoding('utf8');",
+    "let input='';",
+    "process.stdin.on('data',(chunk)=>{input+=chunk;});",
+    "process.stdin.on('end',()=>{",
+    "const args=process.argv.slice(2);",
+    "const outputFormatIndex=args.indexOf('--output-format');",
+    "const schemaIndex=args.indexOf('--json-schema');",
+    "const hasStructuredOutput=outputFormatIndex!==-1&&args[outputFormatIndex+1]==='json'&&schemaIndex!==-1&&args[schemaIndex+1];",
+    "if(!hasStructuredOutput){process.stdout.write('Saved 1 new memories.');return;}",
+    "const schema=JSON.parse(args[schemaIndex+1]);",
+    "if(schema?.type!=='object'||schema?.properties?.synthesized?.type!=='array'){process.stdout.write('Wrong schema');return;}",
+    `process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,result:JSON.stringify({synthesized:[{content: input.includes('remember my preference') ? ${JSON.stringify(outputText)} : 'Wrong prompt', type: 'rule', scope: 'project', tags: ['stop-bridge']}]})}));`,
+    '});'
+  ].join('');
+}
+
 function buildBridgeScriptSchemaTailOnly(outputText) {
   return [
     "process.stdin.setEncoding('utf8');",
@@ -859,6 +877,41 @@ test('stop hook wake requests schema-structured bridge output so summarize_pendi
   assert.equal(task.status, 'completed');
   assert.equal(memory.content, 'Bridge remembered via schema');
   assert.equal(details.session_id, 's-flow-bridge-schema');
+  assert.equal(details.inserted_count, 1);
+  assert.equal(details.skipped_count, 0);
+
+  db.close();
+});
+
+test('stop hook wake accepts Claude json result envelopes for schema-structured bridge output', async () => {
+  const db = openDb();
+  const transcript = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-envelope.jsonl');
+  const script = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-bridge-envelope-stub.mjs');
+
+  resetStopDaemonState(db);
+  writeFileSync(script, buildBridgeScriptSchemaEnvelopeOnly('Bridge remembered via envelope'));
+  writeTranscript(transcript, 'remember my preference', 'ok');
+  await handleStop(db, {
+    session_id: 's-flow-bridge-envelope',
+    transcript_path: transcript,
+    cwd: process.cwd()
+  });
+
+  setBridgeCommand(script);
+  try {
+    await runUntilFirstTask(db);
+  } finally {
+    clearClaudeBridgeEnv();
+  }
+
+  const task = getStopTask(db, 's-flow-bridge-envelope');
+  const memory = getLatestAutoMemory(db);
+  const audit = getLatestAudit(db, 'summarize_pending_applied');
+  const details = JSON.parse(audit.details);
+
+  assert.equal(task.status, 'completed');
+  assert.equal(memory.content, 'Bridge remembered via envelope');
+  assert.equal(details.session_id, 's-flow-bridge-envelope');
   assert.equal(details.inserted_count, 1);
   assert.equal(details.skipped_count, 0);
 

@@ -8,6 +8,19 @@ export function parseLlmJson(raw) {
     return [];
   }
 
+  if (parsed && typeof parsed === 'object' && parsed.type === 'result' && parsed.result != null) {
+    if (typeof parsed.result === 'string') {
+      const inner = parsed.result.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+      try {
+        parsed = JSON.parse(inner);
+      } catch {
+        return [];
+      }
+    } else {
+      parsed = parsed.result;
+    }
+  }
+
   const normalized = Array.isArray(parsed)
     ? parsed
     : (parsed && typeof parsed === 'object' && Array.isArray(parsed.synthesized) ? parsed.synthesized : []);

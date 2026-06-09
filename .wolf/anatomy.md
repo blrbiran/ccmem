@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-06T14:10:36.803Z
-> Files: 140 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-08T16:59:08.116Z
+> Files: 147 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
 
@@ -11,6 +11,7 @@
 ## ./
 
 - `CLAUDE.md` — OpenWolf (~57 tok)
+- `config.default.json` (~706 tok)
 - `package.json` — Node.js package manifest (~99 tok)
 - `README.md` — Project documentation (~757 tok)
 
@@ -81,6 +82,8 @@
 - `ccmem-design.md` — Claude Code 记忆插件设计方案 v3.0 (~37417 tok)
 - `ccmem-v0.4-dogfood.md` — ccmem v0.4 dogfood / 验证清单 (~3731 tok)
 - `ccmem-v0.4-spec.md` — ccmem v0.4 实施 spec (~18395 tok)
+- `ccmem-v0.5-dogfood.md` — ccmem v0.5 dogfood / 验证清单，含 A4 容器 fallback 验证记录 (~1200 tok)
+- `ccmem-v0.5-spec.md` — ccmem v0.5 实施 spec，覆盖 self-restart、diagnose 扩展与 A4 容器 fallback (~15000 tok)
 - `claude-code-behavior-uncertainties.md` — Claude Code 行为验证清单 (~2337 tok)
 - `design-deep-analysis.md` — ccmem 设计深入分析 (~5248 tok)
 - `design-motivation.md` — 设计初衷：为什么要做这个记忆系统 (~523 tok)
@@ -101,7 +104,7 @@
 
 ## scripts/
 
-- `cli.mjs` — db: getOptionValue, createStdinLineReader, formatAgeDays + 4 more (~6148 tok)
+- `cli.mjs` — args: getDb, printHelp, getOptionValue + 6 more; lazy-DB help path plus daemon install/status/restart-history output and container-fallback variant reporting (~7600 tok)
 - `hook.mjs` — T_ENTRY: buildHookOutput, writeHookOutput, isBlacklistedSession (~618 tok)
 
 ## scripts/daemon/
@@ -109,8 +112,9 @@
 - `claude-p.mjs` — Exports callClaudeP with optional structured-output schema args (~1450 tok)
 - `dispatch.mjs` — Exports dispatchTask (~237 tok)
 - `lock.mjs` — Exports acquireDaemonLock, refreshHeartbeat, releaseDaemonLock, isDaemonAlive (~371 tok)
-- `loop.mjs` — Exports weeklyLeaseKey, securityAuditLeaseKey, scheduleCronTasks, runTask, mainLoop (~1570 tok)
-- `main.mjs` — Declares db (~160 tok)
+- `loop.mjs` — Exports parseDailyAt, parseWeeklyAt, weeklyLeaseKey, securityAuditLeaseKey + 3 more (~2076 tok)
+- `main.mjs` — Declares db (~490 tok)
+- `self-restart.mjs` — Exports getStartupSchemaVersion, writeDaemonStartupState, checkSchemaStaleness, scheduleGracefulRest (~873 tok)
 - `wake.mjs` — Exports touchWakeFile, wakeRecently (~135 tok)
 
 ## scripts/daemon/tasks/
@@ -130,8 +134,8 @@
 ## scripts/lib/
 
 - `audit.mjs` — Exports writeAudit, writeAuditMany (~390 tok)
-- `config.mjs` — Exports loadConfig (~778 tok)
-- `db.mjs` — Exports getDataRoot, getDbPath, getSchemaVersion, runMigration + 2 more (~435 tok)
+- `config.mjs` — Exports loadConfig (~836 tok)
+- `db.mjs` — Exports getDataRoot, getDbPath, getSchemaVersion, runMigration + 2 more (~723 tok)
 - `feedback.mjs` — NEGATIVE_FEEDBACK: getLastAssistantText, parseJsonArray, getLastUnknownFeedback + 76 more (~8407 tok)
 - `hook-safety.mjs` — Exports withHookSafety (~363 tok)
 - `injection-cache.mjs` — Exports rebuildInjectionCache (~424 tok)
@@ -154,8 +158,8 @@
 ## scripts/lib/admin/
 
 - `cron.mjs` — Exports cmdAdminCron (~1527 tok)
-- `daemon.mjs` — Exports renderPlist, cmdAdminDaemon without injecting CCMEM_ENABLE_REAL_CLAUDE_P into daemon env (~3349 tok)
-- `diagnose.mjs` — SESSION_LIMIT: firstValue, parseMemIds, parseDetails + 16 more (~6190 tok)
+- `daemon.mjs` — Exports renderPlist; monolithic daemon admin with launchd lifecycle, install-time Claude capability probe, and wrapper/PID-file container fallback (~5112 tok)
+- `diagnose.mjs` — SESSION_LIMIT: firstValue, parseMemIds, parseDetails + 17 more; includes restart_history diagnostics (~6600 tok)
 
 ## scripts/lib/cmd/
 
@@ -180,17 +184,19 @@
 - `002_v02.sql` — SQL: tables: memory_feedback, recent_injections, daemon_lock, ccmem_blacklisted_sessions (~573 tok)
 - `003_v03.sql` — SQL: tables: cross_scope_alerts (~304 tok)
 - `004_v04.sql` — SQL: tables: metrics_daily_rollup (~337 tok)
+- `005_v04_compat.sql` (~73 tok)
+- `006_v05.sql` (~77 tok)
 
 ## tests/integration/
 
 - `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~13610 tok)
-- `admin-daemon-command.test.mjs` — dataRoot: writeFakeLaunchctlScript, resetFakeLaunchctlScript, createFakeClaudeBinary + 20 more (~5783 tok)
-- `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedRollupRow, seedSecurityD (~4634 tok)
+- `admin-daemon-command.test.mjs` — dataRoot: writeFakeLaunchctlScript, resetFakeLaunchctlScript, createFakeClaudeBinary + 20 more; covers fallback wrapper/PID lifecycle, configured node-path install, and restart closure (~7868 tok)
+- `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedRollupRow, seedSecurityD; includes --restart-history CLI regression and daemon startup schema diagnostics (~5600 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)
 - `daemon-loop.test.mjs` — resetRuntimeTables: setClaudeBridgeEnv, setTaskTimeoutConfig (~49732 tok)
 - `forget-pin-cache.test.mjs` — resetCommandTables: seedStaleMaintenanceState, assertPreludeCleanup, insertMemory + 13 more (~3200 tok)
-- `migration-v1-to-v2.test.mjs` — Declares db (~443 tok)
+- `migration-v1-to-v2.test.mjs` — Legacy migration regression plus stop-hook smoke test; latest schema assertion now tracks v0.5 version 6 (~443 tok)
 - `mode-command.test.mjs` — Declares db (~238 tok)
 - `promote-command.test.mjs` — dataRoot: resetPromoteTables, seedStaleMaintenanceState, assertPreludeCleanup, insertPromoteMemory (~2395 tok)
 - `prompt-submit-retrieval.test.mjs` — API routes: GET (3 endpoints) (~3306 tok)
@@ -210,6 +216,7 @@
 - `priority.test.mjs` — Declares score (~123 tok)
 - `project-key.test.mjs` (~174 tok)
 - `render.test.mjs` — Declares text (~154 tok)
+- `self-restart.test.mjs` — Declares withConfig (~1250 tok)
 - `task-runs.test.mjs` — Declares db (~714 tok)
 - `threat-scan.test.mjs` — Declares result (~98 tok)
 - `trust.test.mjs` (~77 tok)

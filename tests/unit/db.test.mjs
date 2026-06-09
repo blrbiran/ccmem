@@ -13,7 +13,7 @@ const { getMode, setMode } = await import('../../scripts/lib/mode.mjs');
 test('openDb creates DB file and applies the latest schema', () => {
   const db = openDb();
   assert.equal(existsSync(getDbPath()), true);
-  assert.equal(getSchemaVersion(db), 4);
+  assert.equal(getSchemaVersion(db), 6);
   db.close();
 });
 

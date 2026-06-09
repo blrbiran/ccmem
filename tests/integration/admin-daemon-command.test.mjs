@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -204,7 +205,7 @@ const CLI = `${ROOT}/scripts/cli.mjs`;
 const BIN = `${ROOT}/bin/ccmem`;
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
-const { cmdAdminDaemon, getLaunchAgentPath } = await import('../../scripts/lib/admin/daemon.mjs');
+const { cmdAdminDaemon, getLaunchAgentPath, resolveInstallNodePath } = await import('../../scripts/lib/admin/daemon.mjs');
 
 function resetAdminTables(db) {
   db.prepare(`DELETE FROM daemon_lock`).run();
@@ -216,6 +217,11 @@ function seedAliveDaemon(db, now = Date.now()) {
     `INSERT INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive)
      VALUES (1, ?, ?, ?, ?, 1)`
   ).run(4321, 'test-host', now - 5000, now - 800);
+  db.prepare(
+    `INSERT INTO config_kv (key, value, set_at)
+     VALUES ('daemon_startup_schema_version', '6', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+  ).run(now - 5000);
 
   db.prepare(
     `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, started_at, status)
@@ -324,6 +330,8 @@ test('cmdAdminDaemon returns live daemon status and running task', async () => {
   assert.equal(result.alive, true);
   assert.equal(result.pid, 4321);
   assert.equal(result.hostname, 'test-host');
+  assert.equal(result.startup_schema_version, 6);
+  assert.equal(typeof result.uptime_sec, 'number');
   assert.equal(result.running_task.type, 'summarize_pending');
   assert.equal(typeof result.heartbeat_age_ms, 'number');
   db.close();
@@ -427,6 +435,26 @@ test('cmdAdminDaemon install and uninstall manage a launchd plist', async () => 
   });
 });
 
+test('resolveInstallNodePath prefers explicit and configured existing node paths', () => {
+  const existingNodePath = fileURLToPath(import.meta.url);
+
+  assert.equal(
+    resolveInstallNodePath(
+      { CCMEM_INSTALL_NODE_PATH: existingNodePath },
+      { daemon: { platform_install_fallback_node_paths: ['/missing/node'] } }
+    ),
+    existingNodePath
+  );
+
+  assert.equal(
+    resolveInstallNodePath(
+      {},
+      { daemon: { platform_install_fallback_node_paths: ['/missing/node', existingNodePath] } }
+    ),
+    existingNodePath
+  );
+});
+
 test('cli admin daemon status prints live daemon summary', () => {
   const db = openDb();
   resetAdminTables(db);
@@ -441,6 +469,8 @@ test('cli admin daemon status prints live daemon summary', () => {
 
   assert.match(output, /ccmem: daemon alive pid=4321/);
   assert.match(output, /host=test-host/);
+  assert.match(output, /startup_schema=6/);
+  assert.match(output, /uptime_sec=\d+/);
   assert.match(output, /running=summarize_pending#\d+/);
 });
 
@@ -458,6 +488,7 @@ test('bin ccmem suppresses sqlite experimental warning for daemon status', () =>
 
   assert.doesNotMatch(output, /ExperimentalWarning/);
   assert.match(output, /ccmem: daemon alive pid=4321/);
+  assert.match(output, /startup_schema=6/);
   assert.match(output, /running=summarize_pending#\d+/);
 });
 
@@ -587,6 +618,136 @@ test('cli admin daemon restart reboots a launchd service after bootout unloads i
   assert.match(log, /bootstrap/);
 });
 
+test('cli admin daemon install falls back when launchctl bus is unavailable', async () => {
+  clearLaunchctlLog();
+  writeFakeLaunchctlScript([
+    '#!/bin/sh',
+    'printf \'%s\\n\' "$@" >> "$CCMEM_LAUNCHCTL_LOG"',
+    'if [ "$1" = "bootstrap" ]; then',
+    '  printf %s\\n "Failed to connect to bus: No such file or directory" >&2',
+    '  exit 1',
+    'fi',
+    'exit 0',
+    ''
+  ].join('\n'));
+  const { fakeClaudeDir } = createFakeClaudeBinary('fake-container-fallback-claude-bin');
+  const wrapperPath = path.join(dataRoot, 'daemon-wrapper.sh');
+  const pidPath = path.join(dataRoot, 'daemon-wrapper.pid');
+
+  const cliEnv = {
+    ...env,
+    PATH: `${fakeClaudeDir}:${env.PATH ?? process.env.PATH ?? ''}`,
+    ANTHROPIC_API_KEY: 'test-api-key',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-test',
+    CLAUDE_CODE_USE_FOUNDRY: '1',
+    CCMEM_LAUNCHCTL_BIN: fakeLaunchctlPath,
+    CCMEM_LAUNCHCTL_LOG: fakeLaunchctlLog
+  };
+
+  const installOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'install'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(installOutput, /ccmem: daemon installed \(linux\/container-fallback\) /);
+  assert.equal(existsSync(wrapperPath), true);
+  assert.equal(existsSync(pidPath), true);
+  const wrapper = readFileSync(wrapperPath, 'utf8');
+  assert.match(wrapper, /ccmem daemon wrapper/);
+  assert.match(wrapper, /--experimental-sqlite/);
+  assert.match(wrapper, /sleep 10/);
+
+  const startedRow = await waitForDaemonLock(true);
+  assert.equal(typeof startedRow?.holder_pid, 'number');
+
+  const statusOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'status'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(statusOutput, /ccmem: daemon alive pid=\d+/);
+  assert.match(statusOutput, /source=container-fallback/);
+
+  const uninstallOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'uninstall'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(uninstallOutput, /ccmem: daemon uninstalled /);
+  assert.equal(await waitForDaemonLock(false), true);
+  assert.equal(existsSync(wrapperPath), false);
+  assert.equal(existsSync(pidPath), false);
+
+  const log = readLaunchctlLog();
+  assert.match(log, /bootstrap/);
+});
+
+
+test('cli admin daemon fallback supports stop, start, and restart after install', async () => {
+  clearLaunchctlLog();
+  writeFakeLaunchctlScript([
+    '#!/bin/sh',
+    'printf \'%s\\n\' "$@" >> "$CCMEM_LAUNCHCTL_LOG"',
+    'if [ "$1" = "bootstrap" ]; then',
+    '  printf %s\\n "Failed to connect to bus: No such file or directory" >&2',
+    '  exit 1',
+    'fi',
+    'exit 0',
+    ''
+  ].join('\n'));
+  const { fakeClaudeDir } = createFakeClaudeBinary('fake-container-restart-claude-bin');
+  const cliEnv = {
+    ...env,
+    PATH: `${fakeClaudeDir}:${env.PATH ?? process.env.PATH ?? ''}`,
+    ANTHROPIC_API_KEY: 'test-api-key',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-test',
+    CLAUDE_CODE_USE_FOUNDRY: '1',
+    CCMEM_LAUNCHCTL_BIN: fakeLaunchctlPath,
+    CCMEM_LAUNCHCTL_LOG: fakeLaunchctlLog
+  };
+
+  const installOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'install'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(installOutput, /ccmem: daemon installed \(linux\/container-fallback\) /);
+  assert.equal(await waitForDaemonLock(true) !== null, true);
+
+  const stopOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'stop'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(stopOutput, /ccmem: daemon stopped pid=\d+/);
+  assert.equal(await waitForDaemonLock(false), true);
+
+  const startOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'start'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(startOutput, /ccmem: daemon started pid=\d+/);
+  const restartedRow = await waitForDaemonLock(true);
+  assert.equal(typeof restartedRow?.holder_pid, 'number');
+
+  const restartOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'restart'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(restartOutput, /ccmem: daemon restarted pid=\d+/);
+  const restartedAgainRow = await waitForDaemonLock(true);
+  assert.equal(typeof restartedAgainRow?.holder_pid, 'number');
+
+  const uninstallOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'uninstall'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(uninstallOutput, /ccmem: daemon uninstalled /);
+  assert.equal(await waitForDaemonLock(false), true);
+});
 
 test('cli admin daemon install blocks claude binaries without json-schema support', () => {
   rmSync(fakeLaunchctlLog, { force: true });
@@ -667,6 +828,74 @@ test('cli admin daemon status prints not running when daemon lock is absent', ()
   });
 
   assert.match(output, /ccmem: daemon not running/);
+});
+
+test('cli help does not create a database file', () => {
+  const helpDataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-help-'));
+  const helpEnv = {
+    ...env,
+    CCMEM_DATA_ROOT: helpDataRoot
+  };
+  const dbPath = path.join(helpDataRoot, 'global.db');
+
+  try {
+    const output = execFileSync(NODE, [CLI, '--help'], {
+      cwd: ROOT,
+      env: helpEnv,
+      encoding: 'utf8'
+    });
+
+    assert.match(output, /Usage: ccmem <command> \[options\]/);
+    assert.equal(existsSync(dbPath), false);
+  } finally {
+    rmSync(helpDataRoot, { recursive: true, force: true });
+  }
+});
+
+test('cli admin daemon install uses configured fallback node path in plist', () => {
+  rmSync(fakeLaunchctlLog, { force: true });
+  const configPath = path.join(dataRoot, 'daemon-install-config.json');
+  const fakeConfiguredNodePath = path.join(dataRoot, 'fake-configured-node');
+  const { fakeClaudeDir } = createFakeClaudeBinary('fake-config-node-claude-bin');
+  writeFileSync(fakeConfiguredNodePath, '#!/bin/sh\nexit 0\n');
+  chmodSync(fakeConfiguredNodePath, 0o755);
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      daemon: {
+        platform_install_fallback_node_paths: [fakeConfiguredNodePath]
+      }
+    })
+  );
+
+  const cliEnv = {
+    ...env,
+    PATH: `${fakeClaudeDir}:${env.PATH ?? process.env.PATH ?? ''}`,
+    ANTHROPIC_API_KEY: 'test-api-key',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-test',
+    CLAUDE_CODE_USE_FOUNDRY: '1',
+    CCMEM_LAUNCHCTL_BIN: fakeLaunchctlPath,
+    CCMEM_LAUNCHCTL_LOG: fakeLaunchctlLog,
+    CCMEM_CONFIG_PATH: configPath,
+    CCMEM_INSTALL_NODE_PATH: '/missing/install-node'
+  };
+
+  const installOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'install'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(installOutput, /ccmem: daemon installed /);
+
+  const plist = readFileSync(getLaunchAgentPath(), 'utf8');
+  assert.match(plist, new RegExp(escapeRegExp(fakeConfiguredNodePath)));
+
+  const uninstallOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'uninstall'], {
+    cwd: ROOT,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+  assert.match(uninstallOutput, /ccmem: daemon uninstalled /);
 });
 
 test.after(async () => {

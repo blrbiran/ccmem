@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 const DEFAULT_CONFIG = {
-  version: '0.4',
+  version: '0.5',
   inject: { max_chars: 4000, max_per_prompt: 6 },
   save: { max_chars_per_memory: 300 },
   retrieval: {
@@ -24,6 +24,11 @@ const DEFAULT_CONFIG = {
     session_start: { p50: 50, p95: 300 },
     prompt_submit: { p50: 50, p95: 100 },
     stop: { p50: 50, p95: 200 }
+  },
+  cron: {
+    daily_at: '02:17',
+    weekly_at: 'Sun 03:17',
+    dead_letter_alert: 5
   },
   security: {
     scan_patterns_version: '2026.07',
@@ -93,7 +98,12 @@ const DEFAULT_CONFIG = {
       '/usr/local/bin/node',
       '/opt/homebrew/bin/node',
       '/usr/bin/node'
-    ]
+    ],
+    self_restart_on_schema_mismatch: true,
+    self_restart_check_interval_ms: 20000
+  },
+  migration_backup: {
+    max_keep: 5
   }
 };
 

@@ -24,9 +24,53 @@ function weekKey(date) {
   return `${utc.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
-function weeklyLeaseAnchor(date, hour, minute) {
+function parseClock(value, fallbackHour, fallbackMinute, invalidHour = 0, invalidMinute = 0) {
+  if (value == null || value === '') {
+    return { hour: fallbackHour, minute: fallbackMinute };
+  }
+
+  const match = String(value).trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return { hour: invalidHour, minute: invalidMinute };
+  }
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return { hour: invalidHour, minute: invalidMinute };
+  }
+
+  return { hour, minute };
+}
+
+export function parseDailyAt(value) {
+  return parseClock(value, 2, 17);
+}
+
+export function parseWeeklyAt(value) {
+  if (value == null || value === '') {
+    return { weekday: 0, hour: 3, minute: 17 };
+  }
+
+  const match = String(value).trim().match(/^([A-Za-z]{3})\s+(\d{1,2}:\d{2})$/);
+  if (!match) {
+    return { weekday: 0, hour: 0, minute: 0 };
+  }
+
+  const weekdayMap = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  const weekday = weekdayMap[match[1].toLowerCase()];
+  if (weekday == null) {
+    return { weekday: 0, hour: 0, minute: 0 };
+  }
+
+  const clock = parseClock(match[2], 3, 17);
+  return { weekday, hour: clock.hour, minute: clock.minute };
+}
+
+function weeklyLeaseAnchor(date, weekday, hour, minute) {
   const anchor = new Date(date.getTime());
-  anchor.setDate(anchor.getDate() - anchor.getDay());
+  const dayOffset = (anchor.getDay() - weekday + 7) % 7;
+  anchor.setDate(anchor.getDate() - dayOffset);
   anchor.setHours(hour, minute, 0, 0);
 
   if (date < anchor) {
@@ -36,12 +80,15 @@ function weeklyLeaseAnchor(date, hour, minute) {
   return anchor;
 }
 
-export function weeklyLeaseKey(date) {
-  return weekKey(weeklyLeaseAnchor(date, 3, 17));
+export function weeklyLeaseKey(date, weeklyAt = null) {
+  const parsed = typeof weeklyAt === 'string' || weeklyAt == null
+    ? parseWeeklyAt(weeklyAt ?? loadConfig().cron?.weekly_at)
+    : weeklyAt;
+  return weekKey(weeklyLeaseAnchor(date, parsed.weekday, parsed.hour, parsed.minute));
 }
 
-export function securityAuditLeaseKey(date) {
-  return weekKey(weeklyLeaseAnchor(date, 3, 47));
+export function securityAuditLeaseKey(date, hour = 3, minute = 47) {
+  return weekKey(weeklyLeaseAnchor(date, 0, hour, minute));
 }
 
 function timeReached(date, hour, minute) {
@@ -51,12 +98,14 @@ function timeReached(date, hour, minute) {
 export function scheduleCronTasks(db, now = new Date()) {
   const nowMs = now.getTime();
   const cfg = loadConfig();
+  const dailyCfg = parseDailyAt(cfg.cron?.daily_at);
+  const weeklyCfg = parseWeeklyAt(cfg.cron?.weekly_at);
   const auditCfg = cfg.security?.audit ?? {};
   const auditHour = Number(auditCfg.schedule_hour ?? 3);
   const auditMinute = Number(auditCfg.schedule_minute ?? 47);
   const catchUpDays = Number(auditCfg.catch_up_days ?? 7);
 
-  if (timeReached(now, 2, 17)) {
+  if (timeReached(now, dailyCfg.hour, dailyCfg.minute)) {
     const leaseKey = dayKey(now);
 
     if (tryClaimLease(db, 'daily_maintenance', leaseKey, RAN_BY.DAEMON)) {
@@ -67,8 +116,8 @@ export function scheduleCronTasks(db, now = new Date()) {
     }
   }
 
-  if (timeReached(now, 3, 17)) {
-    const leaseKey = weeklyLeaseKey(now);
+  if (timeReached(now, weeklyCfg.hour, weeklyCfg.minute)) {
+    const leaseKey = weeklyLeaseKey(now, weeklyCfg);
 
     if (tryClaimLease(db, 'weekly_synthesis', leaseKey, RAN_BY.DAEMON)) {
       db.prepare(
@@ -78,13 +127,13 @@ export function scheduleCronTasks(db, now = new Date()) {
     }
   }
 
-  const securityAnchor = weeklyLeaseAnchor(now, auditHour, auditMinute);
+  const securityAnchor = weeklyLeaseAnchor(now, 0, auditHour, auditMinute);
   const withinCatchUpWindow = !Number.isFinite(catchUpDays)
     || catchUpDays <= 0
     || (nowMs - securityAnchor.getTime()) < (catchUpDays * 86400000);
 
   if (timeReached(now, auditHour, auditMinute) && withinCatchUpWindow) {
-    const leaseKey = securityAuditLeaseKey(now);
+    const leaseKey = securityAuditLeaseKey(now, auditHour, auditMinute);
 
     if (tryClaimLease(db, 'security_audit', leaseKey, RAN_BY.DAEMON)) {
       db.prepare(
@@ -94,8 +143,6 @@ export function scheduleCronTasks(db, now = new Date()) {
     }
   }
 }
-
-export { dayKey, weekKey };
 
 function errorMessage(error) {
   return String(error?.message ?? error);
@@ -134,7 +181,7 @@ function scheduleRetry(db, task, error, currentAttempt) {
   return true;
 }
 
-export async function runTask(db, task, dispatch) {
+export async function runTask(db, task, dispatch, { afterTask } = {}) {
   db.prepare(
     `UPDATE tasks
      SET status = 'running', started_at = ?, attempts = attempts + 1
@@ -160,10 +207,12 @@ export async function runTask(db, task, dispatch) {
     ).run(finishedAt, message, task.id);
 
     scheduleRetry(db, task, error, currentAttempt);
+  } finally {
+    await afterTask?.(task);
   }
 }
 
-export async function mainLoop(db, shouldStop, dispatch) {
+export async function mainLoop(db, shouldStop, dispatch, { afterTask } = {}) {
   while (!shouldStop()) {
     if (getMode(db) === 'off') {
       await new Promise((resolve) => setTimeout(resolve, wakeRecently() ? 30000 : 300000));
@@ -189,7 +238,9 @@ export async function mainLoop(db, shouldStop, dispatch) {
         break;
       }
 
-      await runTask(db, task, dispatch);
+      await runTask(db, task, dispatch, { afterTask });
     }
   }
 }
+
+export { dayKey, weekKey, timeReached };

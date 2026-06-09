@@ -11,9 +11,190 @@ import { cmdResurrect } from './lib/cmd/resurrect.mjs';
 import { cmdSave } from './lib/cmd/save.mjs';
 import { cmdStats } from './lib/cmd/stats.mjs';
 
-const db = openDb();
+let db = null;
 const [verb, ...rawArgs] = process.argv.slice(2);
 const args = rawArgs[0] === '--' ? rawArgs.slice(1) : rawArgs;
+
+function getDb() {
+  if (!db) {
+    db = openDb();
+  }
+
+  return db;
+}
+
+function printHelp() {
+  process.stdout.write(
+    'Usage: ccmem <command> [options]\n\n' +
+    'Commands:\n' +
+    '  save <content> [--global]\n' +
+    '  list [--limit N] [--quarantined]\n' +
+    '  mode [active|shadow|off]\n' +
+    '  audit show <id>\n' +
+    '  admin daemon <status|start|stop|restart|install|uninstall>\n' +
+    '  admin cron <list|run>\n' +
+    '  admin diagnose [--migrations|--key|--sessions|--security|--tuning|--metrics|--restart-history]\n' +
+    '  stats [--json|--buckets]\n' +
+    '  promote <id> [--global]\n' +
+    '  resurrect [--quarantined|--alerts|--revalidation]\n'
+  );
+}
+
+if (!verb || verb === '--help' || verb === '-h' || verb === 'help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === 'daemon' && args[1] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === 'diagnose' && args[1] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'list' && args[0] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'save' && args[0] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'mode' && args[0] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'stats' && args[0] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'resurrect' && args[0] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'promote' && args[0] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'audit' && args[0] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === 'cron' && args[1] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] == null) {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'audit' && args[0] == null) {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === 'daemon' && args[1] == null) {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === 'cron' && args[1] == null) {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === 'diagnose' && args[1] === '--') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'audit' && args[0] === 'show' && args[1] == null) {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'promote' && args.find((arg) => !arg.startsWith('--')) == null) {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'save' && args.filter((arg) => !arg.startsWith('--')).length === 0) {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'unknown') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === 'diagnose' && args[1] == null) {
+  // handled below with defaults, keep DB lazy until command path.
+}
+
+if (verb === 'list' && args[0] == null) {
+  // handled below with defaults, keep DB lazy until command path.
+}
+
+if (verb === 'stats' && args[0] == null) {
+  // handled below with defaults, keep DB lazy until command path.
+}
+
+if (verb === 'mode' && args[0] == null) {
+  // handled below with defaults, keep DB lazy until command path.
+}
+
+if (verb === 'resurrect' && args[0] == null) {
+  // handled below with defaults, keep DB lazy until command path.
+}
+
+if (verb === 'save' && args[0] != null) {
+  // handled below.
+}
+
+if (verb === 'admin' && args[0] === 'daemon' && args[1] != null) {
+  // handled below.
+}
+
+if (verb === 'admin' && args[0] === 'cron' && args[1] != null) {
+  // handled below.
+}
+
+if (verb === 'audit' && args[0] === 'show' && args[1] != null) {
+  // handled below.
+}
+
+if (verb === 'promote' && args.find((arg) => !arg.startsWith('--')) != null) {
+  // handled below.
+}
+
+if (verb === 'admin' && args[0] === 'diagnose') {
+  // handled below.
+}
+
+if (!['save', 'list', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect'].includes(verb)) {
+  printHelp();
+  process.exit(64);
+}
+
+const closeDb = () => db?.close();
 
 function getOptionValue(flag) {
   const idx = args.indexOf(flag);
@@ -135,10 +316,10 @@ try {
   if (verb === 'save') {
     const content = args.filter((arg) => !arg.startsWith('--')).join(' ');
     const scope = args.includes('--global') ? 'global' : 'project';
-    const result = await cmdSave(db, { cwd: process.cwd(), content, scope });
+    const result = await cmdSave(getDb(), { cwd: process.cwd(), content, scope });
     process.stdout.write(`ccmem: saved memory #${result.id} (${result.scope} ${result.type})\n`);
   } else if (verb === 'list') {
-    const rows = await cmdList(db, {
+    const rows = await cmdList(getDb(), {
       limit: Number(getOptionValue('--limit') ?? 20),
       quarantined: args.includes('--quarantined')
     });
@@ -157,22 +338,23 @@ try {
       }
     }
   } else if (verb === 'mode') {
-    const result = await cmdMode(db, { mode: args[0] ?? null });
+    const result = await cmdMode(getDb(), { mode: args[0] ?? null });
     process.stdout.write(`ccmem: mode=${result.mode}\n`);
   } else if (verb === 'audit' && args[0] === 'show' && args[1]) {
-    const row = await cmdAuditShow(db, { id: Number(args[1]) });
+    const row = await cmdAuditShow(getDb(), { id: Number(args[1]) });
     process.stdout.write(`${JSON.stringify(row)}\n`);
   } else if (verb === 'admin' && args[0] === 'daemon' && args[1]) {
     const daemonVerb = args[1];
-    const result = await cmdAdminDaemon(db, { verb: daemonVerb });
+    const result = await cmdAdminDaemon(getDb(), { verb: daemonVerb });
 
     if (daemonVerb === 'status') {
       if (!result.alive) {
         process.stdout.write('ccmem: daemon not running\n');
       } else {
         const running = result.running_task ? `${result.running_task.type}#${result.running_task.id}` : 'none';
+        const source = result.install_variant === 'container-fallback' ? ' source=container-fallback' : '';
         process.stdout.write(
-          `ccmem: daemon alive pid=${result.pid} host=${result.hostname} heartbeat_ms=${result.heartbeat_age_ms} running=${running}\n`
+          `ccmem: daemon alive pid=${result.pid} host=${result.hostname} heartbeat_ms=${result.heartbeat_age_ms} startup_schema=${result.startup_schema_version ?? 'unknown'} uptime_sec=${result.uptime_sec ?? 'unknown'} running=${running}${source}\n`
         );
       }
     } else if (result.status === 'already_running') {
@@ -186,7 +368,8 @@ try {
     } else if (result.status === 'restarted') {
       process.stdout.write(`ccmem: daemon restarted pid=${result.pid}\n`);
     } else if (result.status === 'installed') {
-      process.stdout.write(`ccmem: daemon installed ${result.plist_path}\n`);
+      const variant = result.variant ? ` (${result.variant})` : '';
+      process.stdout.write(`ccmem: daemon installed${variant} ${result.plist_path}\n`);
     } else if (result.status === 'uninstalled') {
       process.stdout.write(`ccmem: daemon uninstalled ${result.plist_path}\n`);
     } else if (result.status === 'not_installed') {
@@ -216,7 +399,7 @@ try {
     const taskIdx = args.indexOf('--task');
 
     if (args.includes('--issues')) {
-      const result = await cmdAdminCron(db, { verb: 'list', issues: true });
+      const result = await cmdAdminCron(getDb(), { verb: 'list', issues: true });
 
       if (result.issues.length) {
         process.stdout.write('ccmem: cron issues\n');
@@ -233,7 +416,7 @@ try {
       }
     } else if (historyIdx >= 0 && taskIdx >= 0 && args[taskIdx + 1]) {
       try {
-        const result = await cmdAdminCron(db, {
+        const result = await cmdAdminCron(getDb(), {
           verb: 'list',
           taskType: args[taskIdx + 1],
           history: args[historyIdx + 1] ?? '10'
@@ -252,7 +435,7 @@ try {
         }
       }
     } else {
-      const result = await cmdAdminCron(db, { verb: 'list' });
+      const result = await cmdAdminCron(getDb(), { verb: 'list' });
       process.stdout.write(`ccmem: daemon ${result.daemon_alive ? 'alive' : 'not running'}\n`);
 
       for (const item of result.items) {
@@ -262,7 +445,7 @@ try {
     }
   } else if (verb === 'admin' && args[0] === 'cron' && args[1] === 'run' && args[2]) {
     try {
-      const result = await cmdAdminCron(db, { verb: 'run', taskType: args[2] });
+      const result = await cmdAdminCron(getDb(), { verb: 'run', taskType: args[2] });
       if (result.status === 'skipped') {
         process.stdout.write(`ccmem: skipped ${result.type} (${result.reason})\n`);
       } else {
@@ -277,7 +460,7 @@ try {
       }
     }
   } else if (verb === 'admin' && args[0] === 'diagnose') {
-    const result = await cmdAdminDiagnose(db, {
+    const result = await cmdAdminDiagnose(getDb(), {
       cwd: process.cwd(),
       migrations: args.includes('--migrations'),
       key: args.includes('--key'),
@@ -285,6 +468,7 @@ try {
       security: args.includes('--security'),
       tuning: args.includes('--tuning'),
       metrics: args.includes('--metrics'),
+      restartHistory: args.includes('--restart-history'),
       days: Number(getOptionValue('--days') ?? 14)
     });
 
@@ -335,12 +519,19 @@ try {
       printTuning(result);
     } else if (args.includes('--metrics')) {
       printMetrics(result);
+    } else if (args.includes('--restart-history')) {
+      process.stdout.write(`ccmem: restart_history ${result.restart_history.length}\n`);
+      for (const row of result.restart_history) {
+        process.stdout.write(
+          `restart ts=${row.ts} from=${row.from_version} to=${row.to_version} pid=${row.daemon_pid ?? 'unknown'} waited_ms=${row.waited_ms} task=${row.in_flight_task_type ?? 'none'}#${row.in_flight_task_id ?? 'none'}\n`
+        );
+      }
     } else {
       process.stdout.write(`ccmem: db ${result.db.health} schema=${result.db.schema_version} path=${result.db.path}\n`);
 
       if (result.daemon.alive) {
         process.stdout.write(
-          `ccmem: daemon alive pid=${result.daemon.pid} host=${result.daemon.hostname} heartbeat_ms=${result.daemon.heartbeat_age_ms}\n`
+          `ccmem: daemon alive pid=${result.daemon.pid} host=${result.daemon.hostname} heartbeat_ms=${result.daemon.heartbeat_age_ms} startup_schema=${result.daemon.startup_schema_version ?? 'unknown'} uptime_sec=${result.daemon.uptime_sec ?? 'unknown'}\n`
         );
       } else {
         process.stdout.write('ccmem: daemon unavailable\n');
@@ -358,7 +549,7 @@ try {
       }
     }
   } else if (verb === 'stats') {
-    const result = await cmdStats(db, {
+    const result = await cmdStats(getDb(), {
       buckets: args.includes('--buckets')
     });
 
@@ -400,7 +591,7 @@ try {
     const readLine = createStdinLineReader();
     const id = args.find((arg) => !arg.startsWith('--')) ?? null;
     const global = args.includes('--global');
-    const result = await cmdPromote(db, {
+    const result = await cmdPromote(getDb(), {
       id,
       global,
       confirm: (mem) => {
@@ -432,7 +623,7 @@ try {
     }
   } else if (verb === 'resurrect') {
     const readLine = createStdinLineReader();
-    const result = await cmdResurrect(db, {
+    const result = await cmdResurrect(getDb(), {
       cwd: process.cwd(),
       bottom: getOptionValue('--bottom') ?? 10,
       tag: getOptionValue('--tag'),
@@ -514,5 +705,5 @@ try {
     }
   }
 } finally {
-  db.close();
+  closeDb();
 }

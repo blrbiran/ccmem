@@ -2,7 +2,7 @@
 
 > OpenWolf's long-term learning memory.
 > Compacted on 2026-06-04; full pre-compaction snapshot: `cerebrum.archive.2026-06-04.md`
-> Last updated: 2026-06-04
+> Last updated: 2026-06-08
 
 ## User Preferences
 
@@ -40,6 +40,7 @@
 - **Hook output contract**: `hookSpecificOutput.additionalContext` is only for SessionStart/UserPromptSubmit-style injection. Stop hooks should return an empty JSON object instead of emitting `hookSpecificOutput` with `hookEventName: "Stop"`.
 - **Timeout test fixtures**: timeout regressions must use `CCMEM_CONFIG_PATH` / `claude_p_timeout_per_task` once task-specific config takes precedence; the legacy `CCMEM_CLAUDE_P_TIMEOUT_MS` env no longer reliably drives `summarize_pending` timeout paths.
 - **Full-suite closure discipline**: targeted green runs can still miss stale migration/version assertions in older suites. When schema advances, re-check legacy migration/integration tests for hard-coded version numbers and platform-specific temp-path assumptions before claiming completion.
+- **A4 current-repo adaptation**: this repo's daemon admin surface is still monolithic in `scripts/lib/admin/daemon.mjs`, not split into `linux.mjs` / `container.mjs`. For v0.5 here, keep the launchd happy path output stable, but adapt launchctl bus failures to a container-style wrapper loop with a PID file inside the monolith; call out the missing platform split and missing Linux `systemctl --user show-environment` probe as explicit spec drift.
 
 ## Do-Not-Repeat
 
@@ -75,3 +76,4 @@
 
 - Slash commands run via PATH `ccmem`; hooks run via `${CLAUDE_PLUGIN_ROOT}`.
 - Launcher behavior must be correct for both in-repo execution and symlinked installation paths.
+- v0.5 A4 was adapted inside the existing monolithic `scripts/lib/admin/daemon.mjs` instead of introducing new platform modules mid-stream; this is intentional current-repo fit, but remains spec drift relative to `linux.mjs` / `container.mjs`.

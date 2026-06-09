@@ -195,6 +195,28 @@ function loadSecurityDiagnostics(db) {
   };
 }
 
+function loadRestartHistory(db, limit = 10) {
+  return db.prepare(
+    `SELECT ts, details
+     FROM audit_log
+     WHERE action = 'daemon_self_restart'
+     ORDER BY ts DESC, id DESC
+     LIMIT ?`
+  ).all(limit).map((row) => {
+    const details = parseDetails(row.details);
+    return {
+      ts: row.ts,
+      from_version: Number(details.from_version ?? 0),
+      to_version: Number(details.to_version ?? 0),
+      daemon_pid: details.daemon_pid ?? null,
+      daemon_uptime_sec: details.daemon_uptime_sec ?? null,
+      in_flight_task_id: details.in_flight_task_id ?? null,
+      in_flight_task_type: details.in_flight_task_type ?? null,
+      waited_ms: Number(details.waited_ms ?? 0)
+    };
+  });
+}
+
 function buildKeepSuggestion(key, current, rationale, impact = 'healthy default') {
   return {
     key,
@@ -651,7 +673,17 @@ export function getMetricsDiagnostics(db, { days = 14, cfg = loadConfig() } = {}
 
 export async function cmdAdminDiagnose(
   db,
-  { cwd = process.cwd(), migrations = false, key = false, sessions = false, security = false, tuning = false, metrics = false, days = 14 } = {}
+  {
+    cwd = process.cwd(),
+    migrations = false,
+    key = false,
+    sessions = false,
+    security = false,
+    tuning = false,
+    metrics = false,
+    restartHistory = false,
+    days = 14
+  } = {}
 ) {
   if (tuning || metrics) {
     try {
@@ -661,10 +693,16 @@ export async function cmdAdminDiagnose(
 
   const quickCheck = db.prepare('PRAGMA quick_check').get();
   const lock = db.prepare(
-    `SELECT holder_pid, hostname, heartbeat_at
+    `SELECT holder_pid, hostname, acquired_at, heartbeat_at
      FROM daemon_lock
      WHERE id = 1`
   ).get();
+  const startupSchemaRow = db.prepare(
+    `SELECT value
+     FROM config_kv
+     WHERE key = 'daemon_startup_schema_version'`
+  ).get();
+  const startupSchemaVersion = startupSchemaRow?.value == null ? null : Number(startupSchemaRow.value);
   const migrationRows = migrations
     ? db.prepare(
         `SELECT from_version, to_version, description, applied_at, applied_by
@@ -696,7 +734,9 @@ export async function cmdAdminDiagnose(
       alive: daemonAlive,
       pid: lock?.holder_pid ?? null,
       hostname: lock?.hostname ?? null,
-      heartbeat_age_ms: lock ? Math.max(0, Date.now() - lock.heartbeat_at) : null
+      heartbeat_age_ms: lock ? Math.max(0, Date.now() - lock.heartbeat_at) : null,
+      startup_schema_version: Number.isFinite(startupSchemaVersion) ? startupSchemaVersion : null,
+      uptime_sec: lock?.acquired_at ? Math.max(0, Math.floor((Date.now() - lock.acquired_at) / 1000)) : null
     },
     project_key: {
       value: projectKey,
@@ -711,6 +751,7 @@ export async function cmdAdminDiagnose(
     security: security ? loadSecurityDiagnostics(db) : null,
     tuning: tuningDiagnostics,
     metrics: metricsDiagnostics,
+    restart_history: restartHistory ? loadRestartHistory(db) : null,
     migrations: migrations
       ? migrationRows.map((row) => ({
           from_version: row.from_version,

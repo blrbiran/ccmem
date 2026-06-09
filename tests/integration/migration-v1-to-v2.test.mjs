@@ -13,7 +13,7 @@ const { handleStop } = await import('../../scripts/handlers/stop.mjs');
 test('migration upgrades schema to latest version', () => {
   const db = openDb();
   const row = db.prepare('SELECT version FROM schema_meta LIMIT 1').get();
-  assert.equal(row.version, 4);
+  assert.equal(row.version, 6);
   const recent = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='recent_injections'").get();
   assert.ok(recent);
   db.close();

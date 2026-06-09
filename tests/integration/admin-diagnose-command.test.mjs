@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -64,6 +64,11 @@ function seedAliveDaemon(db, now = Date.now()) {
     `INSERT INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive)
      VALUES (1, ?, ?, ?, ?, 1)`
   ).run(2468, 'diagnose-host', now - 4000, now - 600);
+  db.prepare(
+    `INSERT INTO config_kv (key, value, set_at)
+     VALUES ('daemon_startup_schema_version', '6', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+  ).run(now - 4000);
 }
 
 function seedRollupRow(db, {
@@ -225,7 +230,9 @@ test('cmdAdminDiagnose returns db health, daemon status, and fallback project ke
   const result = await cmdAdminDiagnose(db, { cwd: diagnoseCwd });
 
   assert.equal(result.db.health, 'ok');
-  assert.equal(result.db.schema_version, 4);
+  assert.equal(result.db.schema_version, 6);
+  assert.equal(result.daemon.startup_schema_version, 6);
+  assert.equal(typeof result.daemon.uptime_sec, 'number');
   assert.equal(result.daemon.alive, true);
   assert.equal(result.daemon.pid, 2468);
   assert.equal(result.project_key.value, fallbackProjectKey(diagnoseCwd));
@@ -244,7 +251,7 @@ test('cmdAdminDiagnose returns migration history when requested', async () => {
   const result = await cmdAdminDiagnose(db, { cwd: diagnoseCwd, migrations: true });
 
   assert.equal(Array.isArray(result.migrations), true);
-  assert.equal(result.migrations.length >= 4, true);
+  assert.equal(result.migrations.length >= 6, true);
   assert.deepEqual(result.migrations[0], {
     from_version: 0,
     to_version: 1,
@@ -252,7 +259,7 @@ test('cmdAdminDiagnose returns migration history when requested', async () => {
     applied_at: result.migrations[0].applied_at,
     applied_by: 'ccmem-cli'
   });
-  assert.equal(result.migrations.at(-1).to_version, 4);
+  assert.equal(result.migrations.at(-1).to_version, 6);
   db.close();
 });
 
@@ -313,8 +320,10 @@ test('cli admin diagnose prints default diagnostics', () => {
     encoding: 'utf8'
   });
 
-  assert.match(output, /ccmem: db ok schema=4/);
+  assert.match(output, /ccmem: db ok schema=6/);
   assert.match(output, /ccmem: daemon alive pid=2468 host=diagnose-host/);
+  assert.match(output, /startup_schema=6/);
+  assert.match(output, /uptime_sec=\d+/);
   assert.match(output, /ccmem: project_key path:/);
   assert.match(output, /ccmem: tier2 available/);
 });
@@ -349,6 +358,52 @@ test('cli admin diagnose --migrations prints schema migration history', () => {
   assert.match(output, /migration 1->2 by=ccmem-cli desc=v0\.2 schema/);
   assert.match(output, /migration 2->3 by=ccmem-cli desc=v0\.3 schema/);
   assert.match(output, /migration 3->4 by=ccmem-cli desc=v0\.4: metrics_daily_rollup \+ revalidation audit actions/);
+  assert.match(output, /migration 4->5 by=ccmem-cli desc=v0\.4 compat schema version alignment/);
+  assert.match(output, /migration 5->6 by=ccmem-cli desc=v0\.5: self-restart, cron config, and backup hygiene/);
+});
+
+test('cli admin diagnose --restart-history prints daemon self-restart history', () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  db.prepare(
+    `INSERT INTO audit_log (ts, action, affected_ids, details)
+     VALUES (?, 'daemon_self_restart', NULL, ?)`
+  ).run(
+    1717812000000,
+    JSON.stringify({
+      from_version: 5,
+      to_version: 6,
+      daemon_pid: 2468,
+      waited_ms: 1200,
+      in_flight_task_type: 'summarize_pending',
+      in_flight_task_id: 12
+    })
+  );
+  db.prepare(
+    `INSERT INTO audit_log (ts, action, affected_ids, details)
+     VALUES (?, 'daemon_self_restart', NULL, ?)`
+  ).run(
+    1717811990000,
+    JSON.stringify({
+      from_version: 4,
+      to_version: 6,
+      daemon_pid: 1357,
+      waited_ms: 800,
+      in_flight_task_type: 'security_audit',
+      in_flight_task_id: 7
+    })
+  );
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--restart-history'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /ccmem: restart_history 2/);
+  assert.match(output, /restart ts=1717812000000 from=5 to=6 pid=2468 waited_ms=1200 task=summarize_pending#12/);
+  assert.match(output, /restart ts=1717811990000 from=4 to=6 pid=1357 waited_ms=800 task=security_audit#7/);
 });
 
 test('cli admin diagnose --key prints focused project key diagnostics', () => {

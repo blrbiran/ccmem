@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDaemonAlive } from '../../daemon/lock.mjs';
+import { loadConfig } from '../config.mjs';
 import { getDataRoot } from '../db.mjs';
 
 const DAEMON_MAIN = fileURLToPath(new URL('../../daemon/main.mjs', import.meta.url));
@@ -90,6 +91,169 @@ function buildLaunchdDaemonEnv(dataRoot) {
   });
 }
 
+function uniq(values) {
+  return [...new Set(values.filter((value) => typeof value === 'string' && value.trim()))];
+}
+
+function resolveInstallNodePath(baseEnv = process.env, cfg = loadConfig()) {
+  const configured = cfg.daemon?.platform_install_fallback_node_paths ?? [];
+  const candidates = uniq([
+    baseEnv.CCMEM_INSTALL_NODE_PATH,
+    ...configured,
+    process.execPath
+  ]);
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return process.execPath;
+}
+
+export { resolveInstallNodePath };
+
+function buildLaunchdProgramArguments(nodePath) {
+  return [nodePath, '--no-warnings', '--experimental-sqlite', DAEMON_MAIN];
+}
+
+function renderProgramArguments(args) {
+  return args.map((arg) => `    <string>${escapeXml(arg)}</string>`).join('\n');
+}
+
+function getInstallStatePath() {
+  return path.join(getDataRoot(), 'daemon-install-state.json');
+}
+
+function getWrapperScriptPath() {
+  return path.join(getDataRoot(), 'daemon-wrapper.sh');
+}
+
+function getWrapperPidPath() {
+  return path.join(getDataRoot(), 'daemon-wrapper.pid');
+}
+
+function readInstallState() {
+  if (!existsSync(getInstallStatePath())) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(readFileSync(getInstallStatePath(), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function writeInstallState(state) {
+  mkdirSync(getDataRoot(), { recursive: true });
+  writeFileSync(getInstallStatePath(), JSON.stringify(state));
+}
+
+function clearInstallState() {
+  rmSync(getInstallStatePath(), { force: true });
+}
+
+function readWrapperPid() {
+  if (!existsSync(getWrapperPidPath())) {
+    return null;
+  }
+
+  const value = Number.parseInt(readFileSync(getWrapperPidPath(), 'utf8').trim(), 10);
+  return Number.isFinite(value) ? value : null;
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function renderFallbackWrapper(nodePath, outPath, errPath) {
+  return `#!/bin/sh
+# ccmem daemon wrapper (container fallback) — auto-generated, do not edit
+while true; do
+  "${nodePath}" --no-warnings --experimental-sqlite "${DAEMON_MAIN}" >> "${outPath}" 2>> "${errPath}"
+  sleep 10
+done
+`;
+}
+
+function writeFallbackWrapper(nodePath) {
+  const dataRoot = getDataRoot();
+  const { stdoutPath, stderrPath } = getDaemonPlistPaths(dataRoot);
+  const wrapperPath = getWrapperScriptPath();
+
+  mkdirSync(dataRoot, { recursive: true });
+  writeFileSync(wrapperPath, renderFallbackWrapper(nodePath, stdoutPath, stderrPath), { mode: 0o755 });
+  return wrapperPath;
+}
+
+function clearFallbackWrapperFiles() {
+  rmSync(getWrapperPidPath(), { force: true });
+  rmSync(getWrapperScriptPath(), { force: true });
+}
+
+function isFallbackInstalled() {
+  return readInstallState()?.variant === 'container-fallback';
+}
+
+function shouldUseContainerFallback(reason) {
+  return /Failed to connect to bus|No such file or directory|ENOENT|not found/i.test(reason);
+}
+
+function spawnDetachedDaemon(nodePath = process.execPath) {
+  const child = spawn(nodePath, ['--no-warnings', '--experimental-sqlite', DAEMON_MAIN], {
+    detached: true,
+    stdio: 'ignore',
+    env: buildSpawnDaemonEnv()
+  });
+  child.unref();
+  return child;
+}
+
+function spawnFallbackWrapper(nodePath = process.execPath) {
+  const wrapperPath = writeFallbackWrapper(nodePath);
+  const child = spawn('sh', [wrapperPath], {
+    detached: true,
+    stdio: 'ignore',
+    env: buildSpawnDaemonEnv()
+  });
+  child.unref();
+  writeFileSync(getWrapperPidPath(), `${child.pid}`);
+  return child;
+}
+
+function stopFallbackWrapper() {
+  const wrapperPid = readWrapperPid();
+  if (!wrapperPid) {
+    clearFallbackWrapperFiles();
+    return false;
+  }
+
+  try {
+    process.kill(-wrapperPid, 'SIGTERM');
+  } catch (error) {
+    if (error?.code !== 'ESRCH') {
+      throw error;
+    }
+  }
+
+  return true;
+}
+
+function fallbackNodePath() {
+  return readInstallState()?.node_path ?? resolveInstallNodePath(process.env);
+}
+
 function probeClaudeJsonSchemaSupport(command, daemonEnv) {
   const result = spawnSync(command, ['-p', '--help'], {
     encoding: 'utf8',
@@ -141,7 +305,7 @@ function getDaemonPlistPaths(dataRoot) {
   };
 }
 
-function renderDaemonPlist(dataRoot, daemonEnv) {
+function renderDaemonPlist(dataRoot, daemonEnv, nodePath = process.execPath) {
   const paths = getDaemonPlistPaths(dataRoot);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -150,10 +314,7 @@ function renderDaemonPlist(dataRoot, daemonEnv) {
   <key>Label</key><string>${LAUNCHD_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${escapeXml(process.execPath)}</string>
-    <string>--no-warnings</string>
-    <string>--experimental-sqlite</string>
-    <string>${escapeXml(DAEMON_MAIN)}</string>
+${renderProgramArguments(buildLaunchdProgramArguments(nodePath))}
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -165,6 +326,16 @@ ${renderEnvDict(daemonEnv)}
 </dict></plist>
 `;
 }
+
+export function renderPlist() {
+  const dataRoot = getDataRoot();
+  const daemonEnv = buildLaunchdDaemonEnv(dataRoot);
+  const nodePath = resolveInstallNodePath(process.env);
+
+  return renderDaemonPlist(dataRoot, daemonEnv, nodePath);
+}
+
+export { getLaunchAgentPath };
 
 function getLaunchAgentDir() {
   return process.env.CCMEM_LAUNCHAGENT_DIR ?? path.join(os.homedir(), 'Library', 'LaunchAgents');
@@ -190,15 +361,6 @@ function escapeXml(value) {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&apos;');
 }
-
-export function renderPlist() {
-  const dataRoot = getDataRoot();
-  const daemonEnv = buildLaunchdDaemonEnv(dataRoot);
-
-  return renderDaemonPlist(dataRoot, daemonEnv);
-}
-
-export { getLaunchAgentPath };
 
 function runLaunchctl(args) {
   return spawnSync(getLaunchCtlBin(), args, { encoding: 'utf8' });
@@ -236,6 +398,14 @@ function loadDaemonStatus(db) {
      FROM daemon_lock
      WHERE id = 1`
   ).get();
+  const startupSchemaRow = db.prepare(
+    `SELECT value
+     FROM config_kv
+     WHERE key = 'daemon_startup_schema_version'`
+  ).get();
+  const startupSchemaVersion = startupSchemaRow?.value == null ? null : Number(startupSchemaRow.value);
+  const installState = readInstallState();
+  const wrapperPid = readWrapperPid();
 
   return {
     alive: isDaemonAlive(db),
@@ -244,7 +414,13 @@ function loadDaemonStatus(db) {
     acquired_at: lock?.acquired_at ?? null,
     heartbeat_at: lock?.heartbeat_at ?? null,
     heartbeat_age_ms: lock ? Math.max(0, Date.now() - lock.heartbeat_at) : null,
-    running_task: loadRunningTask(db)
+    startup_schema_version: Number.isFinite(startupSchemaVersion) ? startupSchemaVersion : null,
+    uptime_sec: lock?.acquired_at ? Math.max(0, Math.floor((Date.now() - lock.acquired_at) / 1000)) : null,
+    running_task: loadRunningTask(db),
+    install_variant: installState?.variant ?? null,
+    install_source: installState?.source ?? null,
+    wrapper_pid: wrapperPid,
+    wrapper_alive: isProcessAlive(wrapperPid)
   };
 }
 
@@ -326,18 +502,34 @@ function installDaemon() {
     };
   }
 
+  const nodePath = resolveInstallNodePath(process.env);
+
   mkdirSync(getLaunchAgentDir(), { recursive: true });
-  writeFileSync(plistPath, renderDaemonPlist(dataRoot, daemonEnv));
+  writeFileSync(plistPath, renderDaemonPlist(dataRoot, daemonEnv, nodePath));
 
   const bootstrapError = bootstrapDaemon();
   if (bootstrapError) {
+    if (!shouldUseContainerFallback(bootstrapError.reason)) {
+      return {
+        status: 'install_failed',
+        plist_path: plistPath,
+        reason: bootstrapError.reason
+      };
+    }
+
+    const child = spawnFallbackWrapper(nodePath);
+    writeInstallState({ variant: 'container-fallback', source: 'wrapper', node_path: nodePath });
     return {
-      status: 'install_failed',
+      status: 'installed',
       plist_path: plistPath,
-      reason: bootstrapError.reason
+      plist: readPlist(),
+      variant: 'linux/container-fallback',
+      pid: child.pid
     };
   }
 
+  clearFallbackWrapperFiles();
+  clearInstallState();
   return {
     status: 'installed',
     plist_path: plistPath,
@@ -345,21 +537,40 @@ function installDaemon() {
   };
 }
 
-function uninstallDaemon() {
+async function uninstallDaemon(db) {
   const plistPath = getLaunchAgentPath();
-  if (!existsSync(plistPath)) {
+  const fallbackInstalled = isFallbackInstalled();
+
+  if (!existsSync(plistPath) && !fallbackInstalled) {
     return { status: 'not_installed', plist_path: plistPath };
   }
 
-  const result = runLaunchctl(['bootout', getLaunchDomain(), plistPath]);
-  if (![0, 3].includes(result.status ?? 1)) {
-    return {
-      status: 'uninstall_failed',
-      plist_path: plistPath,
-      reason: launchctlError(result)
-    };
+  if (fallbackInstalled) {
+    const stopped = await stopDaemon(db);
+    if (!['stopped', 'not_running'].includes(stopped.status)) {
+      return {
+        status: 'uninstall_failed',
+        plist_path: plistPath,
+        reason: `fallback daemon ${stopped.status}`
+      };
+    }
+    clearFallbackWrapperFiles();
+    clearInstallState();
   }
 
+  if (existsSync(plistPath)) {
+    const result = runLaunchctl(['bootout', getLaunchDomain(), plistPath]);
+    if (![0, 3].includes(result.status ?? 1) && !fallbackInstalled) {
+      return {
+        status: 'uninstall_failed',
+        plist_path: plistPath,
+        reason: launchctlError(result)
+      };
+    }
+  }
+
+  clearFallbackWrapperFiles();
+  clearInstallState();
   rmSync(plistPath, { force: true });
   return { status: 'uninstalled', plist_path: plistPath };
 }
@@ -368,6 +579,18 @@ async function startDaemon(db) {
   const current = loadDaemonStatus(db);
   if (current.alive) {
     return { status: 'already_running', ...current };
+  }
+
+  if (isFallbackInstalled()) {
+    const child = spawnFallbackWrapper(fallbackNodePath());
+    const started = await waitFor(() => {
+      const next = loadDaemonStatus(db);
+      return next.alive && next.wrapper_pid === child.pid ? next : null;
+    });
+
+    return started
+      ? { status: 'started', via: 'wrapper', ...started }
+      : { status: 'start_timeout', via: 'wrapper', pid: child.pid, alive: false, running_task: null, install_variant: 'container-fallback' };
   }
 
   if (isLaunchdInstalled()) {
@@ -387,12 +610,7 @@ async function startDaemon(db) {
     return started ? { status: 'started', via: 'launchctl', ...started } : { status: 'start_timeout', via: 'launchctl' };
   }
 
-  const child = spawn(process.execPath, ['--no-warnings', '--experimental-sqlite', DAEMON_MAIN], {
-    detached: true,
-    stdio: 'ignore',
-    env: buildSpawnDaemonEnv()
-  });
-  child.unref();
+  const child = spawnDetachedDaemon(process.execPath);
 
   const started = await waitFor(() => {
     const next = loadDaemonStatus(db);
@@ -406,6 +624,21 @@ async function startDaemon(db) {
 
 async function stopDaemon(db) {
   const current = loadDaemonStatus(db);
+
+  if (isFallbackInstalled()) {
+    const hadWrapper = stopFallbackWrapper();
+    const stopped = await waitFor(() => {
+      const lock = db.prepare(`SELECT 1 FROM daemon_lock WHERE id = 1`).get();
+      return lock ? null : true;
+    });
+
+    clearFallbackWrapperFiles();
+    if (stopped) {
+      return { status: hadWrapper ? 'stopped' : 'not_running', via: 'wrapper', ...current };
+    }
+
+    return { status: 'stop_timeout', via: 'wrapper', ...current };
+  }
 
   if (isLaunchdInstalled()) {
     const error = bootoutDaemon();
@@ -477,7 +710,7 @@ export async function cmdAdminDaemon(db, { verb } = {}) {
   }
 
   if (verb === 'uninstall') {
-    return uninstallDaemon();
+    return uninstallDaemon(db);
   }
 
   throw new Error(`unsupported admin daemon verb: ${verb}`);

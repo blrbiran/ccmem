@@ -1,3 +1,4 @@
+import { maybeRespawnContainerFallback } from './admin/daemon.mjs';
 import { loadConfig } from './config.mjs';
 import { rebuildInjectionCache } from './injection-cache.mjs';
 import { getMode } from './mode.mjs';
@@ -60,6 +61,12 @@ export function maybeRunTier15(db) {
   const mode = getMode(db);
   if (mode === 'off') {
     return { ran: false, skipped: 'mode_off' };
+  }
+
+  try {
+    maybeRespawnContainerFallback(db);
+  } catch {
+    // non-critical prelude recovery
   }
 
   if (inflightLazy) {

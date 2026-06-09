@@ -205,7 +205,7 @@ const CLI = `${ROOT}/scripts/cli.mjs`;
 const BIN = `${ROOT}/bin/ccmem`;
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
-const { cmdAdminDaemon, getLaunchAgentPath, resolveInstallNodePath } = await import('../../scripts/lib/admin/daemon.mjs');
+const { cmdAdminDaemon, getLaunchAgentPath, maybeRespawnContainerFallback, resolveInstallNodePath } = await import('../../scripts/lib/admin/daemon.mjs');
 
 function resetAdminTables(db) {
   db.prepare(`DELETE FROM daemon_lock`).run();
@@ -747,6 +747,46 @@ test('cli admin daemon fallback supports stop, start, and restart after install'
   });
   assert.match(uninstallOutput, /ccmem: daemon uninstalled /);
   assert.equal(await waitForDaemonLock(false), true);
+});
+
+test('maybeRespawnContainerFallback restarts a stale fallback wrapper', async () => {
+  const db = openDb();
+  resetAdminTables(db);
+  const installStatePath = path.join(dataRoot, 'daemon-install-state.json');
+  const pidPath = path.join(dataRoot, 'daemon-wrapper.pid');
+
+  writeFileSync(installStatePath, JSON.stringify({
+    variant: 'container-fallback',
+    source: 'wrapper',
+    node_path: process.execPath
+  }));
+  writeFileSync(pidPath, '999999');
+
+  try {
+    const before = await cmdAdminDaemon(db, { verb: 'status' });
+    assert.equal(before.install_variant, 'container-fallback');
+    assert.equal(before.wrapper_alive, false);
+    assert.equal(before.stale_pid, 999999);
+
+    assert.equal(maybeRespawnContainerFallback(db), true);
+    const startedRow = await waitForDaemonLock(true);
+    assert.equal(typeof startedRow?.holder_pid, 'number');
+
+    const after = await cmdAdminDaemon(db, { verb: 'status' });
+    assert.equal(after.wrapper_alive, true);
+    assert.equal(typeof after.wrapper_pid, 'number');
+    assert.notEqual(after.wrapper_pid, 999999);
+    assert.equal(after.stale_pid, null);
+
+    const uninstalled = await cmdAdminDaemon(db, { verb: 'uninstall' });
+    assert.equal(uninstalled.status, 'uninstalled');
+    assert.equal(await waitForDaemonLock(false), true);
+  } finally {
+    db.close();
+    rmSync(installStatePath, { force: true });
+    rmSync(pidPath, { force: true });
+    rmSync(path.join(dataRoot, 'daemon-wrapper.sh'), { force: true });
+  }
 });
 
 test('cli admin daemon install blocks claude binaries without json-schema support', () => {

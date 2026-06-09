@@ -116,7 +116,7 @@ export function scheduleCronTasks(db, now = new Date()) {
     }
   }
 
-  if (timeReached(now, weeklyCfg.hour, weeklyCfg.minute)) {
+  if (now.getDay() === weeklyCfg.weekday && timeReached(now, weeklyCfg.hour, weeklyCfg.minute)) {
     const leaseKey = weeklyLeaseKey(now, weeklyCfg);
 
     if (tryClaimLease(db, 'weekly_synthesis', leaseKey, RAN_BY.DAEMON)) {

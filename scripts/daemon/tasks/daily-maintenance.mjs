@@ -2,6 +2,7 @@ import { loadConfig } from '../../lib/config.mjs';
 import { writeAudit } from '../../lib/audit.mjs';
 import { writeMetricsDailyRollup } from '../../lib/metrics-rollup.mjs';
 import { revalidationAuditCore } from '../../lib/revalidation.mjs';
+import { pruneMigrationBackups } from '../../lib/db.mjs';
 import { markLeaseComplete } from '../../lib/task-runs.mjs';
 
 function dayKey(date) {
@@ -93,6 +94,7 @@ export function runDailyMaintenance(db, task) {
       }
     }
 
+    pruneMigrationBackups();
     markLeaseComplete(db, 'daily_maintenance', leaseKey);
   } finally {
     inflightDaily = false;

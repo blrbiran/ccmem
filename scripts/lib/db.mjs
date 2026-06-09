@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,7 @@ import { loadConfig } from './config.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.resolve(HERE, '../migrations');
+const BACKUP_DEDUPE_WINDOW_MS = 60_000;
 
 export function getDataRoot() {
   return process.env.CCMEM_DATA_ROOT ?? path.join(os.homedir(), '.claude', 'ccmem');
@@ -53,9 +54,41 @@ function pruneMigrationBackups(dbPath = getDbPath(), maxKeep = Number(loadConfig
   }
 }
 
+function fileSize(filePath) {
+  try {
+    return statSync(filePath).size;
+  } catch {
+    return null;
+  }
+}
+
+function findReusableMigrationBackup(dbPath = getDbPath(), now = Date.now()) {
+  const currentSize = fileSize(dbPath);
+  if (!Number.isFinite(currentSize)) {
+    return null;
+  }
+
+  for (const backup of listMigrationBackups(dbPath)) {
+    if ((now - backup.ts) > BACKUP_DEDUPE_WINDOW_MS) {
+      break;
+    }
+
+    if (fileSize(backup.path) === currentSize) {
+      return backup.path;
+    }
+  }
+
+  return null;
+}
+
 function createMigrationBackup(dbPath = getDbPath()) {
   if (!existsSync(dbPath)) {
     return null;
+  }
+
+  const reusableBackup = findReusableMigrationBackup(dbPath);
+  if (reusableBackup) {
+    return reusableBackup;
   }
 
   const backupPath = `${dbPath}.bak.${Date.now()}`;
@@ -84,7 +117,7 @@ export function runMigration(db) {
   }
 }
 
-export { createMigrationBackup, listMigrationBackups, pruneMigrationBackups };
+export { createMigrationBackup, findReusableMigrationBackup, listMigrationBackups, pruneMigrationBackups };
 
 export function ensureSchema(db) {
   runMigration(db);

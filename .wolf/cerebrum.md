@@ -40,7 +40,10 @@
 - **Hook output contract**: `hookSpecificOutput.additionalContext` is only for SessionStart/UserPromptSubmit-style injection. Stop hooks should return an empty JSON object instead of emitting `hookSpecificOutput` with `hookEventName: "Stop"`.
 - **Timeout test fixtures**: timeout regressions must use `CCMEM_CONFIG_PATH` / `claude_p_timeout_per_task` once task-specific config takes precedence; the legacy `CCMEM_CLAUDE_P_TIMEOUT_MS` env no longer reliably drives `summarize_pending` timeout paths.
 - **Full-suite closure discipline**: targeted green runs can still miss stale migration/version assertions in older suites. When schema advances, re-check legacy migration/integration tests for hard-coded version numbers and platform-specific temp-path assumptions before claiming completion.
-- **A4 current-repo adaptation**: this repo's daemon admin surface is still monolithic in `scripts/lib/admin/daemon.mjs`, not split into `linux.mjs` / `container.mjs`. For v0.5 here, keep the launchd happy path output stable, but adapt launchctl bus failures to a container-style wrapper loop with a PID file inside the monolith; call out the missing platform split and missing Linux `systemctl --user show-environment` probe as explicit spec drift.
+- **A4 current-repo adaptation**: this repo's daemon admin surface is still monolithic in `scripts/lib/admin/daemon.mjs`, not split into `linux.mjs` / `container.mjs`. For v0.5 here, keep the launchd happy path output stable, but adapt launchctl bus failures to a container-style wrapper loop with a PID file inside the monolith.
+- **v0.5 cron truth source**: when spec and dogfood diverge on weekly scheduling, follow dogfood/runtime validation — `weekly_at` means the configured weekday/time only, with no later-week catch-up for `weekly_synthesis`; `security_audit` keeps its existing Sunday catch-up behavior.
+- **v0.5 backup hygiene**: migration backup dedupe is behavioral, not architectural — reuse a same-size `.bak` created within 60s, and prune old backups from `daily_maintenance` using `migration_backup.max_keep`.
+- **Tier 1.5 fallback recovery**: container-fallback daemon recovery belongs in the command prelude path; if install state says `container-fallback` and the wrapper PID is stale, Tier 1.5 should respawn the wrapper opportunistically rather than waiting for a manual daemon command.
 
 ## Do-Not-Repeat
 

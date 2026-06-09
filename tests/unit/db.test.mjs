@@ -7,7 +7,7 @@ import path from 'node:path';
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-db-'));
 
-const { openDb, getDbPath, getSchemaVersion } = await import('../../scripts/lib/db.mjs');
+const { createMigrationBackup, listMigrationBackups, openDb, getDbPath, getSchemaVersion } = await import('../../scripts/lib/db.mjs');
 const { getMode, setMode } = await import('../../scripts/lib/mode.mjs');
 
 test('openDb creates DB file and applies the latest schema', () => {
@@ -15,6 +15,18 @@ test('openDb creates DB file and applies the latest schema', () => {
   assert.equal(existsSync(getDbPath()), true);
   assert.equal(getSchemaVersion(db), 6);
   db.close();
+});
+
+test('createMigrationBackup reuses a same-size backup created within the dedupe window', () => {
+  const db = openDb();
+  db.close();
+
+  const first = createMigrationBackup();
+  const second = createMigrationBackup();
+
+  assert.equal(typeof first, 'string');
+  assert.equal(second, first);
+  assert.equal(listMigrationBackups().length, 1);
 });
 
 test('mode defaults to active and can be updated', () => {

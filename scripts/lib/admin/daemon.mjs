@@ -406,6 +406,7 @@ function loadDaemonStatus(db) {
   const startupSchemaVersion = startupSchemaRow?.value == null ? null : Number(startupSchemaRow.value);
   const installState = readInstallState();
   const wrapperPid = readWrapperPid();
+  const wrapperAlive = isProcessAlive(wrapperPid);
 
   return {
     alive: isDaemonAlive(db),
@@ -420,7 +421,8 @@ function loadDaemonStatus(db) {
     install_variant: installState?.variant ?? null,
     install_source: installState?.source ?? null,
     wrapper_pid: wrapperPid,
-    wrapper_alive: isProcessAlive(wrapperPid)
+    wrapper_alive: wrapperAlive,
+    stale_pid: wrapperPid && !wrapperAlive ? wrapperPid : null
   };
 }
 
@@ -441,6 +443,16 @@ async function waitFor(check, timeoutMs = WAIT_TIMEOUT_MS) {
   }
 
   return null;
+}
+
+export function maybeRespawnContainerFallback(db) {
+  const status = loadDaemonStatus(db);
+  if (status.install_variant !== 'container-fallback' || status.alive || !status.stale_pid) {
+    return false;
+  }
+
+  spawnFallbackWrapper(fallbackNodePath());
+  return true;
 }
 
 function kickstartDaemon() {

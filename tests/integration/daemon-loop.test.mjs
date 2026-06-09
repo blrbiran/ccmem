@@ -7,7 +7,7 @@ import path from 'node:path';
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-loop-'));
 
-const { openDb } = await import('../../scripts/lib/db.mjs');
+const { getDbPath, listMigrationBackups, openDb } = await import('../../scripts/lib/db.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { callClaudeP } = await import('../../scripts/daemon/claude-p.mjs');
 const { dispatchTask } = await import('../../scripts/daemon/dispatch.mjs');
@@ -37,21 +37,11 @@ function setClaudeBridgeEnv(vars) {
   }
 }
 
-function setTaskTimeoutConfig(taskType, timeoutMs, name) {
+function setRuntimeConfig(name, config) {
   const configPath = path.join(process.env.CCMEM_DATA_ROOT, `${name}-config.json`);
   const originalConfigPath = process.env.CCMEM_CONFIG_PATH;
 
-  writeFileSync(
-    configPath,
-    JSON.stringify({
-      llm: {
-        claude_p_timeout_per_task: {
-          [taskType]: timeoutMs
-        }
-      }
-    })
-  );
-
+  writeFileSync(configPath, JSON.stringify(config));
   process.env.CCMEM_CONFIG_PATH = configPath;
 
   return () => {
@@ -61,6 +51,16 @@ function setTaskTimeoutConfig(taskType, timeoutMs, name) {
       process.env.CCMEM_CONFIG_PATH = originalConfigPath;
     }
   };
+}
+
+function setTaskTimeoutConfig(taskType, timeoutMs, name) {
+  return setRuntimeConfig(name, {
+    llm: {
+      claude_p_timeout_per_task: {
+        [taskType]: timeoutMs
+      }
+    }
+  });
 }
 
 test('mainLoop dispatches queued tasks and marks them completed', async () => {
@@ -4920,6 +4920,7 @@ test('dispatchTask runs daily_maintenance maintenance SQL', async () => {
   const now = Date.now();
   const leaseKey = dayKey(new Date());
   const claimed = tryClaimLease(db, 'daily_maintenance', leaseKey, RAN_BY.DAEMON);
+  const dbPath = getDbPath();
 
   assert.equal(claimed, true);
 
@@ -4941,6 +4942,10 @@ test('dispatchTask runs daily_maintenance maintenance SQL', async () => {
      VALUES ('s-expired', 'cron_llm_child', ?, ?),
             ('s-active', 'cron_llm_child', ?, ?)`
   ).run(now - (31 * 60 * 1000), now - 1000, now, now + (30 * 60 * 1000));
+
+  for (let i = 1; i <= 7; i += 1) {
+    writeFileSync(`${dbPath}.bak.${1700000000000 + i}`, `backup-${i}`);
+  }
 
   db.prepare(
     `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
@@ -4978,6 +4983,7 @@ test('dispatchTask runs daily_maintenance maintenance SQL', async () => {
      FROM task_runs
      WHERE type = 'daily_maintenance' AND date_key = ?`
   ).get(leaseKey);
+  const backupTimestamps = listMigrationBackups().map((backup) => backup.ts);
 
   assert.equal(memory.decay_status, 'archived');
   assert.equal(injectionCount.n, 0);
@@ -4985,6 +4991,13 @@ test('dispatchTask runs daily_maintenance maintenance SQL', async () => {
   assert.equal(task.status, 'completed');
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
+  assert.deepEqual(backupTimestamps, [
+    1700000000007,
+    1700000000006,
+    1700000000005,
+    1700000000004,
+    1700000000003
+  ]);
   db.close();
 });
 
@@ -5274,7 +5287,7 @@ test('scheduleCronTasks on Monday before local 03:17 does not catch up weekly sy
   db.close();
 });
 
-test('scheduleCronTasks at local 03:17 on Monday catches up weekly synthesis once per week lease window', () => {
+test('scheduleCronTasks at local 03:17 on Monday does not enqueue weekly synthesis off the configured weekday', () => {
   const db = openDb();
   resetRuntimeTables(db);
   const mondayBoundary = new Date(2026, 5, 8, 3, 17, 0, 0);
@@ -5302,18 +5315,16 @@ test('scheduleCronTasks at local 03:17 on Monday catches up weekly synthesis onc
   }));
 
   assert.deepEqual(taskCounts, [
-    { type: 'daily_maintenance', n: 1 },
-    { type: 'weekly_synthesis', n: 1 }
+    { type: 'daily_maintenance', n: 1 }
   ]);
   assert.deepEqual(leases, [
-    { type: 'daily_maintenance', date_key: dayKey(mondayBoundary), ran_by: 'daemon', status: 'running' },
-    { type: 'weekly_synthesis', date_key: weeklyLeaseKey(mondayBoundary), ran_by: 'daemon', status: 'running' }
+    { type: 'daily_maintenance', date_key: dayKey(mondayBoundary), ran_by: 'daemon', status: 'running' }
   ]);
 
   db.close();
 });
 
-test('scheduleCronTasks on Monday after local 03:17 catches up weekly synthesis once per week lease window', () => {
+test('scheduleCronTasks on Monday after local 03:17 still skips weekly synthesis off the configured weekday', () => {
   const db = openDb();
   resetRuntimeTables(db);
   const mondayAfterWeeklyHour = new Date(2026, 5, 8, 3, 18, 0, 0);
@@ -5341,52 +5352,61 @@ test('scheduleCronTasks on Monday after local 03:17 catches up weekly synthesis 
   }));
 
   assert.deepEqual(taskCounts, [
-    { type: 'daily_maintenance', n: 1 },
-    { type: 'weekly_synthesis', n: 1 }
+    { type: 'daily_maintenance', n: 1 }
   ]);
   assert.deepEqual(leases, [
-    { type: 'daily_maintenance', date_key: dayKey(mondayAfterWeeklyHour), ran_by: 'daemon', status: 'running' },
-    { type: 'weekly_synthesis', date_key: weeklyLeaseKey(mondayAfterWeeklyHour), ran_by: 'daemon', status: 'running' }
+    { type: 'daily_maintenance', date_key: dayKey(mondayAfterWeeklyHour), ran_by: 'daemon', status: 'running' }
   ]);
 
   db.close();
 });
 
-test('scheduleCronTasks keeps weekly catch-up under the same Sunday lease across later weekdays', () => {
+test('scheduleCronTasks honors configured weekly_at weekday and time', () => {
+  const restoreConfig = setRuntimeConfig('weekly-at-sat', {
+    cron: {
+      weekly_at: 'Sat 05:00'
+    }
+  });
   const db = openDb();
   resetRuntimeTables(db);
-  const sundayBoundary = new Date(2026, 5, 7, 3, 17, 0, 0);
-  const mondayAfterWeeklyHour = new Date(2026, 5, 8, 3, 18, 0, 0);
-  const tuesdayAfterWeeklyHour = new Date(2026, 5, 9, 3, 18, 0, 0);
+  const saturdayBoundary = new Date(2026, 5, 6, 5, 0, 0, 0);
+  const sundaySameTime = new Date(2026, 5, 7, 5, 0, 0, 0);
 
-  scheduleCronTasks(db, mondayAfterWeeklyHour);
-  scheduleCronTasks(db, tuesdayAfterWeeklyHour);
+  try {
+    scheduleCronTasks(db, sundaySameTime);
+    scheduleCronTasks(db, saturdayBoundary);
+    scheduleCronTasks(db, saturdayBoundary);
 
-  const weeklyTaskCount = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM tasks
-     WHERE type = 'weekly_synthesis'`
-  ).get();
-  const weeklyLeases = db.prepare(
-    `SELECT date_key, ran_by, status
-     FROM task_runs
-     WHERE type = 'weekly_synthesis'
-     ORDER BY date_key ASC`
-  ).all().map((row) => ({
-    date_key: row.date_key,
-    ran_by: row.ran_by,
-    status: row.status
-  }));
+    const weeklyTasks = db.prepare(
+      `SELECT payload
+       FROM tasks
+       WHERE type = 'weekly_synthesis'
+       ORDER BY id ASC`
+    ).all().map((row) => JSON.parse(row.payload));
+    const weeklyLeases = db.prepare(
+      `SELECT date_key, ran_by, status
+       FROM task_runs
+       WHERE type = 'weekly_synthesis'
+       ORDER BY date_key ASC`
+    ).all().map((row) => ({
+      date_key: row.date_key,
+      ran_by: row.ran_by,
+      status: row.status
+    }));
 
-  assert.equal(weeklyTaskCount.n, 1);
-  assert.deepEqual(weeklyLeases, [
-    { date_key: weeklyLeaseKey(sundayBoundary), ran_by: 'daemon', status: 'running' }
-  ]);
-
-  db.close();
+    assert.deepEqual(weeklyTasks, [
+      { lease_key: weeklyLeaseKey(saturdayBoundary, 'Sat 05:00') }
+    ]);
+    assert.deepEqual(weeklyLeases, [
+      { date_key: weeklyLeaseKey(saturdayBoundary, 'Sat 05:00'), ran_by: 'daemon', status: 'running' }
+    ]);
+  } finally {
+    restoreConfig();
+    db.close();
+  }
 });
 
-test('scheduleCronTasks persists the anchored Sunday lease key in cron task payload across ISO week rollover catch-up', () => {
+test('scheduleCronTasks on Tuesday after ISO week rollover still skips weekly synthesis off the configured weekday', () => {
   const db = openDb();
   resetRuntimeTables(db);
   const tuesdayAfterIsoRollover = new Date(2021, 0, 5, 3, 18, 0, 0);
@@ -5412,28 +5432,13 @@ test('scheduleCronTasks persists the anchored Sunday lease key in cron task payl
     ran_by: row.ran_by,
     status: row.status
   }));
-  const tasks = db.prepare(
-    `SELECT type, payload
-     FROM tasks
-     WHERE type IN ('daily_maintenance', 'weekly_synthesis')
-     ORDER BY type ASC`
-  ).all().map((row) => ({
-    type: row.type,
-    payload: JSON.parse(row.payload)
-  }));
 
   assert.notEqual(weekKey(tuesdayAfterIsoRollover), weeklyLeaseKey(tuesdayAfterIsoRollover));
   assert.deepEqual(taskCounts, [
-    { type: 'daily_maintenance', n: 1 },
-    { type: 'weekly_synthesis', n: 1 }
+    { type: 'daily_maintenance', n: 1 }
   ]);
   assert.deepEqual(leases, [
-    { type: 'daily_maintenance', date_key: dayKey(tuesdayAfterIsoRollover), ran_by: 'daemon', status: 'running' },
-    { type: 'weekly_synthesis', date_key: weeklyLeaseKey(tuesdayAfterIsoRollover), ran_by: 'daemon', status: 'running' }
-  ]);
-  assert.deepEqual(tasks, [
-    { type: 'daily_maintenance', payload: { lease_key: dayKey(tuesdayAfterIsoRollover) } },
-    { type: 'weekly_synthesis', payload: { lease_key: weeklyLeaseKey(tuesdayAfterIsoRollover) } }
+    { type: 'daily_maintenance', date_key: dayKey(tuesdayAfterIsoRollover), ran_by: 'daemon', status: 'running' }
   ]);
 
   db.close();
@@ -5494,7 +5499,7 @@ test('scheduleCronTasks at local 03:47 on Sunday enqueues security_audit once pe
   db.close();
 });
 
-test('scheduleCronTasks on Monday before local 03:47 does not catch up security_audit yet', () => {
+test('scheduleCronTasks on Monday before local 03:47 does not enqueue security_audit yet', () => {
   const db = openDb();
   resetRuntimeTables(db);
   const mondayBeforeAuditHour = new Date(2026, 5, 8, 3, 46, 0, 0);
@@ -5522,18 +5527,16 @@ test('scheduleCronTasks on Monday before local 03:47 does not catch up security_
   }));
 
   assert.deepEqual(taskCounts, [
-    { type: 'daily_maintenance', n: 1 },
-    { type: 'weekly_synthesis', n: 1 }
+    { type: 'daily_maintenance', n: 1 }
   ]);
   assert.deepEqual(leases, [
-    { type: 'daily_maintenance', date_key: dayKey(mondayBeforeAuditHour), ran_by: 'daemon', status: 'running' },
-    { type: 'weekly_synthesis', date_key: weeklyLeaseKey(mondayBeforeAuditHour), ran_by: 'daemon', status: 'running' }
+    { type: 'daily_maintenance', date_key: dayKey(mondayBeforeAuditHour), ran_by: 'daemon', status: 'running' }
   ]);
 
   db.close();
 });
 
-test('scheduleCronTasks at local 03:47 on Monday catches up security_audit once per week lease window', () => {
+test('scheduleCronTasks at local 03:47 on Monday enqueues security_audit without backfilling weekly synthesis', () => {
   const db = openDb();
   resetRuntimeTables(db);
   const mondayAuditBoundary = new Date(2026, 5, 8, 3, 47, 0, 0);
@@ -5562,13 +5565,11 @@ test('scheduleCronTasks at local 03:47 on Monday catches up security_audit once 
 
   assert.deepEqual(taskCounts, [
     { type: 'daily_maintenance', n: 1 },
-    { type: 'security_audit', n: 1 },
-    { type: 'weekly_synthesis', n: 1 }
+    { type: 'security_audit', n: 1 }
   ]);
   assert.deepEqual(leases, [
     { type: 'daily_maintenance', date_key: dayKey(mondayAuditBoundary), ran_by: 'daemon', status: 'running' },
-    { type: 'security_audit', date_key: securityAuditLeaseKey(mondayAuditBoundary), ran_by: 'daemon', status: 'running' },
-    { type: 'weekly_synthesis', date_key: weeklyLeaseKey(mondayAuditBoundary), ran_by: 'daemon', status: 'running' }
+    { type: 'security_audit', date_key: securityAuditLeaseKey(mondayAuditBoundary), ran_by: 'daemon', status: 'running' }
   ]);
 
   db.close();

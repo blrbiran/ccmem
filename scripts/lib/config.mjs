@@ -1,14 +1,32 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 const DEFAULT_CONFIG = {
-  version: '0.5',
+  version: '0.6',
   inject: { max_chars: 4000, max_per_prompt: 6 },
   save: { max_chars_per_memory: 300 },
+  embedding: {
+    enabled: false,
+    provider: 'transformers-local',
+    model: 'Xenova/all-MiniLM-L6-v2',
+    quantized: true,
+    backfill_batch_size: 50
+  },
   retrieval: {
     like_fallback: {
       enabled: true,
       trigger_when_fts_below: 3,
       max_terms: 5
+    },
+    weights: {
+      fts: 0.4,
+      jaccard: 0.2,
+      semantic: 0.4
+    }
+  },
+  feedback: {
+    l1_positive: {
+      enabled: true,
+      cosine_threshold: 0.65
     }
   },
   recent_injections: { retention_days: 14, max_per_session: 20 },

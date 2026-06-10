@@ -1,6 +1,7 @@
 import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
 import { getTuningDiagnostics } from '../admin/diagnose.mjs';
+import { transformersLocal } from '../embedding/transformers-local.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
 
 const FEEDBACK_WINDOW_MS = 14 * 86400000;
@@ -32,6 +33,7 @@ function toPendingMap(rows) {
     weekly_synthesis: 0,
     security_audit: 0,
     revalidation_audit: 0,
+    vec_backfill: 0,
     total: 0
   };
 
@@ -44,6 +46,52 @@ function toPendingMap(rows) {
   }
 
   return pending;
+}
+
+function semanticRuntimeEnabled(db, cfg) {
+  const kv = db.prepare(`SELECT value FROM config_kv WHERE key = 'embedding.enabled'`).get()?.value ?? null;
+  return kv != null ? kv === 'true' : Boolean(cfg.embedding?.enabled);
+}
+
+function getSemanticStats(db, cfg) {
+  const enabled = semanticRuntimeEnabled(db, cfg);
+  const embedded = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE embedding IS NOT NULL
+       AND status = 'active'
+       AND decay_status IN ('active', 'probation')`
+  ).get()?.n ?? 0);
+  const pending = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE embedding IS NULL
+       AND status = 'active'
+       AND decay_status IN ('active', 'probation')`
+  ).get()?.n ?? 0);
+
+  if (!enabled) {
+    return {
+      status: 'disabled',
+      enabled: false,
+      loaded: false,
+      model: cfg.embedding?.model ?? transformersLocal.modelId,
+      dim: transformersLocal.dim,
+      embedded,
+      pending
+    };
+  }
+
+  const status = pending > 0 ? 'pending backfill' : embedded > 0 ? 'active' : 'enabled';
+  return {
+    status,
+    enabled: true,
+    loaded: transformersLocal.isLoaded(),
+    model: cfg.embedding?.model ?? transformersLocal.modelId,
+    dim: transformersLocal.dim,
+    embedded,
+    pending
+  };
 }
 
 export async function cmdStats(db, { buckets = false } = {}) {
@@ -109,6 +157,7 @@ export async function cmdStats(db, { buckets = false } = {}) {
        AND quarantined_at < ?`
   ).get(pendingSunsetCutoff);
   const tuning = getTuningDiagnostics(db, cfg);
+  const semantic = getSemanticStats(db, cfg);
 
   return {
     tier1: { available: true },
@@ -123,6 +172,7 @@ export async function cmdStats(db, { buckets = false } = {}) {
         : null,
       pending: toPendingMap(pendingRows)
     },
+    semantic,
     memories: {
       active: toCount(memoryRow?.active),
       probation: toCount(memoryRow?.probation),

@@ -38,7 +38,7 @@ export function adjustTrust(db, memId, outcome) {
     return;
   }
 
-  if (outcome === 'helpful_implicit') {
+  if (outcome === 'helpful_implicit' || outcome === 'helpful_implicit_partial') {
     db.prepare(
       `UPDATE memories
        SET trust_score = MIN(1.0, trust_score + 0.025),
@@ -47,4 +47,21 @@ export function adjustTrust(db, memId, outcome) {
        WHERE id = ?`
     ).run(Date.now(), memId);
   }
+}
+
+export function applyOutcomeToSubset(db, feedbackId, memIds, outcome, evidence = null) {
+  const normalized = [...new Set((memIds ?? []).map((id) => Number(id)).filter(Number.isFinite))];
+  if (!normalized.length) {
+    return;
+  }
+
+  for (const memId of normalized) {
+    adjustTrust(db, memId, outcome);
+  }
+
+  db.prepare(
+    `UPDATE memory_feedback
+     SET outcome = ?, evidence = ?, outcome_locked = 1
+     WHERE id = ?`
+  ).run(`${outcome}_partial`, evidence, feedbackId);
 }

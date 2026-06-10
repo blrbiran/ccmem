@@ -1,10 +1,14 @@
 import { openDb } from '../lib/db.mjs';
-import { inferPrevTurnOutcome } from '../lib/feedback.mjs';
+import { inferPositiveFeedback, inferPrevTurnOutcome } from '../lib/feedback.mjs';
+import { loadConfig } from '../lib/config.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
 import { getNextPromptIdx, writeRecentInjection } from '../lib/recent-injections.mjs';
+import { retrieveMemories, sanitizeFtsQuery as sanitizePromptQuery } from '../lib/retrieval.mjs';
 
 const SHADOW_NOTICE = 'ccmem: mode=shadow (read-only diagnostic — no writes, no inject)\n';
+
+export const sanitizeFtsQuery = sanitizePromptQuery;
 
 function upsertSessionContext(db, sessionId, projectKey) {
   if (!sessionId) {
@@ -27,18 +31,18 @@ function upsertSessionContext(db, sessionId, projectKey) {
   ).run(sessionId, projectKey, Date.now());
 }
 
-export function sanitizeFtsQuery(prompt) {
-  return prompt
-    .replace(/["':(){}\[\]]/g, ' ')
-    .split(/\s+/)
-    .filter((token) => token.length >= 2)
-    .slice(0, 20);
+function renderScore(score) {
+  if (!score) {
+    return '';
+  }
+
+  return ` | score fused=${Number(score.fused ?? 0).toFixed(3)} fts=${Number(score.fts ?? 0).toFixed(3)} jaccard=${Number(score.jaccard ?? 0).toFixed(3)} semantic=${Number(score.semantic ?? 0).toFixed(3)}`;
 }
 
 export function renderRetrievedBlock(rows) {
   const lines = ['=== ccmem: retrieved for current prompt ===', ''];
   for (const row of rows) {
-    lines.push(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}`);
+    lines.push(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}${renderScore(row.score)}`);
   }
   return lines.join('\n');
 }
@@ -57,34 +61,20 @@ export async function handlePromptSubmit(hookData) {
       return { additionalContext: '' };
     }
 
+    const config = loadConfig();
     const projectKey = resolveProjectKey(hookData.cwd);
     upsertSessionContext(db, hookData.session_id, projectKey);
 
+    const retrieval = await retrieveMemories(db, hookData.prompt ?? '', projectKey, config);
+
     if (hookData.session_id) {
       inferPrevTurnOutcome(db, hookData.session_id, hookData.prompt ?? '');
+      if (config.feedback?.l1_positive?.enabled !== false) {
+        inferPositiveFeedback(db, hookData.session_id, hookData.prompt ?? '', retrieval.queryVec);
+      }
     }
 
-    const tokens = sanitizeFtsQuery((hookData.prompt || '').slice(0, 2000)).map((token) => token.toLowerCase());
-    if (!tokens.length) {
-      return { additionalContext: '' };
-    }
-
-    const candidates = db.prepare(
-      `SELECT id, type, content, scope, pinned, last_touched_at
-       FROM memories
-       WHERE (scope = 'global' OR project_key = ?)
-         AND decay_status IN ('active', 'probation')
-       ORDER BY pinned DESC, last_touched_at DESC`
-    ).all(projectKey);
-
-    const rows = candidates
-      .filter((row) => {
-        const content = row.content.toLowerCase();
-        return tokens.some((token) => content.includes(token));
-      })
-      .slice(0, 6)
-      .map(({ id, type, content, scope }) => ({ id, type, content, scope }));
-
+    const rows = retrieval.rows;
     if (hookData.session_id && rows.length) {
       const injectedIds = rows.map((row) => row.id);
       const promptIdx = getNextPromptIdx(db, hookData.session_id);

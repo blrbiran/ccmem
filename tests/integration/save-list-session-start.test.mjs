@@ -14,6 +14,8 @@ const HOOK = '/Users/biran/code/skills/ccmem/scripts/hook.mjs';
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { callClaudeP } = await import('../../scripts/daemon/claude-p.mjs');
+const { cmdExport } = await import('../../scripts/lib/cmd/export.mjs');
+const { cmdImport } = await import('../../scripts/lib/cmd/import.mjs');
 const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
 const { cmdList } = await import('../../scripts/lib/cmd/list.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
@@ -32,7 +34,7 @@ function resetSaveListTables(db) {
   db.prepare(`DELETE FROM injection_cache`).run();
   db.prepare(`DELETE FROM ccmem_blacklisted_sessions`).run();
   db.prepare(`DELETE FROM memories`).run();
-  db.prepare(`DELETE FROM config_kv WHERE key = 'mode'`).run();
+  db.prepare(`DELETE FROM config_kv`).run();
 }
 
 async function seedQuarantinedListFixture(db, now = Date.now()) {
@@ -126,6 +128,131 @@ test('cli list --quarantined prints quarantined memories with reason', async () 
 
   assert.match(output, /^\[m\d+\] fact \| project \| user_explicit trust=0\.20 quarantined=\d+d ago reason=tier3_auto\n$/);
   assert.doesNotMatch(output, /Visible list memory/);
+});
+
+test('cmdExport and cmdImport round-trip memories through external source without sync embeddings', async () => {
+  const db = openDb();
+  resetSaveListTables(db);
+  await cmdSave(db, { cwd: process.cwd(), content: 'Exported global memory', scope: 'global' });
+  await cmdSave(db, { cwd: process.cwd(), content: 'Exported project memory', scope: 'project' });
+
+  const exported = cmdExport(db, {});
+  const backupPath = path.join(process.env.CCMEM_DATA_ROOT, 'backup.json');
+  writeFileSync(backupPath, JSON.stringify(exported, null, 2));
+
+  resetSaveListTables(db);
+  const imported = await cmdImport(db, { cwd: process.cwd(), filePath: backupPath });
+  const rows = db.prepare(
+    `SELECT content, source, embedding
+     FROM memories
+     ORDER BY id ASC`
+  ).all();
+
+  assert.equal(imported.imported, 2);
+  assert.equal(imported.skipped, 0);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((row) => row.content), ['Exported global memory', 'Exported project memory']);
+  assert.deepEqual(rows.map((row) => row.source), ['external', 'external']);
+  assert.equal(rows.every((row) => row.embedding == null), true);
+  db.close();
+});
+
+test('cli import reports embedding pending when semantic is enabled', async () => {
+  const db = openDb();
+  resetSaveListTables(db);
+  db.prepare(
+    `INSERT INTO config_kv (key, value, set_at)
+     VALUES ('embedding.enabled', 'true', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+  ).run(Date.now());
+  const backupPath = path.join(process.env.CCMEM_DATA_ROOT, 'import-pending.json');
+  writeFileSync(backupPath, JSON.stringify({
+    version: '0.6',
+    exported_at: Date.now(),
+    memories: [
+      { scope: 'global', project_key: null, type: 'fact', content: 'Imported pending embedding', pinned: 0, tags: '[]' }
+    ]
+  }, null, 2));
+  db.close();
+
+  const output = spawnSync(NODE, [CLI, 'import', backupPath], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env: {
+      ...process.env,
+      CCMEM_TEST_MODE: '1',
+      CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT
+    },
+    encoding: 'utf8'
+  });
+
+  const verifyDb = openDb();
+  const importedRow = verifyDb.prepare(`SELECT source, embedding FROM memories WHERE content = 'Imported pending embedding'`).get();
+  assert.equal(output.status, 0);
+  assert.match(output.stdout, /ccmem: imported 1, skipped 0/);
+  assert.match(output.stderr, /1 memories imported without embeddings \(vec_backfill will process them\)/);
+  assert.equal(importedRow.source, 'external');
+  assert.equal(importedRow.embedding, null);
+  verifyDb.close();
+});
+
+test('cli admin semantic toggles runtime semantic state', () => {
+  const db = openDb();
+  resetSaveListTables(db);
+  db.close();
+
+  const baseEnv = {
+    ...process.env,
+    CCMEM_TEST_MODE: '1',
+    CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT
+  };
+
+  const onOutput = execFileSync(NODE, [CLI, 'admin', 'semantic', 'on'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env: baseEnv,
+    encoding: 'utf8'
+  });
+  const statusOutput = execFileSync(NODE, [CLI, 'admin', 'semantic', 'status'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env: baseEnv,
+    encoding: 'utf8'
+  });
+  const offOutput = execFileSync(NODE, [CLI, 'admin', 'semantic', 'off'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env: baseEnv,
+    encoding: 'utf8'
+  });
+
+  assert.match(onOutput, /ccmem: semantic enabled enabled=true loaded=true/);
+  assert.match(statusOutput, /ccmem: semantic enabled enabled=true/);
+  assert.match(offOutput, /ccmem: semantic disabled enabled=false loaded=false/);
+});
+
+test('cli list query --score prints score breakdown when semantic is enabled', async () => {
+  const db = openDb();
+  resetSaveListTables(db);
+  db.prepare(
+    `INSERT INTO config_kv (key, value, set_at)
+     VALUES ('embedding.enabled', 'true', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+  ).run(Date.now());
+  await cmdSave(db, { cwd: process.cwd(), content: 'Semantic score target memory', scope: 'project' });
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'list', 'semantic', 'score', '--score', '--limit', '1'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env: {
+      ...process.env,
+      CCMEM_TEST_MODE: '1',
+      CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT
+    },
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /\[m\d+\] fact \| project Semantic score target memory/);
+  assert.match(output, /score fused=/);
+  assert.match(output, /fts=/);
+  assert.match(output, /jaccard=/);
+  assert.match(output, /semantic=/);
 });
 
 test('session-start in off mode stays read-only and returns no injected context', async () => {

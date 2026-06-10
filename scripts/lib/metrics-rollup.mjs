@@ -138,6 +138,13 @@ export function writeMetricsDailyRollup(db) {
        AND ts >= ? AND ts < ?`
   ).get(dayStartMs, dayEndMs)?.n ?? 0);
 
+  const vecBackfillEmbedded = Number(db.prepare(
+    `SELECT COALESCE(SUM(CAST(json_extract(details, '$.embedded') AS INTEGER)), 0) AS n
+     FROM audit_log
+     WHERE action = 'vec_backfill_run'
+       AND ts >= ? AND ts < ?`
+  ).get(dayStartMs, dayEndMs)?.n ?? 0);
+
   const memPool = db.prepare(
     `SELECT
        SUM(CASE WHEN decay_status = 'active' AND status = 'active' THEN 1 ELSE 0 END) AS active,
@@ -156,10 +163,10 @@ export function writeMetricsDailyRollup(db) {
       llm_calls, llm_total_duration_ms, llm_failures, llm_dead_letters,
       sec_quarantined, sec_alerts_emitted,
       reval_quarantined, reval_flagged, reval_scanned,
-      tier15_clusters,
+      tier15_clusters, vec_backfill_embedded,
       mems_active, mems_probation, mems_quarantine, mems_archived,
       written_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     dayKey,
     hookStats.session_start?.p50 ?? null,
@@ -178,6 +185,7 @@ export function writeMetricsDailyRollup(db) {
     Number(revalStats?.f ?? 0),
     Number(revalStats?.s ?? 0),
     tier15Clusters,
+    vecBackfillEmbedded,
     Number(memPool.active ?? 0),
     Number(memPool.probation ?? 0),
     Number(memPool.quarantine ?? 0),

@@ -1,8 +1,12 @@
 import { parseTranscript, extractAssistantText } from './transcript.mjs';
-import { adjustTrust } from './trust.mjs';
+import { loadConfig } from './config.mjs';
+import { blobToVec, cosineSimilarity } from './embedding/cosine.mjs';
+import { applyOutcomeToSubset, adjustTrust } from './trust.mjs';
 
 const NEGATIVE_FEEDBACK = /不对|重做|错了|wrong|redo|undo|revert/i;
 const SELF_CORRECT = /(actually|on second thought|i was wrong|更准确地说|我之前.*错了)/i;
+const AFFIRMATIVE = /^(对|好|嗯|是的|没错|正确|对的|好的|就这样|可以|行|ok|yes|yeah|right|correct|exactly|perfect|great|good|that's right|that works)/i;
+const AFFIRMATIVE_NEGATED = /^(对|好|嗯|是的|ok|yes|yeah).{0,5}(但是|不过|可是|然而|but|however|though|except)/i;
 
 function getLastAssistantText(transcriptPath) {
   const lastAssistant = [...parseTranscript(transcriptPath)]
@@ -1223,4 +1227,66 @@ export function inferFromTranscript(db, sessionId, transcriptPath) {
 
 export function inferL25FromTranscript(db, sessionId, transcriptPath) {
   inferImplicitReference(db, sessionId, transcriptPath);
+}
+
+export function inferPositiveFeedback(db, sessionId, prompt, queryVec) {
+  if (!queryVec) {
+    return;
+  }
+
+  const cfg = loadConfig().feedback?.l1_positive ?? {};
+  const text = String(prompt ?? '').trim();
+  if (!AFFIRMATIVE.test(text) || AFFIRMATIVE_NEGATED.test(text)) {
+    return;
+  }
+
+  const row = db.prepare(
+    `SELECT id, injected_ids
+     FROM memory_feedback
+     WHERE session_id = ?
+       AND outcome = 'unknown'
+       AND outcome_locked = 0
+       AND injection_source = 'user_prompt_submit'
+     ORDER BY recorded_at DESC
+     LIMIT 1`
+  ).get(sessionId);
+  if (!row) {
+    return;
+  }
+
+  const injectedIds = parseJsonArray(row.injected_ids)
+    .map((id) => Number(id))
+    .filter(Number.isFinite);
+  if (!injectedIds.length) {
+    return;
+  }
+
+  const memories = db.prepare(
+    `SELECT id, embedding
+     FROM memories
+     WHERE id IN (${injectedIds.map(() => '?').join(',')})
+       AND embedding IS NOT NULL
+       AND status = 'active'
+       AND decay_status IN ('active', 'probation')`
+  ).all(...injectedIds);
+  if (!memories.length) {
+    return;
+  }
+
+  let bestId = null;
+  let bestCosine = -1;
+  for (const memory of memories) {
+    const score = cosineSimilarity(queryVec, blobToVec(memory.embedding));
+    if (score > bestCosine) {
+      bestCosine = score;
+      bestId = memory.id;
+    }
+  }
+
+  const threshold = Number(cfg.cosine_threshold ?? 0.65);
+  if (bestId == null || bestCosine < threshold) {
+    return;
+  }
+
+  applyOutcomeToSubset(db, row.id, [bestId], 'helpful_implicit', `l1_positive_cosine:${bestCosine.toFixed(3)}`);
 }

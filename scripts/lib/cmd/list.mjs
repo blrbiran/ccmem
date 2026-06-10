@@ -1,6 +1,9 @@
+import { loadConfig } from '../config.mjs';
+import { resolveProjectKey } from '../project-key.mjs';
+import { retrieveMemories } from '../retrieval.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
 
-export async function cmdList(db, { limit = 20, quarantined = false } = {}) {
+export async function cmdList(db, { limit = 20, quarantined = false, query = null, cwd = process.cwd() } = {}) {
   try {
     maybeRunTier15(db);
   } catch {}
@@ -22,6 +25,12 @@ export async function cmdList(db, { limit = 20, quarantined = false } = {}) {
        ORDER BY m.quarantined_at DESC, m.id DESC
        LIMIT ?`
     ).all(limit);
+  }
+
+  if (query) {
+    const projectKey = resolveProjectKey(cwd);
+    const result = await retrieveMemories(db, query, projectKey, loadConfig());
+    return result.rows.slice(0, limit);
   }
 
   return db.prepare(

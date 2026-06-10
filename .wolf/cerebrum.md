@@ -2,7 +2,7 @@
 
 > OpenWolf's long-term learning memory.
 > Compacted on 2026-06-04; full pre-compaction snapshot: `cerebrum.archive.2026-06-04.md`
-> Last updated: 2026-06-08
+> Last updated: 2026-06-10
 
 ## User Preferences
 
@@ -21,6 +21,7 @@
 - **LLM-visible command output**: Claude Code slash-command stdout and stderr both enter model context. Metadata should go to audit/state, not raw terminal output.
 - **Plugin runtime split**: slash commands do not inherit `CLAUDE_PLUGIN_ROOT`; slash commands should invoke the PATH `ccmem` CLI, while hooks should use `${CLAUDE_PLUGIN_ROOT}`.
 - **Local verification runtime**: this repo's sqlite-dependent tests and scripts should use `/usr/local/bin/node`, not the default PATH `node`.
+- **SQLite optional-module discipline**: FTS5 availability is a runtime capability, not a binary-path heuristic. Core open/migration/retrieval paths must capability-probe and degrade gracefully when FTS virtual tables are unavailable.
 - **Schema / code consistency**: every table or column referenced by code must exist explicitly in migrations/schema docs; schema drift is a recurring failure mode.
 - **Cross-process test state**: library calls and spawned CLI tests must share the same `CCMEM_DATA_ROOT`, or they will appear to read different databases.
 - **Lease semantics**: daily and weekly leases are local-calendar concepts. Use shared helpers for lease keys and carry `lease_key` through task payloads instead of recomputing from completion time.
@@ -40,6 +41,7 @@
 - **Hook output contract**: `hookSpecificOutput.additionalContext` is only for SessionStart/UserPromptSubmit-style injection. Stop hooks should return an empty JSON object instead of emitting `hookSpecificOutput` with `hookEventName: "Stop"`.
 - **Timeout test fixtures**: timeout regressions must use `CCMEM_CONFIG_PATH` / `claude_p_timeout_per_task` once task-specific config takes precedence; the legacy `CCMEM_CLAUDE_P_TIMEOUT_MS` env no longer reliably drives `summarize_pending` timeout paths.
 - **Full-suite closure discipline**: targeted green runs can still miss stale migration/version assertions in older suites. When schema advances, re-check legacy migration/integration tests for hard-coded version numbers and platform-specific temp-path assumptions before claiming completion.
+- **npm test runtime**: this repo's package test scripts must use `/usr/local/bin/node`, not PATH `node`, or full-suite runs can fail at migration/bootstrap time with sqlite/FTS capability drift that targeted `/usr/local/bin/node` runs do not reproduce.
 - **A4 current-repo adaptation**: this repo's daemon admin surface is still monolithic in `scripts/lib/admin/daemon.mjs`, not split into `linux.mjs` / `container.mjs`. For v0.5 here, keep the launchd happy path output stable, but adapt launchctl bus failures to a container-style wrapper loop with a PID file inside the monolith.
 - **v0.5 cron truth source**: when spec and dogfood diverge on weekly scheduling, follow dogfood/runtime validation — `weekly_at` means the configured weekday/time only, with no later-week catch-up for `weekly_synthesis`; `security_audit` keeps its existing Sunday catch-up behavior.
 - **v0.5 backup hygiene**: migration backup dedupe is behavioral, not architectural — reuse a same-size `.bak` created within 60s, and prune old backups from `daily_maintenance` using `migration_backup.max_keep`.
@@ -48,6 +50,7 @@
 ## Do-Not-Repeat
 
 - Do not answer spec, packaging, or marketplace details from memory alone; verify against current files or current UI behavior.
+- Do not treat `/usr/local/bin/node` path alignment as the fix for sqlite capability gaps; probe whether the active runtime actually supports FTS5.
 - Do not derive daily lease keys from UTC `toISOString().slice(0, 10)` or recompute daily/weekly lease keys from completion-time `new Date()`.
 - Do not let scheduler, worker, manual entrypoints, and tests derive lease windows differently; use shared helpers.
 - Do not rely on empty-stderr assertions in hook/daemon suites; Node/runtime warnings can be present without indicating a product failure.
@@ -60,6 +63,7 @@
 ### Runtime architecture
 
 - Hooks stay synchronous and lightweight; daemon owns async/LLM work.
+- FTS-backed retrieval remains an optimization, not a schema requirement; base migrations create core tables only, while `scripts/lib/db.mjs` reconciles optional FTS tables/triggers when the runtime supports them.
 - The daemon-optional model remains: Tier 1 works without daemon, Tier 1.5 runs opportunistically, Tier 2 needs daemon.
 - Runtime flags and warning policy are entrypoint invariants, not launcher-only details.
 

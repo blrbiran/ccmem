@@ -1,15 +1,19 @@
 import { cmdAdminCron } from './lib/admin/cron.mjs';
 import { cmdAdminDaemon } from './lib/admin/daemon.mjs';
 import { cmdAdminDiagnose } from './lib/admin/diagnose.mjs';
+import { cmdAdminSemantic } from './lib/admin/semantic.mjs';
 import { openDb } from './lib/db.mjs';
 import { readFileSync } from 'node:fs';
 import { cmdAuditShow } from './lib/cmd/audit.mjs';
+import { cmdExport } from './lib/cmd/export.mjs';
+import { cmdImport } from './lib/cmd/import.mjs';
 import { cmdList } from './lib/cmd/list.mjs';
 import { cmdMode } from './lib/cmd/mode.mjs';
 import { cmdPromote } from './lib/cmd/promote.mjs';
 import { cmdResurrect } from './lib/cmd/resurrect.mjs';
 import { cmdSave } from './lib/cmd/save.mjs';
 import { cmdStats } from './lib/cmd/stats.mjs';
+import { resolveProjectKey } from './lib/project-key.mjs';
 
 let db = null;
 const [verb, ...rawArgs] = process.argv.slice(2);
@@ -28,11 +32,14 @@ function printHelp() {
     'Usage: ccmem <command> [options]\n\n' +
     'Commands:\n' +
     '  save <content> [--global]\n' +
-    '  list [--limit N] [--quarantined]\n' +
+    '  list [query] [--limit N] [--quarantined] [--score]\n' +
+    '  export --json [--scope global|project]\n' +
+    '  import <file>\n' +
     '  mode [active|shadow|off]\n' +
     '  audit show <id>\n' +
     '  admin daemon <status|start|stop|restart|install|uninstall>\n' +
     '  admin cron <list|run>\n' +
+    '  admin semantic <on|off|status>\n' +
     '  admin diagnose [--migrations|--key|--sessions|--security|--tuning|--metrics|--restart-history]\n' +
     '  stats [--json|--buckets]\n' +
     '  promote <id> [--global]\n' +
@@ -55,7 +62,22 @@ if (verb === 'admin' && args[0] === 'diagnose' && args[1] === '--help') {
   process.exit(0);
 }
 
+if (verb === 'admin' && args[0] === 'semantic' && args[1] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
 if (verb === 'list' && args[0] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'export' && args[0] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'import' && args[0] === '--help') {
   printHelp();
   process.exit(0);
 }
@@ -120,6 +142,11 @@ if (verb === 'admin' && args[0] === 'cron' && args[1] == null) {
   process.exit(0);
 }
 
+if (verb === 'admin' && args[0] === 'semantic' && args[1] == null) {
+  printHelp();
+  process.exit(0);
+}
+
 if (verb === 'admin' && args[0] === 'diagnose' && args[1] === '--') {
   printHelp();
   process.exit(0);
@@ -136,6 +163,11 @@ if (verb === 'promote' && args.find((arg) => !arg.startsWith('--')) == null) {
 }
 
 if (verb === 'save' && args.filter((arg) => !arg.startsWith('--')).length === 0) {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'import' && args.filter((arg) => !arg.startsWith('--')).length === 0) {
   printHelp();
   process.exit(0);
 }
@@ -189,7 +221,7 @@ if (verb === 'admin' && args[0] === 'diagnose') {
   // handled below.
 }
 
-if (!['save', 'list', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect'].includes(verb)) {
+if (!['save', 'list', 'export', 'import', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect'].includes(verb)) {
   printHelp();
   process.exit(64);
 }
@@ -319,9 +351,13 @@ try {
     const result = await cmdSave(getDb(), { cwd: process.cwd(), content, scope });
     process.stdout.write(`ccmem: saved memory #${result.id} (${result.scope} ${result.type})\n`);
   } else if (verb === 'list') {
+    const query = args.filter((arg) => !arg.startsWith('--')).join(' ') || null;
+    const showScore = args.includes('--score');
     const rows = await cmdList(getDb(), {
+      cwd: process.cwd(),
       limit: Number(getOptionValue('--limit') ?? 20),
-      quarantined: args.includes('--quarantined')
+      quarantined: args.includes('--quarantined'),
+      query
     });
 
     if (!rows.length) {
@@ -334,8 +370,27 @@ try {
       }
     } else {
       for (const row of rows) {
-        process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}\n`);
+        const scoreSuffix = showScore && row.score
+          ? ` | score fused=${Number(row.score.fused ?? 0).toFixed(3)} fts=${Number(row.score.fts ?? 0).toFixed(3)} jaccard=${Number(row.score.jaccard ?? 0).toFixed(3)} semantic=${Number(row.score.semantic ?? 0).toFixed(3)}`
+          : '';
+        process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}${scoreSuffix}\n`);
       }
+    }
+  } else if (verb === 'export') {
+    const scope = getOptionValue('--scope');
+    const payload = cmdExport(getDb(), {
+      scope,
+      projectKey: scope === 'project' ? resolveProjectKey(process.cwd()) : null
+    });
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+  } else if (verb === 'import') {
+    const filePath = args.find((arg) => !arg.startsWith('--'));
+    const result = await cmdImport(getDb(), { cwd: process.cwd(), filePath });
+    process.stdout.write(`ccmem: imported ${result.imported}, skipped ${result.skipped}\n`);
+    if (result.pending_embeddings > 0) {
+      process.stderr.write(
+        `ccmem: ${result.pending_embeddings} memories imported without embeddings (vec_backfill will process them)\n`
+      );
     }
   } else if (verb === 'mode') {
     const result = await cmdMode(getDb(), { mode: args[0] ?? null });
@@ -459,6 +514,11 @@ try {
         throw error;
       }
     }
+  } else if (verb === 'admin' && args[0] === 'semantic' && args[1]) {
+    const result = await cmdAdminSemantic(getDb(), { verb: args[1] });
+    process.stdout.write(
+      `ccmem: semantic ${result.status} enabled=${result.enabled} loaded=${result.loaded} embedded=${result.embedded} pending=${result.pending} model=${result.model} dim=${result.dim}\n`
+    );
   } else if (verb === 'admin' && args[0] === 'diagnose') {
     const result = await cmdAdminDiagnose(getDb(), {
       cwd: process.cwd(),
@@ -565,10 +625,13 @@ try {
         );
       } else {
         process.stdout.write(
-          `Tier 2   : warn daemon not running pending summarize=${result.tier2.pending.summarize_pending} synthesis=${result.tier2.pending.weekly_synthesis} security_audit=${result.tier2.pending.security_audit}\n`
+          `Tier 2   : warn daemon not running pending summarize=${result.tier2.pending.summarize_pending} synthesis=${result.tier2.pending.weekly_synthesis} security_audit=${result.tier2.pending.security_audit} vec_backfill=${result.tier2.pending.vec_backfill}\n`
         );
       }
 
+      process.stdout.write(
+        `Semantic : ${result.semantic.status} | loaded=${result.semantic.loaded} | embedded=${result.semantic.embedded} | pending=${result.semantic.pending} | model=${result.semantic.model} | dim=${result.semantic.dim}\n`
+      );
       process.stdout.write(
         `Memories : ${result.memories.active} active / ${result.memories.probation} probation / ${result.memories.quarantined} quarantine / ${result.memories.archived} archived\n`
       );

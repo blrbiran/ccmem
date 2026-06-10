@@ -18,36 +18,125 @@ const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
 const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submit.mjs');
 
-test('prompt-submit retrieves relevant memories and records recent injections', async () => {
+function withEnv(key, value, work) {
+  const previous = process.env[key];
+  if (value == null) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+
+  try {
+    return work();
+  } finally {
+    if (previous == null) {
+      delete process.env[key];
+    } else {
+      process.env[key] = previous;
+    }
+  }
+}
+
+async function saveProjectFact(content) {
   const db = openDb();
-  const saved = await cmdSave(db, {
-    cwd: process.cwd(),
-    content: 'API routes live under /app/api',
-    scope: 'project',
-    type: 'fact'
-  });
+  try {
+    return await cmdSave(db, {
+      cwd: process.cwd(),
+      content,
+      scope: 'project',
+      type: 'fact'
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function readOne(sql, ...params) {
+  const db = openDb();
+  try {
+    return db.prepare(sql).get(...params);
+  } finally {
+    db.close();
+  }
+}
+
+function readCount(sql, ...params) {
+  return readOne(sql, ...params).n;
+}
+
+function setStoredMode(mode) {
+  const db = openDb();
+  try {
+    setMode(db, mode);
+  } finally {
+    db.close();
+  }
+}
+
+async function runPromptSubmit(input) {
+  return await handlePromptSubmit(input);
+}
+
+function spawnPromptSubmitHook(input, extraEnv = {}) {
+  return spawnSync(
+    NODE,
+    [HOOK, 'prompt-submit'],
+    {
+      cwd: '/Users/biran/code/skills/ccmem',
+      env: {
+        ...process.env,
+        CCMEM_TEST_MODE: '1',
+        CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT,
+        ...extraEnv
+      },
+      encoding: 'utf8',
+      input: JSON.stringify(input)
+    }
+  );
+}
+
+function execPromptSubmitHook(input, extraEnv = {}) {
+  return execFileSync(
+    NODE,
+    [HOOK, 'prompt-submit'],
+    {
+      cwd: '/Users/biran/code/skills/ccmem',
+      env: {
+        ...process.env,
+        CCMEM_TEST_MODE: '1',
+        CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT,
+        ...extraEnv
+      },
+      encoding: 'utf8',
+      input: JSON.stringify(input)
+    }
+  );
+}
+
+test('prompt-submit retrieves relevant memories and records recent injections', async () => {
+  const saved = await saveProjectFact('API routes live under /app/api');
 
   await handleSessionStart({ cwd: process.cwd(), session_id: 's-retrieval' });
-  const result = await handlePromptSubmit({
+  const result = await runPromptSubmit({
     cwd: process.cwd(),
     session_id: 's-retrieval',
     prompt: 'add a route under app api'
   });
-  const injection = db.prepare(
+  const injection = readOne(
     `SELECT prompt_idx, inject_source, mem_ids
      FROM recent_injections
      WHERE session_id = 's-retrieval' AND inject_source = 'user_prompt_submit'`
-  ).get();
-  const feedback = db.prepare(
+  );
+  const feedback = readOne(
     `SELECT injection_source, injected_ids, outcome
      FROM memory_feedback
      WHERE session_id = 's-retrieval'`
-  ).get();
-  const session = db.prepare(
+  );
+  const session = readOne(
     `SELECT session_id, project_key
      FROM session_context
      WHERE session_id = 's-retrieval'`
-  ).get();
+  );
 
   assert.match(result.additionalContext, /app\/api/);
   assert.equal(injection.prompt_idx, 1);
@@ -58,263 +147,121 @@ test('prompt-submit retrieves relevant memories and records recent injections', 
   assert.equal(feedback.outcome, 'unknown');
   assert.equal(session.session_id, 's-retrieval');
   assert.equal(typeof session.project_key, 'string');
-  db.close();
 });
 
 test('prompt-submit infers previous negative feedback from a correction prompt', async () => {
-  const db = openDb();
-  const saved = await cmdSave(db, {
-    cwd: process.cwd(),
-    content: 'API routes live under /app/api',
-    scope: 'project',
-    type: 'fact'
-  });
+  const saved = await saveProjectFact('API routes live under /app/api');
 
-  await handlePromptSubmit({
+  await runPromptSubmit({
     cwd: process.cwd(),
     session_id: 's-feedback',
     prompt: 'add a route under app api'
   });
-  const before = db.prepare(`SELECT trust_score FROM memories WHERE id = ?`).get(saved.id);
+  const before = readOne(`SELECT trust_score FROM memories WHERE id = ?`, saved.id);
 
-  const result = await handlePromptSubmit({
+  const result = await runPromptSubmit({
     cwd: process.cwd(),
     session_id: 's-feedback',
     prompt: '错了，重做'
   });
-  const feedback = db.prepare(
+  const feedback = readOne(
     `SELECT outcome, evidence
      FROM memory_feedback
      WHERE session_id = 's-feedback'`
-  ).get();
-  const after = db.prepare(`SELECT trust_score FROM memories WHERE id = ?`).get(saved.id);
-  const injections = db.prepare(
+  );
+  const after = readOne(`SELECT trust_score FROM memories WHERE id = ?`, saved.id);
+  const injections = readOne(
     `SELECT COUNT(*) AS n
      FROM recent_injections
      WHERE session_id = 's-feedback'`
-  ).get();
+  );
 
   assert.equal(result.additionalContext, '');
   assert.equal(feedback.outcome, 'unhelpful');
   assert.equal(feedback.evidence, 'neg_keyword');
   assert.equal(after.trust_score < before.trust_score, true);
   assert.equal(injections.n, 1);
-  db.close();
 });
 
 
 test('prompt-submit in off mode stays read-only and returns no injected context', async () => {
-  const db = openDb();
-  await cmdSave(db, {
+  await saveProjectFact('API routes live under /app/api');
+  setStoredMode('off');
+
+  const output = spawnPromptSubmitHook({
     cwd: process.cwd(),
-    content: 'API routes live under /app/api',
-    scope: 'project',
-    type: 'fact'
+    session_id: 's-off',
+    prompt: 'add a route under app api'
   });
-  setMode(db, 'off');
-
-  const output = spawnSync(
-    NODE,
-    [HOOK, 'prompt-submit'],
-    {
-      cwd: '/Users/biran/code/skills/ccmem',
-      env: {
-        ...process.env,
-        CCMEM_TEST_MODE: '1',
-        CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT
-      },
-      encoding: 'utf8',
-      input: JSON.stringify({
-        cwd: process.cwd(),
-        session_id: 's-off',
-        prompt: 'add a route under app api'
-      })
-    }
-  );
-
-  const injections = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM recent_injections
-     WHERE session_id = 's-off'`
-  ).get();
-  const feedback = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM memory_feedback
-     WHERE session_id = 's-off'`
-  ).get();
-  const session = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM session_context
-     WHERE session_id = 's-off'`
-  ).get();
 
   assert.equal(output.status, 0);
   assert.match(output.stdout, /"hookEventName":"UserPromptSubmit"/);
   assert.doesNotMatch(output.stderr, /ccmem:/);
-  assert.equal(injections.n, 0);
-  assert.equal(feedback.n, 0);
-  assert.equal(session.n, 0);
-  db.close();
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM recent_injections WHERE session_id = 's-off'`), 0);
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM memory_feedback WHERE session_id = 's-off'`), 0);
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM session_context WHERE session_id = 's-off'`), 0);
 });
 
 test('prompt-submit hook exits early under CCMEM_INTERNAL and stays read-only', async () => {
-  const db = openDb();
-  await cmdSave(db, {
-    cwd: process.cwd(),
-    content: 'API routes live under /app/api',
-    scope: 'project',
-    type: 'fact'
-  });
-  setMode(db, 'active');
+  await saveProjectFact('API routes live under /app/api');
+  setStoredMode('active');
 
-  const output = spawnSync(
-    NODE,
-    [HOOK, 'prompt-submit'],
+  const output = spawnPromptSubmitHook(
     {
-      cwd: '/Users/biran/code/skills/ccmem',
-      env: {
-        ...process.env,
-        CCMEM_TEST_MODE: '1',
-        CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT,
-        CCMEM_INTERNAL: '1'
-      },
-      encoding: 'utf8',
-      input: JSON.stringify({
-        cwd: process.cwd(),
-        session_id: 's-internal',
-        prompt: 'add a route under app api'
-      })
-    }
+      cwd: process.cwd(),
+      session_id: 's-internal',
+      prompt: 'add a route under app api'
+    },
+    { CCMEM_INTERNAL: '1' }
   );
-
-  const injections = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM recent_injections
-     WHERE session_id = 's-internal'`
-  ).get();
-  const feedback = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM memory_feedback
-     WHERE session_id = 's-internal'`
-  ).get();
-  const session = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM session_context
-     WHERE session_id = 's-internal'`
-  ).get();
 
   assert.equal(output.status, 0);
   assert.match(output.stdout, /"hookEventName":"UserPromptSubmit"/);
   assert.doesNotMatch(output.stderr, /ccmem:/);
-  assert.equal(injections.n, 0);
-  assert.equal(feedback.n, 0);
-  assert.equal(session.n, 0);
-  db.close();
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM recent_injections WHERE session_id = 's-internal'`), 0);
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM memory_feedback WHERE session_id = 's-internal'`), 0);
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM session_context WHERE session_id = 's-internal'`), 0);
 });
 
 test('prompt-submit in shadow mode stays read-only and does not infer feedback', async () => {
-  const db = openDb();
-  const saved = await cmdSave(db, {
-    cwd: process.cwd(),
-    content: 'API routes live under /app/api',
-    scope: 'project',
-    type: 'fact'
-  });
-  setMode(db, 'shadow');
+  const saved = await saveProjectFact('API routes live under /app/api');
+  setStoredMode('shadow');
 
-  const before = db.prepare(`SELECT trust_score FROM memories WHERE id = ?`).get(saved.id);
-  const result = await handlePromptSubmit({
+  const before = readOne(`SELECT trust_score FROM memories WHERE id = ?`, saved.id);
+  const result = await runPromptSubmit({
     cwd: process.cwd(),
     session_id: 's-shadow',
     prompt: 'add a route under app api'
   });
-  const after = db.prepare(`SELECT trust_score FROM memories WHERE id = ?`).get(saved.id);
-  const injections = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM recent_injections
-     WHERE session_id = 's-shadow'`
-  ).get();
-  const feedback = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM memory_feedback
-     WHERE session_id = 's-shadow'`
-  ).get();
-  const session = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM session_context
-     WHERE session_id = 's-shadow'`
-  ).get();
+  const after = readOne(`SELECT trust_score FROM memories WHERE id = ?`, saved.id);
 
   assert.equal(result.additionalContext, '');
   assert.equal(after.trust_score, before.trust_score);
-  assert.equal(injections.n, 0);
-  assert.equal(feedback.n, 0);
-  assert.equal(session.n, 0);
-  db.close();
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM recent_injections WHERE session_id = 's-shadow'`), 0);
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM memory_feedback WHERE session_id = 's-shadow'`), 0);
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM session_context WHERE session_id = 's-shadow'`), 0);
 });
 
 test('prompt-submit hook in shadow mode stays read-only and emits diagnostic notice', async () => {
-  const db = openDb();
-  await cmdSave(db, {
+  await saveProjectFact('API routes live under /app/api');
+  setStoredMode('shadow');
+
+  const output = spawnPromptSubmitHook({
     cwd: process.cwd(),
-    content: 'API routes live under /app/api',
-    scope: 'project',
-    type: 'fact'
+    session_id: 's-shadow-hook',
+    prompt: 'add a route under app api'
   });
-  setMode(db, 'shadow');
-
-  const output = spawnSync(
-    NODE,
-    [HOOK, 'prompt-submit'],
-    {
-      cwd: '/Users/biran/code/skills/ccmem',
-      env: {
-        ...process.env,
-        CCMEM_TEST_MODE: '1',
-        CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT
-      },
-      encoding: 'utf8',
-      input: JSON.stringify({
-        cwd: process.cwd(),
-        session_id: 's-shadow-hook',
-        prompt: 'add a route under app api'
-      })
-    }
-  );
-
-  const injections = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM recent_injections
-     WHERE session_id = 's-shadow-hook'`
-  ).get();
-  const feedback = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM memory_feedback
-     WHERE session_id = 's-shadow-hook'`
-  ).get();
-  const session = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM session_context
-     WHERE session_id = 's-shadow-hook'`
-  ).get();
 
   assert.equal(output.status, 0);
   assert.match(output.stdout, /"hookEventName":"UserPromptSubmit"/);
   assert.match(output.stderr, /ccmem: mode=shadow \(read-only diagnostic — no writes, no inject\)/);
-  assert.equal(injections.n, 0);
-  assert.equal(feedback.n, 0);
-  assert.equal(session.n, 0);
-  db.close();
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM recent_injections WHERE session_id = 's-shadow-hook'`), 0);
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM memory_feedback WHERE session_id = 's-shadow-hook'`), 0);
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM session_context WHERE session_id = 's-shadow-hook'`), 0);
 });
 
 test('prompt-submit hook exits early for sessions blacklisted by daemon bridge child ids', async () => {
-  const db = openDb();
-  await cmdSave(db, {
-    cwd: process.cwd(),
-    content: 'API routes live under /app/api',
-    scope: 'project',
-    type: 'fact'
-  });
+  await saveProjectFact('API routes live under /app/api');
 
   const script = path.join(process.env.CCMEM_DATA_ROOT, 'claude-prompt-submit-blacklist-child.mjs');
   writeFileSync(script, "process.stdout.write(process.env.CLAUDE_CODE_SESSION_ID || '')");
@@ -324,106 +271,65 @@ test('prompt-submit hook exits early for sessions blacklisted by daemon bridge c
     args: [script]
   })).trim();
 
-  const output = execFileSync(
-    NODE,
-    [HOOK, 'prompt-submit'],
-    {
-      cwd: '/Users/biran/code/skills/ccmem',
-      env: {
-        ...process.env,
-        CCMEM_TEST_MODE: '1',
-        CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT
-      },
-      encoding: 'utf8',
-      input: JSON.stringify({
-        cwd: process.cwd(),
-        session_id: childSessionId,
-        prompt: 'add a route under app api'
-      })
-    }
-  );
-
-  const injections = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM recent_injections
-     WHERE session_id = ?`
-  ).get(childSessionId);
-  const feedback = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM memory_feedback
-     WHERE session_id = ?`
-  ).get(childSessionId);
-  const session = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM session_context
-     WHERE session_id = ?`
-  ).get(childSessionId);
+  const output = execPromptSubmitHook({
+    cwd: process.cwd(),
+    session_id: childSessionId,
+    prompt: 'add a route under app api'
+  });
 
   assert.match(childSessionId, /^[0-9a-f-]{36}$/i);
   assert.match(output, /"hookEventName":"UserPromptSubmit"/);
-  assert.equal(injections.n, 0);
-  assert.equal(feedback.n, 0);
-  assert.equal(session.n, 0);
-  db.close();
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM recent_injections WHERE session_id = ?`, childSessionId), 0);
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM memory_feedback WHERE session_id = ?`, childSessionId), 0);
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM session_context WHERE session_id = ?`, childSessionId), 0);
 });
 
 test('prompt-submit hook ignores expired blacklisted sessions and proceeds normally', async () => {
-  const db = openDb();
-  await cmdSave(db, {
-    cwd: process.cwd(),
-    content: 'API routes live under /app/api',
-    scope: 'project',
-    type: 'fact'
-  });
-  setMode(db, 'active');
+  await saveProjectFact('API routes live under /app/api');
+  setStoredMode('active');
   const now = Date.now();
 
+  const db = openDb();
   db.prepare(
     `INSERT INTO ccmem_blacklisted_sessions (session_id, reason, created_at, expires_at)
      VALUES (?, 'cron_llm_child', ?, ?)`
   ).run('s-expired', now, now - 1000);
+  db.close();
 
-  const output = execFileSync(
-    NODE,
-    [HOOK, 'prompt-submit'],
-    {
-      cwd: '/Users/biran/code/skills/ccmem',
-      env: {
-        ...process.env,
-        CCMEM_TEST_MODE: '1',
-        CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT
-      },
-      encoding: 'utf8',
-      input: JSON.stringify({
-        cwd: process.cwd(),
-        session_id: 's-expired',
-        prompt: 'add a route under app api'
-      })
-    }
-  );
-
-  const injections = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM recent_injections
-     WHERE session_id = ?`
-  ).get('s-expired');
-  const feedback = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM memory_feedback
-     WHERE session_id = ?`
-  ).get('s-expired');
-  const blacklist = db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM ccmem_blacklisted_sessions
-     WHERE session_id = ?`
-  ).get('s-expired');
+  const output = execPromptSubmitHook({
+    cwd: process.cwd(),
+    session_id: 's-expired',
+    prompt: 'add a route under app api'
+  });
 
   assert.match(output, /"hookEventName":"UserPromptSubmit"/);
   assert.match(output, /app\/api/);
-  assert.equal(injections.n, 1);
-  assert.equal(feedback.n, 1);
-  assert.equal(blacklist.n, 1);
-  db.close();
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM recent_injections WHERE session_id = ?`, 's-expired'), 1);
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM memory_feedback WHERE session_id = ?`, 's-expired'), 1);
+  assert.equal(readCount(`SELECT COUNT(*) AS n FROM ccmem_blacklisted_sessions WHERE session_id = ?`, 's-expired'), 1);
+});
+
+test('prompt-submit falls back to non-FTS retrieval when FTS5 is unavailable', async () => {
+  await withEnv('CCMEM_DISABLE_FTS5', '1', async () => {
+    const saved = await saveProjectFact('Semantic fallback remembers API route handlers under /app/api');
+    await handleSessionStart({ cwd: process.cwd(), session_id: 's-no-fts' });
+
+    const result = await runPromptSubmit({
+      cwd: process.cwd(),
+      session_id: 's-no-fts',
+      prompt: 'where should I add api route handlers'
+    });
+    const injection = readOne(
+      `SELECT prompt_idx, inject_source, mem_ids
+       FROM recent_injections
+       WHERE session_id = 's-no-fts' AND inject_source = 'user_prompt_submit'`
+    );
+
+    assert.match(result.additionalContext, /app\/api/);
+    assert.equal(injection.prompt_idx, 1);
+    assert.equal(injection.inject_source, 'user_prompt_submit');
+    assert.equal(JSON.parse(injection.mem_ids).includes(saved.id), true);
+  });
 });
 
 test.after(() => rmSync(process.env.CCMEM_DATA_ROOT, { recursive: true, force: true }));

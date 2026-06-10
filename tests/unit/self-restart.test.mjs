@@ -44,8 +44,8 @@ test('getStartupSchemaVersion and writeDaemonStartupState track daemon startup s
   const versionRow = db.prepare(`SELECT value FROM config_kv WHERE key = 'daemon_startup_schema_version'`).get();
   const pidRow = db.prepare(`SELECT value FROM config_kv WHERE key = 'daemon_startup_pid'`).get();
 
-  assert.equal(startupVersion, 6);
-  assert.equal(versionRow.value, '6');
+  assert.equal(startupVersion, 7);
+  assert.equal(versionRow.value, '7');
   assert.equal(pidRow.value, '4321');
   db.close();
 });
@@ -57,7 +57,7 @@ test('checkSchemaStaleness detects schema mismatches and respects config gate', 
   db.prepare(`UPDATE schema_meta SET version = 999`).run();
   const stale = checkSchemaStaleness(db, startupVersion);
   assert.equal(stale.stale, true);
-  assert.equal(stale.startup_version, 6);
+  assert.equal(stale.startup_version, 7);
   assert.equal(stale.current_version, 999);
 
   const restoreConfig = withConfig({ daemon: { self_restart_on_schema_mismatch: false } });
@@ -80,7 +80,7 @@ test('scheduleGracefulRestart writes immediate restart audit and signals when id
 
   const result = scheduleGracefulRestart(
     db,
-    { stale: true, startup_version: 6, current_version: 999 },
+    { stale: true, startup_version: 7, current_version: 999 },
     { pid: 1234, uptimeSec: 8, currentTaskId: null, currentTaskType: null },
     { signal: () => signals.push('restart') }
   );
@@ -100,7 +100,7 @@ test('scheduleGracefulRestart writes immediate restart audit and signals when id
     deferred_reason: null
   });
   assert.deepEqual(signals, ['restart']);
-  assert.equal(details.from_version, 6);
+  assert.equal(details.from_version, 7);
   assert.equal(details.to_version, 999);
   assert.equal(details.in_flight_task_id, null);
   assert.equal(details.waited_ms, 0);
@@ -113,13 +113,13 @@ test('scheduleGracefulRestart defers until the running task finishes', () => {
 
   const scheduled = scheduleGracefulRestart(
     db,
-    { stale: true, startup_version: 6, current_version: 999 },
+    { stale: true, startup_version: 7, current_version: 999 },
     { pid: 5555, uptimeSec: 12, currentTaskId: 77, currentTaskType: 'weekly_synthesis' },
     { now: () => 1000, signal: () => signals.push('restart') }
   );
   const completed = checkPendingRestart(
     db,
-    { startupVersion: 6, pid: 5555, startedAt: 0 },
+    { startupVersion: 7, pid: 5555, startedAt: 0 },
     { id: 77, type: 'weekly_synthesis' },
     { now: () => 9500, signal: () => signals.push('restart') }
   );

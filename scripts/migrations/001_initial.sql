@@ -46,8 +46,6 @@ CREATE TABLE memories (
   CHECK (source IN ('user_explicit', 'tool_output', 'auto_inferred', 'cron_consolidated', 'cerebrum_import', 'external'))
 );
 
-CREATE VIRTUAL TABLE memories_fts USING fts5(content, tokenize='trigram');
-
 CREATE TABLE injection_cache (
   scope TEXT PRIMARY KEY,
   rendered_text TEXT NOT NULL,

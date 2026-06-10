@@ -4,6 +4,7 @@ import { writeMetricsDailyRollup } from '../../lib/metrics-rollup.mjs';
 import { revalidationAuditCore } from '../../lib/revalidation.mjs';
 import { pruneMigrationBackups } from '../../lib/db.mjs';
 import { markLeaseComplete } from '../../lib/task-runs.mjs';
+import { runVecBackfill } from './vec-backfill.mjs';
 
 function dayKey(date) {
   return [
@@ -15,7 +16,7 @@ function dayKey(date) {
 
 let inflightDaily = false;
 
-export function runDailyMaintenance(db, task) {
+export async function runDailyMaintenance(db, task) {
   if (inflightDaily) {
     return;
   }
@@ -81,6 +82,15 @@ export function runDailyMaintenance(db, task) {
     } catch (error) {
       writeAudit(db, 'revalidation_daily_error', null, {
         error: String(error?.message ?? error).slice(0, 200)
+      });
+    }
+
+    try {
+      await runVecBackfill(db, task);
+    } catch (error) {
+      writeAudit(db, 'vec_backfill_error', null, {
+        error: String(error?.message ?? error).slice(0, 200),
+        embedded_before_fail: 0
       });
     }
 

@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-10T12:25:38.951Z
-> Files: 156 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-10T12:47:13.765Z
+> Files: 157 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
 
@@ -10,6 +10,7 @@
 
 ## ./
 
+- `.gitignore` — Git ignore rules (~36 tok)
 - `CLAUDE.md` — OpenWolf (~57 tok)
 - `config.default.json` (~810 tok)
 - `package.json` — Node.js package manifest; npm test scripts use /usr/local/bin/node for sqlite-dependent suites (~132 tok)

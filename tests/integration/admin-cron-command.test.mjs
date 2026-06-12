@@ -519,7 +519,7 @@ test('manual weekly admin cron run completes the claimed lease after a timeout-s
     const audit = db.prepare(
       `SELECT action, details
        FROM audit_log
-       WHERE action = 'weekly_synthesis_stub'
+       WHERE action = 'weekly_synthesis_run'
        ORDER BY id DESC
        LIMIT 1`
     ).get();
@@ -535,7 +535,7 @@ test('manual weekly admin cron run completes the claimed lease after a timeout-s
     assert.equal(lease.ran_by, 'manual');
     assert.equal(lease.status, 'completed');
     assert.equal(typeof lease.completed_at, 'number');
-    assert.equal(audit.action, 'weekly_synthesis_stub');
+    assert.equal(audit.action, 'weekly_synthesis_run');
     assert.equal(details.item_count, 1);
     assert.equal(details.first_output_type, 'rule');
   } finally {
@@ -638,7 +638,7 @@ test('manual weekly admin cron run completes the claimed lease after an explicit
     const audit = db.prepare(
       `SELECT action, details
        FROM audit_log
-       WHERE action = 'weekly_synthesis_stub'
+       WHERE action = 'weekly_synthesis_run'
        ORDER BY id DESC
        LIMIT 1`
     ).get();
@@ -654,7 +654,7 @@ test('manual weekly admin cron run completes the claimed lease after an explicit
     assert.equal(lease.ran_by, 'manual');
     assert.equal(lease.status, 'completed');
     assert.equal(typeof lease.completed_at, 'number');
-    assert.equal(audit.action, 'weekly_synthesis_stub');
+    assert.equal(audit.action, 'weekly_synthesis_run');
     assert.equal(details.item_count, 1);
     assert.equal(details.first_output_type, 'rule');
   } finally {
@@ -757,7 +757,7 @@ test('manual weekly admin cron run completes the claimed lease after a default r
     const audit = db.prepare(
       `SELECT action, details
        FROM audit_log
-       WHERE action = 'weekly_synthesis_stub'
+       WHERE action = 'weekly_synthesis_run'
        ORDER BY id DESC
        LIMIT 1`
     ).get();
@@ -773,7 +773,7 @@ test('manual weekly admin cron run completes the claimed lease after a default r
     assert.equal(lease.ran_by, 'manual');
     assert.equal(lease.status, 'completed');
     assert.equal(typeof lease.completed_at, 'number');
-    assert.equal(audit.action, 'weekly_synthesis_stub');
+    assert.equal(audit.action, 'weekly_synthesis_run');
     assert.equal(details.item_count, 1);
     assert.equal(details.first_output_type, 'rule');
   } finally {
@@ -876,7 +876,7 @@ test('manual weekly admin cron run completes the claimed lease after a too-many-
     const audit = db.prepare(
       `SELECT action, details
        FROM audit_log
-       WHERE action = 'weekly_synthesis_stub'
+       WHERE action = 'weekly_synthesis_run'
        ORDER BY id DESC
        LIMIT 1`
     ).get();
@@ -892,7 +892,7 @@ test('manual weekly admin cron run completes the claimed lease after a too-many-
     assert.equal(lease.ran_by, 'manual');
     assert.equal(lease.status, 'completed');
     assert.equal(typeof lease.completed_at, 'number');
-    assert.equal(audit.action, 'weekly_synthesis_stub');
+    assert.equal(audit.action, 'weekly_synthesis_run');
     assert.equal(details.item_count, 1);
     assert.equal(details.first_output_type, 'rule');
   } finally {
@@ -997,7 +997,7 @@ test('manual weekly admin cron run completes the claimed lease after a seconds r
     const audit = db.prepare(
       `SELECT action, details
        FROM audit_log
-       WHERE action = 'weekly_synthesis_stub'
+       WHERE action = 'weekly_synthesis_run'
        ORDER BY id DESC
        LIMIT 1`
     ).get();
@@ -1013,7 +1013,7 @@ test('manual weekly admin cron run completes the claimed lease after a seconds r
     assert.equal(lease.ran_by, 'manual');
     assert.equal(lease.status, 'completed');
     assert.equal(typeof lease.completed_at, 'number');
-    assert.equal(audit.action, 'weekly_synthesis_stub');
+    assert.equal(audit.action, 'weekly_synthesis_run');
     assert.equal(details.item_count, 1);
     assert.equal(details.first_output_type, 'rule');
   } finally {
@@ -1118,7 +1118,7 @@ test('manual weekly admin cron run completes the claimed lease after a minutes r
     const audit = db.prepare(
       `SELECT action, details
        FROM audit_log
-       WHERE action = 'weekly_synthesis_stub'
+       WHERE action = 'weekly_synthesis_run'
        ORDER BY id DESC
        LIMIT 1`
     ).get();
@@ -1134,7 +1134,7 @@ test('manual weekly admin cron run completes the claimed lease after a minutes r
     assert.equal(lease.ran_by, 'manual');
     assert.equal(lease.status, 'completed');
     assert.equal(typeof lease.completed_at, 'number');
-    assert.equal(audit.action, 'weekly_synthesis_stub');
+    assert.equal(audit.action, 'weekly_synthesis_run');
     assert.equal(details.item_count, 1);
     assert.equal(details.first_output_type, 'rule');
   } finally {

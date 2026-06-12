@@ -262,7 +262,6 @@ export async function runWeeklySynthesis(db, task) {
     llm_calls: results.length
   };
 
-  logAudit(db, 'weekly_synthesis_stub', details);
   logAudit(db, 'weekly_synthesis_run', details);
   markLeaseComplete(db, 'weekly_synthesis', leaseKey);
 }

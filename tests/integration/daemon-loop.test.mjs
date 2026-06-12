@@ -3463,7 +3463,7 @@ test('dispatchTask runs weekly_synthesis stub route', async () => {
   const audit = db.prepare(
     `SELECT action, details
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'
+     WHERE action = 'weekly_synthesis_run'
      ORDER BY id DESC
      LIMIT 1`
   ).get();
@@ -3472,7 +3472,7 @@ test('dispatchTask runs weekly_synthesis stub route', async () => {
   assert.equal(task.status, 'completed');
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
-  assert.equal(audit.action, 'weekly_synthesis_stub');
+  assert.equal(audit.action, 'weekly_synthesis_run');
   assert.equal(details.item_count, 1);
   assert.equal(details.first_output_type, 'rule');
   db.close();
@@ -3721,7 +3721,7 @@ test('dispatchTask can use configured claude bridge command for weekly_synthesis
   const audit = db.prepare(
     `SELECT action, details
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'
+     WHERE action = 'weekly_synthesis_run'
      ORDER BY id DESC
      LIMIT 1`
   ).get();
@@ -3851,7 +3851,7 @@ test('dispatchTask marks weekly_synthesis failed when configured claude bridge e
   const auditCount = db.prepare(
     `SELECT COUNT(*) AS n
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'`
+     WHERE action = 'weekly_synthesis_run'`
   ).get();
 
   assert.equal(task.status, 'failed');
@@ -3920,7 +3920,7 @@ test('dispatchTask marks weekly_synthesis failed when configured claude bridge t
   const auditCount = db.prepare(
     `SELECT COUNT(*) AS n
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'`
+     WHERE action = 'weekly_synthesis_run'`
   ).get();
 
   assert.equal(tasks.length, 2);
@@ -4016,7 +4016,7 @@ test('dispatchTask applies weekly_synthesis after a timeout-scheduled retry late
   const audit = db.prepare(
     `SELECT action, details
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'
+     WHERE action = 'weekly_synthesis_run'
      ORDER BY id DESC
      LIMIT 1`
   ).get();
@@ -4030,7 +4030,7 @@ test('dispatchTask applies weekly_synthesis after a timeout-scheduled retry late
   assert.equal(tasks[1].error_excerpt, null);
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
-  assert.equal(audit.action, 'weekly_synthesis_stub');
+  assert.equal(audit.action, 'weekly_synthesis_run');
   assert.equal(details.item_count, 1);
   assert.equal(details.first_output_type, 'rule');
 
@@ -4092,7 +4092,7 @@ test('dispatchTask schedules weekly_synthesis retry when configured claude bridg
   const auditCount = db.prepare(
     `SELECT COUNT(*) AS n
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'`
+     WHERE action = 'weekly_synthesis_run'`
   ).get();
 
   assert.equal(tasks.length, 2);
@@ -4185,7 +4185,7 @@ test('dispatchTask applies weekly_synthesis after an explicit retry-after retry 
   const audit = db.prepare(
     `SELECT action, details
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'
+     WHERE action = 'weekly_synthesis_run'
      ORDER BY id DESC
      LIMIT 1`
   ).get();
@@ -4199,7 +4199,7 @@ test('dispatchTask applies weekly_synthesis after an explicit retry-after retry 
   assert.equal(tasks[1].error_excerpt, null);
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
-  assert.equal(audit.action, 'weekly_synthesis_stub');
+  assert.equal(audit.action, 'weekly_synthesis_run');
   assert.equal(details.item_count, 1);
   assert.equal(details.first_output_type, 'rule');
 
@@ -4261,7 +4261,7 @@ test('dispatchTask defaults weekly_synthesis rate-limit retry delay to 60 second
   const auditCount = db.prepare(
     `SELECT COUNT(*) AS n
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'`
+     WHERE action = 'weekly_synthesis_run'`
   ).get();
 
   assert.equal(tasks.length, 2);
@@ -4354,7 +4354,7 @@ test('dispatchTask applies weekly_synthesis after a default-rate-limit retry lat
   const audit = db.prepare(
     `SELECT action, details
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'
+     WHERE action = 'weekly_synthesis_run'
      ORDER BY id DESC
      LIMIT 1`
   ).get();
@@ -4368,7 +4368,7 @@ test('dispatchTask applies weekly_synthesis after a default-rate-limit retry lat
   assert.equal(tasks[1].error_excerpt, null);
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
-  assert.equal(audit.action, 'weekly_synthesis_stub');
+  assert.equal(audit.action, 'weekly_synthesis_run');
   assert.equal(details.item_count, 1);
   assert.equal(details.first_output_type, 'rule');
 
@@ -4430,7 +4430,7 @@ test('dispatchTask defaults weekly_synthesis too-many-requests retry delay to 60
   const auditCount = db.prepare(
     `SELECT COUNT(*) AS n
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'`
+     WHERE action = 'weekly_synthesis_run'`
   ).get();
 
   assert.equal(tasks.length, 2);
@@ -4523,7 +4523,7 @@ test('dispatchTask applies weekly_synthesis after a too-many-requests retry late
   const audit = db.prepare(
     `SELECT action, details
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'
+     WHERE action = 'weekly_synthesis_run'
      ORDER BY id DESC
      LIMIT 1`
   ).get();
@@ -4537,7 +4537,7 @@ test('dispatchTask applies weekly_synthesis after a too-many-requests retry late
   assert.equal(tasks[1].error_excerpt, null);
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
-  assert.equal(audit.action, 'weekly_synthesis_stub');
+  assert.equal(audit.action, 'weekly_synthesis_run');
   assert.equal(details.item_count, 1);
   assert.equal(details.first_output_type, 'rule');
 
@@ -4599,7 +4599,7 @@ test('dispatchTask converts weekly_synthesis second-based retry-after into milli
   const auditCount = db.prepare(
     `SELECT COUNT(*) AS n
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'`
+     WHERE action = 'weekly_synthesis_run'`
   ).get();
 
   assert.equal(tasks.length, 2);
@@ -4692,7 +4692,7 @@ test('dispatchTask applies weekly_synthesis after a second-based retry-after ret
   const audit = db.prepare(
     `SELECT action, details
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'
+     WHERE action = 'weekly_synthesis_run'
      ORDER BY id DESC
      LIMIT 1`
   ).get();
@@ -4706,7 +4706,7 @@ test('dispatchTask applies weekly_synthesis after a second-based retry-after ret
   assert.equal(tasks[1].error_excerpt, null);
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
-  assert.equal(audit.action, 'weekly_synthesis_stub');
+  assert.equal(audit.action, 'weekly_synthesis_run');
   assert.equal(details.item_count, 1);
   assert.equal(details.first_output_type, 'rule');
 
@@ -4768,7 +4768,7 @@ test('dispatchTask converts weekly_synthesis minute-based retry-after into milli
   const auditCount = db.prepare(
     `SELECT COUNT(*) AS n
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'`
+     WHERE action = 'weekly_synthesis_run'`
   ).get();
 
   assert.equal(tasks.length, 2);
@@ -4861,7 +4861,7 @@ test('dispatchTask applies weekly_synthesis after a minute-based retry-after ret
   const audit = db.prepare(
     `SELECT action, details
      FROM audit_log
-     WHERE action = 'weekly_synthesis_stub'
+     WHERE action = 'weekly_synthesis_run'
      ORDER BY id DESC
      LIMIT 1`
   ).get();
@@ -4875,7 +4875,7 @@ test('dispatchTask applies weekly_synthesis after a minute-based retry-after ret
   assert.equal(tasks[1].error_excerpt, null);
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
-  assert.equal(audit.action, 'weekly_synthesis_stub');
+  assert.equal(audit.action, 'weekly_synthesis_run');
   assert.equal(details.item_count, 1);
   assert.equal(details.first_output_type, 'rule');
 

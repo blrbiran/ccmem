@@ -1,26 +1,36 @@
-export function parseLlmJson(raw) {
-  let s = String(raw ?? '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+function stripFences(raw) {
+  return String(raw ?? '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+}
 
-  let parsed;
+function tryParseJson(raw) {
   try {
-    parsed = JSON.parse(s);
+    return JSON.parse(stripFences(raw));
   } catch {
-    return [];
+    return null;
+  }
+}
+
+function unwrapClaudeEnvelope(parsed) {
+  let value = parsed;
+
+  if (value && typeof value === 'object' && value.structured_output != null) {
+    value = value.structured_output;
   }
 
-  if (parsed && typeof parsed === 'object' && parsed.type === 'result' && parsed.result != null) {
-    if (typeof parsed.result === 'string') {
-      const inner = parsed.result.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-      try {
-        parsed = JSON.parse(inner);
-      } catch {
-        return [];
-      }
-    } else {
-      parsed = parsed.result;
+  if (value && typeof value === 'object' && value.type === 'result') {
+    if (value.structured_output != null) {
+      return value.structured_output;
     }
+    if (typeof value.result === 'string') {
+      return tryParseJson(value.result);
+    }
+    return value.result ?? null;
   }
 
+  return value;
+}
+
+function normalizeSynthesizedArray(parsed) {
   const normalized = Array.isArray(parsed)
     ? parsed
     : (parsed && typeof parsed === 'object' && Array.isArray(parsed.synthesized) ? parsed.synthesized : []);
@@ -35,4 +45,20 @@ export function parseLlmJson(raw) {
       output_type: ['rule', 'consolidated'].includes(item?.output_type) ? item.output_type : 'consolidated'
     }))
     .filter((item) => item.content.length > 0);
+}
+
+export function parseRawLlmOutput(raw) {
+  const parsed = tryParseJson(raw);
+  if (parsed == null) {
+    return null;
+  }
+  return unwrapClaudeEnvelope(parsed);
+}
+
+export function parseLlmJson(raw) {
+  const parsed = parseRawLlmOutput(raw);
+  if (parsed == null) {
+    return [];
+  }
+  return normalizeSynthesizedArray(parsed);
 }

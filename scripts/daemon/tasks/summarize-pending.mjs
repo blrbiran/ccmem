@@ -1,12 +1,13 @@
 import { callClaudeP } from '../claude-p.mjs';
 import { writeAudit } from '../../lib/audit.mjs';
 import { dedupCheck } from '../../lib/dedup.mjs';
+import { vecToBlob } from '../../lib/embedding/cosine.mjs';
 import { getProvider } from '../../lib/embedding/provider.mjs';
-import { rebuildInjectionCache } from '../../lib/injection-cache.mjs';
+import { cleanTranscript } from '../../lib/transcript-cleaner.mjs';
+import { checkQuality } from '../../lib/quality-gate.mjs';
 import { parseLlmJson } from '../../lib/llm-parse.mjs';
-import { evaluateTier1, evaluateTier2, evaluateTier3 } from '../../lib/threat-scan.mjs';
+import { insertMemory } from '../../lib/cmd/save.mjs';
 import { extractEntryText, parseTranscript } from '../../lib/transcript.mjs';
-import { getSourceInitialTrust } from '../../lib/trust.mjs';
 import { loadConfig } from '../../lib/config.mjs';
 
 const TRANSCRIPT_EXCERPT_MAX = 1000;
@@ -35,13 +36,6 @@ const SUMMARIZE_PENDING_JSON_SCHEMA = {
   }
 };
 
-function logAudit(db, action, details = null) {
-  db.prepare(
-    `INSERT INTO audit_log (ts, action, affected_ids, details)
-     VALUES (?, ?, NULL, ?)`
-  ).run(Date.now(), action, details ? JSON.stringify(details) : null);
-}
-
 function readTranscriptExcerpt(transcriptPath, lastMessageSeq) {
   const entries = parseTranscript(transcriptPath).slice(0, lastMessageSeq);
   const lines = entries
@@ -50,18 +44,14 @@ function readTranscriptExcerpt(transcriptPath, lastMessageSeq) {
       if (!text) {
         return null;
       }
-
       return `${entry.type ?? 'unknown'}: ${text}`;
     })
     .filter(Boolean);
 
   const joined = lines.join('\n');
-
   return {
     entryCount: entries.length,
-    excerpt: joined.length <= TRANSCRIPT_EXCERPT_MAX
-      ? joined
-      : joined.slice(-TRANSCRIPT_EXCERPT_MAX)
+    excerpt: joined.length <= TRANSCRIPT_EXCERPT_MAX ? joined : joined.slice(-TRANSCRIPT_EXCERPT_MAX)
   };
 }
 
@@ -84,11 +74,9 @@ function shouldUseClaudeBridge(payload) {
   if (typeof payload.llm_output === 'string') {
     return true;
   }
-
   if (hasConfiguredClaudeBridge()) {
     return true;
   }
-
   return process.env.CCMEM_TEST_MODE !== '1';
 }
 
@@ -113,7 +101,7 @@ function supersedeIfNewerTaskExists(db, taskId, sessionId, lastMessageSeq) {
      SET status = 'superseded', finished_at = ?
      WHERE id = ?`
   ).run(Date.now(), taskId);
-  logAudit(db, 'summarize_pending_superseded', {
+  writeAudit(db, 'summarize_pending_superseded', null, {
     task_id: taskId,
     session_id: sessionId,
     last_message_seq: lastMessageSeq,
@@ -135,7 +123,7 @@ export async function runSummarizePending(db, task) {
   const cfg = loadConfig();
 
   if (!sessionId || !transcriptPath || !Number.isFinite(lastMessageSeq)) {
-    logAudit(db, 'summarize_pending_bad_payload', { task_id: task.id });
+    writeAudit(db, 'summarize_pending_bad_payload', null, { task_id: task.id });
     return;
   }
 
@@ -160,7 +148,7 @@ export async function runSummarizePending(db, task) {
   ).get(sessionId);
 
   if (ctx && ctx.message_count < 2) {
-    logAudit(db, 'summarize_pending_skipped', {
+    writeAudit(db, 'summarize_pending_skipped', null, {
       task_id: task.id,
       session_id: sessionId,
       reason: 'short_session'
@@ -170,7 +158,7 @@ export async function runSummarizePending(db, task) {
 
   const transcript = readTranscriptExcerpt(transcriptPath, lastMessageSeq);
   if (!transcript.excerpt) {
-    logAudit(db, 'summarize_pending_skipped', {
+    writeAudit(db, 'summarize_pending_skipped', null, {
       task_id: task.id,
       session_id: sessionId,
       reason: 'empty_transcript'
@@ -178,9 +166,41 @@ export async function runSummarizePending(db, task) {
     return;
   }
 
+  const cleanerCfg = cfg.summarize?.transcript_cleaner ?? {};
+  const cleanerEnabled = cleanerCfg.enabled !== false;
+  const cleanedResult = cleanerEnabled
+    ? cleanTranscript(transcript.excerpt, cleanerCfg)
+    : {
+        cleaned: transcript.excerpt,
+        rules_hit: [],
+        before: transcript.excerpt.length,
+        after: transcript.excerpt.length
+      };
+
+  if (cleanedResult.rules_hit.length > 0) {
+    writeAudit(db, 'transcript_cleaned', null, {
+      session_id: sessionId,
+      before_chars: cleanedResult.before,
+      after_chars: cleanedResult.after,
+      rules_hit: cleanedResult.rules_hit,
+      stripped_pct: cleanedResult.before > 0
+        ? Math.round((1 - (cleanedResult.after / cleanedResult.before)) * 100)
+        : 0
+    });
+  }
+
+  const minAfterClean = Number(cfg.summarize?.min_transcript_after_clean ?? 200);
+  if (cleanedResult.cleaned.length < (Number.isFinite(minAfterClean) ? minAfterClean : 200)) {
+    writeAudit(db, 'summarize_skipped_empty_after_clean', null, {
+      session_id: sessionId,
+      after_chars: cleanedResult.cleaned.length
+    });
+    return;
+  }
+
   let llmOutput = null;
   if (shouldUseClaudeBridge(payload)) {
-    llmOutput = await callClaudeP(buildSummarizePrompt(transcript.excerpt), {
+    llmOutput = await callClaudeP(buildSummarizePrompt(cleanedResult.cleaned), {
       taskType: 'summarize_pending',
       jsonSchema: SUMMARIZE_PENDING_JSON_SCHEMA,
       mockOutput: payload.llm_output
@@ -192,7 +212,7 @@ export async function runSummarizePending(db, task) {
   }
 
   if (!llmOutput) {
-    logAudit(db, 'summarize_pending_stub', {
+    writeAudit(db, 'summarize_pending_stub', null, {
       task_id: task.id,
       session_id: sessionId,
       last_message_seq: lastMessageSeq,
@@ -200,62 +220,57 @@ export async function runSummarizePending(db, task) {
       message_count: ctx?.message_count ?? null,
       tool_calls: ctx?.tool_calls ?? null,
       transcript_entry_count: transcript.entryCount,
-      transcript_excerpt: transcript.excerpt
+      transcript_excerpt: cleanedResult.cleaned
     });
     return;
   }
 
-  const items = parseLlmJson(llmOutput);
+  const parsedItems = parseLlmJson(llmOutput);
+  const gateCfg = cfg.summarize?.quality_gate ?? {};
+  const gateEnabled = gateCfg.enabled !== false;
+  const items = [];
+
+  for (const item of parsedItems) {
+    if (!gateEnabled) {
+      items.push(item);
+      continue;
+    }
+
+    const verdict = checkQuality(item.content, gateCfg);
+    if (!verdict.pass) {
+      writeAudit(db, 'quality_gate_reject', null, {
+        reason: verdict.reason,
+        content_excerpt: String(item.content ?? '').slice(0, 80)
+      });
+      continue;
+    }
+
+    items.push(item);
+  }
+
   const provider = getProvider(cfg);
   if (provider) {
     try {
-      await provider.load();
+      await provider.load(cfg);
     } catch {}
   }
+
   const insertedIds = [];
   let skippedCount = 0;
 
   for (const item of items) {
-    const gate = evaluateTier1(item.content);
-    if (!gate.ok) {
-      skippedCount += 1;
-      continue;
-    }
-
-    const source = 'auto_inferred';
-    let scope = item.scope === 'global' ? 'global' : 'project';
-    let projectKey = scope === 'global' ? null : (ctx?.project_key ?? null);
-    let memoryType = item.type;
-    let trustScore = getSourceInitialTrust(source);
-    let tags = uniqueTags(item.tags);
-    let decayStatus = 'active';
-    let quarantinedAt = null;
-    const t2 = evaluateTier2(item.content, source, memoryType);
-    const t3 = cfg.security.tier3.enabled ? evaluateTier3(t2, source) : { action: 'allow' };
-    const timestamp = Date.now();
-
-    if (t3.action === 'force_demote') {
-      memoryType = 'episode';
-      scope = 'project';
-      projectKey = ctx?.project_key ?? null;
-      trustScore = Math.min(trustScore, 0.6);
-      tags = uniqueTags([...tags, 'dangerous_command']);
-    }
-
-    if (t3.action === 'quarantine') {
-      decayStatus = 'quarantine';
-      quarantinedAt = timestamp;
-      trustScore = Math.min(trustScore, 0.3);
-      tags = uniqueTags([...tags, 'quarantine_at_write']);
-    }
-
     let contentVec = null;
+    let embeddingBlob = null;
+
     if (provider?.isLoaded()) {
       try {
-        [contentVec] = await provider.embed([item.content]);
+        [contentVec] = await provider.embed([item.content], cfg);
+        embeddingBlob = contentVec ? vecToBlob(contentVec) : null;
       } catch {}
     }
 
+    const scope = item.scope === 'global' ? 'global' : 'project';
+    const projectKey = scope === 'global' ? null : (ctx?.project_key ?? null);
     const duplicate = dedupCheck(db, {
       content: item.content,
       scope,
@@ -267,62 +282,31 @@ export async function runSummarizePending(db, task) {
       continue;
     }
 
-    const result = db.prepare(
-      `INSERT INTO memories (
+    try {
+      const inserted = await insertMemory(db, {
+        cwd: process.cwd(),
+        content: item.content,
         scope,
-        project_key,
-        type,
-        content,
-        pinned,
-        source,
-        trust_score,
-        tags,
-        decay_status,
-        quarantined_at,
-        last_touched_at,
-        created_at,
-        updated_at
-      ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      scope,
-      projectKey,
-      memoryType,
-      item.content,
-      source,
-      trustScore,
-      JSON.stringify(tags),
-      decayStatus,
-      quarantinedAt,
-      timestamp,
-      timestamp,
-      timestamp
-    );
-
-    const memId = Number(result.lastInsertRowid);
-    insertedIds.push(memId);
-
-    if (decayStatus === 'quarantine') {
-      writeAudit(db, 'security_quarantine_in', memId, {
-        reason: 'tier3_at_write',
-        suspicion_score: t2.score,
-        evidence: t2.evidence,
-        source: 'heuristic',
-        pattern_version: cfg.security.scan_patterns_version
+        type: item.type,
+        source: 'auto_inferred',
+        projectKey,
+        tags: uniqueTags(item.tags),
+        embedSync: false,
+        embeddingBlob
       });
+      insertedIds.push(inserted.id);
+    } catch {
+      skippedCount += 1;
     }
   }
 
-  if (insertedIds.length) {
-    rebuildInjectionCache(db, ctx?.project_key ?? null);
-  }
-
-  logAudit(db, 'summarize_pending_applied', {
+  writeAudit(db, 'summarize_pending_applied', null, {
     task_id: task.id,
     session_id: sessionId,
     last_message_seq: lastMessageSeq,
     inserted_count: insertedIds.length,
     skipped_count: skippedCount,
     transcript_entry_count: transcript.entryCount,
-    transcript_excerpt: transcript.excerpt
+    transcript_excerpt: cleanedResult.cleaned
   });
 }

@@ -6,6 +6,13 @@ import path from 'node:path';
 
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-daemon-'));
+const baseConfigPath = path.join(process.env.CCMEM_DATA_ROOT, 'stop-daemon-base-config.json');
+writeFileSync(baseConfigPath, JSON.stringify({
+  summarize: {
+    min_transcript_after_clean: 1
+  }
+}));
+process.env.CCMEM_CONFIG_PATH = baseConfigPath;
 
 const wakePath = path.join(process.env.CCMEM_DATA_ROOT, 'daemon.wake');
 const { touchWakeFile } = await import('../../scripts/daemon/wake.mjs');
@@ -55,6 +62,9 @@ function setTaskTimeoutConfig(taskType, timeoutMs, name) {
   writeFileSync(
     configPath,
     JSON.stringify({
+      summarize: {
+        min_transcript_after_clean: 1
+      },
       llm: {
         claude_p_timeout_per_task: {
           [taskType]: timeoutMs

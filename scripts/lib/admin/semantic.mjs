@@ -16,6 +16,12 @@ function runtimeEnabled(db, cfg) {
   return kv != null ? kv === 'true' : Boolean(cfg.embedding?.enabled);
 }
 
+function activeProviderName(db, cfg) {
+  return db.prepare(`SELECT value FROM config_kv WHERE key = 'embedding.active_provider'`).get()?.value
+    ?? cfg.embedding?.provider
+    ?? 'transformers-local';
+}
+
 function pendingEmbeddings(db) {
   return Number(db.prepare(
     `SELECT COUNT(*) AS n
@@ -40,12 +46,14 @@ function semanticState(db, cfg) {
   const enabled = runtimeEnabled(db, cfg);
   const embedded = embeddedCount(db);
   const pending = pendingEmbeddings(db);
+  const providerName = activeProviderName(db, cfg);
 
   if (!enabled) {
     return {
       status: 'disabled',
       enabled: false,
       loaded: false,
+      provider: providerName,
       model: cfg.embedding?.model ?? transformersLocal.modelId,
       dim: transformersLocal.dim,
       embedded,
@@ -53,11 +61,12 @@ function semanticState(db, cfg) {
     };
   }
 
-  const provider = getProvider(cfg);
+  const provider = getProvider({ embedding: { ...cfg.embedding, enabled: true, provider: providerName } });
   return {
     status: pending > 0 ? 'pending backfill' : embedded > 0 ? 'active' : 'enabled',
     enabled: true,
     loaded: provider?.isLoaded?.() ?? false,
+    provider: providerName,
     model: provider?.modelId ?? cfg.embedding?.model ?? transformersLocal.modelId,
     dim: provider?.dim ?? transformersLocal.dim,
     embedded,
@@ -65,23 +74,39 @@ function semanticState(db, cfg) {
   };
 }
 
-export async function cmdAdminSemantic(db, { verb }) {
+export async function cmdAdminSemantic(db, { verb, provider: requestedProvider = null } = {}) {
   const cfg = loadConfig();
 
   if (verb === 'on') {
-    setConfigValue(db, 'embedding.enabled', 'true');
+    const providerName = requestedProvider ?? cfg.embedding?.provider ?? 'transformers-local';
+    const providerCfg = { embedding: { ...cfg.embedding, enabled: true, provider: providerName } };
+    const currentModel = db.prepare(`SELECT value FROM config_kv WHERE key = 'embedding.active_model'`).get()?.value ?? null;
     _resetProviderCache();
-    const provider = getProvider(loadConfig());
-    await provider.load();
-    writeAudit(db, 'semantic_enabled', null, { model: provider.modelId, dim: provider.dim });
-    return semanticState(db, loadConfig());
+    const provider = getProvider(providerCfg);
+    await provider.load(providerCfg);
+    const newModel = provider.modelId;
+
+    if (currentModel && currentModel !== newModel) {
+      const nullified = db.prepare(`UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL`).run().changes;
+      writeAudit(db, 'embedding_model_switched', null, {
+        from_model: currentModel,
+        to_model: newModel,
+        nullified_count: nullified
+      });
+    }
+
+    setConfigValue(db, 'embedding.enabled', 'true');
+    setConfigValue(db, 'embedding.active_model', newModel);
+    setConfigValue(db, 'embedding.active_provider', providerName);
+    writeAudit(db, 'semantic_enabled', null, { model: newModel, dim: provider.dim, provider: providerName });
+    return semanticState(db, cfg);
   }
 
   if (verb === 'off') {
     setConfigValue(db, 'embedding.enabled', 'false');
     _resetProviderCache();
     writeAudit(db, 'semantic_disabled', null, {});
-    return semanticState(db, loadConfig());
+    return semanticState(db, cfg);
   }
 
   if (verb === 'status') {

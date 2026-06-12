@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 const DEFAULT_CONFIG = {
-  version: '0.7',
+  version: '0.8',
   inject: { max_chars: 4000, max_per_prompt: 6 },
   save: { max_chars_per_memory: 300 },
   embedding: {
@@ -9,7 +9,13 @@ const DEFAULT_CONFIG = {
     provider: 'transformers-local',
     model: 'Xenova/all-MiniLM-L6-v2',
     quantized: true,
-    backfill_batch_size: 50
+    backfill_batch_size: 50,
+    openai_api_key: null,
+    jina_api_key: null,
+    api_timeout_ms: 30000,
+    openai_base_url: null,
+    openai_model: 'text-embedding-3-small',
+    openai_dim: null
   },
   dedup: {
     enabled: true,
@@ -38,6 +44,17 @@ const DEFAULT_CONFIG = {
     }
   },
   recent_injections: { retention_days: 14, max_per_session: 20 },
+  summarize: {
+    min_transcript_after_clean: 200,
+    transcript_cleaner: {
+      enabled: true,
+      rules: null
+    },
+    quality_gate: {
+      enabled: true,
+      min_chars: 15
+    }
+  },
   llm: {
     claude_p_timeout_per_task: {
       summarize_pending: 60000,
@@ -45,7 +62,8 @@ const DEFAULT_CONFIG = {
       weekly_synthesis: 180000,
       security_audit: 180000,
       contradiction_audit: 180000,
-      monthly_meta_synthesis: 180000
+      monthly_meta_synthesis: 180000,
+      contradiction_merge: 60000
     }
   },
   hook_budget_ms: {
@@ -129,9 +147,14 @@ const DEFAULT_CONFIG = {
     min_days_for_tuning: 7
   },
   consolidation: {
-    cluster_threshold: 0.5,
     minBatchSize: 5,
     maxClusterSize: 15,
+    cluster_tight_threshold: 0.75,
+    cluster_loose_threshold: 0.5,
+    stale_check_enabled: true,
+    quality: {
+      cosine_dup_threshold: 0.9
+    },
     monthly: {
       enabled: true,
       min_consolidated: 30
@@ -172,11 +195,19 @@ function mergeConfig(base, override) {
   return structuredClone(override ?? base);
 }
 
+function applyV08Compatibility(config) {
+  const next = structuredClone(config);
+  if (next.consolidation?.cluster_loose_threshold == null && next.consolidation?.cluster_threshold != null) {
+    next.consolidation.cluster_loose_threshold = next.consolidation.cluster_threshold;
+  }
+  return next;
+}
+
 export function loadConfig() {
   const userPath = process.env.CCMEM_CONFIG_PATH;
   if (!userPath || !existsSync(userPath)) {
-    return structuredClone(DEFAULT_CONFIG);
+    return applyV08Compatibility(DEFAULT_CONFIG);
   }
 
-  return mergeConfig(DEFAULT_CONFIG, JSON.parse(readFileSync(userPath, 'utf8')));
+  return applyV08Compatibility(mergeConfig(DEFAULT_CONFIG, JSON.parse(readFileSync(userPath, 'utf8'))));
 }

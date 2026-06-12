@@ -6,6 +6,13 @@ import path from 'node:path';
 
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-loop-'));
+const baseConfigPath = path.join(process.env.CCMEM_DATA_ROOT, 'daemon-loop-base-config.json');
+writeFileSync(baseConfigPath, JSON.stringify({
+  summarize: {
+    min_transcript_after_clean: 1
+  }
+}));
+process.env.CCMEM_CONFIG_PATH = baseConfigPath;
 
 const { getDbPath, listMigrationBackups, openDb } = await import('../../scripts/lib/db.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
@@ -55,6 +62,9 @@ function setRuntimeConfig(name, config) {
 
 function setTaskTimeoutConfig(taskType, timeoutMs, name) {
   return setRuntimeConfig(name, {
+    summarize: {
+      min_transcript_after_clean: 1
+    },
     llm: {
       claude_p_timeout_per_task: {
         [taskType]: timeoutMs

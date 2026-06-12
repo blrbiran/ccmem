@@ -467,7 +467,7 @@ test('cli resurrect --contradictions acknowledges contradictions and keeps memor
   verifyDb.close();
 
   assert.match(output, /indentation guidance conflicts/);
-  assert.match(output, /ccmem: contradictions keep_a=1 keep_b=0 keep_both=0 skipped=0/);
+  assert.match(output, /ccmem: contradictions keep_a=1 keep_b=0 keep_both=0 merged=0 skipped=0/);
   assert.equal(typeof alert.acknowledged_at, 'number');
   assert.equal(alert.acknowledged_action, 'keep_a');
   assert.equal(memB.decay_status, 'archived');

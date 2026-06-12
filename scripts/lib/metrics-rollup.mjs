@@ -164,6 +164,32 @@ export function writeMetricsDailyRollup(db) {
        AND ts >= ? AND ts < ?`
   ).get(dayStartMs, dayEndMs)?.n ?? 0);
 
+  const synthStats = db.prepare(
+    `SELECT
+       COALESCE(SUM(CAST(json_extract(details, '$.synth_proposed') AS INTEGER)), 0) AS proposed,
+       COALESCE(SUM(CAST(json_extract(details, '$.synth_accepted') AS INTEGER)), 0) AS accepted,
+       COALESCE(SUM(CAST(json_extract(details, '$.synth_rejected') AS INTEGER)), 0) AS rejected
+     FROM audit_log
+     WHERE action = 'weekly_synthesis_run'
+       AND ts >= ? AND ts < ?`
+  ).get(dayStartMs, dayEndMs);
+
+  const noiseStats = db.prepare(
+    `SELECT
+       COALESCE(SUM(CAST(json_extract(details, '$.before_chars') AS INTEGER)
+         - CAST(json_extract(details, '$.after_chars') AS INTEGER)), 0) AS stripped
+     FROM audit_log
+     WHERE action = 'transcript_cleaned'
+       AND ts >= ? AND ts < ?`
+  ).get(dayStartMs, dayEndMs);
+
+  const gateRejects = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM audit_log
+     WHERE action = 'quality_gate_reject'
+       AND ts >= ? AND ts < ?`
+  ).get(dayStartMs, dayEndMs)?.n ?? 0);
+
   const memPool = db.prepare(
     `SELECT
        SUM(CASE WHEN decay_status = 'active' AND status = 'active' THEN 1 ELSE 0 END) AS active,
@@ -183,9 +209,11 @@ export function writeMetricsDailyRollup(db) {
       sec_quarantined, sec_alerts_emitted,
       reval_quarantined, reval_flagged, reval_scanned,
       tier15_clusters, vec_backfill_embedded, contra_detected,
+      synth_proposed, synth_accepted, synth_rejected,
+      input_noise_stripped_chars, quality_gate_rejected,
       mems_active, mems_probation, mems_quarantine, mems_archived,
       written_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     dayKey,
     hookStats.session_start?.p50 ?? null,
@@ -206,6 +234,11 @@ export function writeMetricsDailyRollup(db) {
     tier15Clusters,
     vecBackfillEmbedded,
     contraDetected,
+    Number(synthStats?.proposed ?? 0),
+    Number(synthStats?.accepted ?? 0),
+    Number(synthStats?.rejected ?? 0),
+    Number(noiseStats?.stripped ?? 0),
+    gateRejects,
     Number(memPool.active ?? 0),
     Number(memPool.probation ?? 0),
     Number(memPool.quarantine ?? 0),

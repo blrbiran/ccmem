@@ -67,7 +67,7 @@ function seedAliveDaemon(db, now = Date.now()) {
   ).run(2468, 'diagnose-host', now - 4000, now - 600);
   db.prepare(
     `INSERT INTO config_kv (key, value, set_at)
-     VALUES ('daemon_startup_schema_version', '8', ?)
+     VALUES ('daemon_startup_schema_version', '10', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
   ).run(now - 4000);
 }
@@ -234,8 +234,8 @@ test('cmdAdminDiagnose returns db health, daemon status, and fallback project ke
   const result = await cmdAdminDiagnose(db, { cwd: diagnoseCwd });
 
   assert.equal(result.db.health, 'ok');
-  assert.equal(result.db.schema_version, 8);
-  assert.equal(result.daemon.startup_schema_version, 8);
+  assert.equal(result.db.schema_version, 10);
+  assert.equal(result.daemon.startup_schema_version, 10);
   assert.equal(typeof result.daemon.uptime_sec, 'number');
   assert.equal(result.daemon.alive, true);
   assert.equal(result.daemon.pid, 2468);
@@ -263,7 +263,7 @@ test('cmdAdminDiagnose returns migration history when requested', async () => {
     applied_at: result.migrations[0].applied_at,
     applied_by: 'ccmem-cli'
   });
-  assert.equal(result.migrations.at(-1).to_version, 8);
+  assert.equal(result.migrations.at(-1).to_version, 10);
   db.close();
 });
 
@@ -324,9 +324,9 @@ test('cli admin diagnose prints default diagnostics', () => {
     encoding: 'utf8'
   });
 
-  assert.match(output, /ccmem: db ok schema=8/);
+  assert.match(output, /ccmem: db ok schema=10/);
   assert.match(output, /ccmem: daemon alive pid=2468 host=diagnose-host/);
-  assert.match(output, /startup_schema=8/);
+  assert.match(output, /startup_schema=10/);
   assert.match(output, /uptime_sec=\d+/);
   assert.match(output, /ccmem: project_key path:/);
   assert.match(output, /ccmem: tier2 available/);

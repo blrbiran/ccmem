@@ -163,7 +163,7 @@ function legacySubstringSearch(db, prompt, projectKey, limit) {
   }
 
   const candidates = db.prepare(
-    `SELECT id, type, content, scope, pinned, last_touched_at
+    `SELECT id, type, content, scope, pinned, trust_score, last_touched_at
      FROM memories
      WHERE (scope = 'global' OR project_key = ?)
        AND status = 'active'
@@ -172,10 +172,18 @@ function legacySubstringSearch(db, prompt, projectKey, limit) {
   ).all(projectKey);
 
   return candidates
-    .filter((row) => {
+    .map((row) => {
       const content = String(row.content ?? '').toLowerCase();
-      return tokens.some((token) => content.includes(token));
+      const tokenHits = tokens.reduce((sum, token) => sum + (content.includes(token) ? 1 : 0), 0);
+      return { ...row, tokenHits };
     })
+    .filter((row) => row.tokenHits > 0)
+    .sort((a, b) =>
+      (Number(b.pinned ?? 0) - Number(a.pinned ?? 0))
+      || (Number(b.tokenHits ?? 0) - Number(a.tokenHits ?? 0))
+      || (Number(b.trust_score ?? 0) - Number(a.trust_score ?? 0))
+      || (Number(b.last_touched_at ?? 0) - Number(a.last_touched_at ?? 0))
+    )
     .slice(0, limit);
 }
 
@@ -226,8 +234,14 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
   }
 
   if (!useEmbedding) {
+    const fallbackRows = legacySubstringSearch(db, promptText, projectKey, limit);
     return {
-      rows: legacySubstringSearch(db, promptText, projectKey, limit).map((row) => renderRow(row)),
+      rows: fallbackRows.map((row) => renderRow(row, {
+        fused: Number(row.tokenHits ?? 0),
+        fts: 0,
+        jaccard: Number(row.tokenHits ?? 0),
+        semantic: 0
+      })),
       queryVec: null,
       cosineContribution: null
     };

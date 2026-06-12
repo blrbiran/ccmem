@@ -40,8 +40,8 @@ function printHelp() {
     '  audit show <id>\n' +
     '  admin daemon <status|start|stop|restart|install|uninstall>\n' +
     '  admin cron <list|run>\n' +
-    '  admin semantic <on|off|status>\n' +
-    '  admin diagnose [--migrations|--key|--sessions|--security|--tuning|--metrics|--restart-history]\n' +
+    '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina>]\n' +
+    '  admin diagnose [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history]\n' +
     '  admin alias <old-project-key> <new-project-key>\n' +
     '  stats [--json|--buckets]\n' +
     '  promote <id> [--global]\n' +
@@ -562,9 +562,9 @@ try {
       }
     }
   } else if (verb === 'admin' && args[0] === 'semantic' && args[1]) {
-    const result = await cmdAdminSemantic(getDb(), { verb: args[1] });
+    const result = await cmdAdminSemantic(getDb(), { verb: args[1], provider: getOptionValue('--provider') });
     process.stdout.write(
-      `ccmem: semantic ${result.status} enabled=${result.enabled} loaded=${result.loaded} embedded=${result.embedded} pending=${result.pending} model=${result.model} dim=${result.dim}\n`
+      `ccmem: semantic ${result.status} enabled=${result.enabled} loaded=${result.loaded} provider=${result.provider} embedded=${result.embedded} pending=${result.pending} model=${result.model} dim=${result.dim}\n`
     );
   } else if (verb === 'admin' && args[0] === 'alias' && args[1] && args[2]) {
     const readLine = createStdinLineReader();
@@ -598,6 +598,7 @@ try {
       tuning: args.includes('--tuning'),
       metrics: args.includes('--metrics'),
       restartHistory: args.includes('--restart-history'),
+      synthesis: args.includes('--synthesis'),
       days: Number(getOptionValue('--days') ?? 14)
     });
 
@@ -648,6 +649,23 @@ try {
       printTuning(result);
     } else if (args.includes('--metrics')) {
       printMetrics(result);
+    } else if (args.includes('--synthesis')) {
+      const syn = result.synthesis;
+      process.stdout.write(`Synthesis pipeline (last ${syn.days} days, ${syn.weekly_runs} weekly runs)\n\n`);
+      process.stdout.write('  Input quality\n');
+      process.stdout.write(`    transcript cleaner:  avg ${Math.round(syn.avg_stripped_pct)}% chars stripped (${syn.cleaner_runs} runs)\n`);
+      process.stdout.write(`    quality gate:        ${syn.gate_total} rejected / ${syn.proposed + syn.gate_total} proposed (${(syn.proposed + syn.gate_total) > 0 ? Math.round((syn.gate_total / (syn.proposed + syn.gate_total)) * 100) : 0}% reject rate)\n`);
+      if (syn.gate_reasons.length > 0) {
+        process.stdout.write(`    reject reasons:      ${syn.gate_reasons.map((row) => `${row.reason}=${row.count}`).join('  ')}\n`);
+      }
+      process.stdout.write('\n  Weekly synthesis\n');
+      process.stdout.write(`    LLM calls:           avg ${Math.round(syn.avg_llm_calls * 10) / 10} / run\n`);
+      process.stdout.write(`    proposed:            ${syn.proposed} total (avg ${syn.weekly_runs > 0 ? (syn.proposed / syn.weekly_runs).toFixed(1) : '0.0'} / run)\n`);
+      process.stdout.write(`    accepted:            ${syn.accepted} (${syn.proposed > 0 ? Math.round((syn.accepted / syn.proposed) * 100) : 0}% acceptance)\n`);
+      process.stdout.write(`    rejected:            ${syn.rejected}\n`);
+      process.stdout.write('\n  Output quality\n');
+      process.stdout.write(`    consolidated active: ${syn.consolidated_active}\n`);
+      process.stdout.write(`    superseded:          ${syn.consolidated_superseded}\n`);
     } else if (args.includes('--restart-history')) {
       process.stdout.write(`ccmem: restart_history ${result.restart_history.length}\n`);
       for (const row of result.restart_history) {
@@ -718,6 +736,11 @@ try {
       process.stdout.write(
         `Feedback : helpful ${result.feedback.helpful} / unhelpful ${result.feedback.unhelpful} / unknown ${result.feedback.unknown} (last 14d)\n`
       );
+      if (result.synthesis.consolidated_active > 0) {
+        process.stdout.write(
+          `Synthesis: ${result.synthesis.consolidated_active} consolidated active (${result.synthesis.acceptance_rate}% acceptance rate, last 30d)\n`
+        );
+      }
       if (!result.tuning.insufficient && result.tuning.suggestion_count > 0) {
         process.stdout.write(
           `Tuning  : ${result.tuning.suggestion_count} suggestions available — run /ccmem:admin diagnose --tuning\n`
@@ -769,6 +792,26 @@ try {
       alerts: args.includes('--alerts'),
       revalidation: args.includes('--revalidation'),
       contradictions: args.includes('--contradictions'),
+      merge: async (_row, outcome) => {
+        process.stdout.write('  merging via LLM...\n');
+        if (!outcome?.merge_possible) {
+          if (outcome?.error) {
+            process.stderr.write(`ccmem: merge failed (${outcome.error}) — try a/b/B instead\n`);
+          } else {
+            process.stdout.write(`  LLM says merge not possible: ${outcome?.reason ?? 'unknown'}\n`);
+            process.stdout.write('  Falling back to a/b/B/s menu.\n');
+          }
+          return { action: 'skip' };
+        }
+        process.stdout.write(`  Merged: "${outcome.merged_content}"\n`);
+        process.stdout.write('  Accept? [y/N]: ');
+        const confirm = readLine().trim().toLowerCase();
+        if (confirm !== 'y') {
+          process.stdout.write('  cancelled — alert not acknowledged\n');
+          return { action: 'skip' };
+        }
+        return { action: 'merged' };
+      },
       decide: (row) => {
         if (args.includes('--alerts')) {
           process.stdout.write(
@@ -807,7 +850,7 @@ try {
             `  B [m${row.mem_id_b}] ${row.type_b} trust=${Number(row.trust_b ?? 0).toFixed(2)}\n` +
             `    ${row.content_b ?? ''}\n` +
             `${reason ? `  reason: ${reason}\n` : ''}` +
-            '  [a]keep-A / [b]keep-B / [B]keep-both / [s]kip: '
+            '  [a]keep-A / [b]keep-B / [B]keep-both / [m]merge / [s]kip: '
           );
           return readLine();
         }
@@ -863,7 +906,7 @@ try {
         return acc;
       }, {});
       process.stdout.write(
-        `ccmem: contradictions keep_a=${counts.keep_a ?? 0} keep_b=${counts.keep_b ?? 0} keep_both=${counts.keep_both ?? 0} skipped=${counts.skip ?? 0}\n`
+        `ccmem: contradictions keep_a=${counts.keep_a ?? 0} keep_b=${counts.keep_b ?? 0} keep_both=${counts.keep_both ?? 0} merged=${counts.merged ?? 0} skipped=${counts.skip ?? 0}\n`
       );
     } else {
       const kept = result.items.filter((item) => item.action === 'keep').length;

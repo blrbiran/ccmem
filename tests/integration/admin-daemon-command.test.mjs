@@ -219,7 +219,7 @@ function seedAliveDaemon(db, now = Date.now()) {
   ).run(4321, 'test-host', now - 5000, now - 800);
   db.prepare(
     `INSERT INTO config_kv (key, value, set_at)
-     VALUES ('daemon_startup_schema_version', '8', ?)
+     VALUES ('daemon_startup_schema_version', '10', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
   ).run(now - 5000);
 
@@ -330,7 +330,7 @@ test('cmdAdminDaemon returns live daemon status and running task', async () => {
   assert.equal(result.alive, true);
   assert.equal(result.pid, 4321);
   assert.equal(result.hostname, 'test-host');
-  assert.equal(result.startup_schema_version, 8);
+  assert.equal(result.startup_schema_version, 10);
   assert.equal(typeof result.uptime_sec, 'number');
   assert.equal(result.running_task.type, 'summarize_pending');
   assert.equal(typeof result.heartbeat_age_ms, 'number');
@@ -469,7 +469,7 @@ test('cli admin daemon status prints live daemon summary', () => {
 
   assert.match(output, /ccmem: daemon alive pid=4321/);
   assert.match(output, /host=test-host/);
-  assert.match(output, /startup_schema=8/);
+  assert.match(output, /startup_schema=10/);
   assert.match(output, /uptime_sec=\d+/);
   assert.match(output, /running=summarize_pending#\d+/);
 });
@@ -488,7 +488,7 @@ test('bin ccmem suppresses sqlite experimental warning for daemon status', () =>
 
   assert.doesNotMatch(output, /ExperimentalWarning/);
   assert.match(output, /ccmem: daemon alive pid=4321/);
-  assert.match(output, /startup_schema=8/);
+  assert.match(output, /startup_schema=10/);
   assert.match(output, /running=summarize_pending#\d+/);
 });
 

@@ -216,11 +216,18 @@ export async function runTask(db, task, dispatch, { afterTask } = {}) {
 
   try {
     await dispatch(db, task);
+    const finishedAt = Date.now();
     db.prepare(
       `UPDATE tasks
-       SET status = 'completed', finished_at = ?, error_excerpt = NULL
+       SET status = 'completed',
+           finished_at = ?,
+           duration_ms = CASE
+             WHEN started_at IS NOT NULL AND ? >= started_at THEN ? - started_at
+             ELSE 0
+           END,
+           error_excerpt = NULL
        WHERE id = ? AND status = 'running'`
-    ).run(Date.now(), task.id);
+    ).run(finishedAt, finishedAt, finishedAt, task.id);
   } catch (error) {
     const finishedAt = Date.now();
     const message = errorMessage(error).slice(0, ERROR_EXCERPT_MAX);
@@ -228,9 +235,15 @@ export async function runTask(db, task, dispatch, { afterTask } = {}) {
 
     db.prepare(
       `UPDATE tasks
-       SET status = 'failed', finished_at = ?, error_excerpt = ?
+       SET status = 'failed',
+           finished_at = ?,
+           duration_ms = CASE
+             WHEN started_at IS NOT NULL AND ? >= started_at THEN ? - started_at
+             ELSE 0
+           END,
+           error_excerpt = ?
        WHERE id = ?`
-    ).run(finishedAt, message, task.id);
+    ).run(finishedAt, finishedAt, finishedAt, message, task.id);
 
     scheduleRetry(db, task, error, currentAttempt);
   } finally {

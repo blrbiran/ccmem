@@ -165,6 +165,21 @@ export async function cmdStats(db, { buckets = false } = {}) {
   ).get(pendingSunsetCutoff);
   const tuning = getTuningDiagnostics(db, cfg);
   const semantic = getSemanticStats(db, cfg);
+  const consolidatedActive = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE type = 'consolidated' AND status = 'active'`
+  ).get()?.n ?? 0);
+  const synthesisAgg = db.prepare(
+    `SELECT
+       COALESCE(SUM(CAST(json_extract(details, '$.synth_accepted') AS INTEGER)), 0) AS accepted,
+       COALESCE(SUM(CAST(json_extract(details, '$.synth_proposed') AS INTEGER)), 0) AS proposed
+     FROM audit_log
+     WHERE action = 'weekly_synthesis_run' AND ts > ?`
+  ).get(now - (30 * 86400000));
+  const synthesisRate = Number(synthesisAgg?.proposed ?? 0) > 0
+    ? Math.round((Number(synthesisAgg.accepted ?? 0) / Number(synthesisAgg.proposed ?? 0)) * 100)
+    : 0;
 
   return {
     tier1: { available: true },
@@ -204,6 +219,12 @@ export async function cmdStats(db, { buckets = false } = {}) {
       suggestion_count: tuning.suggestion_count,
       days_available: tuning.days_available,
       min_days: tuning.min_days
+    },
+    synthesis: {
+      consolidated_active: consolidatedActive,
+      accepted_30d: Number(synthesisAgg?.accepted ?? 0),
+      proposed_30d: Number(synthesisAgg?.proposed ?? 0),
+      acceptance_rate: synthesisRate
     },
     buckets: buckets
       ? Object.fromEntries(bucketRows.map((row) => [row.decay_status, Number(row.n ?? 0)]))

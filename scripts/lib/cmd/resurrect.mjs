@@ -3,6 +3,10 @@ import { resolveProjectKey } from '../project-key.mjs';
 import { writeAudit } from '../audit.mjs';
 import { rebuildInjectionCache } from '../injection-cache.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
+import { callClaudeP } from '../../daemon/claude-p.mjs';
+import { insertMemory } from './save.mjs';
+import { buildMergePrompt, MERGE_SCHEMA } from '../llm-prompts/contradiction-merge.mjs';
+import { parseRawLlmOutput } from '../llm-parse.mjs';
 
 function clampLimit(value, fallback = 10) {
   const n = Number(value ?? fallback);
@@ -78,6 +82,10 @@ function normalizeContradictionDecision(input) {
     return 'keep_both';
   }
 
+  if (value === 'm') {
+    return 'merged';
+  }
+
   return 'skip';
 }
 
@@ -93,7 +101,96 @@ function acknowledgeContradiction(db, alertId, action, memIdA) {
   });
 }
 
-function resurrectContradictions(db, { cwd, limit, decide }) {
+async function mergeContradictionPair(db, row, merge) {
+  if (typeof merge !== 'function') {
+    return { action: 'skip', touched: [] };
+  }
+
+  const memA = {
+    id: row.mem_id_a,
+    scope: row.mem_a_scope,
+    project_key: row.mem_a_project_key ?? null,
+    type: row.type_a,
+    content: row.content_a,
+    trust_score: row.trust_a
+  };
+  const memB = {
+    id: row.mem_id_b,
+    scope: row.mem_b_scope,
+    project_key: row.mem_b_project_key ?? null,
+    type: row.type_b,
+    content: row.content_b,
+    trust_score: row.trust_b
+  };
+
+  let outcome;
+  try {
+    const raw = await callClaudeP(buildMergePrompt(memA, memB), {
+      taskType: 'contradiction_merge',
+      jsonSchema: MERGE_SCHEMA
+    });
+    const merged = parseRawLlmOutput(raw) ?? {};
+    if (!merged.merge_possible) {
+      outcome = await merge(row, { merge_possible: false, reason: String(merged.reason ?? '') });
+      return { action: outcome?.action ?? 'skip', touched: [] };
+    }
+
+    const mergedContent = String(merged.merged_content ?? '').slice(0, 300);
+    outcome = await merge(row, {
+      merge_possible: true,
+      merged_content: mergedContent
+    });
+    if (outcome?.action !== 'merged') {
+      return { action: outcome?.action ?? 'skip', touched: [] };
+    }
+
+    const inserted = await insertMemory(db, {
+      cwd: process.cwd(),
+      content: mergedContent,
+      type: 'consolidated',
+      scope: memA.scope,
+      projectKey: memA.project_key,
+      source: 'cron_consolidated',
+      trust: Math.max(Number(memA.trust_score ?? 0), Number(memB.trust_score ?? 0)),
+      consolidationDepth: 0,
+      parentIds: [memA.id, memB.id],
+      lastTouchedAt: Date.now(),
+      embedSync: false
+    });
+
+    const now = Date.now();
+    db.prepare(
+      `UPDATE memories
+       SET status = 'superseded', updated_at = ?
+       WHERE id IN (?, ?)`
+    ).run(now, memA.id, memB.id);
+    db.prepare(
+      `UPDATE contradiction_alerts
+       SET acknowledged_at = ?, acknowledged_action = 'merged'
+       WHERE id = ?`
+    ).run(now, row.id);
+    writeAudit(db, 'contradiction_merged', inserted.id, {
+      alert_id: row.id,
+      source_ids: [memA.id, memB.id],
+      merged_content_excerpt: mergedContent.slice(0, 80)
+    });
+    return {
+      action: 'merged',
+      touched: [
+        { scope: memA.scope, project_key: memA.project_key ?? null },
+        { scope: memB.scope, project_key: memB.project_key ?? null }
+      ]
+    };
+  } catch (error) {
+    outcome = await merge(row, {
+      merge_possible: false,
+      error: String(error?.message ?? error)
+    });
+    return { action: outcome?.action ?? 'skip', touched: [] };
+  }
+}
+
+async function resurrectContradictions(db, { cwd, limit, decide, merge }) {
   const projectKey = resolveProjectKey(cwd);
   const rows = db.prepare(
     `SELECT a.id,
@@ -126,7 +223,7 @@ function resurrectContradictions(db, { cwd, limit, decide }) {
 
   for (const row of rows) {
     const now = Date.now();
-    const action = normalizeContradictionDecision(decide(row));
+    let action = normalizeContradictionDecision(decide(row));
 
     if (action === 'keep_a') {
       db.prepare(
@@ -146,6 +243,12 @@ function resurrectContradictions(db, { cwd, limit, decide }) {
       acknowledgeContradiction(db, row.id, action, row.mem_id_a);
     } else if (action === 'keep_both') {
       acknowledgeContradiction(db, row.id, action, row.mem_id_a);
+    } else if (action === 'merged') {
+      const outcome = await mergeContradictionPair(db, row, merge);
+      action = outcome?.action ?? 'skip';
+      if (Array.isArray(outcome?.touched)) {
+        touched.push(...outcome.touched);
+      }
     }
 
     items.push({
@@ -499,6 +602,7 @@ export async function cmdResurrect(db, {
   bottom = 10,
   tag = null,
   decide = () => 's',
+  merge = null,
   quarantined = false,
   alerts = false,
   contradictions = false,
@@ -524,7 +628,7 @@ export async function cmdResurrect(db, {
   if (contradictions) {
     return {
       tier15,
-      ...resurrectContradictions(db, { cwd, limit: limit ?? bottom, decide })
+      ...await resurrectContradictions(db, { cwd, limit: limit ?? bottom, decide, merge })
     };
   }
 

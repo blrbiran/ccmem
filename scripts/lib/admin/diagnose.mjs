@@ -654,6 +654,61 @@ function averageField(rows, key) {
   return average(rows.map((row) => row[key]));
 }
 
+export function getSynthesisDiagnostics(db, { days = 30 } = {}) {
+  const clampedDays = Math.max(1, Math.min(90, Math.trunc(Number(days) || 30)));
+  const since = Date.now() - (clampedDays * 86400000);
+  const cleanStats = db.prepare(
+    `SELECT COUNT(*) AS runs,
+            COALESCE(AVG(CAST(json_extract(details, '$.stripped_pct') AS REAL)), 0) AS avg_pct
+     FROM audit_log
+     WHERE action = 'transcript_cleaned' AND ts > ?`
+  ).get(since);
+  const gateStats = db.prepare(
+    `SELECT json_extract(details, '$.reason') AS reason, COUNT(*) AS n
+     FROM audit_log
+     WHERE action = 'quality_gate_reject' AND ts > ?
+     GROUP BY reason`
+  ).all(since);
+  const weeklyRuns = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM audit_log
+     WHERE action = 'weekly_synthesis_run' AND ts > ?`
+  ).get(since)?.n ?? 0);
+  const synthAgg = db.prepare(
+    `SELECT
+       COALESCE(SUM(CAST(json_extract(details, '$.synth_proposed') AS INTEGER)), 0) AS proposed,
+       COALESCE(SUM(CAST(json_extract(details, '$.synth_accepted') AS INTEGER)), 0) AS accepted,
+       COALESCE(SUM(CAST(json_extract(details, '$.synth_rejected') AS INTEGER)), 0) AS rejected,
+       COALESCE(AVG(CAST(json_extract(details, '$.llm_calls') AS INTEGER)), 0) AS avg_llm
+     FROM audit_log
+     WHERE action = 'weekly_synthesis_run' AND ts > ?`
+  ).get(since);
+  const consolidated = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE type = 'consolidated' AND status = 'active'`
+  ).get()?.n ?? 0);
+  const superseded = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE type = 'consolidated' AND status = 'superseded'`
+  ).get()?.n ?? 0);
+  return {
+    days: clampedDays,
+    cleaner_runs: Number(cleanStats?.runs ?? 0),
+    avg_stripped_pct: Number(cleanStats?.avg_pct ?? 0),
+    gate_total: gateStats.reduce((sum, row) => sum + Number(row.n ?? 0), 0),
+    gate_reasons: gateStats.map((row) => ({ reason: row.reason ?? 'unknown', count: Number(row.n ?? 0) })),
+    weekly_runs: weeklyRuns,
+    proposed: Number(synthAgg?.proposed ?? 0),
+    accepted: Number(synthAgg?.accepted ?? 0),
+    rejected: Number(synthAgg?.rejected ?? 0),
+    avg_llm_calls: Number(synthAgg?.avg_llm ?? 0),
+    consolidated_active: consolidated,
+    consolidated_superseded: superseded
+  };
+}
+
 function buildHookMetric(currentRows, priorRows, keyPrefix, budget) {
   const p50 = averageField(currentRows, `${keyPrefix}_p50`);
   const p95 = averageField(currentRows, `${keyPrefix}_p95`);
@@ -808,11 +863,12 @@ export async function cmdAdminDiagnose(
     security = false,
     tuning = false,
     metrics = false,
+    synthesis = false,
     restartHistory = false,
     days = 14
   } = {}
 ) {
-  if (tuning || metrics) {
+  if (tuning || metrics || synthesis) {
     try {
       maybeRunTier15(db);
     } catch {}
@@ -843,6 +899,7 @@ export async function cmdAdminDiagnose(
   const cfg = loadConfig();
   const tuningDiagnostics = tuning ? getTuningDiagnostics(db, cfg) : null;
   const metricsDiagnostics = metrics ? getMetricsDiagnostics(db, { days, cfg }) : null;
+  const synthesisDiagnostics = synthesis ? getSynthesisDiagnostics(db, { days: 30 }) : null;
 
   if (tuningDiagnostics && !tuningDiagnostics.insufficient) {
     tuningDiagnostics.audit_id = writeAudit(db, 'tuning_suggestion_emitted', null, {
@@ -878,6 +935,7 @@ export async function cmdAdminDiagnose(
     security: security ? loadSecurityDiagnostics(db) : null,
     tuning: tuningDiagnostics,
     metrics: metricsDiagnostics,
+    synthesis: synthesisDiagnostics,
     restart_history: restartHistory ? loadRestartHistory(db) : null,
     migrations: migrations
       ? migrationRows.map((row) => ({

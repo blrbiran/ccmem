@@ -17,9 +17,15 @@ export function tryClaimLease(db, type, dateKey, ranBy) {
 }
 
 export function markLeaseComplete(db, type, dateKey) {
+  const now = Date.now();
   db.prepare(
     `UPDATE task_runs
-     SET status = 'completed', completed_at = ?
+     SET status = 'completed',
+         completed_at = ?,
+         duration_ms = CASE
+           WHEN started_at IS NOT NULL AND ? >= started_at THEN ? - started_at
+           ELSE 0
+         END
      WHERE type = ? AND date_key = ? AND status = 'running'`
-  ).run(Date.now(), type, dateKey);
+  ).run(now, now, now, type, dateKey);
 }

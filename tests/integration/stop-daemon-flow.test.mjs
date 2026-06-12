@@ -1071,16 +1071,16 @@ test('stop hook wake re-enqueues the same seq after a completed bridge run and l
     ['completed', 2],
     ['completed', 2]
   ]);
-  assert.equal(memories.length, 2);
+  assert.equal(memories.length, 1);
   for (const memory of memories) {
     assert.equal(memory.source, 'auto_inferred');
     assert.deepEqual(JSON.parse(memory.tags), ['stop-bridge']);
   }
   assert.equal(audits.length, 2);
+  assert.deepEqual(audits.map((audit) => JSON.parse(audit.details).inserted_count), [1, 0]);
   for (const audit of audits) {
     const details = JSON.parse(audit.details);
     assert.equal(details.last_message_seq, 2);
-    assert.equal(details.inserted_count, 1);
   }
 
   db.close();

@@ -1,5 +1,7 @@
 import { callClaudeP } from '../claude-p.mjs';
 import { writeAudit } from '../../lib/audit.mjs';
+import { dedupCheck } from '../../lib/dedup.mjs';
+import { getProvider } from '../../lib/embedding/provider.mjs';
 import { rebuildInjectionCache } from '../../lib/injection-cache.mjs';
 import { parseLlmJson } from '../../lib/llm-parse.mjs';
 import { evaluateTier1, evaluateTier2, evaluateTier3 } from '../../lib/threat-scan.mjs';
@@ -68,6 +70,7 @@ function buildSummarizePrompt(transcript) {
     'You are a memory extraction assistant.',
     'Extract durable cross-session memories as JSON.',
     'Return an array or an object with a synthesized array.',
+    'Do NOT extract implementation churn, test-only results, commit info, version bumps, or one-off debugging notes.',
     '',
     transcript
   ].join('\n');
@@ -203,6 +206,12 @@ export async function runSummarizePending(db, task) {
   }
 
   const items = parseLlmJson(llmOutput);
+  const provider = getProvider(cfg);
+  if (provider) {
+    try {
+      await provider.load();
+    } catch {}
+  }
   const insertedIds = [];
   let skippedCount = 0;
 
@@ -238,6 +247,24 @@ export async function runSummarizePending(db, task) {
       quarantinedAt = timestamp;
       trustScore = Math.min(trustScore, 0.3);
       tags = uniqueTags([...tags, 'quarantine_at_write']);
+    }
+
+    let contentVec = null;
+    if (provider?.isLoaded()) {
+      try {
+        [contentVec] = await provider.embed([item.content]);
+      } catch {}
+    }
+
+    const duplicate = dedupCheck(db, {
+      content: item.content,
+      scope,
+      projectKey,
+      contentVec
+    }, cfg);
+    if (duplicate.duplicate) {
+      skippedCount += 1;
+      continue;
     }
 
     const result = db.prepare(

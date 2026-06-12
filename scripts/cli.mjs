@@ -280,6 +280,29 @@ function formatMinutes(ms) {
   return (Number(ms ?? 0) / 60000).toFixed(1).replace(/\.0$/, '.0');
 }
 
+function formatLocalTimestamp(ts) {
+  if (!ts) {
+    return 'unknown';
+  }
+
+  const date = new Date(ts);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  const sec = String(date.getSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}:${sec}`;
+}
+
+function formatDurationSeconds(startedAt, completedAt) {
+  if (!startedAt || !completedAt || completedAt < startedAt) {
+    return 'unknown';
+  }
+
+  return String(Math.round((completedAt - startedAt) / 1000));
+}
+
 function printTuning(result) {
   const tuning = result.tuning;
 
@@ -499,7 +522,9 @@ try {
         process.stdout.write(`ccmem: cron history ${result.type}\n`);
 
         for (const row of result.history) {
-          process.stdout.write(`${row.status}@${row.date_key} by=${row.ran_by}\n`);
+          process.stdout.write(
+            `${row.status}@${row.date_key} by=${row.ran_by} at=${formatLocalTimestamp(row.completed_at ?? row.started_at)} duration_s=${formatDurationSeconds(row.started_at, row.completed_at)}\n`
+          );
         }
       } catch (error) {
         if (error instanceof Error && /unsupported .*cron task:/.test(error.message)) {
@@ -515,7 +540,9 @@ try {
 
       for (const item of result.items) {
         const last = item.last_run ? `${item.last_run.status}@${item.last_run.date_key}` : 'none';
-        process.stdout.write(`${item.type} queued=${item.queued} last=${last}\n`);
+        const at = item.last_run ? formatLocalTimestamp(item.last_run.completed_at ?? item.last_run.started_at) : 'unknown';
+        const duration = item.last_run ? formatDurationSeconds(item.last_run.started_at, item.last_run.completed_at) : 'unknown';
+        process.stdout.write(`${item.type} queued=${item.queued} last=${last} at=${at} duration_s=${duration}\n`);
       }
     }
   } else if (verb === 'admin' && args[0] === 'cron' && args[1] === 'run' && args[2]) {

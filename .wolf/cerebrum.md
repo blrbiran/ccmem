@@ -20,6 +20,7 @@
 - **Hook / daemon boundary**: hooks are limited to synchronous SQLite I/O and JSON output. Any LLM call, spawn, or network work belongs in the daemon.
 - **LLM-visible command output**: Claude Code slash-command stdout and stderr both enter model context. Metadata should go to audit/state, not raw terminal output.
 - **Plugin runtime split**: slash commands do not inherit `CLAUDE_PLUGIN_ROOT`; slash commands should invoke the PATH `ccmem` CLI, while hooks should use `${CLAUDE_PLUGIN_ROOT}`.
+- **Hook runtime resolution**: Claude Code hook processes may resolve `node` from a different non-interactive PATH than the user's shell. Bare `node` inside `hooks/hooks.json` is fragile for sqlite support; prefer a verified absolute node path or generated hook commands.
 - **Local verification runtime**: this repo's sqlite-dependent tests and scripts should use `/usr/local/bin/node`, not the default PATH `node`.
 - **SQLite optional-module discipline**: FTS5 availability is a runtime capability, not a binary-path heuristic. Core open/migration/retrieval paths must capability-probe and degrade gracefully when FTS virtual tables are unavailable.
 - **Schema / code consistency**: every table or column referenced by code must exist explicitly in migrations/schema docs; schema drift is a recurring failure mode.

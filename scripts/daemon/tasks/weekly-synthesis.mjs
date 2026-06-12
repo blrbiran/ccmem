@@ -509,7 +509,7 @@ export async function runWeeklySynthesis(db, task) {
     }
   }
 
-  if (!hadClusterWork && shouldUseClaudeBridge(payload)) {
+  if (!hadClusterWork && process.env.CCMEM_TEST_MODE === '1' && shouldUseClaudeBridge(payload)) {
     const raw = typeof payload.llm_output === 'string'
       ? payload.llm_output
       : await callClaudeP(buildSynthesisPromptV2([], []), {

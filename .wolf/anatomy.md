@@ -1,6 +1,6 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-12T16:04:25.044Z
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-12T16:28:41.087Z
 > Files: 175 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
@@ -128,7 +128,7 @@
 - `security-audit.mjs` — Exports selectAuditCandidates, runSecurityAudit (~2174 tok)
 - `summarize-pending.mjs` — Exports runSummarizePending (~2400 tok)
 - `vec-backfill.mjs` — Exports pendingEmbeddings, runVecBackfill (~623 tok)
-- `weekly-synthesis.mjs` — API routes: GET (1 endpoints) (~4605 tok)
+- `weekly-synthesis.mjs` — API routes: GET (1 endpoints) (~4616 tok)
 
 ## scripts/handlers/
 
@@ -168,7 +168,7 @@
 ## scripts/lib/admin/
 
 - `alias.mjs` — Exports cmdAdminAlias (~346 tok)
-- `cron.mjs` — Exports cmdAdminCron (~2357 tok)
+- `cron.mjs` — Exports cmdAdminCron (~2404 tok)
 - `daemon.mjs` — Exports renderPlist, maybeRespawnContainerFallback (~5211 tok)
 - `diagnose.mjs` — SESSION_LIMIT: firstValue, parseMemIds, parseDetails + 17 more (~8314 tok)
 - `semantic.mjs` — Exports cmdAdminSemantic (~1060 tok)

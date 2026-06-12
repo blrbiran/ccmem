@@ -63,6 +63,7 @@ function loadLatestRunAudit(db, taskType) {
   if (!action) {
     return null;
   }
+
   const row = db.prepare(
     `SELECT ts, details
      FROM audit_log
@@ -73,270 +74,13 @@ function loadLatestRunAudit(db, taskType) {
   if (!row) {
     return null;
   }
-  const details = parseDetails(row.details);
+
   return {
     action,
     ts: row.ts,
-    summary: summarizeAudit(taskType, details)
+    summary: summarizeAudit(taskType, parseDetails(row.details))
   };
 }
-
-function loadVerboseAudits(db) {
-  return new Map(TRACKED_TYPES.map((type) => [type, loadLatestRunAudit(db, type)]));
-}
-
-function statusLabel(row) {
-  return row ? normalizeStatus(row.status) : null;
-}
-
-function withDuration(row) {
-  return row ? { ...row, status: normalizeStatus(row.status) } : null;
-}
-
-function withVerboseItem(item, verboseByType) {
-  return {
-    ...item,
-    last_run: withDuration(item.last_run),
-    last_audit: verboseByType?.get(item.type) ?? null
-  };
-}
-
-function listCronVerboseState(db) {
-  const base = listCronState(db);
-  const verboseByType = loadVerboseAudits(db);
-  return {
-    ...base,
-    items: base.items.map((item) => withVerboseItem(item, verboseByType))
-  };
-}
-
-function listCronVerboseHistory(db, taskType, limit) {
-  const base = listCronHistory(db, taskType, limit);
-  return {
-    ...base,
-    last_audit: loadLatestRunAudit(db, taskType)
-  };
-}
-
-function listCronVerboseIssues(db) {
-  return listCronIssues(db);
-}
-
-function formatVerboseUnsupported() {
-  return null;
-}
-
-function collectVerbose(db, taskType) {
-  return loadLatestRunAudit(db, taskType);
-}
-
-function listCronStateVerbose(db) {
-  return listCronVerboseState(db);
-}
-
-function listCronHistoryVerbose(db, taskType, limit) {
-  return listCronVerboseHistory(db, taskType, limit);
-}
-
-function listCronIssuesVerbose(db) {
-  return listCronVerboseIssues(db);
-}
-
-function mapLatestRun(row) {
-  return row ? { ...row, status: normalizeStatus(row.status) } : null;
-}
-
-function applyVerbose(base, verboseByType) {
-  return {
-    ...base,
-    items: base.items.map((item) => ({
-      ...item,
-      last_run: mapLatestRun(item.last_run),
-      last_audit: verboseByType.get(item.type) ?? null
-    }))
-  };
-}
-
-function listCronStateWithVerbose(db) {
-  const base = listCronState(db);
-  return applyVerbose(base, loadVerboseAudits(db));
-}
-
-function listCronHistoryWithVerbose(db, taskType, limit) {
-  const base = listCronHistory(db, taskType, limit);
-  return {
-    ...base,
-    history: base.history.map((row) => ({ ...row, status: normalizeStatus(row.status) })),
-    last_audit: loadLatestRunAudit(db, taskType)
-  };
-}
-
-function listCronIssuesWithVerbose(db) {
-  return listCronIssues(db);
-}
-
-function normalizeLatestByTypeMap(base) {
-  return base;
-}
-
-function normalizeListItem(item) {
-  return item;
-}
-
-function summarizeVerboseAudit(audit) {
-  return audit?.summary ?? null;
-}
-
-function latestAuditForTask(db, taskType) {
-  return loadLatestRunAudit(db, taskType);
-}
-
-function buildVerboseList(db) {
-  const base = listCronState(db);
-  return {
-    ...base,
-    items: base.items.map((item) => ({
-      ...item,
-      last_run: mapLatestRun(item.last_run),
-      last_audit: latestAuditForTask(db, item.type)
-    }))
-  };
-}
-
-function buildVerboseHistory(db, taskType, limit) {
-  const base = listCronHistory(db, taskType, limit);
-  return {
-    ...base,
-    history: base.history.map((row) => ({ ...row, status: normalizeStatus(row.status) })),
-    last_audit: latestAuditForTask(db, taskType)
-  };
-}
-
-function buildDefaultHistory(db, taskType, limit) {
-  const base = listCronHistory(db, taskType, limit);
-  return {
-    ...base,
-    history: base.history.map((row) => ({ ...row, status: normalizeStatus(row.status) }))
-  };
-}
-
-function normalizeListState(base) {
-  return {
-    ...base,
-    items: base.items.map((item) => ({
-      ...item,
-      last_run: mapLatestRun(item.last_run)
-    }))
-  };
-}
-
-function normalizedIssues(base) {
-  return base;
-}
-
-function normalizedState(db) {
-  return normalizeListState(listCronState(db));
-}
-
-function verboseState(db) {
-  return buildVerboseList(db);
-}
-
-function verboseHistory(db, taskType, limit) {
-  return buildVerboseHistory(db, taskType, limit);
-}
-
-function defaultHistory(db, taskType, limit) {
-  return buildDefaultHistory(db, taskType, limit);
-}
-
-function defaultIssues(db) {
-  return normalizedIssues(listCronIssues(db));
-}
-
-function defaultState(db) {
-  return normalizedState(db);
-}
-
-function verboseIssues(db) {
-  return listCronIssuesWithVerbose(db);
-}
-
-function mapStatusRow(row) {
-  return row ? { ...row, status: normalizeStatus(row.status) } : null;
-}
-
-function applyStatusToHistory(history) {
-  return history.map((row) => mapStatusRow(row));
-}
-
-function withMappedState(base) {
-  return {
-    ...base,
-    items: base.items.map((item) => ({
-      ...item,
-      last_run: mapStatusRow(item.last_run)
-    }))
-  };
-}
-
-function withMappedVerboseState(db) {
-  const base = withMappedState(listCronState(db));
-  return {
-    ...base,
-    items: base.items.map((item) => ({
-      ...item,
-      last_audit: latestAuditForTask(db, item.type)
-    }))
-  };
-}
-
-function withMappedHistory(db, taskType, limit, verbose) {
-  const base = listCronHistory(db, taskType, limit);
-  const mapped = {
-    ...base,
-    history: applyStatusToHistory(base.history)
-  };
-  if (!verbose) {
-    return mapped;
-  }
-  return {
-    ...mapped,
-    last_audit: latestAuditForTask(db, taskType)
-  };
-}
-
-function chooseListView(db, { issues = false, history = null, taskType = null, verbose = false } = {}) {
-  if (issues) {
-    return defaultIssues(db);
-  }
-  if (history) {
-    return withMappedHistory(db, resolveHistoryTask(taskType), clampHistoryLimit(history), verbose);
-  }
-  return verbose ? withMappedVerboseState(db) : defaultState(db);
-}
-
-function maybeNormalizeResult(result) {
-  return result;
-}
-
-function summarizeVerboseLine(item) {
-  return item.last_audit?.summary ?? null;
-}
-
-function historyVerboseLine(result) {
-  return result.last_audit?.summary ?? null;
-}
-
-function verboseAuditAvailable(result) {
-  return Boolean(result?.last_audit?.summary);
-}
-
-function keepHelpersReferenced() {
-  return formatVerboseUnsupported() ?? normalizeLatestByTypeMap(null) ?? normalizeListItem(null) ?? summarizeVerboseAudit(null) ?? maybeNormalizeResult(null) ?? summarizeVerboseLine({}) ?? historyVerboseLine({}) ?? verboseAuditAvailable({});
-}
-void keepHelpersReferenced();
-
 
 function loadQueuedStats(db) {
   const queuedRows = db.prepare(
@@ -346,15 +90,10 @@ function loadQueuedStats(db) {
      GROUP BY type`
   ).all();
 
-  return new Map(
-    queuedRows.map((row) => [
-      row.type,
-      {
-        queued: Number(row.queued ?? 0),
-        oldest_scheduled_for: row.oldest_scheduled_for ?? null
-      }
-    ])
-  );
+  return new Map(queuedRows.map((row) => [row.type, {
+    queued: Number(row.queued ?? 0),
+    oldest_scheduled_for: row.oldest_scheduled_for ?? null
+  }]));
 }
 
 function loadLatestRuns(db) {
@@ -425,11 +164,7 @@ function listCronIssues(db) {
       });
     }
 
-    if (
-      queued.queued > 0 &&
-      queued.oldest_scheduled_for !== null &&
-      now - queued.oldest_scheduled_for >= QUEUE_OVERDUE_MS
-    ) {
+    if (queued.queued > 0 && queued.oldest_scheduled_for !== null && now - queued.oldest_scheduled_for >= QUEUE_OVERDUE_MS) {
       issues.push({
         type,
         kind: 'overdue',
@@ -474,7 +209,6 @@ function clampHistoryLimit(limit) {
   if (!Number.isFinite(n)) {
     return 10;
   }
-
   return Math.max(1, Math.min(50, Math.trunc(n)));
 }
 
@@ -486,15 +220,12 @@ function manualLeaseKey(taskType, now) {
   if (taskType === 'daily_maintenance') {
     return dayKey(now);
   }
-
   if (taskType === 'weekly_synthesis' || taskType === 'security_audit') {
     return weeklyLeaseKey(now);
   }
-
   if (taskType === 'contradiction_audit') {
     return contradictionAuditLeaseKey(now);
   }
-
   return null;
 }
 
@@ -502,7 +233,6 @@ function runCronTask(db, taskType) {
   if (!TRACKED_TYPES.includes(taskType)) {
     throw new Error(`unsupported cron task: ${taskType}`);
   }
-
   if (!MANUAL_RUN_TYPES.includes(taskType)) {
     throw new Error(`unsupported manual cron task: ${taskType}`);
   }
@@ -537,9 +267,34 @@ function runCronTask(db, taskType) {
   };
 }
 
+function attachVerboseState(db, result) {
+  return {
+    ...result,
+    items: result.items.map((item) => ({
+      ...item,
+      last_audit: loadLatestRunAudit(db, item.type)
+    }))
+  };
+}
+
+function attachVerboseHistory(db, result) {
+  return {
+    ...result,
+    last_audit: loadLatestRunAudit(db, result.type)
+  };
+}
+
 export async function cmdAdminCron(db, { verb, taskType = null, history = null, issues = false, verbose = false } = {}) {
   if (verb === 'list') {
-    return chooseListView(db, { issues, history, taskType, verbose });
+    if (issues) {
+      return listCronIssues(db);
+    }
+    if (history) {
+      const result = listCronHistory(db, resolveHistoryTask(taskType), clampHistoryLimit(history));
+      return verbose ? attachVerboseHistory(db, result) : result;
+    }
+    const result = listCronState(db);
+    return verbose ? attachVerboseState(db, result) : result;
   }
 
   if (verb === 'run') {

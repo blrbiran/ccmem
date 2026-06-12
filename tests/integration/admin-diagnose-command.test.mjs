@@ -21,6 +21,7 @@ const CLI = '/Users/biran/code/skills/ccmem/scripts/cli.mjs';
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
+const { cmdAdminAlias } = await import('../../scripts/lib/admin/alias.mjs');
 const { cmdAdminDiagnose } = await import('../../scripts/lib/admin/diagnose.mjs');
 const { fallbackProjectKey } = await import('../../scripts/lib/project-key.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
@@ -66,7 +67,7 @@ function seedAliveDaemon(db, now = Date.now()) {
   ).run(2468, 'diagnose-host', now - 4000, now - 600);
   db.prepare(
     `INSERT INTO config_kv (key, value, set_at)
-     VALUES ('daemon_startup_schema_version', '7', ?)
+     VALUES ('daemon_startup_schema_version', '8', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
   ).run(now - 4000);
 }
@@ -89,6 +90,7 @@ function seedRollupRow(db, {
   revalFlagged = 0,
   revalScanned = 0,
   tier15Clusters = 0,
+  contraDetected = 0,
   memsActive = 5,
   memsProbation = 1,
   memsQuarantine = 0,
@@ -114,12 +116,13 @@ function seedRollupRow(db, {
       reval_flagged,
       reval_scanned,
       tier15_clusters,
+      contra_detected,
       mems_active,
       mems_probation,
       mems_quarantine,
       mems_archived,
       written_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     dayKey,
     sessionStartP50,
@@ -138,6 +141,7 @@ function seedRollupRow(db, {
     revalFlagged,
     revalScanned,
     tier15Clusters,
+    contraDetected,
     memsActive,
     memsProbation,
     memsQuarantine,
@@ -230,8 +234,8 @@ test('cmdAdminDiagnose returns db health, daemon status, and fallback project ke
   const result = await cmdAdminDiagnose(db, { cwd: diagnoseCwd });
 
   assert.equal(result.db.health, 'ok');
-  assert.equal(result.db.schema_version, 7);
-  assert.equal(result.daemon.startup_schema_version, 7);
+  assert.equal(result.db.schema_version, 8);
+  assert.equal(result.daemon.startup_schema_version, 8);
   assert.equal(typeof result.daemon.uptime_sec, 'number');
   assert.equal(result.daemon.alive, true);
   assert.equal(result.daemon.pid, 2468);
@@ -259,7 +263,7 @@ test('cmdAdminDiagnose returns migration history when requested', async () => {
     applied_at: result.migrations[0].applied_at,
     applied_by: 'ccmem-cli'
   });
-  assert.equal(result.migrations.at(-1).to_version, 7);
+  assert.equal(result.migrations.at(-1).to_version, 8);
   db.close();
 });
 
@@ -320,9 +324,9 @@ test('cli admin diagnose prints default diagnostics', () => {
     encoding: 'utf8'
   });
 
-  assert.match(output, /ccmem: db ok schema=7/);
+  assert.match(output, /ccmem: db ok schema=8/);
   assert.match(output, /ccmem: daemon alive pid=2468 host=diagnose-host/);
-  assert.match(output, /startup_schema=7/);
+  assert.match(output, /startup_schema=8/);
   assert.match(output, /uptime_sec=\d+/);
   assert.match(output, /ccmem: project_key path:/);
   assert.match(output, /ccmem: tier2 available/);
@@ -537,6 +541,7 @@ test('cli admin diagnose --metrics prints rollup summary', () => {
     revalQuarantined: 1,
     revalFlagged: 3,
     tier15Clusters: 2,
+    contraDetected: 2,
     memsActive: 8,
     memsProbation: 2,
     memsQuarantine: 1,
@@ -561,6 +566,11 @@ test('cli admin diagnose --metrics prints rollup summary', () => {
   assert.match(output, /total:\s+6/);
   assert.match(output, /revalidation quarantined:\s+1\s+flagged: 3/);
   assert.match(output, /cross-scope alerts emitted:\s+1\s+acknowledged: 1/);
+  assert.match(output, /contradictions detected:\s+2/);
+  assert.match(output, /Embedding/);
+  assert.match(output, /embedded: 0/);
+  assert.match(output, /pending:\s+0/);
+  assert.match(output, /rate:\s+0\/day avg/);
   assert.match(output, /Memory pool \(end of 2026-06-05\)/);
   assert.match(output, /active: 8  probation: 2  quarantine: 1  archived: 4/);
 });
@@ -592,6 +602,100 @@ test('cli admin diagnose --tuning prints actionable suggestions when signals are
   assert.match(output, /security\.audit\.pool_b\.clusterMinSize/);
   assert.match(output, /current: 3  suggest: 5/);
   assert.match(output, /\(use \/ccmem:audit show \d+ for full signal breakdown\)/);
+});
+
+test('cmdAdminAlias updates project keys, cache, and audit', async () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  await cmdSave(db, {
+    cwd: diagnoseCwd,
+    content: 'Alias project memory one',
+    scope: 'project',
+    type: 'fact'
+  });
+  await cmdSave(db, {
+    cwd: diagnoseCwd,
+    content: 'Alias project memory two',
+    scope: 'project',
+    type: 'rule'
+  });
+  const oldKey = fallbackProjectKey(diagnoseCwd);
+  const newKey = 'demo/aliased';
+
+  const result = await cmdAdminAlias(db, {
+    oldKey,
+    newKey,
+    confirm: () => 'ALIAS'
+  });
+
+  const updated = db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE project_key = ?`
+  ).get(newKey);
+  const oldCache = db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM injection_cache
+     WHERE scope = ?`
+  ).get(`project:${oldKey}`);
+  const newCache = db.prepare(
+    `SELECT member_ids
+     FROM injection_cache
+     WHERE scope = ?`
+  ).get(`project:${newKey}`);
+  const audit = db.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'alias_applied'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+
+  assert.equal(result.status, 'applied');
+  assert.equal(result.updated_count, 2);
+  assert.equal(updated.n, 2);
+  assert.equal(oldCache.n, 0);
+  assert.deepEqual(JSON.parse(newCache.member_ids).length, 2);
+  assert.deepEqual(JSON.parse(audit.details), {
+    old_key: oldKey,
+    new_key: newKey,
+    updated_count: 2
+  });
+  db.close();
+});
+
+test('cli admin alias prints success after confirmation', async () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  await cmdSave(db, {
+    cwd: diagnoseCwd,
+    content: 'Alias CLI memory',
+    scope: 'project',
+    type: 'fact'
+  });
+  db.close();
+
+  const oldKey = fallbackProjectKey(diagnoseCwd);
+  const newKey = 'demo/aliased-cli';
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'alias', oldKey, newKey], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8',
+    input: 'ALIAS\n'
+  });
+
+  const verifyDb = openDb();
+  const row = verifyDb.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE project_key = ?`
+  ).get(newKey);
+  verifyDb.close();
+
+  assert.match(output, new RegExp(`Alias: "${oldKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}" → "${newKey}"`));
+  assert.match(output, /Type ALIAS to confirm:/);
+  assert.match(output, /ccmem: aliased 1 memories from "/);
+  assert.equal(row.n, 1);
 });
 
 test.after(() => {

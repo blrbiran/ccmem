@@ -32,6 +32,8 @@ function toPendingMap(rows) {
     summarize_pending: 0,
     weekly_synthesis: 0,
     security_audit: 0,
+    contradiction_audit: 0,
+    monthly_meta_synthesis: 0,
     revalidation_audit: 0,
     vec_backfill: 0,
     total: 0
@@ -148,6 +150,11 @@ export async function cmdStats(db, { buckets = false } = {}) {
        SUM(CASE WHEN acknowledged_at IS NOT NULL THEN 1 ELSE 0 END) AS acknowledged
      FROM cross_scope_alerts`
   ).get();
+  const contradictionsRow = db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM contradiction_alerts
+     WHERE acknowledged_at IS NULL`
+  ).get();
   const pendingSunsetCutoff = now - ((cfg.security.quarantine.sunset_days - 5) * 86400000);
   const pendingSunsetRow = db.prepare(
     `SELECT COUNT(*) AS n
@@ -188,7 +195,8 @@ export async function cmdStats(db, { buckets = false } = {}) {
       quarantined: toCount(memoryRow?.quarantined),
       pending_sunset: toCount(pendingSunsetRow?.n),
       alerts_pending: toCount(alertsRow?.pending),
-      alerts_acknowledged: toCount(alertsRow?.acknowledged)
+      alerts_acknowledged: toCount(alertsRow?.acknowledged),
+      contradictions_pending: toCount(contradictionsRow?.n)
     },
     feedback: toFeedbackMap(feedbackRows),
     tuning: {

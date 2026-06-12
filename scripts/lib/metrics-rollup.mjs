@@ -22,6 +22,7 @@ export function aggregateHookLatencies(startMs, endMs) {
   const buckets = {
     session_start: [],
     prompt_submit: [],
+    prompt_submit_cosine: [],
     stop: []
   };
 
@@ -48,6 +49,9 @@ export function aggregateHookLatencies(startMs, endMs) {
       }
 
       buckets[row.hook].push(row.ms_total);
+      if (row.hook === 'prompt_submit' && typeof row.cosine_contribution === 'number') {
+        buckets.prompt_submit_cosine.push(row.cosine_contribution);
+      }
     }
   } catch {
     return {};
@@ -59,8 +63,17 @@ export function aggregateHookLatencies(startMs, endMs) {
       continue;
     }
 
+    if (hook === 'prompt_submit_cosine') {
+      output.prompt_submit = {
+        ...(output.prompt_submit ?? {}),
+        avg_cosine_contribution: values.reduce((sum, value) => sum + value, 0) / values.length
+      };
+      continue;
+    }
+
     values.sort((a, b) => a - b);
     output[hook] = {
+      ...(output[hook] ?? {}),
       p50: percentile(values, 0.5),
       p95: percentile(values, 0.95)
     };
@@ -144,6 +157,12 @@ export function writeMetricsDailyRollup(db) {
      WHERE action = 'vec_backfill_run'
        AND ts >= ? AND ts < ?`
   ).get(dayStartMs, dayEndMs)?.n ?? 0);
+  const contraDetected = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM audit_log
+     WHERE action = 'contradiction_detected'
+       AND ts >= ? AND ts < ?`
+  ).get(dayStartMs, dayEndMs)?.n ?? 0);
 
   const memPool = db.prepare(
     `SELECT
@@ -163,10 +182,10 @@ export function writeMetricsDailyRollup(db) {
       llm_calls, llm_total_duration_ms, llm_failures, llm_dead_letters,
       sec_quarantined, sec_alerts_emitted,
       reval_quarantined, reval_flagged, reval_scanned,
-      tier15_clusters, vec_backfill_embedded,
+      tier15_clusters, vec_backfill_embedded, contra_detected,
       mems_active, mems_probation, mems_quarantine, mems_archived,
       written_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     dayKey,
     hookStats.session_start?.p50 ?? null,
@@ -186,6 +205,7 @@ export function writeMetricsDailyRollup(db) {
     Number(revalStats?.s ?? 0),
     tier15Clusters,
     vecBackfillEmbedded,
+    contraDetected,
     Number(memPool.active ?? 0),
     Number(memPool.probation ?? 0),
     Number(memPool.quarantine ?? 0),

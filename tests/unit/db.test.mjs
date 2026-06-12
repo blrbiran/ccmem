@@ -33,7 +33,7 @@ function withEnv(key, value, work) {
 test('openDb creates DB file and applies the latest schema', () => {
   const db = openDb();
   assert.equal(existsSync(getDbPath()), true);
-  assert.equal(getSchemaVersion(db), 7);
+  assert.equal(getSchemaVersion(db), 8);
   db.close();
 });
 
@@ -45,7 +45,7 @@ test('openDb repairs a partially applied v0.6 migration and finishes schema upgr
   db.close();
 
   const repaired = openDb();
-  assert.equal(getSchemaVersion(repaired), 7);
+  assert.equal(getSchemaVersion(repaired), 8);
   assert.equal(
     repaired.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'memories_ai'").get().name,
     'memories_ai'
@@ -64,7 +64,7 @@ test('openDb works without FTS5 support', () => {
     withEnv('CCMEM_DATA_ROOT', tempRoot, () => {
       withEnv('CCMEM_DISABLE_FTS5', '1', () => {
         const db = openDb();
-        assert.equal(getSchemaVersion(db), 7);
+        assert.equal(getSchemaVersion(db), 8);
         assert.equal(Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'memories_fts' LIMIT 1").get()), false);
         assert.equal(
           db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger' AND name IN ('memories_ai', 'memories_ad', 'memories_au')").get().n,

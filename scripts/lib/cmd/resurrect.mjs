@@ -64,6 +64,111 @@ function normalizeRevalidationDecision(input) {
   return 'skip';
 }
 
+function normalizeContradictionDecision(input) {
+  const value = String(input ?? '').trim();
+  if (value === 'a') {
+    return 'keep_a';
+  }
+
+  if (value === 'b') {
+    return 'keep_b';
+  }
+
+  if (value === 'B') {
+    return 'keep_both';
+  }
+
+  return 'skip';
+}
+
+function acknowledgeContradiction(db, alertId, action, memIdA) {
+  db.prepare(
+    `UPDATE contradiction_alerts
+     SET acknowledged_at = ?, acknowledged_action = ?
+     WHERE id = ?`
+  ).run(Date.now(), action, alertId);
+  writeAudit(db, 'contradiction_acknowledged', memIdA, {
+    alert_id: alertId,
+    action
+  });
+}
+
+function resurrectContradictions(db, { cwd, limit, decide }) {
+  const projectKey = resolveProjectKey(cwd);
+  const rows = db.prepare(
+    `SELECT a.id,
+            a.mem_id_a,
+            a.mem_id_b,
+            a.scope,
+            a.cosine_similarity,
+            a.evidence,
+            a.detected_at,
+            ma.scope AS mem_a_scope,
+            ma.project_key AS mem_a_project_key,
+            ma.type AS type_a,
+            ma.content AS content_a,
+            ma.trust_score AS trust_a,
+            mb.scope AS mem_b_scope,
+            mb.project_key AS mem_b_project_key,
+            mb.type AS type_b,
+            mb.content AS content_b,
+            mb.trust_score AS trust_b
+     FROM contradiction_alerts a
+     JOIN memories ma ON ma.id = a.mem_id_a
+     JOIN memories mb ON mb.id = a.mem_id_b
+     WHERE a.acknowledged_at IS NULL
+       AND (a.scope = 'global' OR a.scope = ?)
+     ORDER BY a.detected_at ASC, a.id ASC
+     LIMIT ?`
+  ).all(projectKey, clampLimit(limit, 10));
+  const touched = [];
+  const items = [];
+
+  for (const row of rows) {
+    const now = Date.now();
+    const action = normalizeContradictionDecision(decide(row));
+
+    if (action === 'keep_a') {
+      db.prepare(
+        `UPDATE memories
+         SET decay_status = 'archived', updated_at = ?
+         WHERE id = ?`
+      ).run(now, row.mem_id_b);
+      touched.push({ scope: row.mem_b_scope, project_key: row.mem_b_project_key ?? null });
+      acknowledgeContradiction(db, row.id, action, row.mem_id_a);
+    } else if (action === 'keep_b') {
+      db.prepare(
+        `UPDATE memories
+         SET decay_status = 'archived', updated_at = ?
+         WHERE id = ?`
+      ).run(now, row.mem_id_a);
+      touched.push({ scope: row.mem_a_scope, project_key: row.mem_a_project_key ?? null });
+      acknowledgeContradiction(db, row.id, action, row.mem_id_a);
+    } else if (action === 'keep_both') {
+      acknowledgeContradiction(db, row.id, action, row.mem_id_a);
+    }
+
+    items.push({
+      id: row.id,
+      mem_id_a: row.mem_id_a,
+      mem_id_b: row.mem_id_b,
+      cosine_similarity: row.cosine_similarity,
+      detected_at: row.detected_at,
+      evidence: row.evidence,
+      type_a: row.type_a,
+      content_a: row.content_a,
+      trust_a: row.trust_a,
+      type_b: row.type_b,
+      content_b: row.content_b,
+      trust_b: row.trust_b,
+      action
+    });
+  }
+
+  rebuildTouchedCaches(db, touched);
+  return { mode: 'contradictions', items };
+}
+
 function rebuildTouchedCaches(db, touchedScopes) {
   let rebuildGlobal = false;
   const projectKeys = new Set();
@@ -396,6 +501,7 @@ export async function cmdResurrect(db, {
   decide = () => 's',
   quarantined = false,
   alerts = false,
+  contradictions = false,
   revalidation = false,
   limit = null
 } = {}) {
@@ -412,6 +518,13 @@ export async function cmdResurrect(db, {
     return {
       tier15,
       ...resurrectRevalidation(db, { cwd, limit: limit ?? bottom, decide })
+    };
+  }
+
+  if (contradictions) {
+    return {
+      tier15,
+      ...resurrectContradictions(db, { cwd, limit: limit ?? bottom, decide })
     };
   }
 

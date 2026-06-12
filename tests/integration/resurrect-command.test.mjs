@@ -21,9 +21,11 @@ const CLI = '/Users/biran/code/skills/ccmem/scripts/cli.mjs';
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
 const { cmdResurrect } = await import('../../scripts/lib/cmd/resurrect.mjs');
+const { resolveProjectKey } = await import('../../scripts/lib/project-key.mjs');
 
 function resetResurrectTables(db) {
   db.prepare(`DELETE FROM task_runs`).run();
+  db.prepare(`DELETE FROM contradiction_alerts`).run();
   db.prepare(`DELETE FROM cross_scope_alerts`).run();
   db.prepare(`DELETE FROM audit_log_targets`).run();
   db.prepare(`DELETE FROM audit_log`).run();
@@ -127,6 +129,40 @@ async function seedRevalidationFlaggedMemory(db, now = Date.now()) {
   ).run(Number(audit.lastInsertRowid), saved.id);
 
   return saved.id;
+}
+
+async function seedContradictionAlert(db, now = Date.now()) {
+  const memA = await cmdSave(db, {
+    cwd: '/Users/biran/code/skills/ccmem',
+    content: 'Use 4 spaces for indentation',
+    scope: 'project',
+    type: 'rule'
+  });
+  const memB = await cmdSave(db, {
+    cwd: '/Users/biran/code/skills/ccmem',
+    content: 'Use 2 spaces for indentation',
+    scope: 'project',
+    type: 'rule'
+  });
+
+  const inserted = db.prepare(
+    `INSERT INTO contradiction_alerts (
+      mem_id_a, mem_id_b, scope, cosine_similarity, evidence, detected_at
+     ) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    memA.id,
+    memB.id,
+    resolveProjectKey('/Users/biran/code/skills/ccmem'),
+    0.88,
+    JSON.stringify({ llm_reason: 'indentation guidance conflicts' }),
+    now - 1800000
+  );
+
+  return {
+    alertId: Number(inserted.lastInsertRowid),
+    memAId: memA.id,
+    memBId: memB.id
+  };
 }
 
 test('cmdResurrect keeps and forgets grey-zone memories', async () => {
@@ -395,6 +431,48 @@ test('cli resurrect --revalidation prints no pending flags when empty', () => {
   });
 
   assert.equal(output, 'ccmem: no revalidation flags pending\n');
+});
+
+test('cli resurrect --contradictions acknowledges contradictions and keeps memory A', async () => {
+  const db = openDb();
+  resetResurrectTables(db);
+  const { alertId, memBId } = await seedContradictionAlert(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'resurrect', '--contradictions', '--limit', '1'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8',
+    input: 'a\n'
+  });
+
+  const verifyDb = openDb();
+  const alert = verifyDb.prepare(
+    `SELECT acknowledged_at, acknowledged_action
+     FROM contradiction_alerts
+     WHERE id = ?`
+  ).get(alertId);
+  const memB = verifyDb.prepare(
+    `SELECT decay_status
+     FROM memories
+     WHERE id = ?`
+  ).get(memBId);
+  const audit = verifyDb.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'contradiction_acknowledged'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  verifyDb.close();
+
+  assert.match(output, /indentation guidance conflicts/);
+  assert.match(output, /ccmem: contradictions keep_a=1 keep_b=0 keep_both=0 skipped=0/);
+  assert.equal(typeof alert.acknowledged_at, 'number');
+  assert.equal(alert.acknowledged_action, 'keep_a');
+  assert.equal(memB.decay_status, 'archived');
+  assert.equal(JSON.parse(audit.details).alert_id, alertId);
+  assert.equal(JSON.parse(audit.details).action, 'keep_a');
 });
 
 test.after(() => rmSync(dataRoot, { recursive: true, force: true }));

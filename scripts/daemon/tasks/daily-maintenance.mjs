@@ -3,7 +3,8 @@ import { writeAudit } from '../../lib/audit.mjs';
 import { writeMetricsDailyRollup } from '../../lib/metrics-rollup.mjs';
 import { revalidationAuditCore } from '../../lib/revalidation.mjs';
 import { pruneMigrationBackups } from '../../lib/db.mjs';
-import { markLeaseComplete } from '../../lib/task-runs.mjs';
+import { monthlyMetaLeaseKey } from '../loop.mjs';
+import { RAN_BY, markLeaseComplete, tryClaimLease } from '../../lib/task-runs.mjs';
 import { runVecBackfill } from './vec-backfill.mjs';
 
 function dayKey(date) {
@@ -12,6 +13,18 @@ function dayKey(date) {
     String(date.getMonth() + 1).padStart(2, '0'),
     String(date.getDate()).padStart(2, '0')
   ].join('-');
+}
+
+function projectScopes(db) {
+  return db.prepare(
+    `SELECT DISTINCT project_key
+     FROM memories
+     WHERE scope = 'project'
+       AND project_key IS NOT NULL
+       AND type = 'consolidated'
+       AND status = 'active'
+       AND decay_status IN ('active', 'probation')`
+  ).all().map((row) => row.project_key);
 }
 
 let inflightDaily = false;
@@ -77,6 +90,11 @@ export async function runDailyMaintenance(db, task) {
        WHERE detected_at < ?`
     ).run(now - (cfg.security.cross_scope.alert_retention_days * 86400000));
 
+    db.prepare(
+      `DELETE FROM contradiction_alerts
+       WHERE detected_at < ?`
+    ).run(now - (Number(cfg.contradiction?.alert_retention_days ?? 60) * 86400000));
+
     try {
       revalidationAuditCore(db, { trigger: 'daily' });
     } catch (error) {
@@ -101,6 +119,43 @@ export async function runDailyMaintenance(db, task) {
         writeAudit(db, 'metrics_rollup_error', null, {
           error: String(error?.message ?? error).slice(0, 200)
         });
+      }
+    }
+
+    if (Number(new Date(now).getDate()) === 1 && cfg.consolidation?.monthly?.enabled !== false) {
+      const threshold = Number(cfg.consolidation?.monthly?.min_consolidated ?? 30);
+      for (const scope of ['global', ...projectScopes(db)]) {
+        const count = Number((scope === 'global'
+          ? db.prepare(
+              `SELECT COUNT(*) AS n
+               FROM memories
+               WHERE type = 'consolidated'
+                 AND status = 'active'
+                 AND decay_status IN ('active', 'probation')
+                 AND scope = 'global'`
+            ).get()
+          : db.prepare(
+              `SELECT COUNT(*) AS n
+               FROM memories
+               WHERE type = 'consolidated'
+                 AND status = 'active'
+                 AND decay_status IN ('active', 'probation')
+                 AND project_key = ?`
+            ).get(scope))?.n ?? 0);
+
+        if (count < threshold) {
+          continue;
+        }
+
+        const metaLeaseKey = monthlyMetaLeaseKey(new Date(now), scope);
+        if (!tryClaimLease(db, 'monthly_meta_synthesis', metaLeaseKey, RAN_BY.DAEMON)) {
+          continue;
+        }
+
+        db.prepare(
+          `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+           VALUES ('monthly_meta_synthesis', ?, ?, ?, 'queued')`
+        ).run(JSON.stringify({ scope, lease_key: metaLeaseKey }), now, now);
       }
     }
 

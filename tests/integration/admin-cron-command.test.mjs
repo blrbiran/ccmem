@@ -20,8 +20,9 @@ const CLI = '/Users/biran/code/skills/ccmem/scripts/cli.mjs';
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { dispatchTask } = await import('../../scripts/daemon/dispatch.mjs');
-const { dayKey, weeklyLeaseKey, runTask } = await import('../../scripts/daemon/loop.mjs');
+const { contradictionAuditLeaseKey, dayKey, monthlyMetaLeaseKey, weeklyLeaseKey, runTask } = await import('../../scripts/daemon/loop.mjs');
 const { cmdAdminCron } = await import('../../scripts/lib/admin/cron.mjs');
+const { insertMemory } = await import('../../scripts/lib/cmd/save.mjs');
 
 function resetCronTables(db) {
   db.prepare(`DELETE FROM daemon_lock`).run();
@@ -1624,6 +1625,312 @@ test('cmdAdminCron run enqueues security_audit with the anchored manual week lea
     assert.equal(lease.status, 'running');
   } finally {
     global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('cmdAdminCron run enqueues contradiction_audit with the anchored manual week lease key', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const fixedNow = new Date(2026, 5, 8, 4, 18, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    const result = await cmdAdminCron(db, { verb: 'run', taskType: 'contradiction_audit' });
+    const task = db.prepare(
+      `SELECT type, payload, scheduled_for, status
+       FROM tasks
+       WHERE id = ?`
+    ).get(result.task_id);
+    const lease = db.prepare(
+      `SELECT date_key, ran_by, status
+       FROM task_runs
+       WHERE type = 'contradiction_audit'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+
+    assert.equal(result.type, 'contradiction_audit');
+    assert.equal(task.type, 'contradiction_audit');
+    assert.equal(task.scheduled_for, fixedNowMs);
+    assert.equal(task.status, 'queued');
+    assert.deepEqual(JSON.parse(task.payload), { lease_key: contradictionAuditLeaseKey(fixedNow) });
+    assert.equal(lease.date_key, contradictionAuditLeaseKey(fixedNow));
+    assert.equal(lease.ran_by, 'manual');
+    assert.equal(lease.status, 'running');
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('dispatchTask runs contradiction_audit and records alerts', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const now = Date.now();
+  const first = db.prepare(
+    `INSERT INTO memories (
+      scope, project_key, type, content, embedding, pinned, source, trust_score,
+      status, decay_status, helpful_count, unhelpful_count, last_touched_at, created_at, updated_at, tags
+     ) VALUES ('project', 'demo/repo', 'rule', 'Use 4 spaces', ?, 0, 'auto_inferred', 0.5, 'active', 'active', 0, 0, ?, ?, ?, '[]')`
+  ).run(Buffer.alloc(16, 1), now, now, now);
+  const second = db.prepare(
+    `INSERT INTO memories (
+      scope, project_key, type, content, embedding, pinned, source, trust_score,
+      status, decay_status, helpful_count, unhelpful_count, last_touched_at, created_at, updated_at, tags
+     ) VALUES ('project', 'demo/repo', 'rule', 'Use 2 spaces', ?, 0, 'auto_inferred', 0.5, 'active', 'active', 0, 0, ?, ?, ?, '[]')`
+  ).run(Buffer.alloc(16, 1), now, now, now);
+  const memAId = Number(first.lastInsertRowid);
+  const memBId = Number(second.lastInsertRowid);
+  const leaseKey = contradictionAuditLeaseKey(new Date());
+  db.prepare(
+    `INSERT INTO task_runs (type, date_key, started_at, status, ran_by)
+     VALUES ('contradiction_audit', ?, ?, 'running', 'manual')`
+  ).run(leaseKey, now);
+  const llmOutput = JSON.stringify({
+    contradictions: [{ id_a: memAId, id_b: memBId, reason: 'indentation conflict' }],
+    compatible: []
+  });
+  const taskInsert = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('contradiction_audit', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({ lease_key: leaseKey, llm_output: llmOutput }), now - 1000, now - 1000);
+  const task = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(taskInsert.lastInsertRowid));
+
+  await runTask(db, task, dispatchTask);
+
+  const alert = db.prepare(
+    `SELECT mem_id_a, mem_id_b, scope
+     FROM contradiction_alerts
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const audit = db.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'contradiction_audit_run'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const lease = db.prepare(
+    `SELECT status, completed_at
+     FROM task_runs
+     WHERE type = 'contradiction_audit' AND date_key = ?`
+  ).get(leaseKey);
+
+  assert.equal(alert.mem_id_a, memAId);
+  assert.equal(alert.mem_id_b, memBId);
+  assert.equal(alert.scope, 'demo/repo');
+  assert.equal(JSON.parse(audit.details).contradictions_found, 1);
+  assert.equal(lease.status, 'completed');
+  assert.equal(typeof lease.completed_at, 'number');
+  db.close();
+});
+
+test('cmdAdminCron run enqueues monthly_meta_synthesis without a lease payload', async () => {
+  const db = openDb();
+  resetCronTables(db);
+
+  const result = await cmdAdminCron(db, { verb: 'run', taskType: 'monthly_meta_synthesis' });
+  const task = db.prepare(
+    `SELECT type, payload, status
+     FROM tasks
+     WHERE id = ?`
+  ).get(result.task_id);
+
+  assert.equal(result.type, 'monthly_meta_synthesis');
+  assert.equal(task.type, 'monthly_meta_synthesis');
+  assert.equal(task.status, 'queued');
+  assert.deepEqual(JSON.parse(task.payload), {});
+  db.close();
+});
+
+test('dispatchTask runs monthly_meta_synthesis and supersedes source consolidated memories', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const configPath = path.join(dataRoot, 'monthly-meta-config.json');
+  const previousConfigPath = process.env.CCMEM_CONFIG_PATH;
+  writeFileSync(configPath, JSON.stringify({ consolidation: { monthly: { enabled: true, min_consolidated: 2 } } }));
+  process.env.CCMEM_CONFIG_PATH = configPath;
+
+  try {
+    const first = await insertMemory(db, {
+      cwd: '/Users/biran/code/skills/ccmem',
+      content: 'Project patterns converge on strict API boundaries',
+      scope: 'project',
+      projectKey: 'demo/repo',
+      type: 'consolidated',
+      source: 'cron_consolidated',
+      embedSync: false
+    });
+    const second = await insertMemory(db, {
+      cwd: '/Users/biran/code/skills/ccmem',
+      content: 'Project patterns converge on explicit service contracts',
+      scope: 'project',
+      projectKey: 'demo/repo',
+      type: 'consolidated',
+      source: 'cron_consolidated',
+      embedSync: false
+    });
+
+    const leaseKey = monthlyMetaLeaseKey(new Date(2026, 6, 1), 'demo/repo');
+    db.prepare(
+      `INSERT INTO task_runs (type, date_key, started_at, status, ran_by)
+       VALUES ('monthly_meta_synthesis', ?, ?, 'running', 'manual')`
+    ).run(leaseKey, Date.now());
+
+    const llmOutput = JSON.stringify({
+      synthesized: [
+        { content: 'Project rules converge on explicit interface contracts', source_ids: [first.id, second.id] }
+      ]
+    });
+    const taskInsert = db.prepare(
+      `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+       VALUES ('monthly_meta_synthesis', ?, ?, ?, 'queued')`
+    ).run(JSON.stringify({ scope: 'demo/repo', lease_key: leaseKey, llm_output: llmOutput }), Date.now(), Date.now());
+    const task = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(Number(taskInsert.lastInsertRowid));
+
+    await runTask(db, task, dispatchTask);
+
+    const synthesized = db.prepare(
+      `SELECT id, type, source, project_key, content, parent_ids, consolidation_depth, status
+       FROM memories
+       WHERE source = 'cron_consolidated'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    const parents = db.prepare(
+      `SELECT id, status
+       FROM memories
+       WHERE id IN (?, ?)
+       ORDER BY id ASC`
+    ).all(first.id, second.id);
+    const audit = db.prepare(
+      `SELECT details
+       FROM audit_log
+       WHERE action = 'monthly_meta_run'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+    const lease = db.prepare(
+      `SELECT status, completed_at
+       FROM task_runs
+       WHERE type = 'monthly_meta_synthesis' AND date_key = ?`
+    ).get(leaseKey);
+
+    assert.equal(synthesized.type, 'consolidated');
+    assert.equal(synthesized.project_key, 'demo/repo');
+    assert.equal(synthesized.content, 'Project rules converge on explicit interface contracts');
+    assert.deepEqual(JSON.parse(synthesized.parent_ids), [first.id, second.id]);
+    assert.equal(synthesized.consolidation_depth, 1);
+    assert.deepEqual(parents.map((row) => row.status), ['superseded', 'superseded']);
+    assert.equal(JSON.parse(audit.details).output_count, 1);
+    assert.equal(lease.status, 'completed');
+    assert.equal(typeof lease.completed_at, 'number');
+  } finally {
+    if (previousConfigPath === undefined) {
+      delete process.env.CCMEM_CONFIG_PATH;
+    } else {
+      process.env.CCMEM_CONFIG_PATH = previousConfigPath;
+    }
+    db.close();
+  }
+});
+
+test('daily maintenance on day one enqueues monthly_meta_synthesis when threshold is met', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const fixedNow = new Date(2026, 6, 1, 2, 17, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+  const configPath = path.join(dataRoot, 'monthly-meta-day1-config.json');
+  const previousConfigPath = process.env.CCMEM_CONFIG_PATH;
+  writeFileSync(configPath, JSON.stringify({ consolidation: { monthly: { enabled: true, min_consolidated: 2 } } }));
+  process.env.CCMEM_CONFIG_PATH = configPath;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    await insertMemory(db, {
+      cwd: '/Users/biran/code/skills/ccmem',
+      content: 'First consolidated source',
+      scope: 'project',
+      projectKey: 'demo/repo',
+      type: 'consolidated',
+      source: 'cron_consolidated',
+      embedSync: false
+    });
+    await insertMemory(db, {
+      cwd: '/Users/biran/code/skills/ccmem',
+      content: 'Second consolidated source',
+      scope: 'project',
+      projectKey: 'demo/repo',
+      type: 'consolidated',
+      source: 'cron_consolidated',
+      embedSync: false
+    });
+
+    const result = await cmdAdminCron(db, { verb: 'run', taskType: 'daily_maintenance' });
+    const dailyTask = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(result.task_id);
+    await runTask(db, dailyTask, dispatchTask);
+
+    const monthlyTask = db.prepare(
+      `SELECT type, payload, status
+       FROM tasks
+       WHERE type = 'monthly_meta_synthesis'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+
+    assert.equal(monthlyTask.type, 'monthly_meta_synthesis');
+    assert.equal(monthlyTask.status, 'queued');
+    assert.equal(JSON.parse(monthlyTask.payload).scope, 'demo/repo');
+  } finally {
+    global.Date = OriginalDate;
+    if (previousConfigPath === undefined) {
+      delete process.env.CCMEM_CONFIG_PATH;
+    } else {
+      process.env.CCMEM_CONFIG_PATH = previousConfigPath;
+    }
     db.close();
   }
 });

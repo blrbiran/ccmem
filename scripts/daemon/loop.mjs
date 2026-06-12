@@ -91,6 +91,14 @@ export function securityAuditLeaseKey(date, hour = 3, minute = 47) {
   return weekKey(weeklyLeaseAnchor(date, 0, hour, minute));
 }
 
+export function contradictionAuditLeaseKey(date, hour = 4, minute = 17) {
+  return weekKey(weeklyLeaseAnchor(date, 0, hour, minute));
+}
+
+export function monthlyMetaLeaseKey(date, scope) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}_${scope}`;
+}
+
 function timeReached(date, hour, minute) {
   return date.getHours() > hour || (date.getHours() === hour && date.getMinutes() >= minute);
 }
@@ -104,6 +112,9 @@ export function scheduleCronTasks(db, now = new Date()) {
   const auditHour = Number(auditCfg.schedule_hour ?? 3);
   const auditMinute = Number(auditCfg.schedule_minute ?? 47);
   const catchUpDays = Number(auditCfg.catch_up_days ?? 7);
+  const contradictionCfg = cfg.contradiction?.audit ?? {};
+  const contradictionHour = Number(contradictionCfg.schedule_hour ?? 4);
+  const contradictionMinute = Number(contradictionCfg.schedule_minute ?? 17);
 
   if (timeReached(now, dailyCfg.hour, dailyCfg.minute)) {
     const leaseKey = dayKey(now);
@@ -139,6 +150,21 @@ export function scheduleCronTasks(db, now = new Date()) {
       db.prepare(
         `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
          VALUES ('security_audit', ?, ?, ?, 'queued')`
+      ).run(JSON.stringify({ lease_key: leaseKey }), nowMs, nowMs);
+    }
+  }
+
+  if (
+    contradictionCfg.enabled !== false
+    && now.getDay() === Number(contradictionCfg.schedule_weekday ?? 0)
+    && timeReached(now, contradictionHour, contradictionMinute)
+  ) {
+    const leaseKey = contradictionAuditLeaseKey(now, contradictionHour, contradictionMinute);
+
+    if (tryClaimLease(db, 'contradiction_audit', leaseKey, RAN_BY.DAEMON)) {
+      db.prepare(
+        `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+         VALUES ('contradiction_audit', ?, ?, ?, 'queued')`
       ).run(JSON.stringify({ lease_key: leaseKey }), nowMs, nowMs);
     }
   }

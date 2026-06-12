@@ -157,9 +157,25 @@ function hasAssistantText(text) {
   return Boolean(text);
 }
 
+function isAlreadyBoostedInSession(db, sessionId, memId) {
+  return Boolean(db.prepare(
+    `SELECT 1
+     FROM memory_feedback
+     WHERE session_id = ?
+       AND outcome IN ('helpful_implicit', 'helpful_implicit_partial')
+       AND EXISTS (
+         SELECT 1
+         FROM json_each(injected_ids)
+         WHERE CAST(value AS INTEGER) = ?
+       )
+     LIMIT 1`
+  ).get(sessionId, memId));
+}
+
 function updateImplicitHelpful(db, sessionId, assistantText) {
   const feedback = lastFeedback(db, sessionId);
-  const memories = referencedMemories(db, sessionId, assistantText);
+  const memories = referencedMemories(db, sessionId, assistantText)
+    .filter((memory) => !isAlreadyBoostedInSession(db, sessionId, memory.id));
   if (!memories.length) {
     return;
   }
@@ -1284,7 +1300,7 @@ export function inferPositiveFeedback(db, sessionId, prompt, queryVec) {
   }
 
   const threshold = Number(cfg.cosine_threshold ?? 0.65);
-  if (bestId == null || bestCosine < threshold) {
+  if (bestId == null || bestCosine < threshold || isAlreadyBoostedInSession(db, sessionId, bestId)) {
     return;
   }
 

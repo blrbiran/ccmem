@@ -16,7 +16,7 @@ export function cmdExport(db, { scope = null, projectKey = null } = {}) {
   const memories = db.prepare(sql).all(...params);
 
   return {
-    version: '0.6',
+    version: '0.7',
     exported_at: Date.now(),
     memories
   };

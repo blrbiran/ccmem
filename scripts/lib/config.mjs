@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 const DEFAULT_CONFIG = {
-  version: '0.6',
+  version: '0.7',
   inject: { max_chars: 4000, max_per_prompt: 6 },
   save: { max_chars_per_memory: 300 },
   embedding: {
@@ -10,6 +10,14 @@ const DEFAULT_CONFIG = {
     model: 'Xenova/all-MiniLM-L6-v2',
     quantized: true,
     backfill_batch_size: 50
+  },
+  dedup: {
+    enabled: true,
+    window_days: 30,
+    fts_candidate_limit: 20,
+    jaccard_threshold: 0.3,
+    trigram_size: 3,
+    cosine_threshold: 0.85
   },
   retrieval: {
     like_fallback: {
@@ -35,7 +43,9 @@ const DEFAULT_CONFIG = {
       summarize_pending: 60000,
       l4_review: 90000,
       weekly_synthesis: 180000,
-      security_audit: 180000
+      security_audit: 180000,
+      contradiction_audit: 180000,
+      monthly_meta_synthesis: 180000
     }
   },
   hook_budget_ms: {
@@ -47,6 +57,18 @@ const DEFAULT_CONFIG = {
     daily_at: '02:17',
     weekly_at: 'Sun 03:17',
     dead_letter_alert: 5
+  },
+  contradiction: {
+    audit: {
+      enabled: true,
+      schedule_weekday: 0,
+      schedule_hour: 4,
+      schedule_minute: 17,
+      cosine_threshold: 0.7,
+      max_pairs_per_batch: 30,
+      dedup_window_days: 30
+    },
+    alert_retention_days: 60
   },
   security: {
     scan_patterns_version: '2026.07',
@@ -105,6 +127,15 @@ const DEFAULT_CONFIG = {
     enabled: true,
     retention_days: 90,
     min_days_for_tuning: 7
+  },
+  consolidation: {
+    cluster_threshold: 0.5,
+    minBatchSize: 5,
+    maxClusterSize: 15,
+    monthly: {
+      enabled: true,
+      min_consolidated: 30
+    }
   },
   tuning_suggest: {
     pool_b_zero_quarantine_ratio: 0.7,

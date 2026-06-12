@@ -1,4 +1,6 @@
+import { runContradictionAudit } from './tasks/contradiction-audit.mjs';
 import { runDailyMaintenance } from './tasks/daily-maintenance.mjs';
+import { runMonthlyMetaSynthesis } from './tasks/monthly-meta-synthesis.mjs';
 import { runRevalidationAudit } from './tasks/revalidation-audit.mjs';
 import { runSecurityAudit } from './tasks/security-audit.mjs';
 import { runSummarizePending } from './tasks/summarize-pending.mjs';
@@ -24,6 +26,14 @@ export async function dispatchTask(db, task) {
 
   if (task.type === 'security_audit') {
     return runSecurityAudit(db, task);
+  }
+
+  if (task.type === 'contradiction_audit') {
+    return runContradictionAudit(db, task);
+  }
+
+  if (task.type === 'monthly_meta_synthesis') {
+    return runMonthlyMetaSynthesis(db, task);
   }
 
   if (task.type === 'vec_backfill') {

@@ -42,7 +42,8 @@ export async function withHookSafety(hookName, timeoutMs, fn, tEntry = process.h
     hook: hookName,
     ms_business: Number(tBusinessEnd - tBusinessStart) / 1e6,
     ms_total: Number(tStdoutDone - tEntry) / 1e6,
-    error: result._error ?? null
+    error: result._error ?? null,
+    ...(result._metricFields && typeof result._metricFields === 'object' ? result._metricFields : {})
   });
 
   process.exit(0);

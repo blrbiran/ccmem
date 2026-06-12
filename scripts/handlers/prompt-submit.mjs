@@ -91,7 +91,12 @@ export async function handlePromptSubmit(hookData) {
     }
 
     return {
-      additionalContext: rows.length ? renderRetrievedBlock(rows) : ''
+      additionalContext: rows.length ? renderRetrievedBlock(rows) : '',
+      _metricFields: {
+        matched: rows.length,
+        fused_count: rows.filter((row) => row.score).length,
+        cosine_contribution: retrieval.cosineContribution ?? null
+      }
     };
   } finally {
     db.close();

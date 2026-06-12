@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { writeAudit } from '../audit.mjs';
 import { loadConfig } from '../config.mjs';
@@ -504,6 +505,107 @@ function computeRevalidationThresholdSuggestion(db, cfg, startMs) {
   );
 }
 
+function computeEmbeddingWeightSuggestion(db, cfg, startMs) {
+  const current = Number(cfg.retrieval?.weights?.semantic ?? 0.4);
+  const metricsPath = `${getDbPath().replace(/global\.db$/, 'metrics.jsonl')}`;
+  let lines = [];
+
+  try {
+    lines = readFileSync(metricsPath, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  } catch {
+    lines = [];
+  }
+
+  const relevant = lines.filter((row) => (
+    row.hook === 'prompt_submit'
+    && typeof row.ts === 'number'
+    && row.ts >= startMs
+    && typeof row.cosine_contribution === 'number'
+  ));
+
+  if (relevant.length < 50) {
+    return buildKeepSuggestion(
+      'retrieval.weights.semantic',
+      current,
+      formatKeepRationale('prompt_submit cosine samples', relevant.length, 50)
+    );
+  }
+
+  const avg = relevant.reduce((sum, row) => sum + row.cosine_contribution, 0) / relevant.length;
+  if (avg < 0.15) {
+    return buildSuggestion(
+      'retrieval.weights.semantic',
+      current,
+      Math.min(0.7, round(current + 0.1, 1)),
+      `cosine avg contribution ${round(avg * 100, 0)}% across ${relevant.length} prompt_submit samples`,
+      'increase semantic retrieval influence'
+    );
+  }
+
+  if (avg > 0.6) {
+    return buildSuggestion(
+      'retrieval.weights.semantic',
+      current,
+      Math.max(0.2, round(current - 0.1, 1)),
+      `cosine avg contribution ${round(avg * 100, 0)}% across ${relevant.length} prompt_submit samples`,
+      'reduce semantic dominance in fused retrieval scoring'
+    );
+  }
+
+  return buildKeepSuggestion(
+    'retrieval.weights.semantic',
+    current,
+    `cosine avg contribution ${round(avg * 100, 0)}% stayed balanced`
+  );
+}
+
+function computeL1PositiveThresholdSuggestion(db, cfg, startMs) {
+  const current = Number(cfg.feedback?.l1_positive?.cosine_threshold ?? 0.65);
+  const rows = db.prepare(
+    `SELECT json_extract(details, '$.user_action') AS user_action
+     FROM audit_log
+     WHERE action = 'revalidation_resurrect' AND ts >= ?`
+  ).all(startMs);
+  const keep = rows.filter((row) => row.user_action === 'keep').length;
+  const forget = rows.filter((row) => row.user_action === 'forget' || row.user_action === 'quarantine').length;
+  const total = keep + forget;
+
+  if (total < 5) {
+    return buildKeepSuggestion(
+      'feedback.l1_positive.cosine_threshold',
+      current,
+      formatKeepRationale('l1_positive revalidation decisions', total, 5)
+    );
+  }
+
+  const ratio = forget / total;
+  if (ratio > 0.6) {
+    return buildSuggestion(
+      'feedback.l1_positive.cosine_threshold',
+      current,
+      Math.min(0.9, round(current + 0.05, 2)),
+      `${forget}/${total} recent resurrect decisions ended in forget/quarantine`,
+      'make positive implicit boosts stricter'
+    );
+  }
+
+  if (ratio < 0.2) {
+    return buildSuggestion(
+      'feedback.l1_positive.cosine_threshold',
+      current,
+      Math.max(0.5, round(current - 0.05, 2)),
+      `${forget}/${total} recent resurrect decisions ended in forget/quarantine`,
+      'allow more positive implicit boosts'
+    );
+  }
+
+  return buildKeepSuggestion(
+    'feedback.l1_positive.cosine_threshold',
+    current,
+    `forget/quarantine ratio ${round(ratio, 2)} stayed balanced`
+  );
+}
+
 export function computeTuningSuggestions(db, cfg = loadConfig()) {
   const startMs = windowStartMs(TUNING_WINDOW_DAYS);
 
@@ -512,7 +614,9 @@ export function computeTuningSuggestions(db, cfg = loadConfig()) {
     computeDedupSuggestion(db, cfg, startMs),
     computeSunsetSuggestion(db, cfg, startMs),
     computeTier15ClusterSuggestion(db, cfg, startMs),
-    computeRevalidationThresholdSuggestion(db, cfg, startMs)
+    computeRevalidationThresholdSuggestion(db, cfg, startMs),
+    computeEmbeddingWeightSuggestion(db, cfg, startMs),
+    computeL1PositiveThresholdSuggestion(db, cfg, startMs)
   ];
 }
 
@@ -599,6 +703,7 @@ function buildHookMetric(currentRows, priorRows, keyPrefix, budget) {
   };
 }
 
+
 export function getMetricsDiagnostics(db, { days = 14, cfg = loadConfig() } = {}) {
   const clampedDays = clampMetricsDays(days);
   const rows = db.prepare(
@@ -618,6 +723,7 @@ export function getMetricsDiagnostics(db, { days = 14, cfg = loadConfig() } = {}
       hooks: null,
       llm: null,
       flow: null,
+      embedding: null,
       memory_pool: null
     };
   }
@@ -634,6 +740,21 @@ export function getMetricsDiagnostics(db, { days = 14, cfg = loadConfig() } = {}
        AND ts >= ?
        AND ts < ?`
   ).get(startMs, endMs)?.n ?? 0);
+  const totalEmbedded = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE embedding IS NOT NULL
+       AND status = 'active'
+       AND decay_status IN ('active', 'probation')`
+  ).get()?.n ?? 0);
+  const totalPendingEmbeddings = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE embedding IS NULL
+       AND status = 'active'
+       AND decay_status IN ('active', 'probation')`
+  ).get()?.n ?? 0);
+  const avgEmbeddingRate = averageField(currentRows, 'vec_backfill_embedded');
 
   return {
     no_data: false,
@@ -659,7 +780,13 @@ export function getMetricsDiagnostics(db, { days = 14, cfg = loadConfig() } = {}
       revalidation_quarantined: currentRows.reduce((sum, row) => sum + Number(row.reval_quarantined ?? 0), 0),
       revalidation_flagged: currentRows.reduce((sum, row) => sum + Number(row.reval_flagged ?? 0), 0),
       cross_scope_alerts_emitted: currentRows.reduce((sum, row) => sum + Number(row.sec_alerts_emitted ?? 0), 0),
-      cross_scope_alerts_acknowledged: alertsAcknowledged
+      cross_scope_alerts_acknowledged: alertsAcknowledged,
+      contradictions_detected: currentRows.reduce((sum, row) => sum + Number(row.contra_detected ?? 0), 0)
+    },
+    embedding: {
+      embedded: totalEmbedded,
+      pending: totalPendingEmbeddings,
+      avg_rate_per_day: Number.isFinite(avgEmbeddingRate) ? round(avgEmbeddingRate, 1) : 0
     },
     memory_pool: {
       day_key: latestRow.day_key,

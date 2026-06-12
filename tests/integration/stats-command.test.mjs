@@ -102,6 +102,7 @@ function resetStatsTables(db) {
   db.prepare(`DELETE FROM tasks`).run();
   db.prepare(`DELETE FROM recent_injections`).run();
   db.prepare(`DELETE FROM memory_feedback`).run();
+  db.prepare(`DELETE FROM contradiction_alerts`).run();
   db.prepare(`DELETE FROM cross_scope_alerts`).run();
   db.prepare(`DELETE FROM audit_log_targets`).run();
   db.prepare(`DELETE FROM audit_log`).run();
@@ -183,6 +184,12 @@ function seedSecurityStatsFixture(db, now = Date.now()) {
       acknowledged_at, acknowledged_action
      ) VALUES (1, 2, 'demo/repo', 0.79, 'ack duplicate', ?, ?, 'keep_global')`
   ).run(now - 4000, now - 1000);
+
+  db.prepare(
+    `INSERT INTO contradiction_alerts (
+      mem_id_a, mem_id_b, scope, cosine_similarity, evidence, detected_at
+     ) VALUES (1, 2, 'demo/repo', 0.88, ?, ?)`
+  ).run(JSON.stringify({ llm_reason: 'style contradiction' }), now - 1500);
 }
 
 test('cmdStats aggregates runtime state and opportunistic maintenance', async () => {
@@ -238,6 +245,7 @@ test('cmdStats reports security quarantine and cross-scope alert counts', async 
   assert.equal(result.security.pending_sunset, 1);
   assert.equal(result.security.alerts_pending, 1);
   assert.equal(result.security.alerts_acknowledged, 1);
+  assert.equal(result.security.contradictions_pending, 1);
   assert.equal(result.buckets.quarantine, 1);
   db.close();
 });
@@ -324,6 +332,7 @@ test('cli stats prints the security line when quarantine or alerts exist', () =>
   });
 
   assert.match(output, /Security : 1 quarantined \(1 pending sunset\) \| 1 cross-scope alerts pending/);
+  assert.match(output, /Contradict: 1 contradictions pending — run \/ccmem:resurrect --contradictions/);
 });
 
 test('cli stats --json returns structured stats', () => {
@@ -344,6 +353,7 @@ test('cli stats --json returns structured stats', () => {
   assert.equal(parsed.memories.quarantined, 0);
   assert.equal(parsed.feedback.helpful, 2);
   assert.equal(parsed.security.alerts_pending, 0);
+  assert.equal(parsed.security.contradictions_pending, 0);
   assert.equal(parsed.buckets.archived, 2);
 });
 

@@ -1,5 +1,5 @@
 import { isDaemonAlive } from '../../daemon/lock.mjs';
-import { dayKey, weeklyLeaseKey } from '../../daemon/loop.mjs';
+import { contradictionAuditLeaseKey, dayKey, weeklyLeaseKey } from '../../daemon/loop.mjs';
 import { RAN_BY, tryClaimLease } from '../task-runs.mjs';
 
 const TRACKED_TYPES = [
@@ -7,10 +7,12 @@ const TRACKED_TYPES = [
   'summarize_pending',
   'weekly_synthesis',
   'security_audit',
+  'contradiction_audit',
+  'monthly_meta_synthesis',
   'revalidation_audit',
   'vec_backfill'
 ];
-const MANUAL_RUN_TYPES = ['daily_maintenance', 'weekly_synthesis', 'security_audit', 'revalidation_audit', 'vec_backfill'];
+const MANUAL_RUN_TYPES = ['daily_maintenance', 'weekly_synthesis', 'security_audit', 'contradiction_audit', 'monthly_meta_synthesis', 'revalidation_audit', 'vec_backfill'];
 const QUEUE_OVERDUE_MS = 5 * 60 * 1000;
 const RUNNING_ZOMBIE_MS = 10 * 60 * 1000;
 
@@ -163,6 +165,10 @@ function manualLeaseKey(taskType, now) {
 
   if (taskType === 'weekly_synthesis' || taskType === 'security_audit') {
     return weeklyLeaseKey(now);
+  }
+
+  if (taskType === 'contradiction_audit') {
+    return contradictionAuditLeaseKey(now);
   }
 
   return null;

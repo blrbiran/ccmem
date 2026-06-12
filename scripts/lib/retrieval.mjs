@@ -12,13 +12,57 @@ export function sanitizeFtsQuery(prompt) {
     .join(' ');
 }
 
+const CJK_RANGE = /[㐀-鿿]/u;
+let cachedSegmenter = undefined;
+
+function getSegmenter() {
+  if (cachedSegmenter !== undefined) {
+    return cachedSegmenter;
+  }
+
+  try {
+    cachedSegmenter = new Intl.Segmenter('zh-Hans', { granularity: 'word' });
+  } catch {
+    cachedSegmenter = null;
+  }
+
+  return cachedSegmenter;
+}
+
 export function tokenize(text) {
-  return String(text ?? '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}_]+/gu, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 200);
+  const raw = String(text ?? '').toLowerCase().trim();
+  if (!raw) {
+    return [];
+  }
+
+  const segments = raw.split(/[\s,。、!?;:!?,;：；"'“”‘’【】（）()\[\]{}]+/u);
+  const tokens = [];
+
+  for (const seg of segments) {
+    if (!seg || seg.length < 2) {
+      continue;
+    }
+
+    if (CJK_RANGE.test(seg)) {
+      const segmenter = getSegmenter();
+      if (segmenter) {
+        let emitted = 0;
+        for (const { segment, isWordLike } of segmenter.segment(seg)) {
+          if (isWordLike && segment.length >= 2) {
+            tokens.push(segment);
+            emitted += 1;
+          }
+        }
+        if (emitted > 0) {
+          continue;
+        }
+      }
+    }
+
+    tokens.push(seg);
+  }
+
+  return [...new Set(tokens)].slice(0, 200);
 }
 
 export function extractShortTokens(text, maxTerms = 5) {
@@ -163,7 +207,7 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
   const promptText = String(prompt ?? '').slice(0, 2000);
   const promptTokenList = tokenize(promptText);
   if (!promptTokenList.length) {
-    return { rows: [], queryVec: null };
+    return { rows: [], queryVec: null, cosineContribution: null };
   }
 
   const promptTokens = new Set(promptTokenList);
@@ -184,7 +228,8 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
   if (!useEmbedding) {
     return {
       rows: legacySubstringSearch(db, promptText, projectKey, limit).map((row) => renderRow(row)),
-      queryVec: null
+      queryVec: null,
+      cosineContribution: null
     };
   }
 
@@ -246,13 +291,19 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
     || (Number(b.last_touched_at ?? 0) - Number(a.last_touched_at ?? 0))
   );
 
+  const selected = scored.slice(0, limit);
+  const cosineContribution = selected.length
+    ? selected.reduce((sum, row) => sum + (row.fused > 0 ? ((row.cosineScore * weights.semantic) / row.fused) : 0), 0) / selected.length
+    : null;
+
   return {
-    rows: scored.slice(0, limit).map((row) => renderRow(row, {
+    rows: selected.map((row) => renderRow(row, {
       fused: row.fused,
       fts: row.ftsScore,
       jaccard: row.jaccardScore,
       semantic: row.cosineScore
     })),
-    queryVec
+    queryVec,
+    cosineContribution
   };
 }

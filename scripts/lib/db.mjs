@@ -234,7 +234,7 @@ function reconcileFtsArtifacts(db, { rebuild = false, transactional = true } = {
   return transactional ? runInTransaction(db, work) : work();
 }
 
-function runV07Migration(db) {
+function runV06Migration(db) {
   runInTransaction(db, () => {
     const fromVersion = getSchemaVersion(db);
     const now = Date.now();
@@ -265,6 +265,66 @@ function runV07Migration(db) {
   });
 }
 
+function runV07Migration(db) {
+  runInTransaction(db, () => {
+    const fromVersion = getSchemaVersion(db);
+    const now = Date.now();
+
+    if (!tableExists(db, 'contradiction_alerts')) {
+      db.exec(`
+        CREATE TABLE contradiction_alerts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          mem_id_a INTEGER NOT NULL,
+          mem_id_b INTEGER NOT NULL,
+          scope TEXT NOT NULL,
+          cosine_similarity REAL NOT NULL,
+          evidence TEXT,
+          detected_at INTEGER NOT NULL,
+          acknowledged_at INTEGER,
+          acknowledged_action TEXT,
+          CHECK (cosine_similarity >= 0.0 AND cosine_similarity <= 1.0),
+          CHECK (
+            acknowledged_action IS NULL OR
+            acknowledged_action IN ('keep_a', 'keep_b', 'keep_both')
+          )
+        )
+      `);
+      db.exec(`
+        CREATE INDEX idx_contra_pending ON contradiction_alerts(detected_at)
+          WHERE acknowledged_at IS NULL
+      `);
+      db.exec(`CREATE INDEX idx_contra_mem_a ON contradiction_alerts(mem_id_a)`);
+      db.exec(`CREATE INDEX idx_contra_mem_b ON contradiction_alerts(mem_id_b)`);
+    }
+
+    if (!columnExists(db, 'metrics_daily_rollup', 'contra_detected')) {
+      db.exec('ALTER TABLE metrics_daily_rollup ADD COLUMN contra_detected INTEGER NOT NULL DEFAULT 0');
+    }
+
+    db.prepare('UPDATE schema_meta SET version = 8, applied_at = ?').run(now);
+    if (!migrationRecorded(db, 8)) {
+      db.prepare(`
+        INSERT INTO schema_migrations (from_version, to_version, description, applied_at, applied_by)
+        VALUES (?, 8, 'v0.7: contradiction_alerts + contra_detected rollup + meta-synthesis', ?, 'ccmem-cli')
+      `).run(fromVersion, now);
+    }
+  });
+}
+
+function runSpecialMigration(db, toVersion) {
+  if (toVersion === 7) {
+    runV06Migration(db);
+    return true;
+  }
+
+  if (toVersion === 8) {
+    runV07Migration(db);
+    return true;
+  }
+
+  return false;
+}
+
 export function runMigration(db) {
   const currentVersion = getSchemaVersion(db);
   const files = readdirSync(MIGRATIONS_DIR)
@@ -282,8 +342,7 @@ export function runMigration(db) {
 
   for (const file of pending) {
     const toVersion = Number(file.split('_', 1)[0]);
-    if (toVersion === 7) {
-      runV07Migration(db);
+    if (runSpecialMigration(db, toVersion)) {
       continue;
     }
 

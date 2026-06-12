@@ -1,3 +1,4 @@
+import { cmdAdminAlias } from './lib/admin/alias.mjs';
 import { cmdAdminCron } from './lib/admin/cron.mjs';
 import { cmdAdminDaemon } from './lib/admin/daemon.mjs';
 import { cmdAdminDiagnose } from './lib/admin/diagnose.mjs';
@@ -41,9 +42,10 @@ function printHelp() {
     '  admin cron <list|run>\n' +
     '  admin semantic <on|off|status>\n' +
     '  admin diagnose [--migrations|--key|--sessions|--security|--tuning|--metrics|--restart-history]\n' +
+    '  admin alias <old-project-key> <new-project-key>\n' +
     '  stats [--json|--buckets]\n' +
     '  promote <id> [--global]\n' +
-    '  resurrect [--quarantined|--alerts|--revalidation]\n'
+    '  resurrect [--quarantined|--alerts|--revalidation|--contradictions]\n'
   );
 }
 
@@ -58,6 +60,11 @@ if (verb === 'admin' && args[0] === 'daemon' && args[1] === '--help') {
 }
 
 if (verb === 'admin' && args[0] === 'diagnose' && args[1] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === 'alias' && args[1] === '--help') {
   printHelp();
   process.exit(0);
 }
@@ -143,6 +150,11 @@ if (verb === 'admin' && args[0] === 'cron' && args[1] == null) {
 }
 
 if (verb === 'admin' && args[0] === 'semantic' && args[1] == null) {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === 'alias' && (args[1] == null || args[2] == null)) {
   printHelp();
   process.exit(0);
 }
@@ -337,6 +349,14 @@ function printMetrics(result) {
   process.stdout.write(
     `    cross-scope alerts emitted:    ${metrics.flow.cross_scope_alerts_emitted}   acknowledged: ${metrics.flow.cross_scope_alerts_acknowledged}\n`
   );
+  process.stdout.write(
+    `    contradictions detected:       ${metrics.flow.contradictions_detected}\n`
+  );
+
+  process.stdout.write('\n  Embedding\n');
+  process.stdout.write(`    embedded: ${metrics.embedding.embedded}\n`);
+  process.stdout.write(`    pending:  ${metrics.embedding.pending}\n`);
+  process.stdout.write(`    rate:     ${Math.round(metrics.embedding.avg_rate_per_day)}/day avg\n`);
 
   process.stdout.write(`\n  Memory pool (end of ${metrics.memory_pool.day_key})\n`);
   process.stdout.write(
@@ -519,6 +539,28 @@ try {
     process.stdout.write(
       `ccmem: semantic ${result.status} enabled=${result.enabled} loaded=${result.loaded} embedded=${result.embedded} pending=${result.pending} model=${result.model} dim=${result.dim}\n`
     );
+  } else if (verb === 'admin' && args[0] === 'alias' && args[1] && args[2]) {
+    const readLine = createStdinLineReader();
+    const result = await cmdAdminAlias(getDb(), {
+      oldKey: args[1],
+      newKey: args[2],
+      confirm: ({ oldKey, newKey, count }) => {
+        process.stdout.write(
+          `Alias: "${oldKey}" → "${newKey}" (${count} memories)\n` +
+          'Type ALIAS to confirm: '
+        );
+        return readLine();
+      }
+    });
+
+    if (result.status === 'usage' || result.status === 'not_found') {
+      process.stderr.write(`${result.reason}\n`);
+      process.exitCode = result.status === 'usage' ? 64 : 2;
+    } else if (result.status === 'cancelled') {
+      process.stdout.write('ccmem: cancelled\n');
+    } else {
+      process.stdout.write(`ccmem: aliased ${result.updated_count} memories from "${result.oldKey}" → "${result.newKey}"\n`);
+    }
   } else if (verb === 'admin' && args[0] === 'diagnose') {
     const result = await cmdAdminDiagnose(getDb(), {
       cwd: process.cwd(),
@@ -641,6 +683,11 @@ try {
           `Security : ${result.security.quarantined} quarantined (${result.security.pending_sunset} pending sunset) | ${result.security.alerts_pending} cross-scope alerts pending\n`
         );
       }
+      if (result.security.contradictions_pending > 0) {
+        process.stdout.write(
+          `Contradict: ${result.security.contradictions_pending} contradictions pending — run /ccmem:resurrect --contradictions\n`
+        );
+      }
       process.stdout.write(
         `Feedback : helpful ${result.feedback.helpful} / unhelpful ${result.feedback.unhelpful} / unknown ${result.feedback.unknown} (last 14d)\n`
       );
@@ -694,6 +741,7 @@ try {
       quarantined: args.includes('--quarantined'),
       alerts: args.includes('--alerts'),
       revalidation: args.includes('--revalidation'),
+      contradictions: args.includes('--contradictions'),
       decide: (row) => {
         if (args.includes('--alerts')) {
           process.stdout.write(
@@ -713,6 +761,26 @@ try {
             `  flag reason: ${row.flag_reason ?? 'unknown'}\n` +
             `  content: ${row.content}\n` +
             '  [k]eep / [f]orget / [q]uarantine / [s]kip: '
+          );
+          return readLine();
+        }
+
+        if (args.includes('--contradictions')) {
+          const reason = (() => {
+            try {
+              return JSON.parse(row.evidence ?? '{}')?.llm_reason ?? '';
+            } catch {
+              return '';
+            }
+          })();
+          process.stdout.write(
+            `[alert#${row.id}] cosine=${Number(row.cosine_similarity ?? 0).toFixed(2)} detected ${formatAgeDays(row.detected_at)}\n` +
+            `  A [m${row.mem_id_a}] ${row.type_a} trust=${Number(row.trust_a ?? 0).toFixed(2)}\n` +
+            `    ${row.content_a ?? ''}\n` +
+            `  B [m${row.mem_id_b}] ${row.type_b} trust=${Number(row.trust_b ?? 0).toFixed(2)}\n` +
+            `    ${row.content_b ?? ''}\n` +
+            `${reason ? `  reason: ${reason}\n` : ''}` +
+            '  [a]keep-A / [b]keep-B / [B]keep-both / [s]kip: '
           );
           return readLine();
         }
@@ -741,6 +809,8 @@ try {
         process.stdout.write('ccmem: no pending cross-scope alerts\n');
       } else if (result.mode === 'revalidation') {
         process.stdout.write('ccmem: no revalidation flags pending\n');
+      } else if (result.mode === 'contradictions') {
+        process.stdout.write('ccmem: no contradictions detected\n');
       } else {
         process.stdout.write('ccmem: no grey-zone memories\n');
       }
@@ -759,6 +829,14 @@ try {
       }, {});
       process.stdout.write(
         `ccmem: revalidation keep=${counts.keep ?? 0} forget=${counts.forget ?? 0} quarantine=${counts.quarantine ?? 0} skipped=${counts.skip ?? 0}\n`
+      );
+    } else if (result.mode === 'contradictions') {
+      const counts = result.items.reduce((acc, item) => {
+        acc[item.action] = (acc[item.action] ?? 0) + 1;
+        return acc;
+      }, {});
+      process.stdout.write(
+        `ccmem: contradictions keep_a=${counts.keep_a ?? 0} keep_b=${counts.keep_b ?? 0} keep_both=${counts.keep_both ?? 0} skipped=${counts.skip ?? 0}\n`
       );
     } else {
       const kept = result.items.filter((item) => item.action === 'keep').length;

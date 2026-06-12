@@ -1,6 +1,7 @@
 import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
 import { getTuningDiagnostics } from '../admin/diagnose.mjs';
+import { getProvider } from '../embedding/provider.mjs';
 import { transformersLocal } from '../embedding/transformers-local.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
 
@@ -55,6 +56,12 @@ function semanticRuntimeEnabled(db, cfg) {
   return kv != null ? kv === 'true' : Boolean(cfg.embedding?.enabled);
 }
 
+function activeProviderName(db, cfg) {
+  return db.prepare(`SELECT value FROM config_kv WHERE key = 'embedding.active_provider'`).get()?.value
+    ?? cfg.embedding?.provider
+    ?? 'transformers-local';
+}
+
 function getSemanticStats(db, cfg) {
   const enabled = semanticRuntimeEnabled(db, cfg);
   const embedded = Number(db.prepare(
@@ -72,11 +79,14 @@ function getSemanticStats(db, cfg) {
        AND decay_status IN ('active', 'probation')`
   ).get()?.n ?? 0);
 
+  const providerName = activeProviderName(db, cfg);
+
   if (!enabled) {
     return {
       status: 'disabled',
       enabled: false,
       loaded: false,
+      provider: providerName,
       model: cfg.embedding?.model ?? transformersLocal.modelId,
       dim: transformersLocal.dim,
       embedded,
@@ -84,13 +94,15 @@ function getSemanticStats(db, cfg) {
     };
   }
 
+  const provider = getProvider({ embedding: { ...cfg.embedding, enabled: true, provider: providerName } });
   const status = pending > 0 ? 'pending backfill' : embedded > 0 ? 'active' : 'enabled';
   return {
     status,
     enabled: true,
-    loaded: transformersLocal.isLoaded(),
-    model: cfg.embedding?.model ?? transformersLocal.modelId,
-    dim: transformersLocal.dim,
+    loaded: provider?.isLoaded?.() ?? false,
+    provider: providerName,
+    model: provider?.modelId ?? cfg.embedding?.model ?? transformersLocal.modelId,
+    dim: provider?.dim ?? transformersLocal.dim,
     embedded,
     pending
   };

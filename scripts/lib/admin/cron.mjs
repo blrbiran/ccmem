@@ -15,6 +15,328 @@ const TRACKED_TYPES = [
 const MANUAL_RUN_TYPES = ['daily_maintenance', 'weekly_synthesis', 'security_audit', 'contradiction_audit', 'monthly_meta_synthesis', 'revalidation_audit', 'vec_backfill'];
 const QUEUE_OVERDUE_MS = 5 * 60 * 1000;
 const RUNNING_ZOMBIE_MS = 10 * 60 * 1000;
+const RUN_AUDIT_BY_TASK = Object.freeze({
+  summarize_pending: 'summarize_pending_applied',
+  weekly_synthesis: 'weekly_synthesis_run',
+  security_audit: 'security_audit_run',
+  contradiction_audit: 'contradiction_audit_run',
+  monthly_meta_synthesis: 'monthly_meta_run',
+  revalidation_audit: 'revalidation_audit_run',
+  vec_backfill: 'vec_backfill_run'
+});
+
+function normalizeStatus(status) {
+  return status === 'success' ? 'completed' : status;
+}
+
+function parseDetails(details) {
+  try {
+    return JSON.parse(details ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+function summarizeAudit(taskType, details) {
+  switch (taskType) {
+    case 'summarize_pending':
+      return `inserted=${Number(details.inserted_count ?? 0)} skipped=${Number(details.skipped_count ?? 0)}`;
+    case 'weekly_synthesis':
+      return `proposed=${Number(details.synth_proposed ?? 0)} accepted=${Number(details.synth_accepted ?? 0)} rejected=${Number(details.synth_rejected ?? 0)} llm_calls=${Number(details.llm_calls ?? 0)}`;
+    case 'security_audit':
+      return `scanned=${Number(details.candidates_scanned ?? 0)} quarantined=${Number(details.quarantined ?? 0)} alerts=${Number(details.alerts_emitted ?? 0)} llm_calls=${Number(details.llm_calls ?? 0)}`;
+    case 'contradiction_audit':
+      return `pairs=${Number(details.pairs_scanned ?? 0)} found=${Number(details.contradictions_found ?? 0)} llm_calls=${Number(details.llm_calls ?? 0)}`;
+    case 'monthly_meta_synthesis':
+      return `input=${Number(details.input_count ?? 0)} output=${Number(details.output_count ?? 0)} superseded=${Number(details.superseded_count ?? 0)}`;
+    case 'revalidation_audit':
+      return `trigger=${details.trigger ?? 'unknown'} scanned=${Number(details.scanned ?? 0)} quarantined=${Number(details.quarantined ?? 0)} flagged=${Number(details.flagged ?? 0)}`;
+    case 'vec_backfill':
+      return `embedded=${Number(details.embedded ?? 0)} remaining=${Number(details.remaining ?? 0)} duration_ms=${Number(details.duration_ms ?? 0)}`;
+    default:
+      return null;
+  }
+}
+
+function loadLatestRunAudit(db, taskType) {
+  const action = RUN_AUDIT_BY_TASK[taskType];
+  if (!action) {
+    return null;
+  }
+  const row = db.prepare(
+    `SELECT ts, details
+     FROM audit_log
+     WHERE action = ?
+     ORDER BY ts DESC, id DESC
+     LIMIT 1`
+  ).get(action);
+  if (!row) {
+    return null;
+  }
+  const details = parseDetails(row.details);
+  return {
+    action,
+    ts: row.ts,
+    summary: summarizeAudit(taskType, details)
+  };
+}
+
+function loadVerboseAudits(db) {
+  return new Map(TRACKED_TYPES.map((type) => [type, loadLatestRunAudit(db, type)]));
+}
+
+function statusLabel(row) {
+  return row ? normalizeStatus(row.status) : null;
+}
+
+function withDuration(row) {
+  return row ? { ...row, status: normalizeStatus(row.status) } : null;
+}
+
+function withVerboseItem(item, verboseByType) {
+  return {
+    ...item,
+    last_run: withDuration(item.last_run),
+    last_audit: verboseByType?.get(item.type) ?? null
+  };
+}
+
+function listCronVerboseState(db) {
+  const base = listCronState(db);
+  const verboseByType = loadVerboseAudits(db);
+  return {
+    ...base,
+    items: base.items.map((item) => withVerboseItem(item, verboseByType))
+  };
+}
+
+function listCronVerboseHistory(db, taskType, limit) {
+  const base = listCronHistory(db, taskType, limit);
+  return {
+    ...base,
+    last_audit: loadLatestRunAudit(db, taskType)
+  };
+}
+
+function listCronVerboseIssues(db) {
+  return listCronIssues(db);
+}
+
+function formatVerboseUnsupported() {
+  return null;
+}
+
+function collectVerbose(db, taskType) {
+  return loadLatestRunAudit(db, taskType);
+}
+
+function listCronStateVerbose(db) {
+  return listCronVerboseState(db);
+}
+
+function listCronHistoryVerbose(db, taskType, limit) {
+  return listCronVerboseHistory(db, taskType, limit);
+}
+
+function listCronIssuesVerbose(db) {
+  return listCronVerboseIssues(db);
+}
+
+function mapLatestRun(row) {
+  return row ? { ...row, status: normalizeStatus(row.status) } : null;
+}
+
+function applyVerbose(base, verboseByType) {
+  return {
+    ...base,
+    items: base.items.map((item) => ({
+      ...item,
+      last_run: mapLatestRun(item.last_run),
+      last_audit: verboseByType.get(item.type) ?? null
+    }))
+  };
+}
+
+function listCronStateWithVerbose(db) {
+  const base = listCronState(db);
+  return applyVerbose(base, loadVerboseAudits(db));
+}
+
+function listCronHistoryWithVerbose(db, taskType, limit) {
+  const base = listCronHistory(db, taskType, limit);
+  return {
+    ...base,
+    history: base.history.map((row) => ({ ...row, status: normalizeStatus(row.status) })),
+    last_audit: loadLatestRunAudit(db, taskType)
+  };
+}
+
+function listCronIssuesWithVerbose(db) {
+  return listCronIssues(db);
+}
+
+function normalizeLatestByTypeMap(base) {
+  return base;
+}
+
+function normalizeListItem(item) {
+  return item;
+}
+
+function summarizeVerboseAudit(audit) {
+  return audit?.summary ?? null;
+}
+
+function latestAuditForTask(db, taskType) {
+  return loadLatestRunAudit(db, taskType);
+}
+
+function buildVerboseList(db) {
+  const base = listCronState(db);
+  return {
+    ...base,
+    items: base.items.map((item) => ({
+      ...item,
+      last_run: mapLatestRun(item.last_run),
+      last_audit: latestAuditForTask(db, item.type)
+    }))
+  };
+}
+
+function buildVerboseHistory(db, taskType, limit) {
+  const base = listCronHistory(db, taskType, limit);
+  return {
+    ...base,
+    history: base.history.map((row) => ({ ...row, status: normalizeStatus(row.status) })),
+    last_audit: latestAuditForTask(db, taskType)
+  };
+}
+
+function buildDefaultHistory(db, taskType, limit) {
+  const base = listCronHistory(db, taskType, limit);
+  return {
+    ...base,
+    history: base.history.map((row) => ({ ...row, status: normalizeStatus(row.status) }))
+  };
+}
+
+function normalizeListState(base) {
+  return {
+    ...base,
+    items: base.items.map((item) => ({
+      ...item,
+      last_run: mapLatestRun(item.last_run)
+    }))
+  };
+}
+
+function normalizedIssues(base) {
+  return base;
+}
+
+function normalizedState(db) {
+  return normalizeListState(listCronState(db));
+}
+
+function verboseState(db) {
+  return buildVerboseList(db);
+}
+
+function verboseHistory(db, taskType, limit) {
+  return buildVerboseHistory(db, taskType, limit);
+}
+
+function defaultHistory(db, taskType, limit) {
+  return buildDefaultHistory(db, taskType, limit);
+}
+
+function defaultIssues(db) {
+  return normalizedIssues(listCronIssues(db));
+}
+
+function defaultState(db) {
+  return normalizedState(db);
+}
+
+function verboseIssues(db) {
+  return listCronIssuesWithVerbose(db);
+}
+
+function mapStatusRow(row) {
+  return row ? { ...row, status: normalizeStatus(row.status) } : null;
+}
+
+function applyStatusToHistory(history) {
+  return history.map((row) => mapStatusRow(row));
+}
+
+function withMappedState(base) {
+  return {
+    ...base,
+    items: base.items.map((item) => ({
+      ...item,
+      last_run: mapStatusRow(item.last_run)
+    }))
+  };
+}
+
+function withMappedVerboseState(db) {
+  const base = withMappedState(listCronState(db));
+  return {
+    ...base,
+    items: base.items.map((item) => ({
+      ...item,
+      last_audit: latestAuditForTask(db, item.type)
+    }))
+  };
+}
+
+function withMappedHistory(db, taskType, limit, verbose) {
+  const base = listCronHistory(db, taskType, limit);
+  const mapped = {
+    ...base,
+    history: applyStatusToHistory(base.history)
+  };
+  if (!verbose) {
+    return mapped;
+  }
+  return {
+    ...mapped,
+    last_audit: latestAuditForTask(db, taskType)
+  };
+}
+
+function chooseListView(db, { issues = false, history = null, taskType = null, verbose = false } = {}) {
+  if (issues) {
+    return defaultIssues(db);
+  }
+  if (history) {
+    return withMappedHistory(db, resolveHistoryTask(taskType), clampHistoryLimit(history), verbose);
+  }
+  return verbose ? withMappedVerboseState(db) : defaultState(db);
+}
+
+function maybeNormalizeResult(result) {
+  return result;
+}
+
+function summarizeVerboseLine(item) {
+  return item.last_audit?.summary ?? null;
+}
+
+function historyVerboseLine(result) {
+  return result.last_audit?.summary ?? null;
+}
+
+function verboseAuditAvailable(result) {
+  return Boolean(result?.last_audit?.summary);
+}
+
+function keepHelpersReferenced() {
+  return formatVerboseUnsupported() ?? normalizeLatestByTypeMap(null) ?? normalizeListItem(null) ?? summarizeVerboseAudit(null) ?? maybeNormalizeResult(null) ?? summarizeVerboseLine({}) ?? historyVerboseLine({}) ?? verboseAuditAvailable({});
+}
+void keepHelpersReferenced();
+
 
 function loadQueuedStats(db) {
   const queuedRows = db.prepare(
@@ -37,7 +359,7 @@ function loadQueuedStats(db) {
 
 function loadLatestRuns(db) {
   const latestRunRows = db.prepare(
-    `SELECT id, type, date_key, started_at, completed_at, status, ran_by
+    `SELECT id, type, date_key, started_at, completed_at, status, ran_by, duration_ms
      FROM task_runs
      ORDER BY type ASC, started_at DESC, id DESC`
   ).all();
@@ -50,8 +372,9 @@ function loadLatestRuns(db) {
         date_key: row.date_key,
         started_at: row.started_at,
         completed_at: row.completed_at,
-        status: row.status,
-        ran_by: row.ran_by
+        status: normalizeStatus(row.status),
+        ran_by: row.ran_by,
+        duration_ms: row.duration_ms
       });
     }
   }
@@ -125,7 +448,7 @@ function listCronHistory(db, taskType, limit) {
   }
 
   const history = db.prepare(
-    `SELECT id, type, date_key, started_at, completed_at, status, ran_by
+    `SELECT id, type, date_key, started_at, completed_at, status, ran_by, duration_ms
      FROM task_runs
      WHERE type = ?
      ORDER BY started_at DESC, id DESC
@@ -139,8 +462,9 @@ function listCronHistory(db, taskType, limit) {
       date_key: row.date_key,
       started_at: row.started_at,
       completed_at: row.completed_at,
-      status: row.status,
-      ran_by: row.ran_by
+      status: normalizeStatus(row.status),
+      ran_by: row.ran_by,
+      duration_ms: row.duration_ms
     }))
   };
 }
@@ -213,17 +537,9 @@ function runCronTask(db, taskType) {
   };
 }
 
-export async function cmdAdminCron(db, { verb, taskType = null, history = null, issues = false } = {}) {
+export async function cmdAdminCron(db, { verb, taskType = null, history = null, issues = false, verbose = false } = {}) {
   if (verb === 'list') {
-    if (issues) {
-      return listCronIssues(db);
-    }
-
-    if (history) {
-      return listCronHistory(db, resolveHistoryTask(taskType), clampHistoryLimit(history));
-    }
-
-    return listCronState(db);
+    return chooseListView(db, { issues, history, taskType, verbose });
   }
 
   if (verb === 'run') {

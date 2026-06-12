@@ -124,7 +124,7 @@ v0.7 已 ship 以下能力，v0.8 在其上叠加，**不重写**：
 
 **A4 — Contradiction merge**：
 14. `/ccmem:resurrect --contradictions` 显示 `m` 选项；选 `m` → LLM 产出合并记忆 → 用户 `y/N` 确认
-15. 确认后：新记忆 `type='rule'` + `parent_ids=[id_a, id_b]`；两条原记忆 → `superseded`；alert → `acknowledged_action='merged'`
+15. 确认后：新记忆 `type='consolidated'` + `parent_ids=[id_a, id_b]`；两条原记忆 → `superseded`；alert → `acknowledged_action='merged'`
 16. LLM 合并失败 → stderr 提示 + fallback 到 a/b/B/s 菜单
 
 **A5 — Synthesis 可观测性**：

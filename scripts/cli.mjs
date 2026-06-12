@@ -495,6 +495,7 @@ try {
   } else if (verb === 'admin' && args[0] === 'cron' && args[1] === 'list') {
     const historyIdx = args.indexOf('--history');
     const taskIdx = args.indexOf('--task');
+    const verbose = args.includes('--verbose');
 
     if (args.includes('--issues')) {
       const result = await cmdAdminCron(getDb(), { verb: 'list', issues: true });
@@ -517,7 +518,8 @@ try {
         const result = await cmdAdminCron(getDb(), {
           verb: 'list',
           taskType: args[taskIdx + 1],
-          history: args[historyIdx + 1] ?? '10'
+          history: args[historyIdx + 1] ?? '10',
+          verbose
         });
         process.stdout.write(`ccmem: cron history ${result.type}\n`);
 
@@ -525,6 +527,9 @@ try {
           process.stdout.write(
             `${row.status}@${row.date_key} by=${row.ran_by} at=${formatLocalTimestamp(row.completed_at ?? row.started_at)} duration_s=${formatDurationSeconds(row.started_at, row.completed_at)}\n`
           );
+        }
+        if (verbose && result.last_audit?.summary) {
+          process.stdout.write(`  audit: ${result.last_audit.summary}\n`);
         }
       } catch (error) {
         if (error instanceof Error && /unsupported .*cron task:/.test(error.message)) {
@@ -535,7 +540,7 @@ try {
         }
       }
     } else {
-      const result = await cmdAdminCron(getDb(), { verb: 'list' });
+      const result = await cmdAdminCron(getDb(), { verb: 'list', verbose });
       process.stdout.write(`ccmem: daemon ${result.daemon_alive ? 'alive' : 'not running'}\n`);
 
       for (const item of result.items) {
@@ -543,6 +548,9 @@ try {
         const at = item.last_run ? formatLocalTimestamp(item.last_run.completed_at ?? item.last_run.started_at) : 'unknown';
         const duration = item.last_run ? formatDurationSeconds(item.last_run.started_at, item.last_run.completed_at) : 'unknown';
         process.stdout.write(`${item.type} queued=${item.queued} last=${last} at=${at} duration_s=${duration}\n`);
+        if (verbose && item.last_audit?.summary) {
+          process.stdout.write(`  audit: ${item.last_audit.summary}\n`);
+        }
       }
     }
   } else if (verb === 'admin' && args[0] === 'cron' && args[1] === 'run' && args[2]) {

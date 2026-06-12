@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-12T13:59:28.455Z
-> Files: 174 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-12T16:04:25.044Z
+> Files: 175 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
 
@@ -66,14 +66,14 @@
 
 ## commands/
 
-- `admin.md` (~132 tok)
+- `admin.md` (~149 tok)
 - `audit.md` (~36 tok)
 - `forget.md` (~39 tok)
 - `list.md` — Declares rule (~56 tok)
 - `mode.md` (~43 tok)
 - `pin.md` (~37 tok)
 - `promote.md` (~44 tok)
-- `resurrect.md` (~63 tok)
+- `resurrect.md` (~68 tok)
 - `save.md` — Declares rule (~52 tok)
 - `show.md` (~37 tok)
 - `stats.md` (~46 tok)
@@ -85,6 +85,7 @@
 - `ccmem-v0.4-spec.md` — ccmem v0.4 实施 spec (~18395 tok)
 - `ccmem-v0.5-dogfood.md` — ccmem v0.5 dogfood / 验证清单，含 A4 容器 fallback 验证记录 (~1200 tok)
 - `ccmem-v0.5-spec.md` — ccmem v0.5 实施 spec，覆盖 self-restart、diagnose 扩展与 A4 容器 fallback (~15000 tok)
+- `ccmem-v0.8-spec.md` — ccmem v0.8 实施 spec (~17341 tok)
 - `claude-code-behavior-uncertainties.md` — Claude Code 行为验证清单 (~2337 tok)
 - `design-deep-analysis.md` — ccmem 设计深入分析 (~5248 tok)
 - `design-motivation.md` — 设计初衷：为什么要做这个记忆系统 (~523 tok)
@@ -105,7 +106,7 @@
 
 ## scripts/
 
-- `cli.mjs` — args: getDb, printHelp, getOptionValue + 8 more (~10199 tok)
+- `cli.mjs` — args: getDb, printHelp, getOptionValue + 8 more (~10292 tok)
 - `hook.mjs` — T_ENTRY: buildHookOutput, writeHookOutput, isBlacklistedSession (~618 tok)
 
 ## scripts/daemon/
@@ -167,7 +168,7 @@
 ## scripts/lib/admin/
 
 - `alias.mjs` — Exports cmdAdminAlias (~346 tok)
-- `cron.mjs` — Exports cmdAdminCron (~1598 tok)
+- `cron.mjs` — Exports cmdAdminCron (~2357 tok)
 - `daemon.mjs` — Exports renderPlist, maybeRespawnContainerFallback (~5211 tok)
 - `diagnose.mjs` — SESSION_LIMIT: firstValue, parseMemIds, parseDetails + 17 more (~8314 tok)
 - `semantic.mjs` — Exports cmdAdminSemantic (~1060 tok)
@@ -185,7 +186,7 @@
 - `resurrect.mjs` — clampLimit: normalizeGreyDecision, normalizeAlertDecision, normalizeRevalidationDecision + 8 more (~5082 tok)
 - `save.mjs` — Exports insertMemory, cmdSave (~1296 tok)
 - `show.mjs` — Exports cmdShow (~56 tok)
-- `stats.mjs` — Exports cmdStats (~1918 tok)
+- `stats.mjs` — Exports cmdStats (~2057 tok)
 
 ## scripts/lib/embedding/
 

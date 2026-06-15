@@ -19,6 +19,7 @@ const { cmdImport } = await import('../../scripts/lib/cmd/import.mjs');
 const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
 const { cmdList } = await import('../../scripts/lib/cmd/list.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
+const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submit.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
 
 function resetSaveListTables(db) {
@@ -107,6 +108,24 @@ test('cmdList excludes quarantined memories by default and returns them with rea
   assert.equal(quarantinedRows.length, 1);
   assert.equal(quarantinedRows[0].content, 'Quarantined list memory');
   assert.equal(quarantinedRows[0].reason, 'tier3_auto');
+  db.close();
+});
+
+test('cmdList returns never-injected active memories when requested', async () => {
+  const db = openDb();
+  resetSaveListTables(db);
+  const injected = await cmdSave(db, { cwd: process.cwd(), content: 'Already injected memory', scope: 'project' });
+  const never = await cmdSave(db, { cwd: process.cwd(), content: 'Never injected memory', scope: 'project' });
+
+  db.prepare(
+    `INSERT INTO recent_injections (session_id, prompt_idx, inject_source, mem_ids, created_at)
+     VALUES ('s-used', 1, 'user_prompt_submit', ?, ?)`
+  ).run(JSON.stringify([injected.id]), Date.now());
+
+  const rows = await cmdList(db, { neverInjected: true, days: 30, limit: 10 });
+
+  assert.equal(rows.some((row) => row.id === never.id), true);
+  assert.equal(rows.some((row) => row.id === injected.id), false);
   db.close();
 });
 
@@ -253,6 +272,65 @@ test('cli list query --score prints score breakdown when semantic is enabled', a
   assert.match(output, /fts=/);
   assert.match(output, /jaccard=/);
   assert.match(output, /semantic=/);
+});
+
+test('cli show prints recent injection history when scores are present', async () => {
+  const db = openDb();
+  resetSaveListTables(db);
+  db.prepare(
+    `INSERT INTO config_kv (key, value, set_at)
+     VALUES ('embedding.enabled', 'true', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+  ).run(Date.now());
+  const saved = await cmdSave(db, { cwd: process.cwd(), content: 'Show history memory', scope: 'project' });
+  db.close();
+
+  await handlePromptSubmit({
+    cwd: process.cwd(),
+    session_id: 's-show-history',
+    prompt: 'show history memory'
+  });
+
+  const output = execFileSync(NODE, [CLI, 'show', `m${saved.id}`], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env: {
+      ...process.env,
+      CCMEM_TEST_MODE: '1',
+      CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT
+    },
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /Recent injections \(last 14d\):/);
+  assert.match(output, /fts=/);
+  assert.match(output, /jac=/);
+  assert.match(output, /cos=/);
+  assert.match(output, /fused=/);
+});
+
+test('cli list --never-injected prints only never-injected memories', async () => {
+  const db = openDb();
+  resetSaveListTables(db);
+  const injected = await cmdSave(db, { cwd: process.cwd(), content: 'Injected CLI memory', scope: 'project' });
+  const never = await cmdSave(db, { cwd: process.cwd(), content: 'Never injected CLI memory', scope: 'project' });
+  db.prepare(
+    `INSERT INTO recent_injections (session_id, prompt_idx, inject_source, mem_ids, created_at)
+     VALUES ('s-cli-never', 1, 'user_prompt_submit', ?, ?)`
+  ).run(JSON.stringify([injected.id]), Date.now());
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'list', '--never-injected', '--days', '30'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env: {
+      ...process.env,
+      CCMEM_TEST_MODE: '1',
+      CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT
+    },
+    encoding: 'utf8'
+  });
+
+  assert.match(output, new RegExp(`m${never.id}`));
+  assert.doesNotMatch(output, new RegExp(`m${injected.id}`));
 });
 
 test('session-start in off mode stays read-only and returns no injected context', async () => {

@@ -28,24 +28,28 @@ export function adjustTrust(db, memId, outcome) {
   }
 
   if (outcome === 'helpful') {
+    const now = Date.now();
     db.prepare(
       `UPDATE memories
        SET trust_score = MIN(1.0, trust_score + 0.05),
            helpful_count = helpful_count + 1,
-           updated_at = ?
+           updated_at = ?,
+           last_touched_at = ?
        WHERE id = ?`
-    ).run(Date.now(), memId);
+    ).run(now, now, memId);
     return;
   }
 
   if (outcome === 'helpful_implicit' || outcome === 'helpful_implicit_partial') {
+    const now = Date.now();
     db.prepare(
       `UPDATE memories
        SET trust_score = MIN(1.0, trust_score + 0.025),
            helpful_count = helpful_count + 1,
-           updated_at = ?
+           updated_at = ?,
+           last_touched_at = ?
        WHERE id = ?`
-    ).run(Date.now(), memId);
+    ).run(now, now, memId);
   }
 }
 

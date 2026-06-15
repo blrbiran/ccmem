@@ -4,6 +4,7 @@ import { writeAudit } from '../audit.mjs';
 import { loadConfig } from '../config.mjs';
 import { getDbPath, getSchemaVersion } from '../db.mjs';
 import { fallbackProjectKey, resolveProjectKey } from '../project-key.mjs';
+import { collectInjectionRows, countNeverInjected } from '../recent-injections.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
 
 const SESSION_LIMIT = 10;
@@ -853,6 +854,120 @@ export function getMetricsDiagnostics(db, { days = 14, cfg = loadConfig() } = {}
   };
 }
 
+function aggregateRetrievalTiming(days) {
+  const cutoff = windowStartMs(days);
+  const metricsPath = `${getDbPath().replace(/global\.db$/, 'metrics.jsonl')}`;
+  let lines = [];
+
+  try {
+    lines = readFileSync(metricsPath, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } catch {
+    return null;
+  }
+
+  const rows = lines.filter((row) => (
+    row.hook === 'prompt_submit'
+    && typeof row.ts === 'number'
+    && row.ts >= cutoff
+  ));
+  if (!rows.length) {
+    return null;
+  }
+
+  const embed = rows.map((row) => Number(row.retrieval_embed_ms)).filter(Number.isFinite).sort((a, b) => a - b);
+  const dbRead = rows.map((row) => Number(row.retrieval_db_ms)).filter(Number.isFinite).sort((a, b) => a - b);
+  const cosine = rows.map((row) => Number(row.retrieval_cosine_ms)).filter(Number.isFinite).sort((a, b) => a - b);
+  const pools = rows.map((row) => Number(row.retrieval_pool)).filter(Number.isFinite);
+
+  if (!embed.length && !dbRead.length && !cosine.length) {
+    return null;
+  }
+
+  return {
+    embed: {
+      p50: round(percentile(embed, 0.5) ?? 0, 1),
+      p95: round(percentile(embed, 0.95) ?? 0, 1)
+    },
+    db: {
+      p50: round(percentile(dbRead, 0.5) ?? 0, 1),
+      p95: round(percentile(dbRead, 0.95) ?? 0, 1)
+    },
+    cosine: {
+      p50: round(percentile(cosine, 0.5) ?? 0, 1),
+      p95: round(percentile(cosine, 0.95) ?? 0, 1)
+    },
+    avgPool: round(average(pools) ?? 0, 1)
+  };
+}
+
+function getInjectionDiagnostics(db, { days = 14, cfg = loadConfig() } = {}) {
+  const rows = collectInjectionRows(db, days);
+  const total = rows.length;
+  const empty = rows.filter((row) => row.mem_ids.length === 0).length;
+  const activeCount = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM memories
+     WHERE status = 'active'
+       AND decay_status IN ('active', 'probation')`
+  ).get()?.n ?? 0);
+
+  const distinctMems = new Set(rows.flatMap((row) => row.mem_ids.map((id) => Number(id)).filter(Number.isFinite)));
+  const fusedValues = rows.flatMap((row) => row.scores.map((score) => Number(score?.f)).filter(Number.isFinite));
+  const aggregate = new Map();
+
+  for (const row of rows) {
+    for (const score of row.scores) {
+      const id = Number(score?.id);
+      if (!Number.isFinite(id)) {
+        continue;
+      }
+      const current = aggregate.get(id) ?? { id, count: 0, fusedSum: 0 };
+      current.count += 1;
+      current.fusedSum += Number(score?.f ?? 0);
+      aggregate.set(id, current);
+    }
+  }
+
+  const memIds = [...aggregate.keys()];
+  const memMeta = new Map(
+    memIds.length
+      ? db.prepare(
+          `SELECT id, type, scope, content
+           FROM memories
+           WHERE id IN (${memIds.map(() => '?').join(',')})`
+        ).all(...memIds).map((row) => [Number(row.id), row])
+      : []
+  );
+
+  const decorated = [...aggregate.values()].map((item) => ({
+    ...item,
+    avgFused: item.count > 0 ? item.fusedSum / item.count : 0,
+    ...(memMeta.get(item.id) ?? { type: 'unknown', scope: 'unknown', content: '' })
+  }));
+  decorated.sort((a, b) => b.count - a.count || b.avgFused - a.avgFused || a.id - b.id);
+
+  const lowThreshold = Number(cfg.injection_observability?.low_quality_threshold ?? 0.30);
+  const perf = aggregateRetrievalTiming(days);
+
+  return {
+    days,
+    total,
+    empty,
+    active_count: activeCount,
+    distinct_mems: distinctMems.size,
+    fused_p50: round(percentile([...fusedValues].sort((a, b) => a - b), 0.5) ?? 0, 2),
+    fused_p95: round(percentile([...fusedValues].sort((a, b) => a - b), 0.95) ?? 0, 2),
+    top10: decorated.slice(0, 10),
+    low_threshold: lowThreshold,
+    low_quality: decorated.filter((item) => item.avgFused < lowThreshold).slice(0, 10),
+    never_count: countNeverInjected(db, 30),
+    perf
+  };
+}
+
 export async function cmdAdminDiagnose(
   db,
   {
@@ -865,10 +980,11 @@ export async function cmdAdminDiagnose(
     metrics = false,
     synthesis = false,
     restartHistory = false,
+    injections = false,
     days = 14
   } = {}
 ) {
-  if (tuning || metrics || synthesis) {
+  if (tuning || metrics || synthesis || injections) {
     try {
       maybeRunTier15(db);
     } catch {}
@@ -900,6 +1016,7 @@ export async function cmdAdminDiagnose(
   const tuningDiagnostics = tuning ? getTuningDiagnostics(db, cfg) : null;
   const metricsDiagnostics = metrics ? getMetricsDiagnostics(db, { days, cfg }) : null;
   const synthesisDiagnostics = synthesis ? getSynthesisDiagnostics(db, { days: 30 }) : null;
+  const injectionDiagnostics = injections ? getInjectionDiagnostics(db, { days, cfg }) : null;
 
   if (tuningDiagnostics && !tuningDiagnostics.insufficient) {
     tuningDiagnostics.audit_id = writeAudit(db, 'tuning_suggestion_emitted', null, {
@@ -936,6 +1053,7 @@ export async function cmdAdminDiagnose(
     tuning: tuningDiagnostics,
     metrics: metricsDiagnostics,
     synthesis: synthesisDiagnostics,
+    injections: injectionDiagnostics,
     restart_history: restartHistory ? loadRestartHistory(db) : null,
     migrations: migrations
       ? migrationRows.map((row) => ({

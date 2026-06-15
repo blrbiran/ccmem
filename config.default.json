@@ -1,5 +1,5 @@
 {
-  "version": "0.8",
+  "version": "0.9",
   "inject": { "max_chars": 4000, "max_per_prompt": 6 },
   "save": { "max_chars_per_memory": 300 },
   "embedding": {
@@ -46,12 +46,45 @@
     "min_transcript_after_clean": 200,
     "transcript_cleaner": {
       "enabled": true,
-      "rules": null
+      "extra_rules": []
     },
     "quality_gate": {
       "enabled": true,
-      "min_chars": 15
+      "min_chars": 15,
+      "rules_enabled": {
+        "too_short": true,
+        "commit_format": true,
+        "too_specific": true,
+        "version_snapshot": true,
+        "test_count": true,
+        "timestamp_dominant": true,
+        "path_list": true
+      }
     }
+  },
+  "adaptive_decay": {
+    "consolidated_fast_expire_days": 60,
+    "consolidated_max_depth_for_expire": 1,
+    "candidate_expire_archive_days": 30
+  },
+  "injection_observability": {
+    "never_injected_alert_ratio": 0.15,
+    "low_quality_threshold": 0.3
+  },
+  "cross_project": {
+    "audit": {
+      "enabled": true,
+      "schedule_weekday": 0,
+      "schedule_hour": 4,
+      "schedule_minute": 47,
+      "cosine_threshold": 0.85,
+      "min_projects": 2,
+      "min_trust": 0.5,
+      "max_candidates_per_run": 5,
+      "dedup_window_days": 30,
+      "max_pairs": 500000
+    },
+    "alert_retention_days": 60
   },
   "llm": {
     "claude_p_timeout_per_task": {

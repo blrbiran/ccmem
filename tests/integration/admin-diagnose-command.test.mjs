@@ -67,7 +67,7 @@ function seedAliveDaemon(db, now = Date.now()) {
   ).run(2468, 'diagnose-host', now - 4000, now - 600);
   db.prepare(
     `INSERT INTO config_kv (key, value, set_at)
-     VALUES ('daemon_startup_schema_version', '10', ?)
+     VALUES ('daemon_startup_schema_version', '11', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
   ).run(now - 4000);
 }
@@ -234,8 +234,8 @@ test('cmdAdminDiagnose returns db health, daemon status, and fallback project ke
   const result = await cmdAdminDiagnose(db, { cwd: diagnoseCwd });
 
   assert.equal(result.db.health, 'ok');
-  assert.equal(result.db.schema_version, 10);
-  assert.equal(result.daemon.startup_schema_version, 10);
+  assert.equal(result.db.schema_version, 11);
+  assert.equal(result.daemon.startup_schema_version, 11);
   assert.equal(typeof result.daemon.uptime_sec, 'number');
   assert.equal(result.daemon.alive, true);
   assert.equal(result.daemon.pid, 2468);
@@ -263,7 +263,7 @@ test('cmdAdminDiagnose returns migration history when requested', async () => {
     applied_at: result.migrations[0].applied_at,
     applied_by: 'ccmem-cli'
   });
-  assert.equal(result.migrations.at(-1).to_version, 10);
+  assert.equal(result.migrations.at(-1).to_version, 11);
   db.close();
 });
 
@@ -324,9 +324,9 @@ test('cli admin diagnose prints default diagnostics', () => {
     encoding: 'utf8'
   });
 
-  assert.match(output, /ccmem: db ok schema=10/);
+  assert.match(output, /ccmem: db ok schema=11/);
   assert.match(output, /ccmem: daemon alive pid=2468 host=diagnose-host/);
-  assert.match(output, /startup_schema=10/);
+  assert.match(output, /startup_schema=11/);
   assert.match(output, /uptime_sec=\d+/);
   assert.match(output, /ccmem: project_key path:/);
   assert.match(output, /ccmem: tier2 available/);
@@ -602,6 +602,45 @@ test('cli admin diagnose --tuning prints actionable suggestions when signals are
   assert.match(output, /security\.audit\.pool_b\.clusterMinSize/);
   assert.match(output, /current: 3  suggest: 5/);
   assert.match(output, /\(use \/ccmem:audit show \d+ for full signal breakdown\)/);
+});
+
+test('cli admin diagnose --injections prints injection observability summary', async () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  const memA = await cmdSave(db, { cwd: diagnoseCwd, content: 'Injection memory A', scope: 'project', type: 'fact' });
+  const memB = await cmdSave(db, { cwd: diagnoseCwd, content: 'Injection memory B', scope: 'project', type: 'fact' });
+  const memC = await cmdSave(db, { cwd: diagnoseCwd, content: 'Injection memory C', scope: 'project', type: 'fact' });
+  db.prepare(
+    `INSERT INTO recent_injections (session_id, prompt_idx, inject_source, mem_ids, scores, created_at)
+     VALUES
+     ('s1', 1, 'user_prompt_submit', ?, ?, ?),
+     ('s2', 1, 'user_prompt_submit', '[]', NULL, ?)`
+  ).run(
+    JSON.stringify([memA.id, memB.id]),
+    JSON.stringify([
+      { id: memA.id, fts: 0.8, jac: 0.6, cos: 0.9, f: 0.82 },
+      { id: memB.id, fts: 0.4, jac: 0.3, cos: 0.2, f: 0.25 }
+    ]),
+    Date.now(),
+    Date.now()
+  );
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--injections', '--days', '14'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /Injection overview \(last 14 days\)/);
+  assert.match(output, /Volume/);
+  assert.match(output, /Top 10 most injected/);
+  assert.match(output, /Low-quality injections/);
+  assert.match(output, /Never injected \(30d, active\): 1 memories/);
+  assert.match(output, new RegExp(`m${memA.id}`));
+  assert.match(output, new RegExp(`m${memB.id}`));
+  assert.match(output, /avg=0\.25/);
+  assert.doesNotMatch(output, new RegExp(`m${memC.id}.*avg=`));
 });
 
 test('cmdAdminAlias updates project keys, cache, and audit', async () => {

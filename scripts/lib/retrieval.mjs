@@ -215,7 +215,7 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
   const promptText = String(prompt ?? '').slice(0, 2000);
   const promptTokenList = tokenize(promptText);
   if (!promptTokenList.length) {
-    return { rows: [], queryVec: null, cosineContribution: null };
+    return { rows: [], queryVec: null, cosineContribution: null, timing: null };
   }
 
   const promptTokens = new Set(promptTokenList);
@@ -243,11 +243,14 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
         semantic: 0
       })),
       queryVec: null,
-      cosineContribution: null
+      cosineContribution: null,
+      timing: null
     };
   }
 
+  const tEmbed = Date.now();
   const [queryVec] = await provider.embed([promptText]);
+  const embedMs = Date.now() - tEmbed;
   let ftsRows = useFts && ftsQuery ? ftsSearch(db, ftsQuery, projectKey, limit * 3) : [];
   let candidateRows = ftsRows;
   const likeEnabled = config?.retrieval?.like_fallback?.enabled !== false;
@@ -262,6 +265,7 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
     candidateRows = dedupeMerge(candidateRows, likeRows);
   }
 
+  const tDbRead = Date.now();
   const allVecs = db.prepare(
     `SELECT id, embedding
      FROM memories
@@ -270,11 +274,14 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
        AND decay_status IN ('active', 'probation')
        AND (scope = 'global' OR project_key = ?)`
   ).all(projectKey);
+  const dbReadMs = Date.now() - tDbRead;
 
+  const tCosine = Date.now();
   const cosineScores = new Map();
   for (const row of allVecs) {
     cosineScores.set(row.id, cosineSimilarity(queryVec, blobToVec(row.embedding)));
   }
+  const cosineMs = Date.now() - tCosine;
 
   const candidateIds = new Set(candidateRows.map((row) => row.id));
   for (const [id] of [...cosineScores.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit * 2)) {
@@ -318,6 +325,12 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
       semantic: row.cosineScore
     })),
     queryVec,
-    cosineContribution
+    cosineContribution,
+    timing: {
+      embedMs,
+      dbReadMs,
+      cosineMs,
+      candidatePool: allVecs.length
+    }
   };
 }

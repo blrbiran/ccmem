@@ -115,6 +115,7 @@ export function scheduleCronTasks(db, now = new Date()) {
   const contradictionCfg = cfg.contradiction?.audit ?? {};
   const contradictionHour = Number(contradictionCfg.schedule_hour ?? 4);
   const contradictionMinute = Number(contradictionCfg.schedule_minute ?? 17);
+  const crossProjectCfg = cfg.cross_project?.audit ?? {};
 
   if (timeReached(now, dailyCfg.hour, dailyCfg.minute)) {
     const leaseKey = dayKey(now);
@@ -165,6 +166,25 @@ export function scheduleCronTasks(db, now = new Date()) {
       db.prepare(
         `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
          VALUES ('contradiction_audit', ?, ?, ?, 'queued')`
+      ).run(JSON.stringify({ lease_key: leaseKey }), nowMs, nowMs);
+    }
+  }
+
+  if (
+    crossProjectCfg.enabled !== false
+    && now.getDay() === Number(crossProjectCfg.schedule_weekday ?? 0)
+    && timeReached(now, Number(crossProjectCfg.schedule_hour ?? 4), Number(crossProjectCfg.schedule_minute ?? 47))
+  ) {
+    const leaseKey = weeklyLeaseKey(now, {
+      weekday: Number(crossProjectCfg.schedule_weekday ?? 0),
+      hour: Number(crossProjectCfg.schedule_hour ?? 4),
+      minute: Number(crossProjectCfg.schedule_minute ?? 47)
+    });
+
+    if (tryClaimLease(db, 'cross_project_patterns', leaseKey, RAN_BY.DAEMON)) {
+      db.prepare(
+        `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+         VALUES ('cross_project_patterns', ?, ?, ?, 'queued')`
       ).run(JSON.stringify({ lease_key: leaseKey }), nowMs, nowMs);
     }
   }

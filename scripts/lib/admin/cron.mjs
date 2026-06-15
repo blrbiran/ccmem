@@ -1,5 +1,6 @@
 import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { contradictionAuditLeaseKey, dayKey, weeklyLeaseKey } from '../../daemon/loop.mjs';
+import { loadConfig } from '../config.mjs';
 import { RAN_BY, tryClaimLease } from '../task-runs.mjs';
 
 const TRACKED_TYPES = [
@@ -8,11 +9,12 @@ const TRACKED_TYPES = [
   'weekly_synthesis',
   'security_audit',
   'contradiction_audit',
+  'cross_project_patterns',
   'monthly_meta_synthesis',
   'revalidation_audit',
   'vec_backfill'
 ];
-const MANUAL_RUN_TYPES = ['daily_maintenance', 'weekly_synthesis', 'security_audit', 'contradiction_audit', 'monthly_meta_synthesis', 'revalidation_audit', 'vec_backfill'];
+const MANUAL_RUN_TYPES = ['daily_maintenance', 'weekly_synthesis', 'security_audit', 'contradiction_audit', 'cross_project_patterns', 'monthly_meta_synthesis', 'revalidation_audit', 'vec_backfill'];
 const QUEUE_OVERDUE_MS = 5 * 60 * 1000;
 const RUNNING_ZOMBIE_MS = 10 * 60 * 1000;
 const RUN_AUDIT_BY_TASK = Object.freeze({
@@ -20,6 +22,7 @@ const RUN_AUDIT_BY_TASK = Object.freeze({
   weekly_synthesis: 'weekly_synthesis_run',
   security_audit: 'security_audit_run',
   contradiction_audit: 'contradiction_audit_run',
+  cross_project_patterns: 'cross_project_run',
   monthly_meta_synthesis: 'monthly_meta_run',
   revalidation_audit: 'revalidation_audit_run',
   vec_backfill: 'vec_backfill_run'
@@ -47,6 +50,8 @@ function summarizeAudit(taskType, details) {
       return `scanned=${Number(details.candidates_scanned ?? 0)} quarantined=${Number(details.quarantined ?? 0)} alerts=${Number(details.alerts_emitted ?? 0)} llm_calls=${Number(details.llm_calls ?? 0)}`;
     case 'contradiction_audit':
       return `pairs=${Number(details.pairs_scanned ?? 0)} found=${Number(details.contradictions_found ?? 0)} llm_calls=${Number(details.llm_calls ?? 0)}`;
+    case 'cross_project_patterns':
+      return `projects=${Number(details.projects_scanned ?? 0)} pairs=${Number(details.pairs_checked ?? 0)} candidates=${Number(details.candidates_found ?? 0)} clusters=${Number(details.clusters_formed ?? 0)}`;
     case 'monthly_meta_synthesis':
       return `input=${Number(details.input_count ?? 0)} output=${Number(details.output_count ?? 0)} superseded=${Number(details.superseded_count ?? 0)}`;
     case 'revalidation_audit':
@@ -225,6 +230,14 @@ function manualLeaseKey(taskType, now) {
   }
   if (taskType === 'contradiction_audit') {
     return contradictionAuditLeaseKey(now);
+  }
+  if (taskType === 'cross_project_patterns') {
+    const cfg = loadConfig().cross_project?.audit ?? {};
+    return weeklyLeaseKey(now, {
+      weekday: Number(cfg.schedule_weekday ?? 0),
+      hour: Number(cfg.schedule_hour ?? 4),
+      minute: Number(cfg.schedule_minute ?? 47)
+    });
   }
   return null;
 }

@@ -104,6 +104,7 @@ function resetStatsTables(db) {
   db.prepare(`DELETE FROM memory_feedback`).run();
   db.prepare(`DELETE FROM contradiction_alerts`).run();
   db.prepare(`DELETE FROM cross_scope_alerts`).run();
+  db.prepare(`DELETE FROM promote_candidates`).run();
   db.prepare(`DELETE FROM audit_log_targets`).run();
   db.prepare(`DELETE FROM audit_log`).run();
   db.prepare(`DELETE FROM metrics_daily_rollup`).run();
@@ -382,6 +383,34 @@ test('cli stats prints the tuning hint when suggestions are available', () => {
   });
 
   assert.match(output, /Tuning  : \d+ suggestions available — run \/ccmem:admin diagnose --tuning/);
+});
+
+test('cli stats prints injection and promote hints when thresholds are exceeded', () => {
+  const db = openDb();
+  resetStatsTables(db);
+  const now = Date.now();
+  insertMemory(db, { content: 'hint one', trust: 0.9, now });
+  insertMemory(db, { content: 'hint two', trust: 0.8, now });
+  insertMemory(db, { content: 'hint three', trust: 0.7, now });
+  const ids = db.prepare(`SELECT id FROM memories ORDER BY id ASC`).all().map((row) => row.id);
+  db.prepare(
+    `INSERT INTO recent_injections (session_id, prompt_idx, inject_source, mem_ids, created_at)
+     VALUES ('s-hint', 1, 'user_prompt_submit', ?, ?)`
+  ).run(JSON.stringify([ids[0]]), now);
+  db.prepare(
+    `INSERT INTO promote_candidates (mem_id, project_key, similar_in, trigger, detected_at)
+     VALUES (?, 'demo/repo', ?, 'cosine_cross_project', ?)`
+  ).run(ids[0], JSON.stringify([{ project_key: 'demo/other', mem_id: ids[1], cosine: 0.91 }]), now);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'stats'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /Injection: 2 memories never injected in 30d \(67%\) — run \/ccmem:admin diagnose --injections/);
+  assert.match(output, /Promote  : 1 cross-project patterns detected — run \/ccmem:resurrect --promote-candidates/);
 });
 
 test.after(() => rmSync(dataRoot, { recursive: true, force: true }));

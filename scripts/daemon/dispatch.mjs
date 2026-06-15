@@ -1,4 +1,5 @@
 import { runContradictionAudit } from './tasks/contradiction-audit.mjs';
+import { runCrossProjectPatterns } from './tasks/cross-project-patterns.mjs';
 import { runDailyMaintenance } from './tasks/daily-maintenance.mjs';
 import { runMonthlyMetaSynthesis } from './tasks/monthly-meta-synthesis.mjs';
 import { runRevalidationAudit } from './tasks/revalidation-audit.mjs';
@@ -30,6 +31,10 @@ export async function dispatchTask(db, task) {
 
   if (task.type === 'contradiction_audit') {
     return runContradictionAudit(db, task);
+  }
+
+  if (task.type === 'cross_project_patterns') {
+    return runCrossProjectPatterns(db, task);
   }
 
   if (task.type === 'monthly_meta_synthesis') {

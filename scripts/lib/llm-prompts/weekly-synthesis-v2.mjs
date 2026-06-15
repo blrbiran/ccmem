@@ -66,6 +66,11 @@ concise synthesis.
 <<EXISTING CONSOLIDATED>>
 ${existingJson}
 
+CRITICAL: Before producing any synthesis, check against the existing list above.
+If your proposed output is essentially restating something already captured
+(same topic + same conclusion, even in different words), DO NOT output it.
+Only synthesize genuinely NEW patterns not yet covered.
+
 <<CLUSTER MEMORIES>>
 ${clusterJson}
 

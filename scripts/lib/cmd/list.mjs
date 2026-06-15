@@ -1,9 +1,10 @@
 import { loadConfig } from '../config.mjs';
 import { resolveProjectKey } from '../project-key.mjs';
+import { collectInjectionRows, listNeverInjected } from '../recent-injections.mjs';
 import { retrieveMemories } from '../retrieval.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
 
-export async function cmdList(db, { limit = 20, quarantined = false, query = null, cwd = process.cwd() } = {}) {
+export async function cmdList(db, { limit = 20, quarantined = false, neverInjected = false, days = 30, query = null, cwd = process.cwd() } = {}) {
   try {
     maybeRunTier15(db);
   } catch {}
@@ -25,6 +26,10 @@ export async function cmdList(db, { limit = 20, quarantined = false, query = nul
        ORDER BY m.quarantined_at DESC, m.id DESC
        LIMIT ?`
     ).all(limit);
+  }
+
+  if (neverInjected) {
+    return listNeverInjected(db, { days, limit });
   }
 
   if (query) {

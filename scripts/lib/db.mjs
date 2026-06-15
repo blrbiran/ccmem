@@ -415,6 +415,62 @@ function runV08BacklogMigration(db) {
   });
 }
 
+function runV09Migration(db) {
+  runInTransaction(db, () => {
+    const fromVersion = getSchemaVersion(db);
+    const now = Date.now();
+
+    if (!columnExists(db, 'recent_injections', 'scores')) {
+      db.exec('ALTER TABLE recent_injections ADD COLUMN scores TEXT');
+    }
+
+    if (!columnExists(db, 'metrics_daily_rollup', 'inj_total')) {
+      db.exec('ALTER TABLE metrics_daily_rollup ADD COLUMN inj_total INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!columnExists(db, 'metrics_daily_rollup', 'inj_empty')) {
+      db.exec('ALTER TABLE metrics_daily_rollup ADD COLUMN inj_empty INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!columnExists(db, 'metrics_daily_rollup', 'inj_avg_fused')) {
+      db.exec('ALTER TABLE metrics_daily_rollup ADD COLUMN inj_avg_fused REAL');
+    }
+    if (!columnExists(db, 'metrics_daily_rollup', 'inj_never_30d')) {
+      db.exec('ALTER TABLE metrics_daily_rollup ADD COLUMN inj_never_30d INTEGER NOT NULL DEFAULT 0');
+    }
+
+    if (!tableExists(db, 'promote_candidates')) {
+      db.exec(`
+        CREATE TABLE promote_candidates (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          mem_id INTEGER NOT NULL,
+          project_key TEXT NOT NULL,
+          similar_in TEXT NOT NULL,
+          trigger TEXT NOT NULL,
+          detected_at INTEGER NOT NULL,
+          acknowledged_at INTEGER,
+          acknowledged_action TEXT,
+          CHECK (
+            acknowledged_action IS NULL OR
+            acknowledged_action IN ('promote', 'dismiss')
+          )
+        )
+      `);
+      db.exec(`
+        CREATE INDEX idx_promote_pending ON promote_candidates(detected_at)
+          WHERE acknowledged_at IS NULL
+      `);
+      db.exec(`CREATE INDEX idx_promote_mem ON promote_candidates(mem_id)`);
+    }
+
+    db.prepare('UPDATE schema_meta SET version = 11, applied_at = ?').run(now);
+    if (!migrationRecorded(db, 11)) {
+      db.prepare(`
+        INSERT INTO schema_migrations (from_version, to_version, description, applied_at, applied_by)
+        VALUES (?, 11, 'v0.9: injection scores + promote_candidates + injection rollup', ?, 'ccmem-cli')
+      `).run(fromVersion, now);
+    }
+  });
+}
+
 function runSpecialMigration(db, toVersion) {
   if (toVersion === 7) {
     runV06Migration(db);
@@ -433,6 +489,11 @@ function runSpecialMigration(db, toVersion) {
 
   if (toVersion === 10) {
     runV08BacklogMigration(db);
+    return true;
+  }
+
+  if (toVersion === 11) {
+    runV09Migration(db);
     return true;
   }
 

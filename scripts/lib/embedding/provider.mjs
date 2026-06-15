@@ -28,20 +28,26 @@ function resolveConfig(config = null) {
 }
 
 function resolveEnabled(fileCfg, config = null) {
+  const kvEnabled = readConfigKv('embedding.enabled');
+  if (kvEnabled != null) {
+    return kvEnabled === 'true';
+  }
   if (typeof config?.embedding?.enabled === 'boolean') {
     return config.embedding.enabled;
   }
-  const kvEnabled = readConfigKv('embedding.enabled');
-  return kvEnabled != null ? kvEnabled === 'true' : Boolean(fileCfg.enabled);
+  return Boolean(fileCfg.enabled);
 }
 
 function resolveProviderName(fileCfg, config = null) {
+  const kvProvider = readConfigKv('embedding.active_provider');
+  if (kvProvider) {
+    return kvProvider;
+  }
   const explicit = config?.embedding?.provider;
   if (explicit) {
     return explicit;
   }
-  const kvProvider = readConfigKv('embedding.active_provider');
-  return kvProvider ?? fileCfg.provider ?? 'transformers-local';
+  return fileCfg.provider ?? 'transformers-local';
 }
 
 function providerByName(name) {

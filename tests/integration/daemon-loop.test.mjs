@@ -5454,6 +5454,41 @@ test('scheduleCronTasks on Tuesday after ISO week rollover still skips weekly sy
   db.close();
 });
 
+test('scheduleCronTasks at local 04:47 on Sunday enqueues cross_project_patterns once per lease window', () => {
+  const db = openDb();
+  resetRuntimeTables(db);
+  const sundayCrossProject = new Date(2026, 5, 7, 4, 47, 0, 0);
+
+  scheduleCronTasks(db, sundayCrossProject);
+  scheduleCronTasks(db, sundayCrossProject);
+
+  const taskCounts = db.prepare(
+    `SELECT type, COUNT(*) AS n
+     FROM tasks
+     WHERE type = 'cross_project_patterns'
+     GROUP BY type`
+  ).all().map((row) => ({ type: row.type, n: row.n }));
+  const leases = db.prepare(
+    `SELECT type, date_key, ran_by, status
+     FROM task_runs
+     WHERE type = 'cross_project_patterns'`
+  ).all().map((row) => ({
+    type: row.type,
+    date_key: row.date_key,
+    ran_by: row.ran_by,
+    status: row.status
+  }));
+
+  assert.deepEqual(taskCounts, [
+    { type: 'cross_project_patterns', n: 1 }
+  ]);
+  assert.deepEqual(leases, [
+    { type: 'cross_project_patterns', date_key: weeklyLeaseKey(sundayCrossProject, { weekday: 0, hour: 4, minute: 47 }), ran_by: 'daemon', status: 'running' }
+  ]);
+
+  db.close();
+});
+
 test('scheduleCronTasks at local 03:47 on Sunday enqueues security_audit once per lease window', () => {
   const db = openDb();
   resetRuntimeTables(db);

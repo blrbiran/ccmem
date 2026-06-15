@@ -23,6 +23,7 @@ const { dispatchTask } = await import('../../scripts/daemon/dispatch.mjs');
 const { contradictionAuditLeaseKey, dayKey, monthlyMetaLeaseKey, weeklyLeaseKey, runTask } = await import('../../scripts/daemon/loop.mjs');
 const { cmdAdminCron } = await import('../../scripts/lib/admin/cron.mjs');
 const { insertMemory } = await import('../../scripts/lib/cmd/save.mjs');
+const { fallbackProjectKey } = await import('../../scripts/lib/project-key.mjs');
 
 function resetCronTables(db) {
   db.prepare(`DELETE FROM daemon_lock`).run();
@@ -1627,6 +1628,120 @@ test('cmdAdminCron run enqueues security_audit with the anchored manual week lea
     global.Date = OriginalDate;
     db.close();
   }
+});
+
+test('cmdAdminCron run enqueues cross_project_patterns with the anchored manual week lease key', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  const fixedNow = new Date(2026, 5, 7, 4, 48, 0, 0);
+  const fixedNowMs = fixedNow.getTime();
+  const OriginalDate = global.Date;
+
+  class FixedDate extends OriginalDate {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNowMs;
+    }
+
+    static parse(value) {
+      return OriginalDate.parse(value);
+    }
+
+    static UTC(...args) {
+      return OriginalDate.UTC(...args);
+    }
+  }
+
+  global.Date = FixedDate;
+
+  try {
+    const result = await cmdAdminCron(db, { verb: 'run', taskType: 'cross_project_patterns' });
+    const task = db.prepare(
+      `SELECT type, payload, scheduled_for, status
+       FROM tasks
+       WHERE id = ?`
+    ).get(result.task_id);
+    const lease = db.prepare(
+      `SELECT date_key, ran_by, status
+       FROM task_runs
+       WHERE type = 'cross_project_patterns'
+       ORDER BY id DESC
+       LIMIT 1`
+    ).get();
+
+    assert.equal(result.type, 'cross_project_patterns');
+    assert.equal(task.type, 'cross_project_patterns');
+    assert.equal(task.scheduled_for, fixedNowMs);
+    assert.equal(task.status, 'queued');
+    assert.deepEqual(JSON.parse(task.payload), { lease_key: weeklyLeaseKey(fixedNow, { weekday: 0, hour: 4, minute: 47 }) });
+    assert.equal(lease.date_key, weeklyLeaseKey(fixedNow, { weekday: 0, hour: 4, minute: 47 }));
+    assert.equal(lease.ran_by, 'manual');
+    assert.equal(lease.status, 'running');
+  } finally {
+    global.Date = OriginalDate;
+    db.close();
+  }
+});
+
+test('manual cross_project_patterns run creates promote candidate for similar memories across projects', async () => {
+  const db = openDb();
+  resetCronTables(db);
+  db.prepare(`DELETE FROM memories`).run();
+  db.prepare(`DELETE FROM promote_candidates`).run();
+  db.prepare(`DELETE FROM audit_log_targets`).run();
+  db.prepare(`DELETE FROM audit_log`).run();
+  db.prepare(
+    `INSERT INTO config_kv (key, value, set_at)
+     VALUES ('embedding.enabled', 'true', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+  ).run(Date.now());
+
+  const projectACwd = '/tmp/ccmem-cross-project-a';
+  const projectBCwd = '/tmp/ccmem-cross-project-b';
+  const memA = await insertMemory(db, {
+    cwd: projectACwd,
+    content: 'Use feature folders for related commands',
+    scope: 'project',
+    type: 'fact',
+    source: 'user_explicit'
+  });
+  await insertMemory(db, {
+    cwd: projectBCwd,
+    content: 'Use feature folders for related commands',
+    scope: 'project',
+    type: 'fact',
+    source: 'user_explicit'
+  });
+
+  const result = await cmdAdminCron(db, { verb: 'run', taskType: 'cross_project_patterns' });
+  const task = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(result.task_id);
+  await runTask(db, task, dispatchTask);
+
+  const candidate = db.prepare(
+    `SELECT mem_id, project_key, trigger, acknowledged_at
+     FROM promote_candidates
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const audit = db.prepare(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'cross_project_run'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  const details = JSON.parse(audit.details);
+
+  assert.equal(candidate.mem_id, memA.id);
+  assert.equal(candidate.project_key, fallbackProjectKey(projectACwd));
+  assert.equal(candidate.trigger, 'cosine_cross_project');
+  assert.equal(candidate.acknowledged_at, null);
+  assert.equal(details.candidates_found, 1);
+  assert.equal(details.projects_scanned >= 2, true);
+  db.close();
 });
 
 test('cmdAdminCron run enqueues contradiction_audit with the anchored manual week lease key', async () => {

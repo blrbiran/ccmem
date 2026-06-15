@@ -89,6 +89,121 @@ function normalizeContradictionDecision(input) {
   return 'skip';
 }
 
+function normalizePromoteDecision(input) {
+  const value = String(input ?? '').trim().toLowerCase();
+  if (value === 'p') {
+    return 'promote';
+  }
+  if (value === 'd') {
+    return 'dismiss';
+  }
+  return 'skip';
+}
+
+function parseTags(tags) {
+  try {
+    const parsed = JSON.parse(tags ?? '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function resurrectPromoteCandidates(db, { cwd, limit, decide }) {
+  const currentProjectKey = resolveProjectKey(cwd);
+  const rows = db.prepare(
+    `SELECT pc.id AS candidate_id,
+            pc.mem_id,
+            pc.project_key,
+            pc.similar_in,
+            pc.trigger,
+            pc.detected_at,
+            m.content,
+            m.type,
+            m.trust_score,
+            m.tags
+     FROM promote_candidates pc
+     JOIN memories m ON m.id = pc.mem_id
+     WHERE pc.acknowledged_at IS NULL
+       AND (pc.project_key = ? OR EXISTS (
+         SELECT 1
+         FROM json_each(pc.similar_in) je
+         WHERE json_extract(je.value, '$.project_key') = ?
+       ))
+     ORDER BY pc.detected_at DESC, pc.id DESC
+     LIMIT ?`
+  ).all(currentProjectKey, currentProjectKey, clampLimit(limit, 10));
+
+  const items = [];
+  const touched = [];
+
+  for (const row of rows) {
+    const now = Date.now();
+    const action = normalizePromoteDecision(decide({
+      ...row,
+      similar: JSON.parse(row.similar_in ?? '[]')
+    }));
+
+    if (action === 'promote') {
+      const tags = parseTags(row.tags);
+      if (tags.includes('dangerous_command') || tags.includes('contains_secret')) {
+        items.push({
+          candidate_id: row.candidate_id,
+          mem_id: row.mem_id,
+          project_key: row.project_key,
+          content: row.content,
+          type: row.type,
+          trust_score: row.trust_score,
+          similar: JSON.parse(row.similar_in ?? '[]'),
+          action: 'blocked'
+        });
+        continue;
+      }
+
+      db.prepare(
+        `UPDATE memories
+         SET scope = 'global', project_key = NULL, type = 'rule', updated_at = ?
+         WHERE id = ?`
+      ).run(now, row.mem_id);
+      db.prepare(
+        `UPDATE promote_candidates
+         SET acknowledged_at = ?, acknowledged_action = 'promote'
+         WHERE id = ?`
+      ).run(now, row.candidate_id);
+      writeAudit(db, 'cross_project_acknowledged', row.mem_id, {
+        candidate_id: row.candidate_id,
+        action: 'promote'
+      });
+      touched.push({ scope: 'global', project_key: null });
+      touched.push({ scope: 'project', project_key: row.project_key ?? null });
+    } else if (action === 'dismiss') {
+      db.prepare(
+        `UPDATE promote_candidates
+         SET acknowledged_at = ?, acknowledged_action = 'dismiss'
+         WHERE id = ?`
+      ).run(now, row.candidate_id);
+      writeAudit(db, 'cross_project_acknowledged', row.mem_id, {
+        candidate_id: row.candidate_id,
+        action: 'dismiss'
+      });
+    }
+
+    items.push({
+      candidate_id: row.candidate_id,
+      mem_id: row.mem_id,
+      project_key: row.project_key,
+      content: row.content,
+      type: row.type,
+      trust_score: row.trust_score,
+      similar: JSON.parse(row.similar_in ?? '[]'),
+      action
+    });
+  }
+
+  rebuildTouchedCaches(db, touched);
+  return { mode: 'promote_candidates', items };
+}
+
 function acknowledgeContradiction(db, alertId, action, memIdA) {
   db.prepare(
     `UPDATE contradiction_alerts
@@ -607,6 +722,7 @@ export async function cmdResurrect(db, {
   alerts = false,
   contradictions = false,
   revalidation = false,
+  promoteCandidates = false,
   limit = null
 } = {}) {
   const tier15 = alerts ? { ran: false, skipped: 'alerts_mode' } : maybeRunTier15(db);
@@ -636,6 +752,13 @@ export async function cmdResurrect(db, {
     return {
       tier15,
       ...resurrectQuarantined(db, { limit: limit ?? bottom, decide })
+    };
+  }
+
+  if (promoteCandidates) {
+    return {
+      tier15,
+      ...resurrectPromoteCandidates(db, { cwd, limit: limit ?? bottom, decide })
     };
   }
 

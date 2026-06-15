@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getDataRoot } from './db.mjs';
 import { loadConfig } from './config.mjs';
+import { countNeverInjected, parseInjectionScores } from './recent-injections.mjs';
 import { writeAudit } from './audit.mjs';
 
 function percentile(sortedValues, ratio) {
@@ -190,6 +191,37 @@ export function writeMetricsDailyRollup(db) {
        AND ts >= ? AND ts < ?`
   ).get(dayStartMs, dayEndMs)?.n ?? 0);
 
+  const injTotal = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM recent_injections
+     WHERE created_at >= ? AND created_at < ?`
+  ).get(dayStartMs, dayEndMs)?.n ?? 0);
+  const injEmpty = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM recent_injections
+     WHERE created_at >= ? AND created_at < ?
+       AND mem_ids = '[]'`
+  ).get(dayStartMs, dayEndMs)?.n ?? 0);
+  const scoreRows = db.prepare(
+    `SELECT scores
+     FROM recent_injections
+     WHERE created_at >= ? AND created_at < ?
+       AND scores IS NOT NULL`
+  ).all(dayStartMs, dayEndMs);
+  let fusedSum = 0;
+  let fusedCount = 0;
+  for (const row of scoreRows) {
+    for (const score of parseInjectionScores(row.scores)) {
+      const fused = Number(score?.f);
+      if (Number.isFinite(fused)) {
+        fusedSum += fused;
+        fusedCount += 1;
+      }
+    }
+  }
+  const injAvgFused = fusedCount > 0 ? fusedSum / fusedCount : null;
+  const injNever30d = countNeverInjected(db, 30);
+
   const memPool = db.prepare(
     `SELECT
        SUM(CASE WHEN decay_status = 'active' AND status = 'active' THEN 1 ELSE 0 END) AS active,
@@ -211,9 +243,10 @@ export function writeMetricsDailyRollup(db) {
       tier15_clusters, vec_backfill_embedded, contra_detected,
       synth_proposed, synth_accepted, synth_rejected,
       input_noise_stripped_chars, quality_gate_rejected,
+      inj_total, inj_empty, inj_avg_fused, inj_never_30d,
       mems_active, mems_probation, mems_quarantine, mems_archived,
       written_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     dayKey,
     hookStats.session_start?.p50 ?? null,
@@ -239,6 +272,10 @@ export function writeMetricsDailyRollup(db) {
     Number(synthStats?.rejected ?? 0),
     Number(noiseStats?.stripped ?? 0),
     gateRejects,
+    injTotal,
+    injEmpty,
+    injAvgFused,
+    injNever30d,
     Number(memPool.active ?? 0),
     Number(memPool.probation ?? 0),
     Number(memPool.quarantine ?? 0),

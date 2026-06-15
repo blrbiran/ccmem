@@ -46,6 +46,16 @@ export async function runDailyMaintenance(db, task) {
   try {
     db.prepare(
       `UPDATE memories
+       SET decay_status = 'candidate_expire', updated_at = ?
+       WHERE decay_status = 'active'
+         AND pinned = 0
+         AND helpful_count = 0
+         AND half_life_days IS NOT NULL
+         AND ((? - last_touched_at) / 86400000.0) > (half_life_days * 2)`
+    ).run(now, now);
+
+    db.prepare(
+      `UPDATE memories
        SET decay_status = 'archived', updated_at = ?
        WHERE trust_score < 0.1 AND decay_status != 'archived'`
     ).run(now);
@@ -94,6 +104,34 @@ export async function runDailyMaintenance(db, task) {
       `DELETE FROM contradiction_alerts
        WHERE detected_at < ?`
     ).run(now - (Number(cfg.contradiction?.alert_retention_days ?? 60) * 86400000));
+
+    db.prepare(
+      `UPDATE memories
+       SET decay_status = 'archived', updated_at = ?
+       WHERE decay_status = 'candidate_expire'
+         AND ((? - updated_at) / 86400000.0) > ?`
+    ).run(now, now, Number(cfg.adaptive_decay?.candidate_expire_archive_days ?? 30));
+
+    db.prepare(
+      `UPDATE memories
+       SET decay_status = 'candidate_expire', updated_at = ?
+       WHERE type = 'consolidated'
+         AND decay_status = 'active'
+         AND pinned = 0
+         AND helpful_count = 0
+         AND consolidation_depth <= ?
+         AND ((? - created_at) / 86400000.0) > ?`
+    ).run(
+      now,
+      Number(cfg.adaptive_decay?.consolidated_max_depth_for_expire ?? 1),
+      now,
+      Number(cfg.adaptive_decay?.consolidated_fast_expire_days ?? 60)
+    );
+
+    db.prepare(
+      `DELETE FROM promote_candidates
+       WHERE detected_at < ?`
+    ).run(now - (Number(cfg.cross_project?.alert_retention_days ?? 60) * 86400000));
 
     try {
       revalidationAuditCore(db, { trigger: 'daily' });

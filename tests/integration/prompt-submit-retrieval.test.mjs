@@ -123,7 +123,7 @@ test('prompt-submit retrieves relevant memories and records recent injections', 
     prompt: 'add a route under app api'
   });
   const injection = readOne(
-    `SELECT prompt_idx, inject_source, mem_ids
+    `SELECT prompt_idx, inject_source, mem_ids, scores
      FROM recent_injections
      WHERE session_id = 's-retrieval' AND inject_source = 'user_prompt_submit'`
   );
@@ -142,6 +142,7 @@ test('prompt-submit retrieves relevant memories and records recent injections', 
   assert.equal(injection.prompt_idx, 1);
   assert.equal(injection.inject_source, 'user_prompt_submit');
   assert.deepEqual(JSON.parse(injection.mem_ids), [saved.id]);
+  assert.equal(injection.scores, null);
   assert.equal(feedback.injection_source, 'user_prompt_submit');
   assert.deepEqual(JSON.parse(feedback.injected_ids), [saved.id]);
   assert.equal(feedback.outcome, 'unknown');

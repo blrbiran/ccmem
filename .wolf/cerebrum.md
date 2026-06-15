@@ -48,6 +48,11 @@
 - **v0.5 cron truth source**: when spec and dogfood diverge on weekly scheduling, follow dogfood/runtime validation — `weekly_at` means the configured weekday/time only, with no later-week catch-up for `weekly_synthesis`; `security_audit` keeps its existing Sunday catch-up behavior.
 - **v0.5 backup hygiene**: migration backup dedupe is behavioral, not architectural — reuse a same-size `.bak` created within 60s, and prune old backups from `daily_maintenance` using `migration_backup.max_keep`.
 - **Tier 1.5 fallback recovery**: container-fallback daemon recovery belongs in the command prelude path; if install state says `container-fallback` and the wrapper PID is stale, Tier 1.5 should respawn the wrapper opportunistically rather than waiting for a manual daemon command.
+- **Embedding runtime precedence**: provider resolution must honor `config_kv` runtime toggles (`embedding.enabled`, `embedding.active_provider`) before config-object defaults, or semantic-mode tests and v0.9 observability features can silently stay on non-embedding paths.
+
+## Do-Not-Repeat
+
+- 2026-06-13: Do not hard-code inserted memory ids in integration fixtures; query actual ids from the database before writing dependent `recent_injections` or `promote_candidates` rows.
 
 ## Do-Not-Repeat
 

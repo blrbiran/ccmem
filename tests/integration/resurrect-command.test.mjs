@@ -27,6 +27,7 @@ function resetResurrectTables(db) {
   db.prepare(`DELETE FROM task_runs`).run();
   db.prepare(`DELETE FROM contradiction_alerts`).run();
   db.prepare(`DELETE FROM cross_scope_alerts`).run();
+  db.prepare(`DELETE FROM promote_candidates`).run();
   db.prepare(`DELETE FROM audit_log_targets`).run();
   db.prepare(`DELETE FROM audit_log`).run();
   db.prepare(`DELETE FROM injection_cache`).run();
@@ -129,6 +130,35 @@ async function seedRevalidationFlaggedMemory(db, now = Date.now()) {
   ).run(Number(audit.lastInsertRowid), saved.id);
 
   return saved.id;
+}
+
+async function seedPromoteCandidate(db, { dangerous = false, candidateProjectKey = null, similarProjectKey = 'demo/other' } = {}) {
+  const cwd = '/Users/biran/code/skills/ccmem';
+  const saved = await cmdSave(db, {
+    cwd,
+    content: dangerous ? 'sudo rm -rf /tmp/cache' : 'Use feature folders across repos',
+    scope: 'project',
+    type: dangerous ? 'episode' : 'fact'
+  });
+
+  if (dangerous) {
+    db.prepare(`UPDATE memories SET tags = ? WHERE id = ?`).run('["dangerous_command"]', saved.id);
+  }
+
+  const inserted = db.prepare(
+    `INSERT INTO promote_candidates (mem_id, project_key, similar_in, trigger, detected_at)
+     VALUES (?, ?, ?, 'cosine_cross_project', ?)`
+  ).run(
+    saved.id,
+    candidateProjectKey ?? resolveProjectKey(cwd),
+    JSON.stringify([{ project_key: similarProjectKey, mem_id: 999, cosine: 0.923 }]),
+    Date.now() - 120000
+  );
+
+  return {
+    candidateId: Number(inserted.lastInsertRowid),
+    memId: saved.id
+  };
 }
 
 async function seedContradictionAlert(db, now = Date.now()) {
@@ -473,6 +503,80 @@ test('cli resurrect --contradictions acknowledges contradictions and keeps memor
   assert.equal(memB.decay_status, 'archived');
   assert.equal(JSON.parse(audit.details).alert_id, alertId);
   assert.equal(JSON.parse(audit.details).action, 'keep_a');
+});
+
+test('cli resurrect --promote-candidates promotes a candidate to global', async () => {
+  const db = openDb();
+  resetResurrectTables(db);
+  const { candidateId, memId } = await seedPromoteCandidate(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'resurrect', '--promote-candidates', '--limit', '1'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8',
+    input: 'p\n'
+  });
+
+  const verifyDb = openDb();
+  const mem = verifyDb.prepare(`SELECT scope, project_key, type FROM memories WHERE id = ?`).get(memId);
+  const candidate = verifyDb.prepare(`SELECT acknowledged_action FROM promote_candidates WHERE id = ?`).get(candidateId);
+  const audit = verifyDb.prepare(
+    `SELECT details FROM audit_log WHERE action = 'cross_project_acknowledged' ORDER BY id DESC LIMIT 1`
+  ).get();
+  verifyDb.close();
+
+  assert.match(output, /Similar in 1 other project\(s\)/);
+  assert.match(output, /ccmem: promote_candidates promote=1 dismiss=0 blocked=0 skipped=0/);
+  assert.equal(mem.scope, 'global');
+  assert.equal(mem.project_key, null);
+  assert.equal(mem.type, 'rule');
+  assert.equal(candidate.acknowledged_action, 'promote');
+  assert.equal(JSON.parse(audit.details).action, 'promote');
+});
+
+test('cli resurrect --promote-candidates blocks dangerous candidates', async () => {
+  const db = openDb();
+  resetResurrectTables(db);
+  const { candidateId, memId } = await seedPromoteCandidate(db, { dangerous: true });
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'resurrect', '--promote-candidates', '--limit', '1'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8',
+    input: 'p\n'
+  });
+
+  const verifyDb = openDb();
+  const mem = verifyDb.prepare(`SELECT scope, project_key FROM memories WHERE id = ?`).get(memId);
+  const candidate = verifyDb.prepare(`SELECT acknowledged_action, acknowledged_at FROM promote_candidates WHERE id = ?`).get(candidateId);
+  verifyDb.close();
+
+  assert.match(output, /ccmem: promote_candidates promote=0 dismiss=0 blocked=1 skipped=0/);
+  assert.equal(mem.scope, 'project');
+  assert.equal(typeof mem.project_key, 'string');
+  assert.equal(candidate.acknowledged_action, null);
+  assert.equal(candidate.acknowledged_at, null);
+});
+
+test('cli resurrect --promote-candidates filters out unrelated current-project candidates', async () => {
+  const db = openDb();
+  resetResurrectTables(db);
+  await seedPromoteCandidate(db, {
+    candidateProjectKey: 'demo/unrelated',
+    similarProjectKey: 'demo/other'
+  });
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'resurrect', '--promote-candidates', '--limit', '1'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8',
+    input: 'p\n'
+  });
+
+  assert.equal(output, 'ccmem: no cross-project patterns detected\n');
 });
 
 test.after(() => rmSync(dataRoot, { recursive: true, force: true }));

@@ -13,6 +13,7 @@ import { cmdMode } from './lib/cmd/mode.mjs';
 import { cmdPromote } from './lib/cmd/promote.mjs';
 import { cmdResurrect } from './lib/cmd/resurrect.mjs';
 import { cmdSave } from './lib/cmd/save.mjs';
+import { cmdShow } from './lib/cmd/show.mjs';
 import { cmdStats } from './lib/cmd/stats.mjs';
 import { resolveProjectKey } from './lib/project-key.mjs';
 
@@ -33,7 +34,8 @@ function printHelp() {
     'Usage: ccmem <command> [options]\n\n' +
     'Commands:\n' +
     '  save <content> [--global]\n' +
-    '  list [query] [--limit N] [--quarantined] [--score]\n' +
+    '  list [query] [--limit N] [--quarantined] [--never-injected] [--days N] [--score]\n' +
+    '  show <id>\n' +
     '  export --json [--scope global|project]\n' +
     '  import <file>\n' +
     '  mode [active|shadow|off]\n' +
@@ -41,11 +43,11 @@ function printHelp() {
     '  admin daemon <status|start|stop|restart|install|uninstall>\n' +
     '  admin cron <list|run>\n' +
     '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina>]\n' +
-    '  admin diagnose [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history]\n' +
+    '  admin diagnose [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections]\n' +
     '  admin alias <old-project-key> <new-project-key>\n' +
     '  stats [--json|--buckets]\n' +
     '  promote <id> [--global]\n' +
-    '  resurrect [--quarantined|--alerts|--revalidation|--contradictions]\n'
+    '  resurrect [--quarantined|--alerts|--revalidation|--contradictions|--promote-candidates]\n'
   );
 }
 
@@ -75,6 +77,11 @@ if (verb === 'admin' && args[0] === 'semantic' && args[1] === '--help') {
 }
 
 if (verb === 'list' && args[0] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'show' && args[0] === '--help') {
   printHelp();
   process.exit(0);
 }
@@ -169,6 +176,11 @@ if (verb === 'audit' && args[0] === 'show' && args[1] == null) {
   process.exit(0);
 }
 
+if (verb === 'show' && args.find((arg) => !arg.startsWith('--')) == null) {
+  printHelp();
+  process.exit(0);
+}
+
 if (verb === 'promote' && args.find((arg) => !arg.startsWith('--')) == null) {
   printHelp();
   process.exit(0);
@@ -225,6 +237,10 @@ if (verb === 'audit' && args[0] === 'show' && args[1] != null) {
   // handled below.
 }
 
+if (verb === 'show' && args.find((arg) => !arg.startsWith('--')) != null) {
+  // handled below.
+}
+
 if (verb === 'promote' && args.find((arg) => !arg.startsWith('--')) != null) {
   // handled below.
 }
@@ -233,7 +249,7 @@ if (verb === 'admin' && args[0] === 'diagnose') {
   // handled below.
 }
 
-if (!['save', 'list', 'export', 'import', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect'].includes(verb)) {
+if (!['save', 'list', 'show', 'export', 'import', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect'].includes(verb)) {
   printHelp();
   process.exit(64);
 }
@@ -243,6 +259,18 @@ const closeDb = () => db?.close();
 function getOptionValue(flag) {
   const idx = args.indexOf(flag);
   return idx >= 0 ? args[idx + 1] ?? null : null;
+}
+
+function positionalArgs(optionFlagsWithValue = []) {
+  const skip = new Set();
+  for (const flag of optionFlagsWithValue) {
+    const idx = args.indexOf(flag);
+    if (idx >= 0) {
+      skip.add(idx + 1);
+    }
+  }
+
+  return args.filter((arg, idx) => !arg.startsWith('--') && !skip.has(idx));
 }
 
 function createStdinLineReader() {
@@ -394,17 +422,26 @@ try {
     const result = await cmdSave(getDb(), { cwd: process.cwd(), content, scope });
     process.stdout.write(`ccmem: saved memory #${result.id} (${result.scope} ${result.type})\n`);
   } else if (verb === 'list') {
-    const query = args.filter((arg) => !arg.startsWith('--')).join(' ') || null;
+    const query = positionalArgs(['--limit', '--days']).join(' ') || null;
     const showScore = args.includes('--score');
+    const neverInjected = args.includes('--never-injected');
     const rows = await cmdList(getDb(), {
       cwd: process.cwd(),
       limit: Number(getOptionValue('--limit') ?? 20),
       quarantined: args.includes('--quarantined'),
-      query
+      neverInjected,
+      days: Number(getOptionValue('--days') ?? 30),
+      query: neverInjected ? null : query
     });
 
     if (!rows.length) {
-      process.stdout.write(args.includes('--quarantined') ? 'ccmem: no quarantined memories\n' : 'ccmem: no memories\n');
+      process.stdout.write(
+        args.includes('--quarantined')
+          ? 'ccmem: no quarantined memories\n'
+          : neverInjected
+            ? 'ccmem: no never-injected memories\n'
+            : 'ccmem: no memories\n'
+      );
     } else if (args.includes('--quarantined')) {
       for (const row of rows) {
         process.stdout.write(
@@ -416,7 +453,30 @@ try {
         const scoreSuffix = showScore && row.score
           ? ` | score fused=${Number(row.score.fused ?? 0).toFixed(3)} fts=${Number(row.score.fts ?? 0).toFixed(3)} jaccard=${Number(row.score.jaccard ?? 0).toFixed(3)} semantic=${Number(row.score.semantic ?? 0).toFixed(3)}`
           : '';
-        process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}${scoreSuffix}\n`);
+        const neverSuffix = neverInjected
+          ? ` | trust=${Number(row.trust_score ?? 0).toFixed(2)}`
+          : '';
+        process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}${neverSuffix}${scoreSuffix}\n`);
+      }
+    }
+  } else if (verb === 'show') {
+    const id = positionalArgs()[0];
+    const row = await cmdShow(getDb(), { id });
+    if (!row) {
+      process.stderr.write('ccmem: memory not found\n');
+      process.exitCode = 2;
+    } else {
+      process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope}${row.project_key ? `:${row.project_key}` : ''}\n`);
+      process.stdout.write(`${row.content}\n`);
+      process.stdout.write(`trust=${Number(row.trust_score ?? 0).toFixed(2)} status=${row.status} decay=${row.decay_status}\n`);
+      if (row.injection_history?.length) {
+        process.stdout.write('\nRecent injections (last 14d):\n');
+        for (const item of row.injection_history) {
+          process.stdout.write(
+            `  ${formatAgeDays(item.created_at)}  fts=${Number(item.score?.fts ?? 0).toFixed(3)} jac=${Number(item.score?.jac ?? 0).toFixed(3)} cos=${Number(item.score?.cos ?? 0).toFixed(3)} fused=${Number(item.score?.f ?? 0).toFixed(3)}\n`
+          );
+        }
+        process.stdout.write(`  (${row.injection_history.length} times in 14d)\n`);
       }
     }
   } else if (verb === 'export') {
@@ -607,6 +667,7 @@ try {
       metrics: args.includes('--metrics'),
       restartHistory: args.includes('--restart-history'),
       synthesis: args.includes('--synthesis'),
+      injections: args.includes('--injections'),
       days: Number(getOptionValue('--days') ?? 14)
     });
 
@@ -657,6 +718,40 @@ try {
       printTuning(result);
     } else if (args.includes('--metrics')) {
       printMetrics(result);
+    } else if (args.includes('--injections')) {
+      const inj = result.injections;
+      process.stdout.write(`Injection overview (last ${inj.days} days)\n\n`);
+      process.stdout.write('  Volume\n');
+      process.stdout.write(`    injections:    ${inj.total} (avg ${(inj.total / inj.days).toFixed(1)}/day)\n`);
+      process.stdout.write(`    empty:         ${inj.empty} (${inj.total > 0 ? ((inj.empty / inj.total) * 100).toFixed(1) : '0.0'}%)\n`);
+      process.stdout.write(`    distinct mems: ${inj.distinct_mems} / ${inj.active_count} active (${inj.active_count > 0 ? ((inj.distinct_mems / inj.active_count) * 100).toFixed(1) : '0.0'}%)\n`);
+      if (inj.total > 0) {
+        process.stdout.write('\n  Score distribution (fused, p50 / p95)\n');
+        process.stdout.write(`    ${inj.fused_p50.toFixed(2)} / ${inj.fused_p95.toFixed(2)}\n`);
+      }
+      if (inj.top10.length > 0) {
+        process.stdout.write('\n  Top 10 most injected\n');
+        for (const row of inj.top10) {
+          process.stdout.write(`    m${row.id}  ${row.type}|${row.scope}  ${row.count}x  avg=${row.avgFused.toFixed(2)}  ${String(row.content ?? '').slice(0, 50)}\n`);
+        }
+      }
+      if (inj.low_quality.length > 0) {
+        process.stdout.write(`\n  Low-quality injections (fused < ${inj.low_threshold})\n`);
+        for (const row of inj.low_quality) {
+          process.stdout.write(`    m${row.id}  ${row.type}|${row.scope}  ${row.count}x  avg=${row.avgFused.toFixed(2)}  ${String(row.content ?? '').slice(0, 50)}\n`);
+        }
+        process.stdout.write('    Run /ccmem:forget mNNN to remove, or wait for adaptive decay.\n');
+      }
+      process.stdout.write(`\n  Never injected (30d, active): ${inj.never_count} memories\n`);
+      if (inj.never_count > 0) {
+        process.stdout.write('    Run /ccmem:list --never-injected to see them.\n');
+      }
+      if (inj.perf) {
+        process.stdout.write('\n  Retrieval performance (embedding ON)\n');
+        process.stdout.write(`    embed:     p50=${inj.perf.embed.p50}ms  p95=${inj.perf.embed.p95}ms\n`);
+        process.stdout.write(`    db read:   p50=${inj.perf.db.p50}ms  p95=${inj.perf.db.p95}ms  pool=${inj.perf.avgPool} mems\n`);
+        process.stdout.write(`    cosine:    p50=${inj.perf.cosine.p50}ms  p95=${inj.perf.cosine.p95}ms\n`);
+      }
     } else if (args.includes('--synthesis')) {
       const syn = result.synthesis;
       process.stdout.write(`Synthesis pipeline (last ${syn.days} days, ${syn.weekly_runs} weekly runs)\n\n`);
@@ -741,6 +836,16 @@ try {
           `Contradict: ${result.security.contradictions_pending} contradictions pending — run /ccmem:resurrect --contradictions\n`
         );
       }
+      if (result.injection.active_count > 0 && (result.injection.never_injected_30d / result.injection.active_count) > result.injection.alert_ratio) {
+        process.stdout.write(
+          `Injection: ${result.injection.never_injected_30d} memories never injected in 30d (${Math.round((result.injection.never_injected_30d / result.injection.active_count) * 100)}%) — run /ccmem:admin diagnose --injections\n`
+        );
+      }
+      if (result.promote.pending > 0) {
+        process.stdout.write(
+          `Promote  : ${result.promote.pending} cross-project patterns detected — run /ccmem:resurrect --promote-candidates\n`
+        );
+      }
       process.stdout.write(
         `Feedback : helpful ${result.feedback.helpful} / unhelpful ${result.feedback.unhelpful} / unknown ${result.feedback.unknown} (last 14d)\n`
       );
@@ -800,6 +905,7 @@ try {
       alerts: args.includes('--alerts'),
       revalidation: args.includes('--revalidation'),
       contradictions: args.includes('--contradictions'),
+      promoteCandidates: args.includes('--promote-candidates'),
       merge: async (_row, outcome) => {
         process.stdout.write('  merging via LLM...\n');
         if (!outcome?.merge_possible) {
@@ -873,6 +979,22 @@ try {
           return readLine();
         }
 
+        if (args.includes('--promote-candidates')) {
+          process.stdout.write(
+            `[candidate#${row.candidate_id}] detected ${formatAgeDays(row.detected_at)}\n` +
+            `  [m${row.mem_id}] ${row.type}|project:${row.project_key} trust=${Number(row.trust_score ?? 0).toFixed(2)}\n` +
+            `    ${String(row.content ?? '').slice(0, 100)}\n` +
+            `  Similar in ${Array.isArray(row.similar) ? row.similar.length : 0} other project(s):\n`
+          );
+          for (const similar of (row.similar ?? []).slice(0, 5)) {
+            process.stdout.write(
+              `    project:${similar.project_key} [m${similar.mem_id}] cosine=${Number(similar.cosine ?? 0).toFixed(3)}\n`
+            );
+          }
+          process.stdout.write('  [p]romote to global / [d]ismiss / [s]kip: ');
+          return readLine();
+        }
+
         process.stdout.write(
           `[m${row.id}] ${row.type}|${row.scope} trust=${row.trust_score.toFixed(2)}\n  ${row.content}\n  [k]eep / [f]orget / [s]kip: `
         );
@@ -889,6 +1011,8 @@ try {
         process.stdout.write('ccmem: no revalidation flags pending\n');
       } else if (result.mode === 'contradictions') {
         process.stdout.write('ccmem: no contradictions detected\n');
+      } else if (result.mode === 'promote_candidates') {
+        process.stdout.write('ccmem: no cross-project patterns detected\n');
       } else {
         process.stdout.write('ccmem: no grey-zone memories\n');
       }
@@ -915,6 +1039,14 @@ try {
       }, {});
       process.stdout.write(
         `ccmem: contradictions keep_a=${counts.keep_a ?? 0} keep_b=${counts.keep_b ?? 0} keep_both=${counts.keep_both ?? 0} merged=${counts.merged ?? 0} skipped=${counts.skip ?? 0}\n`
+      );
+    } else if (result.mode === 'promote_candidates') {
+      const counts = result.items.reduce((acc, item) => {
+        acc[item.action] = (acc[item.action] ?? 0) + 1;
+        return acc;
+      }, {});
+      process.stdout.write(
+        `ccmem: promote_candidates promote=${counts.promote ?? 0} dismiss=${counts.dismiss ?? 0} blocked=${counts.blocked ?? 0} skipped=${counts.skip ?? 0}\n`
       );
     } else {
       const kept = result.items.filter((item) => item.action === 'keep').length;

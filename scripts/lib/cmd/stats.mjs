@@ -2,6 +2,7 @@ import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
 import { getTuningDiagnostics } from '../admin/diagnose.mjs';
 import { getProvider } from '../embedding/provider.mjs';
+import { countNeverInjected } from '../recent-injections.mjs';
 import { transformersLocal } from '../embedding/transformers-local.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
 
@@ -192,6 +193,13 @@ export async function cmdStats(db, { buckets = false } = {}) {
   const synthesisRate = Number(synthesisAgg?.proposed ?? 0) > 0
     ? Math.round((Number(synthesisAgg.accepted ?? 0) / Number(synthesisAgg.proposed ?? 0)) * 100)
     : 0;
+  const neverInjected = countNeverInjected(db, 30);
+  const activeCount = toCount(memoryRow?.active) + toCount(memoryRow?.probation);
+  const promotePending = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM promote_candidates
+     WHERE acknowledged_at IS NULL`
+  ).get()?.n ?? 0);
 
   return {
     tier1: { available: true },
@@ -237,6 +245,14 @@ export async function cmdStats(db, { buckets = false } = {}) {
       accepted_30d: Number(synthesisAgg?.accepted ?? 0),
       proposed_30d: Number(synthesisAgg?.proposed ?? 0),
       acceptance_rate: synthesisRate
+    },
+    injection: {
+      never_injected_30d: neverInjected,
+      active_count: activeCount,
+      alert_ratio: Number(cfg.injection_observability?.never_injected_alert_ratio ?? 0.15)
+    },
+    promote: {
+      pending: promotePending
     },
     buckets: buckets
       ? Object.fromEntries(bucketRows.map((row) => [row.decay_status, Number(row.n ?? 0)]))

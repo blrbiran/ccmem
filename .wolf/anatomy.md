@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-06-12T16:28:41.087Z
-> Files: 175 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-06-14T15:36:30.639Z
+> Files: 181 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ../../../.claude/projects/-Users-biran-code-skills-ccmem/memory/
 
@@ -12,7 +12,7 @@
 
 - `.gitignore` — Git ignore rules (~36 tok)
 - `CLAUDE.md` — OpenWolf (~57 tok)
-- `config.default.json` (~1174 tok)
+- `config.default.json` (~1423 tok)
 - `package.json` — Node.js package manifest (~132 tok)
 - `README.md` — Project documentation (~757 tok)
 
@@ -86,6 +86,8 @@
 - `ccmem-v0.5-dogfood.md` — ccmem v0.5 dogfood / 验证清单，含 A4 容器 fallback 验证记录 (~1200 tok)
 - `ccmem-v0.5-spec.md` — ccmem v0.5 实施 spec，覆盖 self-restart、diagnose 扩展与 A4 容器 fallback (~15000 tok)
 - `ccmem-v0.8-spec.md` — ccmem v0.8 实施 spec (~17341 tok)
+- `ccmem-v0.9-dogfood.md` — ccmem v0.9 dogfood 文档 (~6200 tok)
+- `ccmem-v0.9-spec.md` — ccmem v0.9 实施 spec (~26000 tok)
 - `claude-code-behavior-uncertainties.md` — Claude Code 行为验证清单 (~2337 tok)
 - `design-deep-analysis.md` — ccmem 设计深入分析 (~5248 tok)
 - `design-motivation.md` — 设计初衷：为什么要做这个记忆系统 (~523 tok)
@@ -106,15 +108,15 @@
 
 ## scripts/
 
-- `cli.mjs` — args: getDb, printHelp, getOptionValue + 8 more (~10292 tok)
+- `cli.mjs` — args: getDb, printHelp, getOptionValue + 9 more (~12077 tok)
 - `hook.mjs` — T_ENTRY: buildHookOutput, writeHookOutput, isBlacklistedSession (~618 tok)
 
 ## scripts/daemon/
 
 - `claude-p.mjs` — Exports callClaudeP with optional structured-output schema args (~1450 tok)
-- `dispatch.mjs` — Exports dispatchTask (~366 tok)
+- `dispatch.mjs` — Exports dispatchTask (~413 tok)
 - `lock.mjs` — Exports acquireDaemonLock, refreshHeartbeat, releaseDaemonLock, isDaemonAlive (~371 tok)
-- `loop.mjs` — Exports parseDailyAt, parseWeeklyAt, weeklyLeaseKey, securityAuditLeaseKey + 5 more (~2489 tok)
+- `loop.mjs` — Exports parseDailyAt, parseWeeklyAt, weeklyLeaseKey, securityAuditLeaseKey + 5 more (~2714 tok)
 - `main.mjs` — semanticRuntimeEnabled: warmSemanticProvider (~771 tok)
 - `self-restart.mjs` — Exports getStartupSchemaVersion, writeDaemonStartupState, checkSchemaStaleness, scheduleGracefulRest (~873 tok)
 - `wake.mjs` — Exports touchWakeFile, wakeRecently (~135 tok)
@@ -122,55 +124,57 @@
 ## scripts/daemon/tasks/
 
 - `contradiction-audit.mjs` — Exports runContradictionAudit (~1568 tok)
-- `daily-maintenance.mjs` — Exports runDailyMaintenance (~1417 tok)
+- `cross-project-patterns.mjs` — Exports runCrossProjectPatterns (~2376 tok)
+- `daily-maintenance.mjs` — Exports runDailyMaintenance (~1757 tok)
 - `monthly-meta-synthesis.mjs` — Exports runMonthlyMetaSynthesis (~1139 tok)
 - `revalidation-audit.mjs` — Exports runRevalidationAudit (~108 tok)
 - `security-audit.mjs` — Exports selectAuditCandidates, runSecurityAudit (~2174 tok)
-- `summarize-pending.mjs` — Exports runSummarizePending (~2400 tok)
+- `summarize-pending.mjs` — Exports runSummarizePending (~2597 tok)
 - `vec-backfill.mjs` — Exports pendingEmbeddings, runVecBackfill (~623 tok)
 - `weekly-synthesis.mjs` — API routes: GET (1 endpoints) (~4616 tok)
 
 ## scripts/handlers/
 
-- `prompt-submit.mjs` — Exports sanitizeFtsQuery, renderRetrievedBlock, handlePromptSubmit (~908 tok)
+- `prompt-submit.mjs` — Exports sanitizeFtsQuery, renderRetrievedBlock, handlePromptSubmit (~1087 tok)
 - `session-start.mjs` — Exports handleSessionStart (~577 tok)
 - `stop.mjs` — Exports handleStop (~538 tok)
 
 ## scripts/lib/
 
 - `audit.mjs` — Exports writeAudit, writeAuditMany (~390 tok)
-- `config.mjs` — Exports loadConfig (~1330 tok)
-- `db.mjs` — Exports getDataRoot, getDbPath, getSchemaVersion, hasUsableFts (~3941 tok)
-- `dedup.mjs` — Exports dedupCheck (~974 tok)
+- `config.mjs` — Exports loadConfig (~1547 tok)
+- `db.mjs` — Exports getDataRoot, getDbPath, getSchemaVersion, hasUsableFts (~4528 tok)
+- `dedup.mjs` — Exports dedupCheck (~972 tok)
 - `feedback.mjs` — NEGATIVE_FEEDBACK: getLastAssistantText, parseJsonArray, getLastUnknownFeedback + 71 more (~9065 tok)
 - `hook-safety.mjs` — Exports withHookSafety (~391 tok)
 - `injection-cache.mjs` — Exports rebuildInjectionCache (~439 tok)
 - `llm-parse.mjs` — Exports parseRawLlmOutput, parseLlmJson (~500 tok)
-- `metrics-rollup.mjs` — Exports aggregateHookLatencies, detectLLMDeadLetters, writeMetricsDailyRollup (~2241 tok)
+- `metrics-rollup.mjs` — Exports aggregateHookLatencies, detectLLMDeadLetters, writeMetricsDailyRollup (~2557 tok)
 - `metrics.mjs` — Exports recordMetric (~91 tok)
 - `mode.mjs` — Exports getMode, setMode (~104 tok)
+- `pattern-safety.mjs` — Exports compileSafePattern (~431 tok)
 - `priority.mjs` — Exports recencyFactor, frequencyFactor, computePriority (~232 tok)
 - `project-key.mjs` — Exports normalizeRemoteUrl, fallbackProjectKey, resolveProjectKey (~229 tok)
-- `quality-gate.mjs` — Exports checkQuality (~208 tok)
-- `recent-injections.mjs` — Exports getNextPromptIdx, writeRecentInjection (~147 tok)
+- `quality-gate.mjs` — Exports checkQuality (~545 tok)
+- `recent-injections.mjs` — Exports getNextPromptIdx, writeRecentInjection, parseInjectionScores, recentInjectionHistoryForMemor (~966 tok)
 - `render.mjs` — Exports renderStableContext (~172 tok)
-- `retrieval.mjs` — Exports sanitizeFtsQuery, tokenize, extractShortTokens, jaccardSimilarity + 3 more (~2470 tok)
+- `retrieval.mjs` — Exports sanitizeFtsQuery, tokenize, extractShortTokens, jaccardSimilarity + 3 more (~2563 tok)
 - `revalidation.mjs` — Exports revalidationAuditCore (~1494 tok)
 - `synthesis-quality.mjs` — Exports scoreSynthesisOutput (~240 tok)
 - `task-runs.mjs` — Exports RAN_BY, tryClaimLease, markLeaseComplete (~220 tok)
 - `threat-scan.mjs` — Exports tier1Scan, secretScan, evaluateTier1, evaluateTier2, evaluateTier3 (~820 tok)
 - `tier15.mjs` — Exports runSessionStartMiniPrelude, maybeRunTier15 (~1434 tok)
-- `transcript-cleaner.mjs` — Exports cleanTranscript (~556 tok)
+- `transcript-cleaner.mjs` — Exports cleanTranscript (~801 tok)
 - `transcript.mjs` — Exports parseTranscript, extractEntryText, countTranscriptLines, computeSessionStats, extractAssista (~304 tok)
-- `trust.mjs` — Exports getSourceInitialTrust, adjustTrust, applyOutcomeToSubset (~467 tok)
+- `trust.mjs` — Exports getSourceInitialTrust, adjustTrust, applyOutcomeToSubset (~498 tok)
 - `type-heuristic.mjs` — Exports inferType (~117 tok)
 
 ## scripts/lib/admin/
 
 - `alias.mjs` — Exports cmdAdminAlias (~346 tok)
-- `cron.mjs` — Exports cmdAdminCron (~2404 tok)
+- `cron.mjs` — Exports cmdAdminCron (~2586 tok)
 - `daemon.mjs` — Exports renderPlist, maybeRespawnContainerFallback (~5211 tok)
-- `diagnose.mjs` — SESSION_LIMIT: firstValue, parseMemIds, parseDetails + 17 more (~8314 tok)
+- `diagnose.mjs` — SESSION_LIMIT: firstValue, parseMemIds, parseDetails + 17 more (~9387 tok)
 - `semantic.mjs` — Exports cmdAdminSemantic (~1060 tok)
 
 ## scripts/lib/cmd/
@@ -179,21 +183,21 @@
 - `export.mjs` — Exports cmdExport (~180 tok)
 - `forget.mjs` — Exports cmdForget (~197 tok)
 - `import.mjs` — Exports cmdImport (~369 tok)
-- `list.mjs` — Exports cmdList (~388 tok)
+- `list.mjs` — Exports cmdList (~440 tok)
 - `mode.mjs` — Exports cmdMode (~55 tok)
 - `pin.mjs` — Exports cmdPin (~145 tok)
 - `promote.mjs` — Exports cmdPromote (~562 tok)
-- `resurrect.mjs` — clampLimit: normalizeGreyDecision, normalizeAlertDecision, normalizeRevalidationDecision + 8 more (~5082 tok)
+- `resurrect.mjs` — clampLimit: normalizeGreyDecision, normalizeAlertDecision, normalizeRevalidationDecision + 9 more (~6008 tok)
 - `save.mjs` — Exports insertMemory, cmdSave (~1296 tok)
-- `show.mjs` — Exports cmdShow (~56 tok)
-- `stats.mjs` — Exports cmdStats (~2057 tok)
+- `show.mjs` — Exports cmdShow (~161 tok)
+- `stats.mjs` — Exports cmdStats (~2215 tok)
 
 ## scripts/lib/embedding/
 
 - `cosine.mjs` — Exports cosineSimilarity, vecToBlob, blobToVec (~181 tok)
 - `jina.mjs` — Exports jinaEmbedding (~662 tok)
 - `openai.mjs` — Exports openaiEmbedding (~669 tok)
-- `provider.mjs` — Exports getProvider, _resetProviderCache (~656 tok)
+- `provider.mjs` — Exports getProvider, _resetProviderCache (~671 tok)
 - `transformers-local.mjs` — Exports transformersLocal (~463 tok)
 
 ## scripts/lib/llm-prompts/
@@ -203,7 +207,7 @@
 - `monthly-meta-synthesis.mjs` — Exports MONTHLY_META_SCHEMA, buildMonthlyMetaPrompt (~327 tok)
 - `security-audit.mjs` — Exports parseSecurityAuditJson, buildSecurityAuditPrompt (~849 tok)
 - `stale-check.mjs` — Exports STALE_CHECK_SCHEMA, buildStaleCheckPrompt (~289 tok)
-- `weekly-synthesis-v2.mjs` — Exports SYNTHESIS_V2_SCHEMA, buildSynthesisPromptV2 (~597 tok)
+- `weekly-synthesis-v2.mjs` — Exports SYNTHESIS_V2_SCHEMA, buildSynthesisPromptV2 (~674 tok)
 
 ## scripts/migrations/
 
@@ -217,24 +221,25 @@
 - `008_v07.sql` — SQL: tables: contradiction_alerts (~294 tok)
 - `009_v08.sql` — SQL: tables: contradiction_alerts (~470 tok)
 - `010_v08_backlog.sql` (~206 tok)
+- `011_v09.sql` — SQL: tables: promote_candidates (~322 tok)
 
 ## tests/integration/
 
-- `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~16479 tok)
+- `admin-cron-command.test.mjs` — dataRoot: resetCronTables, seedCronFixture, seedCronIssuesFixture, seedHealthyCronFixture (~17473 tok)
 - `admin-daemon-command.test.mjs` — dataRoot: writeFakeLaunchctlScript, resetFakeLaunchctlScript, createFakeClaudeBinary + 20 more (~8274 tok)
-- `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedRollupRow, seedSecurityD (~5892 tok)
+- `admin-diagnose-command.test.mjs` — dataRoot: resetDiagnoseTables, seedSessionDiagnostics, seedAliveDaemon, seedRollupRow, seedSecurityD (~6323 tok)
 - `audit-command.test.mjs` — Declares db (~255 tok)
 - `cli-mode-audit.test.mjs` — Declares dataRoot (~382 tok)
-- `daemon-loop.test.mjs` — baseConfigPath: resetRuntimeTables, setClaudeBridgeEnv, setRuntimeConfig, setTaskTimeoutConfig (~49681 tok)
+- `daemon-loop.test.mjs` — baseConfigPath: resetRuntimeTables, setClaudeBridgeEnv, setRuntimeConfig, setTaskTimeoutConfig (~49969 tok)
 - `forget-pin-cache.test.mjs` — resetCommandTables: seedStaleMaintenanceState, assertPreludeCleanup, insertMemory + 13 more (~3200 tok)
 - `migration-v1-to-v2.test.mjs` — Declares db (~443 tok)
 - `mode-command.test.mjs` — Declares db (~238 tok)
 - `promote-command.test.mjs` — dataRoot: resetPromoteTables, seedStaleMaintenanceState, assertPreludeCleanup, insertPromoteMemory (~2395 tok)
-- `prompt-submit-retrieval.test.mjs` — Prompt-submit retrieval/mode/blacklist integration coverage, including no-FTS fallback (~3122 tok)
-- `resurrect-command.test.mjs` — dataRoot: resetResurrectTables, seedGreyZoneMemories, seedQuarantinedMemory + 3 more (~3858 tok)
-- `save-list-session-start.test.mjs` — NODE: resetSaveListTables, seedQuarantinedListFixture (~5444 tok)
+- `prompt-submit-retrieval.test.mjs` — NODE: withEnv, saveProjectFact, readOne + 5 more (~3135 tok)
+- `resurrect-command.test.mjs` — dataRoot: resetResurrectTables, seedGreyZoneMemories, seedQuarantinedMemory + 4 more (~4876 tok)
+- `save-list-session-start.test.mjs` — NODE: resetSaveListTables, seedQuarantinedListFixture (~6231 tok)
 - `security-audit-task.test.mjs` — dataRoot: resetSecurityAuditTables, saveProjectMemory, saveGlobalMemory, markPoolCCandidate (~2250 tok)
-- `stats-command.test.mjs` — dataRoot: seedRollupRow, resetStatsTables, insertMemory, seedStatsFixture, seedSecurityStatsFixture (~3203 tok)
+- `stats-command.test.mjs` — dataRoot: seedRollupRow, resetStatsTables, insertMemory, seedStatsFixture, seedSecurityStatsFixture (~3567 tok)
 - `stop-daemon-flow.test.mjs` — baseConfigPath: resetStopDaemonState, setClaudeBridgeEnv, clearClaudeBridgeEnv + 44 more (~26239 tok)
 - `stop-hook-dispatch.test.mjs` — dataRoot: openStopDb, resetStopState, setStoredMode + 4 more (~4917 tok)
 - `tier15-feedback.test.mjs` — Declares db (~1799 tok)
@@ -250,5 +255,6 @@
 - `self-restart.test.mjs` — Declares withConfig (~1251 tok)
 - `task-runs.test.mjs` — Declares db (~714 tok)
 - `threat-scan.test.mjs` — Declares result (~98 tok)
+- `transcript-cleaner.test.mjs` — Declares input (~370 tok)
 - `trust.test.mjs` (~77 tok)
 - `type-heuristic.test.mjs` (~121 tok)

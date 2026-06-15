@@ -108,7 +108,7 @@ export function dedupCheck(db, { content, scope, projectKey, contentVec = null }
 
   db.prepare(
     `UPDATE memories
-     SET last_touched_at = ?
+     SET updated_at = ?
      WHERE id = ?`
   ).run(Date.now(), bestCandidate.id);
   writeAudit(db, 'summarize_skip_duplicate', bestCandidate.id, {

@@ -1,3 +1,5 @@
+import { compileSafePattern } from './pattern-safety.mjs';
+
 const DEFAULT_RULES = [
   {
     name: 'git_diff',
@@ -58,6 +60,18 @@ function stripRule(lines, rule) {
     }
 
     removed = true;
+
+    if (typeof rule.end === 'function') {
+      i += 1;
+      while (i < lines.length) {
+        if (rule.end(lines[i])) {
+          break;
+        }
+        i += 1;
+      }
+      continue;
+    }
+
     i += 1;
     while (i < lines.length && rule.continue(lines[i])) {
       i += 1;
@@ -68,12 +82,39 @@ function stripRule(lines, rule) {
   return { lines: kept, removed };
 }
 
+function loadRules(cfgOverride = null) {
+  if (Array.isArray(cfgOverride?.rules)) {
+    return cfgOverride.rules;
+  }
+
+  const extra = Array.isArray(cfgOverride?.extra_rules)
+    ? cfgOverride.extra_rules.map((rule) => {
+        const start = compileSafePattern(rule?.start_pattern);
+        const end = compileSafePattern(rule?.end_pattern);
+        if (!start || !end) {
+          return null;
+        }
+        return {
+          name: String(rule?.name ?? 'extra_rule'),
+          match(line) {
+            return start.test(line);
+          },
+          end(line) {
+            return end.test(line);
+          }
+        };
+      }).filter(Boolean)
+    : [];
+
+  return [...DEFAULT_RULES, ...extra];
+}
+
 export function cleanTranscript(text, cfgOverride = null) {
   if (!text || typeof text !== 'string') {
     return { cleaned: '', rules_hit: [], before: 0, after: 0 };
   }
 
-  const rules = Array.isArray(cfgOverride?.rules) ? cfgOverride.rules : DEFAULT_RULES;
+  const rules = loadRules(cfgOverride);
   let lines = text.split('\n');
   const rulesHit = [];
 

@@ -78,7 +78,22 @@ export async function handlePromptSubmit(hookData) {
     if (hookData.session_id && rows.length) {
       const injectedIds = rows.map((row) => row.id);
       const promptIdx = getNextPromptIdx(db, hookData.session_id);
-      writeRecentInjection(db, hookData.session_id, promptIdx, 'user_prompt_submit', injectedIds);
+      writeRecentInjection(
+        db,
+        hookData.session_id,
+        promptIdx,
+        'user_prompt_submit',
+        injectedIds,
+        retrieval.timing
+          ? rows.map((row) => ({
+              id: row.id,
+              fts: Number((row.score?.fts ?? 0).toFixed(3)),
+              jac: Number((row.score?.jaccard ?? 0).toFixed(3)),
+              cos: Number((row.score?.semantic ?? 0).toFixed(3)),
+              f: Number((row.score?.fused ?? 0).toFixed(3))
+            }))
+          : null
+      );
       db.prepare(
         `INSERT INTO memory_feedback (
           session_id,
@@ -95,7 +110,11 @@ export async function handlePromptSubmit(hookData) {
       _metricFields: {
         matched: rows.length,
         fused_count: rows.filter((row) => row.score).length,
-        cosine_contribution: retrieval.cosineContribution ?? null
+        cosine_contribution: retrieval.cosineContribution ?? null,
+        retrieval_embed_ms: retrieval.timing?.embedMs ?? null,
+        retrieval_db_ms: retrieval.timing?.dbReadMs ?? null,
+        retrieval_cosine_ms: retrieval.timing?.cosineMs ?? null,
+        retrieval_pool: retrieval.timing?.candidatePool ?? null
       }
     };
   } finally {

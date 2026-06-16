@@ -83,6 +83,7 @@ test('save -> list -> session start inject works and records session diagnostics
   ).get();
 
   assert.match(result.additionalContext, /Prefer concise answers/);
+  assert.match(result.additionalContext, /Read `\.ccmem\/context\.md` at session start and after each \/compact\./);
   assert.equal(injection.prompt_idx, 0);
   assert.equal(injection.inject_source, 'session_start');
   assert.deepEqual(JSON.parse(injection.mem_ids), [saved.id]);
@@ -523,6 +524,7 @@ test('session-start runs mini-prelude cleanup after writing injection', async ()
   ).get();
 
   assert.match(result.additionalContext, /Prefer concise answers/);
+  assert.match(result.additionalContext, /ALWAYS re-read regardless of compressed summary content/);
   assert.equal(stale.n, 0);
   assert.equal(kept.n, 20);
   assert.equal(oldestKept.min_prompt_idx, 1);

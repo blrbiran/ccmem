@@ -854,25 +854,24 @@ export function getMetricsDiagnostics(db, { days = 14, cfg = loadConfig() } = {}
   };
 }
 
-function aggregateRetrievalTiming(days) {
+function readMetricsLines(days) {
   const cutoff = windowStartMs(days);
   const metricsPath = `${getDbPath().replace(/global\.db$/, 'metrics.jsonl')}`;
-  let lines = [];
 
   try {
-    lines = readFileSync(metricsPath, 'utf8')
+    return readFileSync(metricsPath, 'utf8')
       .split('\n')
       .filter(Boolean)
-      .map((line) => JSON.parse(line));
+      .map((line) => JSON.parse(line))
+      .filter((row) => typeof row.ts === 'number' && row.ts >= cutoff);
   } catch {
-    return null;
+    return [];
   }
+}
 
-  const rows = lines.filter((row) => (
-    row.hook === 'prompt_submit'
-    && typeof row.ts === 'number'
-    && row.ts >= cutoff
-  ));
+function aggregateRetrievalTiming(days) {
+  const rows = readMetricsLines(days).filter((row) => row.hook === 'prompt_submit');
+
   if (!rows.length) {
     return null;
   }
@@ -905,6 +904,7 @@ function aggregateRetrievalTiming(days) {
 
 function getInjectionDiagnostics(db, { days = 14, cfg = loadConfig() } = {}) {
   const rows = collectInjectionRows(db, days);
+  const promptMetrics = readMetricsLines(days).filter((row) => row.hook === 'prompt_submit');
   const total = rows.length;
   const empty = rows.filter((row) => row.mem_ids.length === 0).length;
   const activeCount = Number(db.prepare(
@@ -951,6 +951,9 @@ function getInjectionDiagnostics(db, { days = 14, cfg = loadConfig() } = {}) {
 
   const lowThreshold = Number(cfg.injection_observability?.low_quality_threshold ?? 0.30);
   const perf = aggregateRetrievalTiming(days);
+  const emptyAcCount = promptMetrics.filter((row) => row.additional_context_empty === true).length;
+  const fileWrites = promptMetrics.filter((row) => row.context_file_written === true).length;
+  const totalBytes = promptMetrics.reduce((sum, row) => sum + Number(row.context_file_bytes ?? 0), 0);
 
   return {
     days,
@@ -964,7 +967,14 @@ function getInjectionDiagnostics(db, { days = 14, cfg = loadConfig() } = {}) {
     low_threshold: lowThreshold,
     low_quality: decorated.filter((item) => item.avgFused < lowThreshold).slice(0, 10),
     never_count: countNeverInjected(db, 30),
-    perf
+    perf,
+    cache: {
+      total_prompts: promptMetrics.length,
+      empty_additional_context: emptyAcCount,
+      context_file_writes: fileWrites,
+      total_file_bytes: totalBytes,
+      additional_context_all_empty: promptMetrics.length === 0 || emptyAcCount === promptMetrics.length
+    }
   };
 }
 

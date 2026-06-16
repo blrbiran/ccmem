@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -13,6 +13,7 @@ const HOOK = '/Users/biran/code/skills/ccmem/scripts/hook.mjs';
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { callClaudeP } = await import('../../scripts/daemon/claude-p.mjs');
+const { getContextFilePath, CONTEXT_EMPTY_SENTINEL } = await import('../../scripts/lib/context-file.mjs');
 const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
@@ -138,7 +139,11 @@ test('prompt-submit retrieves relevant memories and records recent injections', 
      WHERE session_id = 's-retrieval'`
   );
 
-  assert.match(result.additionalContext, /app\/api/);
+  const contextPath = getContextFilePath(process.cwd());
+
+  assert.equal(result.additionalContext, '');
+  assert.equal(existsSync(contextPath), true);
+  assert.match(readFileSync(contextPath, 'utf8'), /app\/api/);
   assert.equal(injection.prompt_idx, 1);
   assert.equal(injection.inject_source, 'user_prompt_submit');
   assert.deepEqual(JSON.parse(injection.mem_ids), [saved.id]);
@@ -304,7 +309,7 @@ test('prompt-submit hook ignores expired blacklisted sessions and proceeds norma
   });
 
   assert.match(output, /"hookEventName":"UserPromptSubmit"/);
-  assert.match(output, /app\/api/);
+  assert.equal(JSON.parse(output).hookSpecificOutput.additionalContext, '');
   assert.equal(readCount(`SELECT COUNT(*) AS n FROM recent_injections WHERE session_id = ?`, 's-expired'), 1);
   assert.equal(readCount(`SELECT COUNT(*) AS n FROM memory_feedback WHERE session_id = ?`, 's-expired'), 1);
   assert.equal(readCount(`SELECT COUNT(*) AS n FROM ccmem_blacklisted_sessions WHERE session_id = ?`, 's-expired'), 1);
@@ -326,11 +331,54 @@ test('prompt-submit falls back to non-FTS retrieval when FTS5 is unavailable', a
        WHERE session_id = 's-no-fts' AND inject_source = 'user_prompt_submit'`
     );
 
-    assert.match(result.additionalContext, /app\/api/);
+    assert.equal(result.additionalContext, '');
+    assert.equal(readFileSync(getContextFilePath(process.cwd()), 'utf8').includes('/app/api'), true);
     assert.equal(injection.prompt_idx, 1);
     assert.equal(injection.inject_source, 'user_prompt_submit');
     assert.equal(JSON.parse(injection.mem_ids).includes(saved.id), true);
   });
+});
+
+test('prompt-submit replaces an existing context file with the no relevant sentinel when retrieval is empty', async () => {
+  await saveProjectFact('Existing context memory under /app/api');
+  await runPromptSubmit({
+    cwd: process.cwd(),
+    session_id: 's-empty-seed',
+    prompt: 'app api seed'
+  });
+
+  const result = await runPromptSubmit({
+    cwd: process.cwd(),
+    session_id: 's-empty',
+    prompt: 'completely unrelated phrase that matches nothing'
+  });
+
+  assert.equal(result.additionalContext, '');
+  assert.equal(readFileSync(getContextFilePath(process.cwd()), 'utf8'), CONTEXT_EMPTY_SENTINEL);
+});
+
+test('prompt-submit falls back to inline additionalContext when file-based injection is disabled', async () => {
+  const configPath = path.join(process.env.CCMEM_DATA_ROOT, 'file-based-off.json');
+  writeFileSync(configPath, JSON.stringify({ injection: { file_based: false } }));
+  const previous = process.env.CCMEM_CONFIG_PATH;
+  process.env.CCMEM_CONFIG_PATH = configPath;
+
+  try {
+    await saveProjectFact('Inline fallback memory under /app/api');
+    const result = await runPromptSubmit({
+      cwd: process.cwd(),
+      session_id: 's-inline',
+      prompt: 'app api inline fallback'
+    });
+
+    assert.match(result.additionalContext, /Inline fallback memory under \/app\/api/);
+  } finally {
+    if (previous == null) {
+      delete process.env.CCMEM_CONFIG_PATH;
+    } else {
+      process.env.CCMEM_CONFIG_PATH = previous;
+    }
+  }
 });
 
 test.after(() => rmSync(process.env.CCMEM_DATA_ROOT, { recursive: true, force: true }));

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compileSafePattern } from '../../scripts/lib/pattern-safety.mjs';
+import { compileSafePattern, isPatternSafe } from '../../scripts/lib/pattern-safety.mjs';
 import { cleanTranscript } from '../../scripts/lib/transcript-cleaner.mjs';
 
 test('cleanTranscript applies extra_rules when patterns are valid', () => {
@@ -48,4 +48,8 @@ test('compileSafePattern rejects nested-quantifier patterns', () => {
 
 test('compileSafePattern rejects backreferences', () => {
   assert.equal(compileSafePattern('(foo)\\1'), null);
+});
+
+test('isPatternSafe reports unsafe nested-quantifier patterns', () => {
+  assert.deepEqual(isPatternSafe('(a+)+$'), { safe: false, reason: 'heuristic_reject' });
 });

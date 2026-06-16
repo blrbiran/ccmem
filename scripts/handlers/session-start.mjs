@@ -6,6 +6,15 @@ import { runSessionStartMiniPrelude } from '../lib/tier15.mjs';
 
 const SHADOW_NOTICE = 'ccmem: mode=shadow (read-only diagnostic — no writes, no inject)\n';
 
+export const CCMEM_READ_INSTRUCTION = [
+  '## ccmem context',
+  'Read `.ccmem/context.md` at session start and after each /compact.',
+  'After /compact, ALWAYS re-read regardless of compressed summary content.',
+  "Re-read if you haven't read it in the last 5 turns or when switching to a different task.",
+  "Context may be from a previous session; prioritize user's current prompt over cached context.",
+  'If file contains only "<!-- ccmem: no relevant memories -->" or is missing, proceed normally.'
+].join('\n');
+
 function parseMemberIds(memberIds) {
   try {
     const parsed = JSON.parse(memberIds ?? '[]');
@@ -52,7 +61,7 @@ export async function handleSessionStart(hookData) {
        WHERE scope = 'global' OR scope = ?
        ORDER BY CASE WHEN scope = 'global' THEN 0 ELSE 1 END`
     ).all(`project:${projectKey}`);
-    const additionalContext = rows.map((row) => row.rendered_text).filter(Boolean).join('\n\n');
+    const stableContext = rows.map((row) => row.rendered_text).filter(Boolean).join('\n\n');
 
     if (mode === 'shadow') {
       process.stderr.write(SHADOW_NOTICE);
@@ -61,7 +70,7 @@ export async function handleSessionStart(hookData) {
 
     upsertSessionContext(db, hookData.session_id, projectKey);
 
-    if (hookData.session_id && additionalContext) {
+    if (hookData.session_id && stableContext) {
       const injectedIds = [...new Set(rows.flatMap((row) => parseMemberIds(row.member_ids)))];
       writeRecentInjection(db, hookData.session_id, 0, 'session_start', injectedIds);
     }
@@ -70,6 +79,7 @@ export async function handleSessionStart(hookData) {
       runSessionStartMiniPrelude(db);
     } catch {}
 
+    const additionalContext = [stableContext, CCMEM_READ_INSTRUCTION].filter(Boolean).join('\n\n');
     return { additionalContext };
   } finally {
     db.close();

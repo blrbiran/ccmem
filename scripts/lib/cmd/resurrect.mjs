@@ -109,30 +109,48 @@ function parseTags(tags) {
   }
 }
 
-function resurrectPromoteCandidates(db, { cwd, limit, decide }) {
+function resurrectPromoteCandidates(db, { cwd, limit, decide, all = false }) {
   const currentProjectKey = resolveProjectKey(cwd);
-  const rows = db.prepare(
-    `SELECT pc.id AS candidate_id,
-            pc.mem_id,
-            pc.project_key,
-            pc.similar_in,
-            pc.trigger,
-            pc.detected_at,
-            m.content,
-            m.type,
-            m.trust_score,
-            m.tags
-     FROM promote_candidates pc
-     JOIN memories m ON m.id = pc.mem_id
-     WHERE pc.acknowledged_at IS NULL
-       AND (pc.project_key = ? OR EXISTS (
-         SELECT 1
-         FROM json_each(pc.similar_in) je
-         WHERE json_extract(je.value, '$.project_key') = ?
-       ))
-     ORDER BY pc.detected_at DESC, pc.id DESC
-     LIMIT ?`
-  ).all(currentProjectKey, currentProjectKey, clampLimit(limit, 10));
+  const rows = all
+    ? db.prepare(
+        `SELECT pc.id AS candidate_id,
+                pc.mem_id,
+                pc.project_key,
+                pc.similar_in,
+                pc.trigger,
+                pc.detected_at,
+                m.content,
+                m.type,
+                m.trust_score,
+                m.tags
+         FROM promote_candidates pc
+         JOIN memories m ON m.id = pc.mem_id
+         WHERE pc.acknowledged_at IS NULL
+         ORDER BY pc.detected_at DESC, pc.id DESC
+         LIMIT ?`
+      ).all(clampLimit(limit, 10))
+    : db.prepare(
+        `SELECT pc.id AS candidate_id,
+                pc.mem_id,
+                pc.project_key,
+                pc.similar_in,
+                pc.trigger,
+                pc.detected_at,
+                m.content,
+                m.type,
+                m.trust_score,
+                m.tags
+         FROM promote_candidates pc
+         JOIN memories m ON m.id = pc.mem_id
+         WHERE pc.acknowledged_at IS NULL
+           AND (pc.project_key = ? OR EXISTS (
+             SELECT 1
+             FROM json_each(pc.similar_in) je
+             WHERE json_extract(je.value, '$.project_key') = ?
+           ))
+         ORDER BY pc.detected_at DESC, pc.id DESC
+         LIMIT ?`
+      ).all(currentProjectKey, currentProjectKey, clampLimit(limit, 10));
 
   const items = [];
   const touched = [];
@@ -723,6 +741,7 @@ export async function cmdResurrect(db, {
   contradictions = false,
   revalidation = false,
   promoteCandidates = false,
+  all = false,
   limit = null
 } = {}) {
   const tier15 = alerts ? { ran: false, skipped: 'alerts_mode' } : maybeRunTier15(db);
@@ -758,7 +777,7 @@ export async function cmdResurrect(db, {
   if (promoteCandidates) {
     return {
       tier15,
-      ...resurrectPromoteCandidates(db, { cwd, limit: limit ?? bottom, decide })
+      ...resurrectPromoteCandidates(db, { cwd, limit: limit ?? bottom, decide, all })
     };
   }
 

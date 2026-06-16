@@ -1,9 +1,11 @@
 import { openDb } from '../lib/db.mjs';
 import { inferPositiveFeedback, inferPrevTurnOutcome } from '../lib/feedback.mjs';
 import { loadConfig } from '../lib/config.mjs';
+import { writeContextFile, clearContextFile } from '../lib/context-file.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
 import { getNextPromptIdx, writeRecentInjection } from '../lib/recent-injections.mjs';
+import { renderRetrievedBlock } from '../lib/render.mjs';
 import { retrieveMemories, sanitizeFtsQuery as sanitizePromptQuery } from '../lib/retrieval.mjs';
 
 const SHADOW_NOTICE = 'ccmem: mode=shadow (read-only diagnostic — no writes, no inject)\n';
@@ -29,22 +31,6 @@ function upsertSessionContext(db, sessionId, projectKey) {
       project_key = excluded.project_key,
       updated_at = excluded.updated_at`
   ).run(sessionId, projectKey, Date.now());
-}
-
-function renderScore(score) {
-  if (!score) {
-    return '';
-  }
-
-  return ` | score fused=${Number(score.fused ?? 0).toFixed(3)} fts=${Number(score.fts ?? 0).toFixed(3)} jaccard=${Number(score.jaccard ?? 0).toFixed(3)} semantic=${Number(score.semantic ?? 0).toFixed(3)}`;
-}
-
-export function renderRetrievedBlock(rows) {
-  const lines = ['=== ccmem: retrieved for current prompt ===', ''];
-  for (const row of rows) {
-    lines.push(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}${renderScore(row.score)}`);
-  }
-  return lines.join('\n');
 }
 
 export async function handlePromptSubmit(hookData) {
@@ -75,6 +61,25 @@ export async function handlePromptSubmit(hookData) {
     }
 
     const rows = retrieval.rows;
+    const useFileBased = config.injection?.file_based !== false;
+    let contextFileWritten = false;
+    let contextFileBytes = 0;
+
+    if (useFileBased) {
+      try {
+        if (rows.length) {
+          const result = writeContextFile(hookData.cwd, rows);
+          contextFileWritten = result.written;
+          contextFileBytes = result.bytes;
+        } else {
+          contextFileBytes = clearContextFile(hookData.cwd);
+        }
+      } catch (error) {
+        process.stderr.write(`ccmem: context file write failed (${error.message})\n`);
+        contextFileBytes = -1;
+      }
+    }
+
     if (hookData.session_id && rows.length) {
       const injectedIds = rows.map((row) => row.id);
       const promptIdx = getNextPromptIdx(db, hookData.session_id);
@@ -105,8 +110,12 @@ export async function handlePromptSubmit(hookData) {
       ).run(hookData.session_id, JSON.stringify(injectedIds), Date.now());
     }
 
+    if (useFileBased) {
+      process.stderr.write(`ccmem: RETRIEVE ${rows.length} mems → .ccmem/context.md\n`);
+    }
+
     return {
-      additionalContext: rows.length ? renderRetrievedBlock(rows) : '',
+      additionalContext: useFileBased ? '' : (rows.length ? renderRetrievedBlock(rows) : ''),
       _metricFields: {
         matched: rows.length,
         fused_count: rows.filter((row) => row.score).length,
@@ -114,7 +123,10 @@ export async function handlePromptSubmit(hookData) {
         retrieval_embed_ms: retrieval.timing?.embedMs ?? null,
         retrieval_db_ms: retrieval.timing?.dbReadMs ?? null,
         retrieval_cosine_ms: retrieval.timing?.cosineMs ?? null,
-        retrieval_pool: retrieval.timing?.candidatePool ?? null
+        retrieval_pool: retrieval.timing?.candidatePool ?? null,
+        context_file_written: useFileBased ? contextFileWritten : false,
+        context_file_bytes: useFileBased ? contextFileBytes : null,
+        additional_context_empty: useFileBased
       }
     };
   } finally {

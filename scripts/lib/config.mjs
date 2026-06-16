@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 const DEFAULT_CONFIG = {
-  version: '0.9',
+  version: '0.10',
   inject: { max_chars: 4000, max_per_prompt: 6 },
   save: { max_chars_per_memory: 300 },
+  injection: { file_based: true },
   embedding: {
     enabled: false,
     provider: 'transformers-local',

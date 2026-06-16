@@ -6,7 +6,8 @@ const SAFETY_SAMPLES = [
   'a'.repeat(2000),
   `${'a'.repeat(2000)}X`,
   ' '.repeat(2000),
-  `${'ab'.repeat(1000)}X`
+  `${'ab'.repeat(1000)}X`,
+  `${'a'.repeat(1000)}!${'a'.repeat(1000)}`
 ];
 
 function looksUnsafe(pattern) {
@@ -55,21 +56,34 @@ function exceedsRuntimeBudget(regex) {
   return false;
 }
 
-export function compileSafePattern(pattern) {
+export function isPatternSafe(pattern) {
   if (typeof pattern !== 'string' || !pattern.trim()) {
-    return null;
+    return { safe: false, reason: 'empty' };
   }
 
   if (looksUnsafe(pattern)) {
-    return null;
+    return { safe: false, reason: 'heuristic_reject' };
   }
 
   try {
     const regex = new RegExp(pattern);
     if (exceedsRuntimeBudget(regex)) {
-      return null;
+      return { safe: false, reason: 'runtime_budget_exceeded' };
     }
-    return regex;
+    return { safe: true, reason: null };
+  } catch {
+    return { safe: false, reason: 'invalid_regex' };
+  }
+}
+
+export function compileSafePattern(pattern) {
+  const verdict = isPatternSafe(pattern);
+  if (!verdict.safe) {
+    return null;
+  }
+
+  try {
+    return new RegExp(pattern);
   } catch {
     return null;
   }

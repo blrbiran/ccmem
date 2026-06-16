@@ -44,8 +44,8 @@ test('getStartupSchemaVersion and writeDaemonStartupState track daemon startup s
   const versionRow = db.prepare(`SELECT value FROM config_kv WHERE key = 'daemon_startup_schema_version'`).get();
   const pidRow = db.prepare(`SELECT value FROM config_kv WHERE key = 'daemon_startup_pid'`).get();
 
-  assert.equal(startupVersion, 11);
-  assert.equal(versionRow.value, '11');
+  assert.equal(startupVersion, 12);
+  assert.equal(versionRow.value, '12');
   assert.equal(pidRow.value, '4321');
   db.close();
 });
@@ -57,7 +57,7 @@ test('checkSchemaStaleness detects schema mismatches and respects config gate', 
   db.prepare(`UPDATE schema_meta SET version = 999`).run();
   const stale = checkSchemaStaleness(db, startupVersion);
   assert.equal(stale.stale, true);
-  assert.equal(stale.startup_version, 11);
+  assert.equal(stale.startup_version, 12);
   assert.equal(stale.current_version, 999);
 
   const restoreConfig = withConfig({ daemon: { self_restart_on_schema_mismatch: false } });

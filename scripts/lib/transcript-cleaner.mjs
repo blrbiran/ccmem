@@ -1,4 +1,4 @@
-import { compileSafePattern } from './pattern-safety.mjs';
+import { compileSafePattern, isPatternSafe } from './pattern-safety.mjs';
 
 const DEFAULT_RULES = [
   {
@@ -89,6 +89,12 @@ function loadRules(cfgOverride = null) {
 
   const extra = Array.isArray(cfgOverride?.extra_rules)
     ? cfgOverride.extra_rules.map((rule) => {
+        const startSafety = isPatternSafe(rule?.start_pattern);
+        const endSafety = isPatternSafe(rule?.end_pattern);
+        if (!startSafety.safe || !endSafety.safe) {
+          process.stderr.write(`ccmem: extra_rule pattern rejected: ${!startSafety.safe ? startSafety.reason : endSafety.reason}\n`);
+          return null;
+        }
         const start = compileSafePattern(rule?.start_pattern);
         const end = compileSafePattern(rule?.end_pattern);
         if (!start || !end) {

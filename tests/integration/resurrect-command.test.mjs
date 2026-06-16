@@ -579,4 +579,25 @@ test('cli resurrect --promote-candidates filters out unrelated current-project c
   assert.equal(output, 'ccmem: no cross-project patterns detected\n');
 });
 
+test('cli resurrect --promote-candidates --all includes unrelated candidates', async () => {
+  const db = openDb();
+  resetResurrectTables(db);
+  await seedPromoteCandidate(db, {
+    candidateProjectKey: 'demo/unrelated',
+    similarProjectKey: 'demo/other'
+  });
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'resurrect', '--promote-candidates', '--all', '--limit', '1'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env,
+    encoding: 'utf8',
+    input: 's\n'
+  });
+
+  assert.match(output, /candidate#/);
+  assert.match(output, /demo\/unrelated/);
+  assert.match(output, /ccmem: promote_candidates promote=0 dismiss=0 blocked=0 skipped=1/);
+});
+
 test.after(() => rmSync(dataRoot, { recursive: true, force: true }));

@@ -49,10 +49,12 @@
 - **v0.5 backup hygiene**: migration backup dedupe is behavioral, not architectural — reuse a same-size `.bak` created within 60s, and prune old backups from `daily_maintenance` using `migration_backup.max_keep`.
 - **Tier 1.5 fallback recovery**: container-fallback daemon recovery belongs in the command prelude path; if install state says `container-fallback` and the wrapper PID is stale, Tier 1.5 should respawn the wrapper opportunistically rather than waiting for a manual daemon command.
 - **Embedding runtime precedence**: provider resolution must honor `config_kv` runtime toggles (`embedding.enabled`, `embedding.active_provider`) before config-object defaults, or semantic-mode tests and v0.9 observability features can silently stay on non-embedding paths.
+- **v0.10 cache-friendly hook contract**: in file-based injection mode, `UserPromptSubmit` should keep `additionalContext` byte-stable (empty) and write dynamic retrieval payload into `.ccmem/context.md`, while `SessionStart` owns the fixed Read instruction. Retrieval regressions now need assertions on context file contents and metrics, not only injected hook output.
 
 ## Do-Not-Repeat
 
 - 2026-06-13: Do not hard-code inserted memory ids in integration fixtures; query actual ids from the database before writing dependent `recent_injections` or `promote_candidates` rows.
+- 2026-06-16: After large same-file helper extraction/replacement, grep for duplicate function declarations before running broad suites; a leftover duplicate `getInjectionDiagnostics` block turned the v0.10 diagnose refactor into a syntax error that cascaded across many CLI tests.
 
 ## Do-Not-Repeat
 

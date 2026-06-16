@@ -47,7 +47,7 @@ function printHelp() {
     '  admin alias <old-project-key> <new-project-key>\n' +
     '  stats [--json|--buckets]\n' +
     '  promote <id> [--global]\n' +
-    '  resurrect [--quarantined|--alerts|--revalidation|--contradictions|--promote-candidates]\n'
+    '  resurrect [--quarantined|--alerts|--revalidation|--contradictions|--promote-candidates] [--all]\n'
   );
 }
 
@@ -752,6 +752,12 @@ try {
         process.stdout.write(`    db read:   p50=${inj.perf.db.p50}ms  p95=${inj.perf.db.p95}ms  pool=${inj.perf.avgPool} mems\n`);
         process.stdout.write(`    cosine:    p50=${inj.perf.cosine.p50}ms  p95=${inj.perf.cosine.p95}ms\n`);
       }
+      process.stdout.write('\n  Cache efficiency (v0.10 file-based injection)\n');
+      process.stdout.write('    injection mode:         file-based\n');
+      process.stdout.write(`    additionalContext empty: ${inj.cache.empty_additional_context}/${inj.cache.total_prompts} (${inj.cache.total_prompts > 0 ? ((inj.cache.empty_additional_context / inj.cache.total_prompts) * 100).toFixed(0) : '0'}%)\n`);
+      process.stdout.write(`    context file writes:     ${inj.cache.context_file_writes}/${inj.cache.total_prompts}\n`);
+      process.stdout.write(`    total file bytes:        ${(inj.cache.total_file_bytes / 1024).toFixed(1)} KB\n`);
+      process.stdout.write(`    cache impact:            ${inj.cache.additional_context_all_empty ? '0% ✅' : 'WARN — some prompts injected additionalContext'}\n`);
     } else if (args.includes('--synthesis')) {
       const syn = result.synthesis;
       process.stdout.write(`Synthesis pipeline (last ${syn.days} days, ${syn.weekly_runs} weekly runs)\n\n`);
@@ -906,6 +912,7 @@ try {
       revalidation: args.includes('--revalidation'),
       contradictions: args.includes('--contradictions'),
       promoteCandidates: args.includes('--promote-candidates'),
+      all: args.includes('--all'),
       merge: async (_row, outcome) => {
         process.stdout.write('  merging via LLM...\n');
         if (!outcome?.merge_possible) {

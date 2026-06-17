@@ -2396,7 +2396,8 @@ Output JSON: { synthesized: [...], theme_merges: [...], merged_duplicates: [...]
 > **W-3 Content 长度约束**:synthesized content MUST be ≤ 80 characters。consolidated
 > 的角色是"索引 + 结论",详细上下文通过 `parent_ids → /ccmem:show --lineage`
 > 追溯。daemon 写入时对 `cron_consolidated` source 检查 80 字符上限(user_explicit
-> 仍走 300 字符 config)。
+> 仍走 500 字符 config)。v0.11 起引入 AI 精炼管道(content-refiner.mjs):超 501
+> 字符的内容先调 LLM 精炼,仍超才 word-boundary 截断。
 >
 > **W-4 月度元整合**:v0.2+ 新增 `monthly_meta_synthesis` cron(每月 1 号 04:17),
 > 找同 scope 同主题 ≥ 3 条 depth ≤ 1 consolidated → merge 为 depth+1。防止
@@ -3355,8 +3356,8 @@ async function insertMemory(mem) {
     throw new SecretInGlobalError(secrets);
   }
 
-  // 3. Length
-  if (mem.content.length > 300) throw new Error(`Content > 300 chars`);
+  // 3. Length (v0.11: 300 → 500, AI refinement for oversized content)
+  if (mem.content.length > 500) throw new Error(`Content > 500 chars`);
 
   // 4. Insert (FTS5 触发器自动同步索引)
   await db.run(`INSERT INTO memories (...) VALUES (...)`, mem);

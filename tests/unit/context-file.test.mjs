@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -94,18 +94,50 @@ test('clearContextFile writes the no-relevant sentinel only when file already ex
   }
 });
 
-test('writeContextFile warns about .gitignore only once per cwd', () => {
+test('writeContextFile adds .ccmem/ to .git/info/exclude when repo metadata exists', () => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-context-file-'));
 
   try {
-    writeFileSync(path.join(cwd, '.gitignore'), 'node_modules/\n', 'utf8');
+    mkdirSync(path.join(cwd, '.git', 'info'), { recursive: true });
+    writeFileSync(path.join(cwd, '.git', 'info', 'exclude'), '# local excludes\n', 'utf8');
 
-    const first = captureStderr(() => writeContextFile(cwd, makeRows(['First write'])));
-    const second = captureStderr(() => writeContextFile(cwd, makeRows(['Second write'])));
+    const { stderr } = captureStderr(() => writeContextFile(cwd, makeRows(['First write'])));
+    const exclude = readFileSync(path.join(cwd, '.git', 'info', 'exclude'), 'utf8');
 
-    assert.match(first.stderr, /add \.ccmem\/ to \.gitignore/);
-    assert.doesNotMatch(second.stderr, /add \.ccmem\/ to \.gitignore/);
-    assert.equal(existsSync(path.join(cwd, '.ccmem', '.gitignore_warned')), true);
+    assert.match(exclude, /\.ccmem\//);
+    assert.doesNotMatch(stderr, /add \.ccmem\/ to \.gitignore/);
+    assert.equal(existsSync(path.join(cwd, '.ccmem', '.gitignore_warned')), false);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('writeContextFile does not duplicate an existing .ccmem/ exclude rule', () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-context-file-'));
+
+  try {
+    mkdirSync(path.join(cwd, '.git', 'info'), { recursive: true });
+    writeFileSync(path.join(cwd, '.git', 'info', 'exclude'), '# local excludes\n.ccmem/\n', 'utf8');
+
+    captureStderr(() => writeContextFile(cwd, makeRows(['First write'])));
+    captureStderr(() => writeContextFile(cwd, makeRows(['Second write'])));
+    const exclude = readFileSync(path.join(cwd, '.git', 'info', 'exclude'), 'utf8');
+
+    assert.equal((exclude.match(/^\.ccmem\/$/gm) ?? []).length, 1);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('writeContextFile warns when .git/info/exclude cannot be updated and .ccmem is still unmanaged', () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-context-file-'));
+
+  try {
+    writeFileSync(path.join(cwd, '.git'), 'not-a-dir', 'utf8');
+
+    const { stderr } = captureStderr(() => writeContextFile(cwd, makeRows(['First write'])));
+
+    assert.match(stderr, /add \.ccmem\/ to \.gitignore/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

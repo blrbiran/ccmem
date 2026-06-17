@@ -47,12 +47,17 @@ export async function insertMemory(db, {
   quarantinedAt = null,
   embeddingBlob = undefined
 }) {
+  const cfg = loadConfig();
+  const maxChars = Number(cfg.save?.max_chars_per_memory ?? 500);
+  if (typeof content === 'string' && Number.isFinite(maxChars) && content.length > maxChars) {
+    throw new Error(`Content > ${maxChars} chars`);
+  }
+
   const gate = evaluateTier1(content);
   if (!gate.ok) {
     throw Object.assign(new Error(`ccmem: rejected save (${gate.reason})`), { exitCode: 64 });
   }
 
-  const cfg = loadConfig();
   let resolvedType = type ?? inferType(content).type;
   let resolvedScope = scope === 'global' ? 'global' : 'project';
   let resolvedProjectKey = resolvedScope === 'global' ? null : (projectKey ?? resolveProjectKey(cwd));

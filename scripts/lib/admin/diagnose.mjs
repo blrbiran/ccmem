@@ -125,6 +125,96 @@ function loadSessionDiagnostics(db) {
   }));
 }
 
+function getContextHistoryDiagnostics(db, { days = 7, sessionId = null, hash = null } = {}) {
+  if (hash) {
+    const snapshot = db.prepare(
+      `SELECT content_hash, content, first_seen_at, hit_count
+       FROM context_snapshots
+       WHERE content_hash = ?`
+    ).get(String(hash));
+    return {
+      mode: 'hash',
+      hash: String(hash),
+      snapshot: snapshot
+        ? {
+            content_hash: snapshot.content_hash,
+            content: snapshot.content,
+            first_seen_at: snapshot.first_seen_at,
+            hit_count: Number(snapshot.hit_count ?? 0)
+          }
+        : null
+    };
+  }
+
+  if (sessionId) {
+    const writes = db.prepare(
+      `SELECT prompt_idx, content_hash, bytes, written, written_at
+       FROM context_write_log
+       WHERE session_id = ?
+       ORDER BY prompt_idx ASC, id ASC`
+    ).all(String(sessionId)).map((row) => ({
+      prompt_idx: Number(row.prompt_idx ?? 0),
+      content_hash: row.content_hash,
+      bytes: Number(row.bytes ?? 0),
+      written: Number(row.written ?? 0) === 1,
+      written_at: row.written_at
+    }));
+
+    return {
+      mode: 'session',
+      session_id: String(sessionId),
+      total: writes.length,
+      writes
+    };
+  }
+
+  const cutoff = windowStartMs(days);
+  const totals = db.prepare(
+    `SELECT
+       COUNT(*) AS total,
+       SUM(CASE WHEN written = 1 THEN 1 ELSE 0 END) AS actual_writes,
+       SUM(CASE WHEN written = 0 THEN 1 ELSE 0 END) AS hash_gate_skips
+     FROM context_write_log
+     WHERE written_at >= ?`
+  ).get(cutoff);
+  const topHashes = db.prepare(
+    `SELECT content_hash,
+            COUNT(*) AS n,
+            SUM(CASE WHEN written = 1 THEN 1 ELSE 0 END) AS writes,
+            SUM(CASE WHEN written = 0 THEN 1 ELSE 0 END) AS skips,
+            MAX(bytes) AS bytes,
+            MIN(written_at) AS first_at,
+            MAX(written_at) AS last_at
+     FROM context_write_log
+     WHERE written_at >= ?
+       AND content_hash != 'empty'
+     GROUP BY content_hash
+     ORDER BY n DESC, last_at DESC
+     LIMIT 10`
+  ).all(cutoff).map((row) => ({
+    content_hash: row.content_hash,
+    count: Number(row.n ?? 0),
+    writes: Number(row.writes ?? 0),
+    skips: Number(row.skips ?? 0),
+    bytes: Number(row.bytes ?? 0),
+    first_at: row.first_at,
+    last_at: row.last_at
+  }));
+
+  const total = Number(totals?.total ?? 0);
+  const actualWrites = Number(totals?.actual_writes ?? 0);
+  const hashGateSkips = Number(totals?.hash_gate_skips ?? 0);
+  return {
+    mode: 'summary',
+    days,
+    total,
+    actual_writes: actualWrites,
+    hash_gate_skips: hashGateSkips,
+    gate_efficiency: total > 0 ? (hashGateSkips / total) : 0,
+    top_hashes: topHashes
+  };
+}
+
 function loadSecurityDiagnostics(db) {
   const lastRun = db.prepare(
     `SELECT ts, details
@@ -991,10 +1081,13 @@ export async function cmdAdminDiagnose(
     synthesis = false,
     restartHistory = false,
     injections = false,
+    contextHistory = false,
+    sessionId = null,
+    contentHash = null,
     days = 14
   } = {}
 ) {
-  if (tuning || metrics || synthesis || injections) {
+  if (tuning || metrics || synthesis || injections || contextHistory) {
     try {
       maybeRunTier15(db);
     } catch {}
@@ -1027,6 +1120,9 @@ export async function cmdAdminDiagnose(
   const metricsDiagnostics = metrics ? getMetricsDiagnostics(db, { days, cfg }) : null;
   const synthesisDiagnostics = synthesis ? getSynthesisDiagnostics(db, { days: 30 }) : null;
   const injectionDiagnostics = injections ? getInjectionDiagnostics(db, { days, cfg }) : null;
+  const contextHistoryDiagnostics = contextHistory
+    ? getContextHistoryDiagnostics(db, { days, sessionId, hash: contentHash })
+    : null;
 
   if (tuningDiagnostics && !tuningDiagnostics.insufficient) {
     tuningDiagnostics.audit_id = writeAudit(db, 'tuning_suggestion_emitted', null, {
@@ -1064,6 +1160,7 @@ export async function cmdAdminDiagnose(
     metrics: metricsDiagnostics,
     synthesis: synthesisDiagnostics,
     injections: injectionDiagnostics,
+    context_history: contextHistoryDiagnostics,
     restart_history: restartHistory ? loadRestartHistory(db) : null,
     migrations: migrations
       ? migrationRows.map((row) => ({

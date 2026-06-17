@@ -9,6 +9,7 @@ import { parseLlmJson } from '../../lib/llm-parse.mjs';
 import { insertMemory } from '../../lib/cmd/save.mjs';
 import { extractEntryText, parseTranscript } from '../../lib/transcript.mjs';
 import { loadConfig } from '../../lib/config.mjs';
+import { refineContentToLimit } from '../../lib/content-refiner.mjs';
 
 const TRANSCRIPT_EXCERPT_MAX = 1000;
 const SUMMARIZE_PENDING_JSON_SCHEMA = {
@@ -234,27 +235,34 @@ export async function runSummarizePending(db, task) {
     return;
   }
 
-  const parsedItems = parseLlmJson(llmOutput);
+  const parsedItems = parseLlmJson(llmOutput, { skipTruncate: true });
   const gateCfg = cfg.summarize?.quality_gate ?? {};
   const gateEnabled = gateCfg.enabled !== false;
   const items = [];
 
   for (const item of parsedItems) {
+    const refinedContent = await refineContentToLimit(item.content, {
+      enabled: cfg.summarize?.content_refiner?.enabled !== false,
+      maxChars: Number(cfg.save?.max_chars_per_memory ?? 500),
+      taskType: 'summarize_pending'
+    });
+    const normalizedItem = { ...item, content: refinedContent };
+
     if (!gateEnabled) {
-      items.push(item);
+      items.push(normalizedItem);
       continue;
     }
 
-    const verdict = checkQuality(item.content, gateCfg);
+    const verdict = checkQuality(normalizedItem.content, gateCfg);
     if (!verdict.pass) {
       writeAudit(db, 'quality_gate_reject', null, {
         reason: verdict.reason,
-        content_excerpt: String(item.content ?? '').slice(0, 80)
+        content_excerpt: String(normalizedItem.content ?? '').slice(0, 80)
       });
       continue;
     }
 
-    items.push(item);
+    items.push(normalizedItem);
   }
 
   const provider = getProvider(cfg);

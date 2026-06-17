@@ -155,7 +155,7 @@ test('writeContextFile truncates oversized payloads to 8KB and warns', () => {
     assert.equal(result.written, true);
     assert.equal(result.bytes <= 8192, true);
     assert.equal(Buffer.byteLength(text, 'utf8') <= 8192, true);
-    assert.match(stderr, /context\.md exceeded 8192B, trimmed to /);
+    assert.match(stderr, /context-unknown\.md exceeded 8192B, trimmed to /);
     assert.match(text, /^<!-- content-hash: [a-f0-9]{8} -->\n/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });

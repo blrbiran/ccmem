@@ -1,19 +1,26 @@
 import { openDb } from '../lib/db.mjs';
+import { loadConfig } from '../lib/config.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
 import { writeRecentInjection } from '../lib/recent-injections.mjs';
 import { runSessionStartMiniPrelude } from '../lib/tier15.mjs';
+import { cleanupStaleContextFiles, contextFileName } from '../lib/context-file.mjs';
 
 const SHADOW_NOTICE = 'ccmem: mode=shadow (read-only diagnostic — no writes, no inject)\n';
 
-export const CCMEM_READ_INSTRUCTION = [
-  '## ccmem context',
-  'Read `.ccmem/context.md` at session start and after each /compact.',
-  'After /compact, ALWAYS re-read regardless of compressed summary content.',
-  "Re-read if you haven't read it in the last 5 turns or when switching to a different task.",
-  "Context may be from a previous session; prioritize user's current prompt over cached context.",
-  'If file contains only "<!-- ccmem: no relevant memories -->" or is missing, proceed normally.'
-].join('\n');
+export function buildReadInstruction(sessionId) {
+  const fileName = contextFileName(sessionId);
+  return [
+    '## ccmem context',
+    `Read \`.ccmem/${fileName}\` at session start and after each /compact.`,
+    'After /compact, ALWAYS re-read regardless of compressed summary content.',
+    "Re-read if you haven't read it in the last 5 turns or when switching to a different task.",
+    "Context may be from a previous session; prioritize user's current prompt over cached context.",
+    'If file contains only "<!-- ccmem: no relevant memories -->" or is missing, proceed normally.'
+  ].join('\n');
+}
+
+export const CCMEM_READ_INSTRUCTION = buildReadInstruction('unknown');
 
 function parseMemberIds(memberIds) {
   try {
@@ -79,7 +86,15 @@ export async function handleSessionStart(hookData) {
       runSessionStartMiniPrelude(db);
     } catch {}
 
-    const additionalContext = [stableContext, CCMEM_READ_INSTRUCTION].filter(Boolean).join('\n\n');
+    const config = loadConfig();
+    const useFileBased = config.injection?.file_based !== false;
+    if (useFileBased) {
+      cleanupStaleContextFiles(hookData.cwd, hookData.session_id);
+    }
+
+    const additionalContext = useFileBased
+      ? [stableContext, buildReadInstruction(hookData.session_id)].filter(Boolean).join('\n\n')
+      : stableContext;
     return { additionalContext };
   } finally {
     db.close();

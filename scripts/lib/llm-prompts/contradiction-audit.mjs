@@ -12,7 +12,7 @@ export const CONTRADICTION_SCHEMA = {
         properties: {
           id_a: { type: 'integer' },
           id_b: { type: 'integer' },
-          reason: { type: 'string', maxLength: 300 }
+          reason: { type: 'string', maxLength: 500 }
         }
       }
     },
@@ -57,7 +57,7 @@ export function parseContradictionAuditJson(raw) {
       .map((item) => ({
         id_a: Number(item?.id_a),
         id_b: Number(item?.id_b),
-        reason: String(item?.reason ?? '').slice(0, 300)
+        reason: String(item?.reason ?? '').slice(0, 500)
       }))
       .filter((item) => Number.isInteger(item.id_a) && Number.isInteger(item.id_b) && item.reason)
     : [];

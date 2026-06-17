@@ -83,7 +83,7 @@ test('save -> list -> session start inject works and records session diagnostics
   ).get();
 
   assert.match(result.additionalContext, /Prefer concise answers/);
-  assert.match(result.additionalContext, /Read `\.ccmem\/context\.md` at session start and after each \/compact\./);
+  assert.match(result.additionalContext, /Read `\.ccmem\/context-unknown\.md` at session start and after each \/compact\./);
   assert.equal(injection.prompt_idx, 0);
   assert.equal(injection.inject_source, 'session_start');
   assert.deepEqual(JSON.parse(injection.mem_ids), [saved.id]);

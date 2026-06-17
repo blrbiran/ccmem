@@ -104,7 +104,7 @@ function parseSynthesisVerdict(raw) {
   const mergedDuplicates = Array.isArray(parsed.merged_duplicates)
     ? parsed.merged_duplicates
       .map((item) => ({
-        content: String(item?.content ?? '').slice(0, 300),
+        content: String(item?.content ?? '').slice(0, 500),
         source_ids: normalizeSourceIds(item?.source_ids)
       }))
       .filter((item) => item.content.length > 0)
@@ -113,7 +113,7 @@ function parseSynthesisVerdict(raw) {
   const synthesized = Array.isArray(parsed.synthesized)
     ? parsed.synthesized
       .map((item) => ({
-        content: String(item?.content ?? '').slice(0, 300),
+        content: String(item?.content ?? '').slice(0, 500),
         output_type: item?.output_type === 'rule' ? 'rule' : 'consolidated',
         source_ids: normalizeSourceIds(item?.source_ids)
       }))
@@ -243,7 +243,7 @@ async function applyMergedDuplicates(db, cluster, mergedDuplicates) {
       `UPDATE memories
        SET content = ?, updated_at = ?, last_touched_at = ?
        WHERE id = ?`
-    ).run(merged.content.slice(0, 300), now, now, keepId);
+    ).run(merged.content.slice(0, 500), now, now, keepId);
 
     for (const sourceId of sources.slice(1)) {
       db.prepare(

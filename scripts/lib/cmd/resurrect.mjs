@@ -268,7 +268,7 @@ async function mergeContradictionPair(db, row, merge) {
       return { action: outcome?.action ?? 'skip', touched: [] };
     }
 
-    const mergedContent = String(merged.merged_content ?? '').slice(0, 300);
+    const mergedContent = String(merged.merged_content ?? '').slice(0, 500);
     outcome = await merge(row, {
       merge_possible: true,
       merged_content: mergedContent

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -26,6 +26,7 @@ const { cmdAdminDiagnose } = await import('../../scripts/lib/admin/diagnose.mjs'
 const { fallbackProjectKey } = await import('../../scripts/lib/project-key.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
 const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submit.mjs');
+const { cleanupStaleContextFiles } = await import('../../scripts/lib/context-file.mjs');
 
 function resetDiagnoseTables(db) {
   db.prepare(`DELETE FROM daemon_lock`).run();
@@ -39,6 +40,9 @@ function resetDiagnoseTables(db) {
   db.prepare(`DELETE FROM audit_log_targets`).run();
   db.prepare(`DELETE FROM audit_log`).run();
   db.prepare(`DELETE FROM metrics_daily_rollup`).run();
+  db.prepare(`DELETE FROM context_write_log`).run();
+  db.prepare(`DELETE FROM context_snapshots`).run();
+  db.prepare(`DELETE FROM config_kv`).run();
   db.prepare(`DELETE FROM memories`).run();
 }
 
@@ -234,7 +238,7 @@ test('cmdAdminDiagnose returns db health, daemon status, and fallback project ke
   const result = await cmdAdminDiagnose(db, { cwd: diagnoseCwd });
 
   assert.equal(result.db.health, 'ok');
-  assert.equal(result.db.schema_version, 12);
+  assert.equal(result.db.schema_version, 13);
   assert.equal(result.daemon.startup_schema_version, 12);
   assert.equal(typeof result.daemon.uptime_sec, 'number');
   assert.equal(result.daemon.alive, true);
@@ -263,7 +267,7 @@ test('cmdAdminDiagnose returns migration history when requested', async () => {
     applied_at: result.migrations[0].applied_at,
     applied_by: 'ccmem-cli'
   });
-  assert.equal(result.migrations.at(-1).to_version, 12);
+  assert.equal(result.migrations.at(-1).to_version, 13);
   db.close();
 });
 
@@ -324,7 +328,7 @@ test('cli admin diagnose prints default diagnostics', () => {
     encoding: 'utf8'
   });
 
-  assert.match(output, /ccmem: db ok schema=12/);
+  assert.match(output, /ccmem: db ok schema=13/);
   assert.match(output, /ccmem: daemon alive pid=2468 host=diagnose-host/);
   assert.match(output, /startup_schema=12/);
   assert.match(output, /uptime_sec=\d+/);
@@ -643,6 +647,280 @@ test('cli admin diagnose --injections prints injection observability summary', a
   assert.match(output, new RegExp(`m${memB.id}`));
   assert.match(output, /avg=0\.25/);
   assert.doesNotMatch(output, new RegExp(`m${memC.id}.*avg=`));
+});
+
+test('cli admin diagnose --context-history prints summary, session rows, and hash content', async () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  db.prepare(
+    `INSERT INTO context_snapshots (content_hash, content, first_seen_at, hit_count)
+     VALUES ('abc12345', '=== ccmem: retrieved for current prompt ===\n\n[m1] fact | project Example', ?, 2)`
+  ).run(Date.now() - 5000);
+  db.prepare(
+    `INSERT INTO context_write_log (session_id, prompt_idx, content_hash, bytes, written, written_at)
+     VALUES
+     ('ctx-session', 1, 'abc12345', 72, 1, ?),
+     ('ctx-session', 2, 'abc12345', 72, 0, ?),
+     ('ctx-session', 3, 'empty', 0, 1, ?)`
+  ).run(Date.now() - 4000, Date.now() - 3000, Date.now() - 2000);
+  db.close();
+
+  const summaryOutput = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--context-history'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+  const sessionOutput = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--context-history', '--session', 'ctx-session'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+  const hashOutput = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--context-history', '--hash', 'abc12345'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(summaryOutput, /Context write history \(last 7 days\)/);
+  assert.match(summaryOutput, /Total writes: 3/);
+  assert.match(summaryOutput, /Actual writes: 2/);
+  assert.match(summaryOutput, /Hash gate skips: 1/);
+  assert.match(summaryOutput, /abc12345/);
+
+  assert.match(sessionOutput, /Session: ctx-session \(3 writes\)/);
+  assert.match(sessionOutput, /prompt 1: abc12345 72B written/);
+  assert.match(sessionOutput, /prompt 2: abc12345 72B skipped \(hash gate\)/);
+  assert.match(sessionOutput, /prompt 3: empty 0B written/);
+
+  assert.match(hashOutput, /Hash: abc12345/);
+  assert.match(hashOutput, /Hit count: 2/);
+  assert.match(hashOutput, /=== ccmem: retrieved for current prompt ===/);
+});
+
+test('cmdAdminDiagnose returns context history diagnostics when requested', async () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  db.prepare(
+    `INSERT INTO context_snapshots (content_hash, content, first_seen_at, hit_count)
+     VALUES ('hash9999', 'snapshot body', ?, 1)`
+  ).run(Date.now() - 1000);
+  db.prepare(
+    `INSERT INTO context_write_log (session_id, prompt_idx, content_hash, bytes, written, written_at)
+     VALUES ('s-context', 1, 'hash9999', 33, 1, ?)`
+  ).run(Date.now() - 500);
+
+  const summary = await cmdAdminDiagnose(db, { cwd: diagnoseCwd, contextHistory: true, days: 7 });
+  const bySession = await cmdAdminDiagnose(db, { cwd: diagnoseCwd, contextHistory: true, sessionId: 's-context' });
+  const byHash = await cmdAdminDiagnose(db, { cwd: diagnoseCwd, contextHistory: true, contentHash: 'hash9999' });
+
+  assert.equal(summary.context_history.mode, 'summary');
+  assert.equal(summary.context_history.total, 1);
+  assert.equal(bySession.context_history.mode, 'session');
+  assert.equal(bySession.context_history.writes.length, 1);
+  assert.equal(byHash.context_history.mode, 'hash');
+  assert.equal(byHash.context_history.snapshot.content, 'snapshot body');
+  db.close();
+});
+
+
+test('cli admin diagnose --context-history reports empty results cleanly', () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  db.close();
+
+  const sessionOutput = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--context-history', '--session', 'missing'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+  const hashOutput = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--context-history', '--hash', 'deadbeef'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(sessionOutput, /ccmem: no write history for session missing/);
+  assert.match(hashOutput, /ccmem: no snapshot found for hash deadbeef/);
+});
+
+
+test('prompt-submit lexical fallback survives embedding provider errors and keeps additionalContext empty', async () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  await cmdSave(db, {
+    cwd: diagnoseCwd,
+    content: 'Embedding fallback remembers app api routes',
+    scope: 'project',
+    type: 'fact'
+  });
+  db.close();
+
+  const configPath = path.join(dataRoot, 'openai-fallback-config.json');
+  const previous = process.env.CCMEM_CONFIG_PATH;
+  const previousKey = process.env.OPENAI_API_KEY;
+  writeFileSync(configPath, JSON.stringify({
+    injection: { file_based: true },
+    embedding: {
+      enabled: true,
+      provider: 'openai',
+      openai_api_key: 'test-key',
+      openai_timeout_ms: 1,
+      openai_base_url: 'http://127.0.0.1:1'
+    }
+  }));
+  process.env.CCMEM_CONFIG_PATH = configPath;
+  process.env.OPENAI_API_KEY = 'test-key';
+
+  try {
+    const result = await handlePromptSubmit({
+      cwd: diagnoseCwd,
+      session_id: 's-embed-fallback',
+      prompt: 'where are app api routes'
+    });
+
+    assert.equal(result.additionalContext, '');
+    assert.equal(existsSync(path.join(diagnoseCwd, '.ccmem', 'context-s-embed-.md')), true);
+  } finally {
+    if (previous == null) {
+      delete process.env.CCMEM_CONFIG_PATH;
+    } else {
+      process.env.CCMEM_CONFIG_PATH = previous;
+    }
+    if (previousKey == null) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = previousKey;
+    }
+  }
+});
+
+
+test('summarize-pending accepts 500-char outputs under v0.11 parsing rules', async () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  const transcriptPath = path.join(dataRoot, 'summary-v011-transcript.jsonl');
+  const configPath = path.join(dataRoot, 'summary-v011-config.json');
+  const previousConfigPath = process.env.CCMEM_CONFIG_PATH;
+  writeFileSync(configPath, JSON.stringify({
+    save: { max_chars_per_memory: 500 },
+    summarize: {
+      min_transcript_after_clean: 1,
+      content_refiner: { enabled: false }
+    }
+  }));
+  process.env.CCMEM_CONFIG_PATH = configPath;
+
+  try {
+    writeFileSync(
+      transcriptPath,
+      `{"type":"user","message":{"content":[{"type":"text","text":${JSON.stringify('durable convention '.repeat(20))}}]}}\n` +
+      `{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n`
+    );
+    db.prepare(
+      `INSERT INTO session_context (session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at)
+       VALUES ('s-summary-v011', 'demo/repo', 0, 3, 0, 2, ?)`
+    ).run(Date.now());
+    db.prepare(
+      `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+       VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+    ).run(JSON.stringify({
+      session_id: 's-summary-v011',
+      transcript_path: transcriptPath,
+      last_message_seq: 2,
+      llm_output: JSON.stringify({
+        synthesized: [{
+          content: 'durable memory '.repeat(40),
+          type: 'fact',
+          scope: 'project',
+          tags: ['summary']
+        }]
+      })
+    }), Date.now(), Date.now());
+
+    const task = db.prepare(`SELECT * FROM tasks WHERE type = 'summarize_pending' ORDER BY id DESC LIMIT 1`).get();
+    const { runSummarizePending } = await import('../../scripts/daemon/tasks/summarize-pending.mjs');
+    await runSummarizePending(db, task);
+    const saved = db.prepare(`SELECT content FROM memories ORDER BY id DESC LIMIT 1`).get();
+
+    assert.equal(Boolean(saved), true);
+    assert.equal(saved.content.length <= 500, true);
+  } finally {
+    if (previousConfigPath == null) {
+      delete process.env.CCMEM_CONFIG_PATH;
+    } else {
+      process.env.CCMEM_CONFIG_PATH = previousConfigPath;
+    }
+    db.close();
+  }
+});
+
+
+test('config default version is 0.11', () => {
+  const raw = readFileSync('/Users/biran/code/skills/ccmem/config.default.json', 'utf8');
+  assert.match(raw, /"version": "0\.11"/);
+});
+
+
+test('config defaults include context_history and openai timeout settings', () => {
+  const raw = readFileSync('/Users/biran/code/skills/ccmem/config.default.json', 'utf8');
+  assert.match(raw, /"context_history"/);
+  assert.match(raw, /"openai_timeout_ms": 800/);
+  assert.match(raw, /"max_chars_per_memory": 500/);
+});
+
+
+test('migration 013 exists', () => {
+  assert.equal(existsSync('/Users/biran/code/skills/ccmem/scripts/migrations/013_v011.sql'), true);
+});
+
+
+test('context history schema tables exist after openDb', () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  const snap = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='context_snapshots'").get();
+  const log = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='context_write_log'").get();
+  assert.equal(snap.name, 'context_snapshots');
+  assert.equal(log.name, 'context_write_log');
+  db.close();
+});
+
+
+test('session-start read instruction uses session-scoped context filename builder output', async () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  await cmdSave(db, {
+    cwd: diagnoseCwd,
+    content: 'Session scoped instruction memory',
+    scope: 'global',
+    type: 'rule'
+  });
+  db.close();
+
+  const result = await handleSessionStart({ cwd: diagnoseCwd, session_id: 'abcdef12-3456-7890' });
+  assert.match(result.additionalContext, /Read `\.ccmem\/context-abcdef12\.md`/);
+});
+
+
+test('cleanup removes legacy context.md but preserves fresh other-session files', () => {
+  const dir = path.join(diagnoseCwd, '.ccmem');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+
+  const legacy = path.join(dir, 'context.md');
+  const stale = path.join(dir, 'context-old1111.md');
+  const fresh = path.join(dir, 'context-fresh222.md');
+  writeFileSync(legacy, 'legacy', 'utf8');
+  writeFileSync(stale, 'stale', 'utf8');
+  writeFileSync(fresh, 'fresh', 'utf8');
+
+  const oldSeconds = (Date.now() - (48 * 60 * 60 * 1000)) / 1000;
+  utimesSync(stale, oldSeconds, oldSeconds);
+
+  cleanupStaleContextFiles(diagnoseCwd, 'current-session');
+
+  assert.equal(existsSync(legacy), false);
+  assert.equal(existsSync(stale), false);
+  assert.equal(existsSync(fresh), true);
 });
 
 test('cmdAdminAlias updates project keys, cache, and audit', async () => {

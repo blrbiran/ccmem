@@ -210,6 +210,67 @@ function renderRow(row, score = null) {
   };
 }
 
+function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery) {
+  let ftsRows = useFts && ftsQuery ? ftsSearch(db, ftsQuery, projectKey, limit * 3) : [];
+  let candidateRows = ftsRows;
+  const likeEnabled = config?.retrieval?.like_fallback?.enabled !== false;
+  const likeTrigger = Number(config?.retrieval?.like_fallback?.trigger_when_fts_below ?? 3);
+  if (likeEnabled && (!useFts || candidateRows.length < likeTrigger)) {
+    const likeRows = likeSearch(
+      db,
+      promptText,
+      projectKey,
+      useFts ? Math.max((limit * 3) - candidateRows.length, limit) : (limit * 3)
+    );
+    candidateRows = dedupeMerge(candidateRows, likeRows);
+  }
+
+  if (!candidateRows.length) {
+    const fallbackRows = legacySubstringSearch(db, promptText, projectKey, limit);
+    return {
+      rows: fallbackRows.map((row) => renderRow(row, {
+        fused: Number(row.tokenHits ?? 0),
+        fts: 0,
+        jaccard: Number(row.tokenHits ?? 0),
+        semantic: 0
+      })),
+      timing: null
+    };
+  }
+
+  const weights = config?.retrieval?.weights ?? { fts: 0.4, jaccard: 0.2, semantic: 0.4 };
+  const scored = candidateRows.map((row) => {
+    const ftsScore = useFts && ftsRows.length
+      ? normalizeRank((ftsRows.find((candidate) => candidate.id === row.id)?.rank ?? 0), ftsRows)
+      : 0;
+    const jaccardScore = jaccardSimilarity(promptTokens, new Set(tokenize(row.content)));
+    const fused = (weights.fts * ftsScore) + (weights.jaccard * jaccardScore);
+    return {
+      ...row,
+      fused,
+      ftsScore,
+      jaccardScore
+    };
+  });
+
+  scored.sort((a, b) =>
+    (Number(b.pinned ?? 0) - Number(a.pinned ?? 0))
+    || (b.fused - a.fused)
+    || (Number(b.trust_score ?? 0) - Number(a.trust_score ?? 0))
+    || (Number(b.last_touched_at ?? 0) - Number(a.last_touched_at ?? 0))
+  );
+
+  return {
+    rows: scored.slice(0, limit).map((row) => renderRow(row, {
+      fused: row.fused,
+      fts: row.ftsScore,
+      jaccard: row.jaccardScore,
+      semantic: 0
+    })),
+    timing: null
+  };
+}
+
 export async function retrieveMemories(db, prompt, projectKey, config) {
   const limit = Number(config?.inject?.max_per_prompt ?? 6);
   const promptText = String(prompt ?? '').slice(0, 2000);
@@ -234,22 +295,34 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
   }
 
   if (!useEmbedding) {
-    const fallbackRows = legacySubstringSearch(db, promptText, projectKey, limit);
+    const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery);
     return {
-      rows: fallbackRows.map((row) => renderRow(row, {
-        fused: Number(row.tokenHits ?? 0),
-        fts: 0,
-        jaccard: Number(row.tokenHits ?? 0),
-        semantic: 0
-      })),
+      rows: lexical.rows,
       queryVec: null,
       cosineContribution: null,
-      timing: null
+      timing: lexical.timing
     };
   }
 
+  let queryVec;
   const tEmbed = Date.now();
-  const [queryVec] = await provider.embed([promptText]);
+  try {
+    [queryVec] = await provider.embed([promptText], config);
+  } catch (error) {
+    const embedMs = Date.now() - tEmbed;
+    process.stderr.write(`ccmem: embedding API failed (${error.message}), falling back to lexical retrieval\n`);
+    const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery);
+    return {
+      rows: lexical.rows,
+      queryVec: null,
+      cosineContribution: null,
+      timing: {
+        ...(lexical.timing ?? {}),
+        embedMs,
+        embedError: String(error.message ?? error)
+      }
+    };
+  }
   const embedMs = Date.now() - tEmbed;
   let ftsRows = useFts && ftsQuery ? ftsSearch(db, ftsQuery, projectKey, limit * 3) : [];
   let candidateRows = ftsRows;

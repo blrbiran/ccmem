@@ -43,7 +43,7 @@ function printHelp() {
     '  admin daemon <status|start|stop|restart|install|uninstall>\n' +
     '  admin cron <list|run>\n' +
     '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina>]\n' +
-    '  admin diagnose [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections]\n' +
+    '  admin diagnose [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections|--context-history] [--session ID] [--hash HASH] [--days N]\n' +
     '  admin alias <old-project-key> <new-project-key>\n' +
     '  stats [--json|--buckets]\n' +
     '  promote <id> [--global]\n' +
@@ -668,7 +668,10 @@ try {
       restartHistory: args.includes('--restart-history'),
       synthesis: args.includes('--synthesis'),
       injections: args.includes('--injections'),
-      days: Number(getOptionValue('--days') ?? 14)
+      contextHistory: args.includes('--context-history'),
+      sessionId: getOptionValue('--session'),
+      contentHash: getOptionValue('--hash'),
+      days: Number(getOptionValue('--days') ?? (args.includes('--context-history') ? 7 : 14))
     });
 
     if (args.includes('--key')) {
@@ -718,6 +721,44 @@ try {
       printTuning(result);
     } else if (args.includes('--metrics')) {
       printMetrics(result);
+    } else if (args.includes('--context-history')) {
+      const history = result.context_history;
+      if (history.mode === 'hash') {
+        if (!history.snapshot) {
+          process.stdout.write(`ccmem: no snapshot found for hash ${history.hash}\n`);
+        } else {
+          process.stdout.write(`Hash: ${history.snapshot.content_hash}\n`);
+          process.stdout.write(`First seen: ${formatLocalTimestamp(history.snapshot.first_seen_at)}\n`);
+          process.stdout.write(`Hit count: ${history.snapshot.hit_count}\n\n`);
+          process.stdout.write('Content:\n');
+          process.stdout.write(`${history.snapshot.content}\n`);
+        }
+      } else if (history.mode === 'session') {
+        if (history.total === 0) {
+          process.stdout.write(`ccmem: no write history for session ${history.session_id}\n`);
+        } else {
+          process.stdout.write(`Session: ${history.session_id} (${history.total} writes)\n\n`);
+          for (const row of history.writes) {
+            process.stdout.write(
+              `  prompt ${row.prompt_idx}: ${row.content_hash} ${row.bytes}B ${row.written ? 'written' : 'skipped (hash gate)'} ${formatLocalTimestamp(row.written_at)}\n`
+            );
+          }
+        }
+      } else {
+        process.stdout.write(`Context write history (last ${history.days} days)\n\n`);
+        process.stdout.write(`  Total writes: ${history.total}\n`);
+        process.stdout.write(`  Actual writes: ${history.actual_writes}\n`);
+        process.stdout.write(`  Hash gate skips: ${history.hash_gate_skips}\n`);
+        process.stdout.write(`  Gate efficiency: ${(history.gate_efficiency * 100).toFixed(1)}%\n`);
+        if (history.top_hashes.length > 0) {
+          process.stdout.write('\n  Top hashes\n');
+          for (const row of history.top_hashes) {
+            process.stdout.write(
+              `    ${row.content_hash}  count=${row.count}  writes=${row.writes}  skips=${row.skips}  bytes=${row.bytes}\n`
+            );
+          }
+        }
+      }
     } else if (args.includes('--injections')) {
       const inj = result.injections;
       process.stdout.write(`Injection overview (last ${inj.days} days)\n\n`);

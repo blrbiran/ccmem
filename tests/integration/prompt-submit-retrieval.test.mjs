@@ -139,7 +139,7 @@ test('prompt-submit retrieves relevant memories and records recent injections', 
      WHERE session_id = 's-retrieval'`
   );
 
-  const contextPath = getContextFilePath(process.cwd());
+  const contextPath = getContextFilePath(process.cwd(), 's-retrieval');
 
   assert.equal(result.additionalContext, '');
   assert.equal(existsSync(contextPath), true);
@@ -332,7 +332,7 @@ test('prompt-submit falls back to non-FTS retrieval when FTS5 is unavailable', a
     );
 
     assert.equal(result.additionalContext, '');
-    assert.equal(readFileSync(getContextFilePath(process.cwd()), 'utf8').includes('/app/api'), true);
+    assert.equal(readFileSync(getContextFilePath(process.cwd(), 's-no-fts'), 'utf8').includes('/app/api'), true);
     assert.equal(injection.prompt_idx, 1);
     assert.equal(injection.inject_source, 'user_prompt_submit');
     assert.equal(JSON.parse(injection.mem_ids).includes(saved.id), true);
@@ -340,21 +340,22 @@ test('prompt-submit falls back to non-FTS retrieval when FTS5 is unavailable', a
 });
 
 test('prompt-submit replaces an existing context file with the no relevant sentinel when retrieval is empty', async () => {
+  const sessionId = 's-empty-1';
   await saveProjectFact('Existing context memory under /app/api');
   await runPromptSubmit({
     cwd: process.cwd(),
-    session_id: 's-empty-seed',
+    session_id: sessionId,
     prompt: 'app api seed'
   });
 
   const result = await runPromptSubmit({
     cwd: process.cwd(),
-    session_id: 's-empty',
+    session_id: sessionId,
     prompt: 'completely unrelated phrase that matches nothing'
   });
 
   assert.equal(result.additionalContext, '');
-  assert.equal(readFileSync(getContextFilePath(process.cwd()), 'utf8'), CONTEXT_EMPTY_SENTINEL);
+  assert.equal(readFileSync(getContextFilePath(process.cwd(), sessionId), 'utf8'), CONTEXT_EMPTY_SENTINEL);
 });
 
 test('prompt-submit falls back to inline additionalContext when file-based injection is disabled', async () => {

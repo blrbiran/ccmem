@@ -93,10 +93,10 @@ test('parseLlmJson falls back safely on invalid JSON and empty content', () => {
   assert.deepEqual(parseLlmJson(JSON.stringify([{ content: '', type: 'rule', scope: 'global' }])), []);
 });
 
-test('parseLlmJson normalizes invalid enum values and truncates long content', () => {
+test('parseLlmJson normalizes invalid enum values and truncates long content at 500 chars by default', () => {
   const parsed = parseLlmJson(JSON.stringify([
     {
-      content: 'x'.repeat(400),
+      content: 'x'.repeat(600),
       type: 'consolidated',
       scope: 'workspace',
       tags: Array.from({ length: 12 }, (_, i) => `t${i}`),
@@ -104,9 +104,22 @@ test('parseLlmJson normalizes invalid enum values and truncates long content', (
     }
   ]));
 
-  assert.equal(parsed[0].content.length, 300);
+  assert.equal(parsed[0].content.length, 500);
   assert.equal(parsed[0].type, 'fact');
   assert.equal(parsed[0].scope, 'project');
   assert.equal(parsed[0].tags.length, 10);
   assert.equal(parsed[0].output_type, 'consolidated');
+});
+
+test('parseLlmJson preserves raw content when skipTruncate is enabled', () => {
+  const parsed = parseLlmJson(JSON.stringify([
+    {
+      content: 'x'.repeat(600),
+      type: 'rule',
+      scope: 'global',
+      tags: []
+    }
+  ]), { skipTruncate: true });
+
+  assert.equal(parsed[0].content.length, 600);
 });

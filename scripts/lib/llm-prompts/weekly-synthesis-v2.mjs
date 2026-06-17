@@ -10,7 +10,7 @@ export const SYNTHESIS_V2_SCHEMA = {
         additionalProperties: false,
         required: ['content', 'source_ids'],
         properties: {
-          content: { type: 'string', maxLength: 300 },
+          content: { type: 'string', maxLength: 500 },
           source_ids: { type: 'array', items: { type: 'integer' } }
         }
       }
@@ -22,7 +22,7 @@ export const SYNTHESIS_V2_SCHEMA = {
         additionalProperties: false,
         required: ['content', 'output_type', 'source_ids'],
         properties: {
-          content: { type: 'string', maxLength: 300 },
+          content: { type: 'string', maxLength: 500 },
           output_type: { type: 'string', enum: ['rule', 'consolidated'] },
           source_ids: { type: 'array', items: { type: 'integer' } }
         }
@@ -56,7 +56,7 @@ Merge memories that say the same thing in different words. Cite all source_ids.
 STEP 2: SYNTHESIZE
 If 3+ memories share a clear underlying pattern not already stated, produce one
 concise synthesis.
-- content <= 300 chars
+- content <= 500 chars
 - output_type='rule' for behavioral preferences or conventions
 - output_type='consolidated' otherwise
 - cite all contributing source_ids

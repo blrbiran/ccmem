@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 const DEFAULT_CONFIG = {
-  version: '0.10',
+  version: '0.11',
   inject: { max_chars: 4000, max_per_prompt: 6 },
-  save: { max_chars_per_memory: 300 },
+  save: { max_chars_per_memory: 500 },
   injection: { file_based: true },
   embedding: {
     enabled: false,
@@ -14,6 +14,7 @@ const DEFAULT_CONFIG = {
     openai_api_key: null,
     jina_api_key: null,
     api_timeout_ms: 30000,
+    openai_timeout_ms: 800,
     openai_base_url: null,
     openai_model: 'text-embedding-3-small',
     openai_dim: null
@@ -50,6 +51,9 @@ const DEFAULT_CONFIG = {
     transcript_cleaner: {
       enabled: true,
       extra_rules: []
+    },
+    content_refiner: {
+      enabled: true
     },
     quality_gate: {
       enabled: true,
@@ -210,6 +214,9 @@ const DEFAULT_CONFIG = {
   },
   migration_backup: {
     max_keep: 5
+  },
+  context_history: {
+    retention_days: 30
   }
 };
 

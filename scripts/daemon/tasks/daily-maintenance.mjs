@@ -197,6 +197,20 @@ export async function runDailyMaintenance(db, task) {
       }
     }
 
+    const contextRetentionDays = Number(cfg.context_history?.retention_days ?? 30);
+    const contextCutoff = now - (contextRetentionDays * 86400000);
+    db.prepare(
+      `DELETE FROM context_write_log
+       WHERE written_at < ?`
+    ).run(contextCutoff);
+    db.prepare(
+      `DELETE FROM context_snapshots
+       WHERE NOT EXISTS (
+         SELECT 1 FROM context_write_log
+         WHERE content_hash = context_snapshots.content_hash
+       )`
+    ).run();
+
     pruneMigrationBackups();
     markLeaseComplete(db, 'daily_maintenance', leaseKey);
   } finally {

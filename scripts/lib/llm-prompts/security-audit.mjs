@@ -15,7 +15,7 @@ export function parseSecurityAuditJson(raw) {
     ? value.quarantine
       .map((item) => ({
         id: Number(item?.id),
-        reason: String(item?.reason ?? '').slice(0, 300)
+        reason: String(item?.reason ?? '').slice(0, 500)
       }))
       .filter((item) => Number.isInteger(item.id) && item.reason)
     : [];
@@ -26,7 +26,7 @@ export function parseSecurityAuditJson(raw) {
         project_id: Number(item?.project_id),
         global_id: Number(item?.global_id),
         similarity: Number(item?.similarity),
-        evidence: String(item?.evidence ?? '').slice(0, 300)
+        evidence: String(item?.evidence ?? '').slice(0, 500)
       }))
       .filter((item) => Number.isInteger(item.project_id) && Number.isInteger(item.global_id) && Number.isFinite(item.similarity) && item.similarity >= 0 && item.similarity <= 1)
     : [];

@@ -1,7 +1,7 @@
 import { openDb } from '../lib/db.mjs';
 import { inferPositiveFeedback, inferPrevTurnOutcome } from '../lib/feedback.mjs';
 import { loadConfig } from '../lib/config.mjs';
-import { writeContextFile, clearContextFile } from '../lib/context-file.mjs';
+import { clearContextFile, contextFileName, writeContextFile } from '../lib/context-file.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
 import { getNextPromptIdx, writeRecentInjection } from '../lib/recent-injections.mjs';
@@ -68,11 +68,11 @@ export async function handlePromptSubmit(hookData) {
     if (useFileBased) {
       try {
         if (rows.length) {
-          const result = writeContextFile(hookData.cwd, rows);
+          const result = writeContextFile(hookData.cwd, rows, hookData.session_id, db);
           contextFileWritten = result.written;
           contextFileBytes = result.bytes;
         } else {
-          contextFileBytes = clearContextFile(hookData.cwd);
+          contextFileBytes = clearContextFile(hookData.cwd, hookData.session_id, db);
         }
       } catch (error) {
         process.stderr.write(`ccmem: context file write failed (${error.message})\n`);
@@ -111,7 +111,7 @@ export async function handlePromptSubmit(hookData) {
     }
 
     if (useFileBased) {
-      process.stderr.write(`ccmem: RETRIEVE ${rows.length} mems → .ccmem/context.md\n`);
+      process.stderr.write(`ccmem: RETRIEVE ${rows.length} mems → .ccmem/${contextFileName(hookData.session_id)}\n`);
     }
 
     return {

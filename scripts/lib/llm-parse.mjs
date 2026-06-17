@@ -30,20 +30,23 @@ function unwrapClaudeEnvelope(parsed) {
   return value;
 }
 
-function normalizeSynthesizedArray(parsed) {
+function normalizeSynthesizedArray(parsed, { skipTruncate = false, maxContentChars = 500 } = {}) {
   const normalized = Array.isArray(parsed)
     ? parsed
     : (parsed && typeof parsed === 'object' && Array.isArray(parsed.synthesized) ? parsed.synthesized : []);
 
   return normalized
     .map((item) => ({
-      content: String(item?.content ?? '').slice(0, 300),
+      content: skipTruncate
+        ? String(item?.content ?? '')
+        : String(item?.content ?? '').slice(0, maxContentChars),
       type: ['rule', 'fact', 'episode'].includes(item?.type) ? item.type : 'fact',
       scope: item?.scope === 'global' ? 'global' : 'project',
       tags: Array.isArray(item?.tags) ? item.tags.slice(0, 10).map((tag) => String(tag)) : [],
       source_ids: Array.isArray(item?.source_ids) ? item.source_ids.filter(Number.isInteger) : [],
       output_type: ['rule', 'consolidated'].includes(item?.output_type) ? item.output_type : 'consolidated'
     }))
+    .map((item) => ({ ...item, content: item.content.trim() }))
     .filter((item) => item.content.length > 0);
 }
 
@@ -55,10 +58,10 @@ export function parseRawLlmOutput(raw) {
   return unwrapClaudeEnvelope(parsed);
 }
 
-export function parseLlmJson(raw) {
+export function parseLlmJson(raw, options = {}) {
   const parsed = parseRawLlmOutput(raw);
   if (parsed == null) {
     return [];
   }
-  return normalizeSynthesizedArray(parsed);
+  return normalizeSynthesizedArray(parsed, options);
 }

@@ -8,7 +8,7 @@ function configFrom(override = null) {
   const modelId = String(embedding.openai_model ?? 'text-embedding-3-small');
   const baseURL = process.env.OPENAI_BASE_URL ?? embedding.openai_base_url ?? null;
   const apiKey = process.env.OPENAI_API_KEY ?? embedding.openai_api_key ?? null;
-  const timeout = Number(embedding.api_timeout_ms ?? 30000);
+  const timeout = Number(embedding.openai_timeout_ms ?? embedding.api_timeout_ms ?? 30000);
   const dim = Number(embedding.openai_dim ?? 1536);
   return {
     modelId,

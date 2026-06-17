@@ -3,7 +3,7 @@ export const MERGE_SCHEMA = {
   additionalProperties: false,
   required: ['merged_content', 'merge_possible'],
   properties: {
-    merged_content: { type: 'string', maxLength: 300 },
+    merged_content: { type: 'string', maxLength: 500 },
     merge_possible: { type: 'boolean' },
     reason: { type: 'string', maxLength: 200 }
   }
@@ -24,7 +24,7 @@ If they can be reconciled by adding context, produce one merged statement.
 If they cannot both be true, set merge_possible=false and explain in reason.
 
 <<CONSTRAINTS>>
-- merged_content <= 300 chars
+- merged_content <= 500 chars
 - do not invent unsupported context
 - prefer higher-trust framing when both are plausible
 

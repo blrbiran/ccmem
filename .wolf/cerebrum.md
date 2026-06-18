@@ -57,6 +57,7 @@
 - **v0.11 save-length invariant**: `insertMemory()` must enforce `save.max_chars_per_memory` directly; otherwise later 500-char work can look implemented in config/tests while persistence still accepts inconsistent lengths.
 - **v0.11 session-scoped cleanup semantics**: `cleanupStaleContextFiles()` should always delete legacy `context.md`, but only delete other session-scoped files when they are stale enough not to clobber active parallel sessions.
 - **v0.11 summarize tests**: summarize integration fixtures that expect insertion on short transcripts must explicitly lower `summarize.min_transcript_after_clean`; otherwise tests silently exercise the skip path instead of the intended post-parse/refine flow.
+- **Mem0 comparison discipline**: when comparing ccmem to Mem0, trust the OSS code over README/platform claims. In the current OSS snapshot, benchmark assets are linked via an external `evaluation` submodule, temporal APIs like `timestamp` / `reference_date` are explicitly rejected, entity boost is implemented as a spaCy side-index rather than LLM extraction, and `add()` being additive does not mean `update()` / `delete()` / `history()` are absent.
 
 ## Do-Not-Repeat
 
@@ -94,6 +95,7 @@
 - Trust recovery remains user-driven rather than forced by periodic exposure.
 - The highest-value synthesis output is a reusable rule/principle, not just a chronological summary.
 - Operational memory files may be periodically compacted, but full snapshots should be archived before slimming.
+- Reference-project comparisons should distinguish borrow-now reliability patterns from non-fit platform bets; for claude-mem, hook I/O discipline, transcript-parser hardening, and progressive-disclosure retrieval fit ccmem, while server-beta/Postgres/BullMQ do not fit the current local-first daemon-optional boundary.
 
 ### Packaging
 

@@ -15,7 +15,7 @@ export function buildReadInstruction(sessionId) {
     `Read \`.ccmem/${fileName}\` at session start and after each /compact.`,
     'After /compact, ALWAYS re-read regardless of compressed summary content.',
     "Re-read if you haven't read it in the last 5 turns or when switching to a different task.",
-    "Context may be from a previous session; prioritize user's current prompt over cached context.",
+    "Context is session-scoped; prioritize the user's current prompt over cached context.",
     'If file contains only "<!-- ccmem: no relevant memories -->" or is missing, proceed normally.'
   ].join('\n');
 }

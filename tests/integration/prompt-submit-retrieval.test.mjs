@@ -155,6 +155,32 @@ test('prompt-submit retrieves relevant memories and records recent injections', 
   assert.equal(typeof session.project_key, 'string');
 });
 
+test('prompt-submit keeps session-scoped context files isolated across sessions', async () => {
+  await saveProjectFact('Session A unique token qqqalphaonly remembers alpha route');
+  await saveProjectFact('Session B unique token zzzbetaonly remembers beta route');
+
+  await runPromptSubmit({
+    cwd: process.cwd(),
+    session_id: 'aaaa1111-session',
+    prompt: 'qqqalphaonly'
+  });
+  const fileABefore = readFileSync(getContextFilePath(process.cwd(), 'aaaa1111-session'), 'utf8');
+
+  await runPromptSubmit({
+    cwd: process.cwd(),
+    session_id: 'bbbb2222-session',
+    prompt: 'zzzbetaonly'
+  });
+
+  const fileAAfter = readFileSync(getContextFilePath(process.cwd(), 'aaaa1111-session'), 'utf8');
+  const fileB = readFileSync(getContextFilePath(process.cwd(), 'bbbb2222-session'), 'utf8');
+
+  assert.match(fileABefore, /qqqalphaonly/);
+  assert.equal(fileAAfter, fileABefore);
+  assert.match(fileB, /zzzbetaonly/);
+  assert.equal(getContextFilePath(process.cwd(), 'aaaa1111-session') === getContextFilePath(process.cwd(), 'bbbb2222-session'), false);
+});
+
 test('prompt-submit infers previous negative feedback from a correction prompt', async () => {
   const saved = await saveProjectFact('API routes live under /app/api');
 

@@ -333,13 +333,12 @@ const [queryVec] = await provider.embed([prompt.slice(0, 2000)]);  // ❌ 异常
 
 **修复**：
 ```javascript
-// openai.mjs — AbortController + 可配置超时（默认 800ms）
-const controller = new AbortController();
-const timer = setTimeout(() => controller.abort(), _timeoutMs);
-try {
-  const response = await fetch(`${_baseURL}/embeddings`, { ..., signal: controller.signal });
-  // ...
-} finally { clearTimeout(timer); }
+// openai.mjs — OpenAI SDK timeout + 可配置超时（默认 800ms）
+const client = new OpenAI({
+  apiKey: cfg.apiKey,
+  baseURL: cfg.baseURL ?? undefined,
+  timeout: cfg.timeoutMs
+});
 
 // retrieval.mjs — try-catch + Path B 降级
 try {
@@ -354,7 +353,7 @@ try {
 - 单元测试：1079/1079 通过 ✅
 - 烟雾测试：embedding timeout 在 ~805ms 触发 ✅
 - 集成测试：fallback 到 Path B 返回 6 rows（FTS5+Jaccard），总耗时 806ms ✅
-- 配置项：`embedding.openai_timeout_ms` 可覆盖默认 800ms
+- 配置项：`embedding.openai_timeout_ms` 通过 OpenAI SDK `timeout` 选项覆盖默认 800ms
 
 **状态**：✅ 已修复（commit 待提交）
 
@@ -853,7 +852,7 @@ grep session_start ~/.claude/ccmem/metrics.jsonl | tail -10
 
 - **Finding 8**（HIGH）：`context.md` v0.10 遗留文件被 24h age guard 保护 → 改为无条件删除
 - **Finding 9**（MEDIUM）：`session_id=null` 时 `recordWriteHistory` SQL NOT NULL 违反 → normalize 到 `'unknown'`
-- **Finding 10**（CRITICAL）：embedding API 无超时 → prompt_submit hook 全部 1500ms timeout → `writeContextFile` 从未执行 → `.ccmem/` 无 context 文件、`context_write_log` 0 rows。修复：AbortController 800ms timeout + Path B (FTS5+Jaccard) 优雅降级
+- **Finding 10**（CRITICAL）：embedding API 无超时 → prompt_submit hook 全部 1500ms timeout → `writeContextFile` 从未执行 → `.ccmem/` 无 context 文件、`context_write_log` 0 rows。修复：OpenAI SDK 800ms timeout + Path B (FTS5+Jaccard) 优雅降级
 - **Finding 11**（HIGH）：memory 内容在 300 字符处硬截断 → 164 条 memory 断句。修复：放宽到 500 字符 + AI 精炼机制 + 164 条软删除
 - **Finding 12**（NEW FEATURE）：AI 精炼管道 — 超 501 字符的内容先调 LLM 精炼，仍超才 word-boundary 截断。新增 `content-refiner.mjs`
 
@@ -871,7 +870,7 @@ grep session_start ~/.claude/ccmem/metrics.jsonl | tail -10
 | context_snapshots 存储膨胀 | 极低 | 低 | 8KB cap + hash 去重 + 30d 清理 |
 | getPromptIdx SELECT MAX 性能 | 极低 | 低 | log 行数 < 10K（30d retention） |
 | session_id[:8] 碰撞 | 极低 | 中 | UUID 前 8 字符碰撞概率 ~1/4B |
-| embedding API 超时/限流 | **已发生** | ~~高~~ **已修复** | 800ms AbortController + Path B 降级 |
+| embedding API 超时/限流 | **已发生** | ~~高~~ **已修复** | 800ms OpenAI SDK timeout + Path B 降级 |
 | memory 内容截断（300→500） | **已发生** | ~~高~~ **已修复** | 500 字符限制 + AI 精炼 + 164 条软删除 |
 
 ---

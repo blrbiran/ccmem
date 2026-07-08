@@ -114,6 +114,10 @@ export async function handlePromptSubmit(hookData) {
       process.stderr.write(`ccmem: RETRIEVE ${rows.length} mems → .ccmem/${contextFileName(hookData.session_id)}\n`);
     }
 
+    const path = retrieval.retrievalPath ?? (retrieval.timing?.embedError ? 'B-fail' : (retrieval.timing ? 'A' : 'B-off'));
+    const embedError = retrieval.timing?.embedError ?? null;
+    const fallback = path === 'B-fail';
+
     return {
       additionalContext: useFileBased ? '' : (rows.length ? renderRetrievedBlock(rows) : ''),
       _metricFields: {
@@ -124,6 +128,9 @@ export async function handlePromptSubmit(hookData) {
         retrieval_db_ms: retrieval.timing?.dbReadMs ?? null,
         retrieval_cosine_ms: retrieval.timing?.cosineMs ?? null,
         retrieval_pool: retrieval.timing?.candidatePool ?? null,
+        retrieval_path: path,
+        retrieval_embed_error: embedError,
+        retrieval_fallback: fallback,
         context_file_written: useFileBased ? contextFileWritten : false,
         context_file_bytes: useFileBased ? contextFileBytes : null,
         additional_context_empty: useFileBased

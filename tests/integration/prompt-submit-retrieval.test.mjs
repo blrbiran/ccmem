@@ -155,6 +155,21 @@ test('prompt-submit retrieves relevant memories and records recent injections', 
   assert.equal(typeof session.project_key, 'string');
 });
 
+test('prompt-submit reports B-off metrics when embedding is disabled', async () => {
+  await saveProjectFact('Workspace routes live under /app/api for lexical retrieval');
+
+  const result = await runPromptSubmit({
+    cwd: process.cwd(),
+    session_id: 's-b-off',
+    prompt: 'workspace app api route'
+  });
+
+  assert.equal(result.additionalContext, '');
+  assert.equal(result._metricFields.retrieval_path, 'B-off');
+  assert.equal(result._metricFields.retrieval_embed_error, null);
+  assert.equal(result._metricFields.retrieval_fallback, false);
+});
+
 test('prompt-submit keeps session-scoped context files isolated across sessions', async () => {
   await saveProjectFact('Session A unique token qqqalphaonly remembers alpha route');
   await saveProjectFact('Session B unique token zzzbetaonly remembers beta route');

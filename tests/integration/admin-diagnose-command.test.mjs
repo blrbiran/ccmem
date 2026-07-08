@@ -27,6 +27,8 @@ const { fallbackProjectKey } = await import('../../scripts/lib/project-key.mjs')
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
 const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submit.mjs');
 const { cleanupStaleContextFiles } = await import('../../scripts/lib/context-file.mjs');
+const { recordMetric } = await import('../../scripts/lib/metrics.mjs');
+const { writeMetricsDailyRollup } = await import('../../scripts/lib/metrics-rollup.mjs');
 
 function resetDiagnoseTables(db) {
   db.prepare(`DELETE FROM daemon_lock`).run();
@@ -524,6 +526,32 @@ test('cli admin diagnose --tuning reports insufficient data before 7 rollup days
   });
 
   assert.match(output, /ccmem: insufficient data \(have 6 days, need >=7\)/);
+});
+
+test('metrics rollup persists v0.12 retrieval path counts', () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  rmSync(path.join(dataRoot, 'metrics.jsonl'), { force: true });
+
+  const now = new Date();
+  const dayEnd = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const dayStart = dayEnd - 86400000;
+  recordMetric({ hook: 'prompt_submit', ts: dayStart + 1000, ms_total: 10, retrieval_path: 'A', retrieval_fallback: false });
+  recordMetric({ hook: 'prompt_submit', ts: dayStart + 2000, ms_total: 11, retrieval_path: 'B-fail', retrieval_fallback: true });
+  writeMetricsDailyRollup(db);
+
+  const row = db.prepare(
+    `SELECT path_a_count, path_b_fail_count, path_b_off_count, path_b_circuit_count, embed_error_rate
+     FROM metrics_daily_rollup
+     ORDER BY written_at DESC
+     LIMIT 1`
+  ).get();
+  assert.equal(row.path_a_count, 1);
+  assert.equal(row.path_b_fail_count, 1);
+  assert.equal(row.path_b_off_count, 0);
+  assert.equal(row.path_b_circuit_count, 0);
+  assert.equal(row.embed_error_rate, 0.5);
+  db.close();
 });
 
 test('cli admin diagnose --metrics prints rollup summary', () => {

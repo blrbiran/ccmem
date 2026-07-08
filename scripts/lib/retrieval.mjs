@@ -300,7 +300,8 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
       rows: lexical.rows,
       queryVec: null,
       cosineContribution: null,
-      timing: lexical.timing
+      timing: lexical.timing,
+      retrievalPath: 'B-off'
     };
   }
 
@@ -316,6 +317,7 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
       rows: lexical.rows,
       queryVec: null,
       cosineContribution: null,
+      retrievalPath: 'B-fail',
       timing: {
         ...(lexical.timing ?? {}),
         embedMs,
@@ -399,6 +401,7 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
     })),
     queryVec,
     cosineContribution,
+    retrievalPath: 'A',
     timing: {
       embedMs,
       dbReadMs,

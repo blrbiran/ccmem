@@ -105,9 +105,50 @@ function yesterdayWindow() {
   return { dayKey, dayStartMs: dayStart, dayEndMs: dayEnd };
 }
 
+export function aggregateRetrievalPaths(startMs, endMs) {
+  const metricsPath = path.join(getDataRoot(), 'metrics.jsonl');
+  const buckets = { total: 0, fallback: 0, A: 0, 'B-fail': 0, 'B-off': 0, 'B-circuit': 0 };
+  if (!fs.existsSync(metricsPath)) {
+    return buckets;
+  }
+
+  try {
+    const lines = fs.readFileSync(metricsPath, 'utf8').split('\n');
+    for (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+
+      let row;
+      try {
+        row = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      if (row.hook !== 'prompt_submit' || typeof row.ts !== 'number' || row.ts < startMs || row.ts >= endMs) {
+        continue;
+      }
+
+      buckets.total += 1;
+      if (row.retrieval_fallback === true) {
+        buckets.fallback += 1;
+      }
+      if (typeof row.retrieval_path === 'string' && row.retrieval_path in buckets) {
+        buckets[row.retrieval_path] += 1;
+      }
+    }
+  } catch {
+    return buckets;
+  }
+
+  return buckets;
+}
+
 export function writeMetricsDailyRollup(db) {
   const { dayKey, dayStartMs, dayEndMs } = yesterdayWindow();
   const hookStats = aggregateHookLatencies(dayStartMs, dayEndMs);
+  const retrievalStats = aggregateRetrievalPaths(dayStartMs, dayEndMs);
   const llmCalls = Number(db.prepare(
     `SELECT COUNT(*) AS n
      FROM tasks
@@ -231,6 +272,8 @@ export function writeMetricsDailyRollup(db) {
      FROM memories`
   ).get() ?? {};
 
+  const embedErrorRate = retrievalStats.total > 0 ? +(retrievalStats.fallback / retrievalStats.total).toFixed(4) : null;
+
   db.prepare(
     `INSERT OR REPLACE INTO metrics_daily_rollup (
       day_key,
@@ -245,8 +288,9 @@ export function writeMetricsDailyRollup(db) {
       input_noise_stripped_chars, quality_gate_rejected,
       inj_total, inj_empty, inj_avg_fused, inj_never_30d,
       mems_active, mems_probation, mems_quarantine, mems_archived,
+      embed_error_rate, path_a_count, path_b_fail_count, path_b_off_count, path_b_circuit_count,
       written_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     dayKey,
     hookStats.session_start?.p50 ?? null,
@@ -280,6 +324,11 @@ export function writeMetricsDailyRollup(db) {
     Number(memPool.probation ?? 0),
     Number(memPool.quarantine ?? 0),
     Number(memPool.archived ?? 0),
+    embedErrorRate,
+    retrievalStats.A,
+    retrievalStats['B-fail'],
+    retrievalStats['B-off'],
+    retrievalStats['B-circuit'],
     Date.now()
   );
 

@@ -2,11 +2,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from './config.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.resolve(HERE, '../migrations');
+const require = createRequire(import.meta.url);
 const BACKUP_DEDUPE_WINDOW_MS = 60_000;
 let cachedFtsSupport;
 
@@ -177,6 +179,26 @@ function runSqlMigration(db, file) {
   runInTransaction(db, () => {
     db.exec(readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8'));
   });
+}
+
+function runJsMigration(db, file) {
+  const migration = require(path.join(MIGRATIONS_DIR, file));
+  if (typeof migration !== 'function') {
+    throw new Error(`Invalid JS migration: ${file}`);
+  }
+  migration(db);
+}
+
+function runVersionedMigration(db, file) {
+  if (file.endsWith('.sql')) {
+    runSqlMigration(db, file);
+    return;
+  }
+  if (file.endsWith('.cjs')) {
+    runJsMigration(db, file);
+    return;
+  }
+  throw new Error(`Unsupported migration type: ${file}`);
 }
 
 function ensureTrigger(db, triggerName, sql) {
@@ -501,9 +523,9 @@ function runSpecialMigration(db, toVersion) {
 }
 
 export function runMigration(db) {
-  const currentVersion = getSchemaVersion(db);
+  let currentVersion = getSchemaVersion(db);
   const files = readdirSync(MIGRATIONS_DIR)
-    .filter((file) => file.endsWith('.sql'))
+    .filter((file) => file.endsWith('.sql') || file.endsWith('.cjs'))
     .sort();
   const pending = files.filter((file) => Number(file.split('_', 1)[0]) > currentVersion);
 
@@ -518,10 +540,12 @@ export function runMigration(db) {
   for (const file of pending) {
     const toVersion = Number(file.split('_', 1)[0]);
     if (runSpecialMigration(db, toVersion)) {
+      currentVersion = getSchemaVersion(db);
       continue;
     }
 
-    runSqlMigration(db, file);
+    runVersionedMigration(db, file);
+    currentVersion = getSchemaVersion(db);
   }
 }
 

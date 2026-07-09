@@ -362,15 +362,20 @@ test('cli stats prints the tuning hint when suggestions are available', () => {
   const db = openDb();
   resetStatsTables(db);
   seedStatsFixture(db);
-  for (let day = 1; day <= 7; day += 1) {
-    seedRollupRow(db, { dayKey: `2026-06-0${day}` });
+  const now = Date.now();
+  for (let day = 0; day < 7; day += 1) {
+    const ts = now - (day * 86400000);
+    seedRollupRow(db, {
+      dayKey: new Date(ts).toISOString().slice(0, 10),
+      writtenAt: ts
+    });
   }
   for (let i = 0; i < 10; i += 1) {
     db.prepare(
       `INSERT INTO audit_log (ts, action, affected_ids, details)
        VALUES (?, 'security_audit_run', NULL, ?)`
     ).run(
-      Date.now() - ((i % 7) * 86400000),
+      now - ((i % 7) * 86400000),
       JSON.stringify({ pool_b: 10, pool_a: 0, pool_c: 0 })
     );
   }

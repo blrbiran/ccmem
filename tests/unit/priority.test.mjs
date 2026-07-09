@@ -15,3 +15,19 @@ test('computePriority increases with pinned high-trust recent memories', () => {
 
   assert.ok(score > 1);
 });
+
+test('permanent temporal_type does not decay', () => {
+  const score = computePriority({
+    type: 'consolidated',
+    trust_score: 0.9,
+    helpful_count: 0,
+    unhelpful_count: 0,
+    half_life_days: 7,
+    temporal_type: 'permanent',
+    last_touched_at: Date.now() - (200 * 86400000),
+    consolidation_depth: 0,
+    pinned: 0
+  });
+
+  assert.ok(score > 0.5, `expected non-decayed priority, got ${score}`);
+});

@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { hasUsableFts } from './db.mjs';
-import { blobToVec, cosineSimilarity } from './embedding/cosine.mjs';
-import { getProviderWithCircuit, recordEmbedFailure, recordEmbedSuccess } from './embedding/provider.mjs';
+import { blobToVec, cosineSimilarity, vecToBlob } from './embedding/cosine.mjs';
+import { getProvider, getProviderWithCircuit, recordEmbedFailure, recordEmbedSuccess } from './embedding/provider.mjs';
 
 export function sanitizeFtsQuery(prompt) {
   return String(prompt ?? '')
@@ -210,6 +211,79 @@ function renderRow(row, score = null) {
   };
 }
 
+function currentModelId(provider, config = null) {
+  if (provider?.modelId) {
+    return String(provider.modelId);
+  }
+
+  const embedding = config?.embedding ?? {};
+  switch (embedding.provider) {
+    case 'openai':
+      return String(embedding.openai_model ?? 'text-embedding-3-small');
+    case 'jina':
+      return 'jina-embeddings-v3';
+    default:
+      return String(embedding.model ?? 'Xenova/all-MiniLM-L6-v2');
+  }
+}
+
+function toFloat32Vec(vec) {
+  if (!vec) {
+    return null;
+  }
+  return vec instanceof Float32Array ? vec : new Float32Array(vec);
+}
+
+function promptHash(modelId, promptText) {
+  return createHash('sha256').update(`${modelId}\n${promptText}`).digest('hex');
+}
+
+function readQueryEmbeddingCache(db, promptText, modelId) {
+  const hash = promptHash(modelId, promptText);
+  const row = db.prepare(
+    `SELECT embedding
+     FROM query_embedding_cache
+     WHERE prompt_hash = ? AND model = ?`
+  ).get(hash, modelId);
+  if (!row?.embedding) {
+    return null;
+  }
+
+  db.prepare(
+    `UPDATE query_embedding_cache
+     SET hit_count = hit_count + 1
+     WHERE prompt_hash = ?`
+  ).run(hash);
+
+  return {
+    hash,
+    queryVec: blobToVec(row.embedding)
+  };
+}
+
+function writeQueryEmbeddingCache(db, promptText, modelId, queryVec) {
+  const normalized = toFloat32Vec(queryVec);
+  if (!normalized) {
+    return;
+  }
+
+  db.prepare(
+    `INSERT INTO query_embedding_cache (prompt_hash, embedding, model, prompt_len, created_at, hit_count)
+     VALUES (?, ?, ?, ?, ?, 1)
+     ON CONFLICT(prompt_hash) DO UPDATE SET
+       embedding = excluded.embedding,
+       model = excluded.model,
+       prompt_len = excluded.prompt_len,
+       created_at = excluded.created_at`
+  ).run(
+    promptHash(modelId, promptText),
+    vecToBlob(normalized),
+    modelId,
+    promptText.length,
+    Date.now()
+  );
+}
+
 function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery) {
   let ftsRows = useFts && ftsQuery ? ftsSearch(db, ftsQuery, projectKey, limit * 3) : [];
   let candidateRows = ftsRows;
@@ -282,10 +356,16 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
   const promptTokens = new Set(promptTokenList);
   const ftsQuery = sanitizeFtsQuery(promptText);
   const useFts = hasUsableFts(db);
+  const baseProvider = getProvider(config);
+  const modelId = baseProvider ? currentModelId(baseProvider, config) : null;
+  const cachedQuery = modelId ? readQueryEmbeddingCache(db, promptText, modelId) : null;
   const { provider, circuit } = getProviderWithCircuit(db, config);
   let useEmbedding = false;
+  let queryVec = cachedQuery?.queryVec ?? null;
 
-  if (provider) {
+  if (queryVec) {
+    useEmbedding = true;
+  } else if (provider) {
     try {
       await provider.load(config);
       useEmbedding = provider.isLoaded();
@@ -305,29 +385,35 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
     };
   }
 
-  let queryVec;
-  const tEmbed = Date.now();
-  try {
-    [queryVec] = await provider.embed([promptText], config);
-    recordEmbedSuccess(db);
-  } catch (error) {
-    const embedMs = Date.now() - tEmbed;
-    recordEmbedFailure(db, config);
-    process.stderr.write(`ccmem: embedding API failed (${error.message}), falling back to lexical retrieval\n`);
-    const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery);
-    return {
-      rows: lexical.rows,
-      queryVec: null,
-      cosineContribution: null,
-      retrievalPath: 'B-fail',
-      timing: {
-        ...(lexical.timing ?? {}),
-        embedMs,
-        embedError: String(error.message ?? error)
+  let embedMs = 0;
+  if (!queryVec) {
+    const tEmbed = Date.now();
+    try {
+      [queryVec] = await provider.embed([promptText], config);
+      queryVec = toFloat32Vec(queryVec);
+      recordEmbedSuccess(db);
+      if (modelId && queryVec) {
+        writeQueryEmbeddingCache(db, promptText, modelId, queryVec);
       }
-    };
+    } catch (error) {
+      embedMs = Date.now() - tEmbed;
+      recordEmbedFailure(db, config);
+      process.stderr.write(`ccmem: embedding API failed (${error.message}), falling back to lexical retrieval\n`);
+      const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery);
+      return {
+        rows: lexical.rows,
+        queryVec: null,
+        cosineContribution: null,
+        retrievalPath: 'B-fail',
+        timing: {
+          ...(lexical.timing ?? {}),
+          embedMs,
+          embedError: String(error.message ?? error)
+        }
+      };
+    }
+    embedMs = Date.now() - tEmbed;
   }
-  const embedMs = Date.now() - tEmbed;
   let ftsRows = useFts && ftsQuery ? ftsSearch(db, ftsQuery, projectKey, limit * 3) : [];
   let candidateRows = ftsRows;
   const likeEnabled = config?.retrieval?.like_fallback?.enabled !== false;

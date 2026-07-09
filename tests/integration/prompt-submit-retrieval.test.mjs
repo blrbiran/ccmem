@@ -222,6 +222,83 @@ test('prompt-submit reports B-circuit metrics when embedding circuit is open', a
   }
 });
 
+test('query embedding cache hit does not close an open circuit and increments hit_count', async () => {
+  const { createHash } = await import('node:crypto');
+  const { insertMemory } = await import('../../scripts/lib/cmd/save.mjs');
+  const { vecToBlob } = await import('../../scripts/lib/embedding/cosine.mjs');
+  const prompt = 'semantic cache query for retry guidance';
+  const model = 'text-embedding-3-small';
+  const vectorBlob = vecToBlob(new Float32Array([1, 0, 0]));
+
+  let db = openDb();
+  await insertMemory(db, {
+    cwd: process.cwd(),
+    content: 'semantic cache query for retry guidance memory',
+    scope: 'project',
+    type: 'fact',
+    embedSync: false,
+    embeddingBlob: vectorBlob
+  });
+  const promptHash = createHash('sha256').update(`${model}\n${prompt}`).digest('hex');
+  db.prepare(
+    `INSERT INTO query_embedding_cache (prompt_hash, embedding, model, prompt_len, created_at, hit_count)
+     VALUES (?, ?, ?, ?, ?, 1)`
+  ).run(promptHash, vectorBlob, model, prompt.length, Date.now());
+  db.prepare(
+    `INSERT INTO config_kv (key, value, set_at)
+     VALUES ('embedding.circuit_open_until', ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+  ).run(String(Date.now() + 60000), Date.now());
+  db.close();
+
+  const configPath = path.join(process.env.CCMEM_DATA_ROOT, 'query-cache-config.json');
+  const previousConfigPath = process.env.CCMEM_CONFIG_PATH;
+  const previousKey = process.env.OPENAI_API_KEY;
+  writeFileSync(configPath, JSON.stringify({
+    injection: { file_based: true },
+    embedding: {
+      enabled: true,
+      provider: 'openai',
+      openai_api_key: 'test-key',
+      openai_base_url: 'http://127.0.0.1:1',
+      openai_model: model
+    }
+  }));
+  process.env.CCMEM_CONFIG_PATH = configPath;
+  process.env.OPENAI_API_KEY = 'test-key';
+
+  try {
+    const result = await runPromptSubmit({
+      cwd: process.cwd(),
+      session_id: 's-query-cache',
+      prompt
+    });
+
+    assert.equal(result.additionalContext, '');
+    assert.equal(result._metricFields.retrieval_path, 'A');
+    assert.equal(result._metricFields.retrieval_embed_error, null);
+
+    db = openDb();
+    const cacheRow = db.prepare(`SELECT hit_count FROM query_embedding_cache WHERE prompt_hash = ?`).get(promptHash);
+    const circuitRow = db.prepare(`SELECT value FROM config_kv WHERE key = 'embedding.circuit_open_until'`).get();
+    db.close();
+
+    assert.equal(cacheRow.hit_count, 2);
+    assert.equal(Number(circuitRow.value) > Date.now(), true);
+  } finally {
+    if (previousConfigPath == null) {
+      delete process.env.CCMEM_CONFIG_PATH;
+    } else {
+      process.env.CCMEM_CONFIG_PATH = previousConfigPath;
+    }
+    if (previousKey == null) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = previousKey;
+    }
+  }
+});
+
 test('prompt-submit keeps session-scoped context files isolated across sessions', async () => {
   await saveProjectFact('Session A unique token qqqalphaonly remembers alpha route');
   await saveProjectFact('Session B unique token zzzbetaonly remembers beta route');

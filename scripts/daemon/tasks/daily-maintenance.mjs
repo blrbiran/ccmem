@@ -70,6 +70,11 @@ export async function runDailyMaintenance(db, task) {
        WHERE expires_at < ?`
     ).run(now);
 
+    db.prepare(
+      `DELETE FROM query_embedding_cache
+       WHERE created_at < ?`
+    ).run(now - (30 * 86400000));
+
     const sunsetCutoff = now - (cfg.security.quarantine.sunset_days * 86400000);
     const sunsetRows = db.prepare(
       `SELECT id, quarantined_at

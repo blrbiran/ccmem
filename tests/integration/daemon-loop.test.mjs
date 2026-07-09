@@ -4983,6 +4983,12 @@ test('dispatchTask runs daily_maintenance maintenance SQL', async () => {
             ('s-active', 'cron_llm_child', ?, ?)`
   ).run(now - (31 * 60 * 1000), now - 1000, now, now + (30 * 60 * 1000));
 
+  db.prepare(
+    `INSERT INTO query_embedding_cache (prompt_hash, embedding, model, prompt_len, created_at, hit_count)
+     VALUES ('old-cache', X'00010203', 'test-model', 10, ?, 1),
+            ('fresh-cache', X'00010203', 'test-model', 10, ?, 1)`
+  ).run(now - (31 * 86400000), now - (5 * 86400000));
+
   for (let i = 1; i <= 7; i += 1) {
     writeFileSync(`${dbPath}.bak.${1700000000000 + i}`, `backup-${i}`);
   }
@@ -5024,6 +5030,11 @@ test('dispatchTask runs daily_maintenance maintenance SQL', async () => {
      WHERE type = 'daily_maintenance' AND date_key = ?`
   ).get(leaseKey);
   const backupTimestamps = listMigrationBackups().map((backup) => backup.ts);
+  const cacheHashes = db.prepare(
+    `SELECT prompt_hash
+     FROM query_embedding_cache
+     ORDER BY prompt_hash ASC`
+  ).all().map((row) => row.prompt_hash);
 
   assert.equal(memory.decay_status, 'archived');
   assert.equal(injectionCount.n, 0);
@@ -5031,6 +5042,7 @@ test('dispatchTask runs daily_maintenance maintenance SQL', async () => {
   assert.equal(task.status, 'completed');
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
+  assert.deepEqual(cacheHashes, ['fresh-cache']);
   assert.deepEqual(backupTimestamps, [
     1700000000007,
     1700000000006,

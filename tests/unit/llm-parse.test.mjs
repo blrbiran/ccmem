@@ -123,3 +123,35 @@ test('parseLlmJson preserves raw content when skipTruncate is enabled', () => {
 
   assert.equal(parsed[0].content.length, 600);
 });
+
+test('parseLlmJson preserves structured summary fields and temporal_type', () => {
+  const parsed = parseLlmJson(JSON.stringify({
+    synthesized: [
+      {
+        content: 'Investigated auth retries and closed the timeout gap',
+        type: 'episode',
+        scope: 'project',
+        tags: ['auth'],
+        investigated: 'auth retry timeout',
+        learned: 'openai timeout must be bounded',
+        completed: 'bounded retry path',
+        next_steps: 'dogfood with live endpoint',
+        temporal_type: 'permanent'
+      }
+    ]
+  }), { skipTruncate: true });
+
+  assert.deepEqual(parsed[0], {
+    content: 'Investigated auth retries and closed the timeout gap',
+    type: 'episode',
+    scope: 'project',
+    tags: ['auth'],
+    source_ids: [],
+    output_type: 'consolidated',
+    investigated: 'auth retry timeout',
+    learned: 'openai timeout must be bounded',
+    completed: 'bounded retry path',
+    next_steps: 'dogfood with live endpoint',
+    temporal_type: 'permanent'
+  });
+});

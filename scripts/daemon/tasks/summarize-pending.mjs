@@ -30,7 +30,12 @@ const SUMMARIZE_PENDING_JSON_SCHEMA = {
           tags: {
             type: 'array',
             items: { type: 'string' }
-          }
+          },
+          investigated: { type: 'string' },
+          learned: { type: 'string' },
+          completed: { type: 'string' },
+          next_steps: { type: 'string' },
+          temporal_type: { enum: ['permanent', 'temporary', 'time-bound'] }
         }
       }
     }
@@ -122,6 +127,22 @@ function supersedeIfNewerTaskExists(db, taskId, sessionId, lastMessageSeq) {
 
 function uniqueTags(tags) {
   return [...new Set((tags ?? []).map((tag) => String(tag)))];
+}
+
+function buildSummaryMeta(item) {
+  const meta = {};
+  for (const [key, value] of [
+    ['investigated', item?.investigated],
+    ['learned', item?.learned],
+    ['completed', item?.completed],
+    ['next_steps', item?.next_steps]
+  ]) {
+    if (typeof value === 'string' && value.trim()) {
+      meta[key] = value.trim().slice(0, 200);
+    }
+  }
+
+  return Object.keys(meta).length ? JSON.stringify(meta) : null;
 }
 
 export async function runSummarizePending(db, task) {
@@ -309,7 +330,9 @@ export async function runSummarizePending(db, task) {
         projectKey,
         tags: uniqueTags(item.tags),
         embedSync: false,
-        embeddingBlob
+        embeddingBlob,
+        summaryMeta: buildSummaryMeta(item),
+        temporalType: item.temporal_type ?? null
       });
       insertedIds.push(inserted.id);
     } catch {

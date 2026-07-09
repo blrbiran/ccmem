@@ -115,7 +115,8 @@ function parseSynthesisVerdict(raw) {
       .map((item) => ({
         content: String(item?.content ?? '').slice(0, 500),
         output_type: item?.output_type === 'rule' ? 'rule' : 'consolidated',
-        source_ids: normalizeSourceIds(item?.source_ids)
+        source_ids: normalizeSourceIds(item?.source_ids),
+        temporal_type: ['permanent', 'temporary', 'time-bound'].includes(item?.temporal_type) ? item.temporal_type : null
       }))
       .filter((item) => item.content.length > 0)
     : [];
@@ -347,7 +348,8 @@ async function applySynthesized(db, scope, cluster, synthesized, existing, provi
       embeddingBlob: embedded.blob,
       parentIds: sourceIds,
       consolidationDepth: newDepth,
-      lastTouchedAt: Date.now()
+      lastTouchedAt: Date.now(),
+      temporalType: item.temporal_type ?? null
     });
 
     existing.unshift({

@@ -45,7 +45,9 @@ export async function insertMemory(db, {
   status = 'active',
   decayStatus = null,
   quarantinedAt = null,
-  embeddingBlob = undefined
+  embeddingBlob = undefined,
+  summaryMeta = null,
+  temporalType = null
 }) {
   const cfg = loadConfig();
   const maxChars = Number(cfg.save?.max_chars_per_memory ?? 500);
@@ -90,12 +92,16 @@ export async function insertMemory(db, {
   const touchedAt = Number.isFinite(Number(lastTouchedAt)) ? Number(lastTouchedAt) : now;
   const resolvedDepth = Number.isFinite(Number(consolidationDepth)) ? Number(consolidationDepth) : 0;
   const resolvedParentIds = Array.isArray(parentIds) && parentIds.length ? JSON.stringify(parentIds.map((id) => Number(id))) : null;
+  const resolvedSummaryMeta = typeof summaryMeta === 'string' && summaryMeta.trim() ? summaryMeta : null;
+  const resolvedTemporalType = ['permanent', 'temporary', 'time-bound'].includes(temporalType) ? temporalType : null;
   const result = db.prepare(
     `INSERT INTO memories (
       scope,
       project_key,
       type,
       content,
+      temporal_type,
+      summary_meta,
       embedding,
       pinned,
       source,
@@ -109,12 +115,14 @@ export async function insertMemory(db, {
       last_touched_at,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     resolvedScope,
     resolvedProjectKey,
     resolvedType,
     content,
+    resolvedTemporalType,
+    resolvedSummaryMeta,
     embedding,
     Number(pinned) ? 1 : 0,
     source,

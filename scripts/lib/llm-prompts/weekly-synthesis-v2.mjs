@@ -24,7 +24,8 @@ export const SYNTHESIS_V2_SCHEMA = {
         properties: {
           content: { type: 'string', maxLength: 500 },
           output_type: { type: 'string', enum: ['rule', 'consolidated'] },
-          source_ids: { type: 'array', items: { type: 'integer' } }
+          source_ids: { type: 'array', items: { type: 'integer' } },
+          temporal_type: { type: ['string', 'null'], enum: ['permanent', 'temporary', 'time-bound', null] }
         }
       }
     }
@@ -59,6 +60,7 @@ concise synthesis.
 - content <= 500 chars
 - output_type='rule' for behavioral preferences or conventions
 - output_type='consolidated' otherwise
+- temporal_type='permanent' for evergreen cross-session guidance; otherwise use 'temporary' or 'time-bound' only when the content is explicitly short-lived
 - cite all contributing source_ids
 - do not invent unsupported context
 - if no clear pattern exists, return empty arrays

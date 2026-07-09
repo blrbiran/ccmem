@@ -271,7 +271,7 @@ test('cmdAdminDiagnose returns migration history when requested', async () => {
     applied_at: result.migrations[0].applied_at,
     applied_by: 'ccmem-cli'
   });
-  assert.equal(result.migrations.at(-1).to_version, 13);
+  assert.equal(result.migrations.at(-1).to_version, 15);
   db.close();
 });
 
@@ -979,6 +979,70 @@ test('summarize-pending accepts 500-char outputs under v0.11 parsing rules', asy
   }
 });
 
+
+test('summarize-pending writes summary_meta into memories', async () => {
+  const previousConfigPath = process.env.CCMEM_CONFIG_PATH;
+  const configPath = path.join(dataRoot, 'summarize-summary-meta-config.json');
+  writeFileSync(configPath, JSON.stringify({
+    summarize: {
+      min_transcript_after_clean: 1,
+      quality_gate: { enabled: false }
+    }
+  }));
+  process.env.CCMEM_CONFIG_PATH = configPath;
+
+  const db = openDb();
+  resetDiagnoseTables(db);
+  try {
+  const transcriptPath = path.join(dataRoot, 'summarize-summary-meta.jsonl');
+  writeFileSync(
+    transcriptPath,
+    `{"type":"user","message":{"content":[{"type":"text","text":"investigated auth retry timeout and bounded it"}]}}\n` +
+    `{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n`
+  );
+  db.prepare(
+    `INSERT INTO session_context (session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at)
+     VALUES ('s-summary-meta', 'demo/repo', 0, 3, 0, 2, ?)`
+  ).run(Date.now());
+  db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+  ).run(JSON.stringify({
+    session_id: 's-summary-meta',
+    transcript_path: transcriptPath,
+    last_message_seq: 2,
+    llm_output: JSON.stringify({
+      synthesized: [{
+        content: 'Investigated auth retries and closed the timeout gap',
+        type: 'episode',
+        scope: 'project',
+        tags: ['auth'],
+        investigated: 'auth retry timeout',
+        learned: 'openai timeout must be bounded',
+        completed: 'bounded retry path',
+        next_steps: 'dogfood with live endpoint',
+        temporal_type: 'permanent'
+      }]
+    })
+  }), Date.now(), Date.now());
+
+  const task = db.prepare(`SELECT * FROM tasks WHERE type = 'summarize_pending' ORDER BY id DESC LIMIT 1`).get();
+  const { runSummarizePending } = await import('../../scripts/daemon/tasks/summarize-pending.mjs');
+  await runSummarizePending(db, task);
+  const saved = db.prepare(`SELECT summary_meta, temporal_type FROM memories WHERE summary_meta IS NOT NULL ORDER BY id DESC LIMIT 1`).get();
+
+  assert.equal(Boolean(saved), true);
+  assert.equal(saved.temporal_type, 'permanent');
+  assert.equal(JSON.parse(saved.summary_meta).learned, 'openai timeout must be bounded');
+  } finally {
+    db.close();
+    if (previousConfigPath == null) {
+      delete process.env.CCMEM_CONFIG_PATH;
+    } else {
+      process.env.CCMEM_CONFIG_PATH = previousConfigPath;
+    }
+  }
+});
 
 test('config default version is 0.11', () => {
   const raw = readFileSync('/Users/biran/code/skills/ccmem/config.default.json', 'utf8');

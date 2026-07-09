@@ -3432,13 +3432,35 @@ test('dispatchTask runs weekly_synthesis stub route', async () => {
   const now = Date.now();
   const leaseKey = weeklyLeaseKey(new Date());
   const claimed = tryClaimLease(db, 'weekly_synthesis', leaseKey, RAN_BY.DAEMON);
+  const { insertMemory } = await import('../../scripts/lib/cmd/save.mjs');
+  const { vecToBlob } = await import('../../scripts/lib/embedding/cosine.mjs');
+  const memA = await insertMemory(db, {
+    cwd: process.cwd(),
+    content: 'Retry guidance variant A',
+    scope: 'project',
+    projectKey: 'demo/repo',
+    type: 'fact',
+    embedSync: false,
+    embeddingBlob: vecToBlob(new Float32Array([1, 0, 0]))
+  });
+  const memB = await insertMemory(db, {
+    cwd: process.cwd(),
+    content: 'Retry guidance variant B',
+    scope: 'project',
+    projectKey: 'demo/repo',
+    type: 'fact',
+    embedSync: false,
+    embeddingBlob: vecToBlob(new Float32Array([1, 0, 0]))
+  });
   const llmOutput = JSON.stringify({
     synthesized: [
       {
         content: 'Merge duplicate guidance',
         type: 'fact',
         scope: 'project',
-        output_type: 'rule'
+        output_type: 'rule',
+        temporal_type: 'permanent',
+        source_ids: [memA.id, memB.id]
       }
     ]
   });
@@ -3477,6 +3499,13 @@ test('dispatchTask runs weekly_synthesis stub route', async () => {
      ORDER BY id DESC
      LIMIT 1`
   ).get();
+  const saved = db.prepare(
+    `SELECT temporal_type
+     FROM memories
+     WHERE content = 'Merge duplicate guidance'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
   const details = JSON.parse(audit.details);
 
   assert.equal(task.status, 'completed');
@@ -3485,6 +3514,7 @@ test('dispatchTask runs weekly_synthesis stub route', async () => {
   assert.equal(audit.action, 'weekly_synthesis_run');
   assert.equal(details.item_count, 1);
   assert.equal(details.first_output_type, 'rule');
+  assert.equal(saved.temporal_type, 'permanent');
   db.close();
 });
 

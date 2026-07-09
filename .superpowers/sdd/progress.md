@@ -1,0 +1,7 @@
+Task 1: complete (commit 228def4, targeted migration test green)
+Task 2: complete (commit 4c5cbbe, targeted observability tests green)
+Task 3: complete (commit bba6f7d, targeted circuit/diagnose tests green)
+Task 4: complete (commit c871784, targeted retrieval-check test green)
+Task 5: complete (commit f22b7f4, targeted parser/summarize/weekly tests green)
+Task 6: complete (commit 53d93ff, targeted priority/query-cache/daily-maintenance tests green)
+Task 7: complete (docs/spec-dogfood closure sync and final review)

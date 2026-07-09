@@ -370,7 +370,7 @@ test('cli stats prints the tuning hint when suggestions are available', () => {
       `INSERT INTO audit_log (ts, action, affected_ids, details)
        VALUES (?, 'security_audit_run', NULL, ?)`
     ).run(
-      Date.parse(`2026-06-${String((i % 7) + 1).padStart(2, '0')}T12:00:00Z`),
+      Date.now() - ((i % 7) * 86400000),
       JSON.stringify({ pool_b: 10, pool_a: 0, pool_c: 0 })
     );
   }

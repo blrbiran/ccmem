@@ -1,12 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-db-'));
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const MIGRATIONS_DIR = path.join(ROOT, 'scripts/migrations');
 const { createMigrationBackup, listMigrationBackups, openDb, getDbPath, getSchemaVersion } = await import('../../scripts/lib/db.mjs');
 const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
 const { getMode, setMode } = await import('../../scripts/lib/mode.mjs');
@@ -33,28 +37,44 @@ function withEnv(key, value, work) {
 test('openDb creates DB file and applies the latest schema', () => {
   const db = openDb();
   assert.equal(existsSync(getDbPath()), true);
-  assert.equal(getSchemaVersion(db), 13);
+  assert.equal(getSchemaVersion(db), 15);
   db.close();
 });
 
 test('openDb repairs a partially applied v0.6 migration and finishes schema upgrade', () => {
-  const db = openDb();
-  db.exec('DROP TRIGGER IF EXISTS memories_ai');
-  db.prepare('UPDATE schema_meta SET version = 6, applied_at = ?').run(Date.now());
-  db.prepare('DELETE FROM schema_migrations WHERE to_version = 7').run();
-  db.close();
+  const tempRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-db-v06-'));
 
-  const repaired = openDb();
-  assert.equal(getSchemaVersion(repaired), 13);
-  assert.equal(
-    repaired.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'memories_ai'").get().name,
-    'memories_ai'
-  );
-  assert.equal(
-    repaired.prepare('SELECT COUNT(*) AS n FROM schema_migrations WHERE to_version = 7').get().n,
-    1
-  );
-  repaired.close();
+  try {
+    withEnv('CCMEM_DATA_ROOT', tempRoot, () => {
+      const seed = new DatabaseSync(getDbPath());
+      for (const file of [
+        '001_initial.sql',
+        '002_v02.sql',
+        '003_v03.sql',
+        '004_v04.sql',
+        '005_v04_compat.sql',
+        '006_v05.sql'
+      ]) {
+        seed.exec(readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8'));
+      }
+      seed.exec('DROP TRIGGER IF EXISTS memories_ai');
+      seed.close();
+
+      const repaired = openDb();
+      assert.equal(getSchemaVersion(repaired), 15);
+      assert.equal(
+        repaired.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'memories_ai'").get().name,
+        'memories_ai'
+      );
+      assert.equal(
+        repaired.prepare('SELECT COUNT(*) AS n FROM schema_migrations WHERE to_version = 7').get().n,
+        1
+      );
+      repaired.close();
+    });
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test('openDb works without FTS5 support', () => {
@@ -64,7 +84,7 @@ test('openDb works without FTS5 support', () => {
     withEnv('CCMEM_DATA_ROOT', tempRoot, () => {
       withEnv('CCMEM_DISABLE_FTS5', '1', () => {
         const db = openDb();
-        assert.equal(getSchemaVersion(db), 13);
+        assert.equal(getSchemaVersion(db), 15);
         assert.equal(Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'memories_fts' LIMIT 1").get()), false);
         assert.equal(
           db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger' AND name IN ('memories_ai', 'memories_ad', 'memories_au')").get().n,

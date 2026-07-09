@@ -43,7 +43,7 @@ function printHelp() {
     '  admin daemon <status|start|stop|restart|install|uninstall>\n' +
     '  admin cron <list|run>\n' +
     '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina>]\n' +
-    '  admin diagnose [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections|--context-history] [--session ID] [--hash HASH] [--days N]\n' +
+    '  admin diagnose [--retrieval] [--embedding-circuit <open|close|status>] [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections|--context-history] [--session ID] [--hash HASH] [--days N]\n' +
     '  admin alias <old-project-key> <new-project-key>\n' +
     '  stats [--json|--buckets]\n' +
     '  promote <id> [--global]\n' +
@@ -353,6 +353,39 @@ function printTuning(result) {
   if (tuning.audit_id != null) {
     process.stdout.write(`(use /ccmem:audit show ${tuning.audit_id} for full signal breakdown)\n`);
   }
+}
+
+function printRetrieval(result) {
+  const retrieval = result.retrieval;
+  process.stdout.write(`Embedding: ${retrieval.embedding_enabled ? 'enabled' : 'disabled'} (${retrieval.embedding_provider})\n`);
+  process.stdout.write(`Circuit: ${retrieval.circuit}`);
+  if (retrieval.circuit_open_until != null) {
+    process.stdout.write(` until ${formatLocalTimestamp(retrieval.circuit_open_until)}`);
+  }
+  process.stdout.write('\n');
+  if (retrieval.benchmark) {
+    process.stdout.write(`Benchmark: recall@3=${retrieval.benchmark.recall_at_3 ?? 'n/a'} total=${retrieval.benchmark.total} last run=${formatLocalTimestamp(retrieval.benchmark.run_at ?? retrieval.benchmark.ts)}\n`);
+  }
+}
+
+function printCircuitStatus(result) {
+  process.stdout.write(`Circuit: ${result.embedding_circuit.status}`);
+  if (result.embedding_circuit.open_until != null) {
+    process.stdout.write(` until ${formatLocalTimestamp(result.embedding_circuit.open_until)}`);
+  }
+  process.stdout.write('\n');
+}
+
+function isCircuitVerb(value) {
+  return value === 'open' || value === 'close' || value === 'status';
+}
+
+function circuitVerbFromArgv(argv) {
+  const idx = argv.indexOf('--embedding-circuit');
+  if (idx >= 0 && isCircuitVerb(argv[idx + 1])) {
+    return argv[idx + 1];
+  }
+  return 'status';
 }
 
 function printMetrics(result) {
@@ -665,6 +698,9 @@ try {
       security: args.includes('--security'),
       tuning: args.includes('--tuning'),
       metrics: args.includes('--metrics'),
+      retrieval: args.includes('--retrieval'),
+      embeddingCircuit: args.includes('--embedding-circuit'),
+      embeddingCircuitVerb: circuitVerbFromArgv(args),
       restartHistory: args.includes('--restart-history'),
       synthesis: args.includes('--synthesis'),
       injections: args.includes('--injections'),
@@ -721,6 +757,10 @@ try {
       printTuning(result);
     } else if (args.includes('--metrics')) {
       printMetrics(result);
+    } else if (args.includes('--retrieval')) {
+      printRetrieval(result);
+    } else if (args.includes('--embedding-circuit')) {
+      printCircuitStatus(result);
     } else if (args.includes('--context-history')) {
       const history = result.context_history;
       if (history.mode === 'hash') {

@@ -4,12 +4,14 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-retrieval-'));
 
 const NODE = '/usr/local/bin/node';
-const HOOK = '/Users/biran/code/skills/ccmem/scripts/hook.mjs';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const HOOK = path.join(ROOT, 'scripts/hook.mjs');
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { callClaudeP } = await import('../../scripts/daemon/claude-p.mjs');
@@ -83,7 +85,7 @@ function spawnPromptSubmitHook(input, extraEnv = {}) {
     NODE,
     [HOOK, 'prompt-submit'],
     {
-      cwd: '/Users/biran/code/skills/ccmem',
+      cwd: ROOT,
       env: {
         ...process.env,
         CCMEM_TEST_MODE: '1',
@@ -101,7 +103,7 @@ function execPromptSubmitHook(input, extraEnv = {}) {
     NODE,
     [HOOK, 'prompt-submit'],
     {
-      cwd: '/Users/biran/code/skills/ccmem',
+      cwd: ROOT,
       env: {
         ...process.env,
         CCMEM_TEST_MODE: '1',
@@ -168,6 +170,56 @@ test('prompt-submit reports B-off metrics when embedding is disabled', async () 
   assert.equal(result._metricFields.retrieval_path, 'B-off');
   assert.equal(result._metricFields.retrieval_embed_error, null);
   assert.equal(result._metricFields.retrieval_fallback, false);
+});
+
+test('prompt-submit reports B-circuit metrics when embedding circuit is open', async () => {
+  await saveProjectFact('Circuit-open retrieval should still find lexical route memory');
+  const db = openDb();
+  db.prepare(
+    `INSERT INTO config_kv (key, value, set_at)
+     VALUES ('embedding.circuit_open_until', ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+  ).run(String(Date.now() + 60000), Date.now());
+  db.close();
+
+  const configPath = path.join(process.env.CCMEM_DATA_ROOT, 'circuit-open-config.json');
+  const previousConfigPath = process.env.CCMEM_CONFIG_PATH;
+  const previousKey = process.env.OPENAI_API_KEY;
+  writeFileSync(configPath, JSON.stringify({
+    injection: { file_based: true },
+    embedding: {
+      enabled: true,
+      provider: 'openai',
+      openai_api_key: 'test-key',
+      openai_base_url: 'http://127.0.0.1:1'
+    }
+  }));
+  process.env.CCMEM_CONFIG_PATH = configPath;
+  process.env.OPENAI_API_KEY = 'test-key';
+
+  try {
+    const result = await runPromptSubmit({
+      cwd: process.cwd(),
+      session_id: 's-b-circuit',
+      prompt: 'find lexical route memory under circuit open'
+    });
+
+    assert.equal(result.additionalContext, '');
+    assert.equal(result._metricFields.retrieval_path, 'B-circuit');
+    assert.equal(result._metricFields.retrieval_embed_error, null);
+    assert.equal(result._metricFields.retrieval_fallback, false);
+  } finally {
+    if (previousConfigPath == null) {
+      delete process.env.CCMEM_CONFIG_PATH;
+    } else {
+      process.env.CCMEM_CONFIG_PATH = previousConfigPath;
+    }
+    if (previousKey == null) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = previousKey;
+    }
+  }
 });
 
 test('prompt-submit keeps session-scoped context files isolated across sessions', async () => {

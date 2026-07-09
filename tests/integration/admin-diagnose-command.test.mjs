@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-admin-diagnose-'));
 const diagnoseCwd = mkdtempSync(path.join(tmpdir(), 'ccmem-diagnose-cwd-'));
@@ -17,7 +18,8 @@ const env = {
 };
 
 const NODE = '/usr/local/bin/node';
-const CLI = '/Users/biran/code/skills/ccmem/scripts/cli.mjs';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const CLI = path.join(ROOT, 'scripts/cli.mjs');
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
@@ -240,7 +242,7 @@ test('cmdAdminDiagnose returns db health, daemon status, and fallback project ke
   const result = await cmdAdminDiagnose(db, { cwd: diagnoseCwd });
 
   assert.equal(result.db.health, 'ok');
-  assert.equal(result.db.schema_version, 13);
+  assert.equal(result.db.schema_version, 15);
   assert.equal(result.daemon.startup_schema_version, 12);
   assert.equal(typeof result.daemon.uptime_sec, 'number');
   assert.equal(result.daemon.alive, true);
@@ -330,7 +332,7 @@ test('cli admin diagnose prints default diagnostics', () => {
     encoding: 'utf8'
   });
 
-  assert.match(output, /ccmem: db ok schema=13/);
+  assert.match(output, /ccmem: db ok schema=15/);
   assert.match(output, /ccmem: daemon alive pid=2468 host=diagnose-host/);
   assert.match(output, /startup_schema=12/);
   assert.match(output, /uptime_sec=\d+/);
@@ -552,6 +554,64 @@ test('metrics rollup persists v0.12 retrieval path counts', () => {
   assert.equal(row.path_b_circuit_count, 0);
   assert.equal(row.embed_error_rate, 0.5);
   db.close();
+});
+
+test('cli admin diagnose --retrieval shows kv-aware embedding state and open circuit', () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO config_kv (key, value, set_at)
+     VALUES ('embedding.enabled', 'false', ?), ('embedding.active_provider', 'openai', ?), ('embedding.circuit_open_until', ?, ?)`
+  ).run(now, now, String(now + 60000), now);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--retrieval'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /Embedding: disabled \(openai\)/);
+  assert.match(output, /Circuit: OPEN/);
+});
+
+test('cli admin diagnose --embedding-circuit can open report and close circuit state', () => {
+  let db = openDb();
+  resetDiagnoseTables(db);
+  db.close();
+
+  const statusOutput = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--embedding-circuit', 'status'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+  assert.match(statusOutput, /Circuit: CLOSED/);
+
+  const openOutput = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--embedding-circuit', 'open'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+  assert.match(openOutput, /Circuit: OPEN/);
+
+  db = openDb();
+  const openUntil = Number(db.prepare(`SELECT value FROM config_kv WHERE key = 'embedding.circuit_open_until'`).get()?.value ?? NaN);
+  db.close();
+  assert.equal(Number.isFinite(openUntil), true);
+  assert.equal(openUntil > Date.now(), true);
+
+  const closeOutput = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--embedding-circuit', 'close'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+  assert.match(closeOutput, /Circuit: CLOSED/);
+
+  db = openDb();
+  const circuitRow = db.prepare(`SELECT value FROM config_kv WHERE key = 'embedding.circuit_open_until'`).get();
+  db.close();
+  assert.equal(circuitRow ?? null, null);
 });
 
 test('cli admin diagnose --metrics prints rollup summary', () => {

@@ -11,6 +11,84 @@ const SESSION_LIMIT = 10;
 const RECENT_INJECTION_LIMIT = 3;
 const TUNING_WINDOW_DAYS = 30;
 
+function readConfigKv(db, key) {
+  return db.prepare(`SELECT value FROM config_kv WHERE key = ?`).get(key)?.value ?? null;
+}
+
+function resolveEmbeddingEnabled(cfg, db) {
+  const kvEnabled = readConfigKv(db, 'embedding.enabled');
+  if (kvEnabled != null) {
+    return kvEnabled === 'true';
+  }
+  return cfg?.embedding?.enabled !== false;
+}
+
+function resolveEmbeddingProvider(cfg, db) {
+  return readConfigKv(db, 'embedding.active_provider')
+    ?? cfg?.embedding?.provider
+    ?? 'transformers-local';
+}
+
+function getRetrievalCheckAudit(db) {
+  const row = db.prepare(
+    `SELECT ts, details
+     FROM audit_log
+     WHERE action = 'retrieval_check_run'
+     ORDER BY id DESC
+     LIMIT 1`
+  ).get();
+  if (!row) {
+    return null;
+  }
+  const details = parseDetails(row.details);
+  return {
+    ts: row.ts,
+    total: Number(details.total ?? 0),
+    recall_at_3: details.recall_at_3 == null ? null : Number(details.recall_at_3),
+    run_at: details.run_at == null ? null : Number(details.run_at)
+  };
+}
+
+function getRetrievalDiagnostics(db, cfg = loadConfig(), { days = 14 } = {}) {
+  const metrics = getMetricsDiagnostics(db, { days, cfg });
+  const circuitOpenUntil = Number(readConfigKv(db, 'embedding.circuit_open_until') ?? NaN);
+  return {
+    embedding_enabled: resolveEmbeddingEnabled(cfg, db),
+    embedding_provider: resolveEmbeddingProvider(cfg, db),
+    circuit: Number.isFinite(circuitOpenUntil) && circuitOpenUntil > Date.now() ? 'OPEN' : 'CLOSED',
+    circuit_open_until: Number.isFinite(circuitOpenUntil) ? circuitOpenUntil : null,
+    metrics
+  };
+}
+
+function setCircuitState(db, verb) {
+  const now = Date.now();
+  if (verb === 'status') {
+    const openUntil = Number(readConfigKv(db, 'embedding.circuit_open_until') ?? NaN);
+    return {
+      status: Number.isFinite(openUntil) && openUntil > now ? 'OPEN' : 'CLOSED',
+      open_until: Number.isFinite(openUntil) ? openUntil : null
+    };
+  }
+
+  if (verb === 'open') {
+    const until = now + 300000;
+    db.prepare(
+      `INSERT INTO config_kv (key, value, set_at)
+       VALUES ('embedding.circuit_open_until', ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+    ).run(String(until), now);
+    return { status: 'OPEN', open_until: until };
+  }
+
+  if (verb === 'close') {
+    db.prepare(`DELETE FROM config_kv WHERE key IN ('embedding.circuit_open_until', 'embedding.consecutive_failures', 'embedding.last_probe_at')`).run();
+    return { status: 'CLOSED', open_until: null };
+  }
+
+  throw new Error(`unsupported embedding circuit verb: ${verb}`);
+}
+
 function firstValue(row) {
   if (!row) {
     return null;
@@ -1078,6 +1156,9 @@ export async function cmdAdminDiagnose(
     security = false,
     tuning = false,
     metrics = false,
+    retrieval = false,
+    embeddingCircuit = false,
+    embeddingCircuitVerb = 'status',
     synthesis = false,
     restartHistory = false,
     injections = false,
@@ -1087,7 +1168,7 @@ export async function cmdAdminDiagnose(
     days = 14
   } = {}
 ) {
-  if (tuning || metrics || synthesis || injections || contextHistory) {
+  if (tuning || metrics || retrieval || synthesis || injections || contextHistory) {
     try {
       maybeRunTier15(db);
     } catch {}
@@ -1118,6 +1199,9 @@ export async function cmdAdminDiagnose(
   const cfg = loadConfig();
   const tuningDiagnostics = tuning ? getTuningDiagnostics(db, cfg) : null;
   const metricsDiagnostics = metrics ? getMetricsDiagnostics(db, { days, cfg }) : null;
+  const retrievalDiagnostics = retrieval ? getRetrievalDiagnostics(db, cfg, { days }) : null;
+  const embeddingCircuitStatus = embeddingCircuit ? setCircuitState(db, embeddingCircuitVerb) : null;
+  const retrievalCheckAudit = retrieval ? getRetrievalCheckAudit(db) : null;
   const synthesisDiagnostics = synthesis ? getSynthesisDiagnostics(db, { days: 30 }) : null;
   const injectionDiagnostics = injections ? getInjectionDiagnostics(db, { days, cfg }) : null;
   const contextHistoryDiagnostics = contextHistory
@@ -1158,6 +1242,11 @@ export async function cmdAdminDiagnose(
     security: security ? loadSecurityDiagnostics(db) : null,
     tuning: tuningDiagnostics,
     metrics: metricsDiagnostics,
+    retrieval: retrievalDiagnostics == null ? null : {
+      ...retrievalDiagnostics,
+      benchmark: retrievalCheckAudit
+    },
+    embedding_circuit: embeddingCircuitStatus,
     synthesis: synthesisDiagnostics,
     injections: injectionDiagnostics,
     context_history: contextHistoryDiagnostics,

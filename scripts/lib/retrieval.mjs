@@ -1,6 +1,6 @@
 import { hasUsableFts } from './db.mjs';
 import { blobToVec, cosineSimilarity } from './embedding/cosine.mjs';
-import { getProvider } from './embedding/provider.mjs';
+import { getProviderWithCircuit, recordEmbedFailure, recordEmbedSuccess } from './embedding/provider.mjs';
 
 export function sanitizeFtsQuery(prompt) {
   return String(prompt ?? '')
@@ -282,12 +282,12 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
   const promptTokens = new Set(promptTokenList);
   const ftsQuery = sanitizeFtsQuery(promptText);
   const useFts = hasUsableFts(db);
-  const provider = getProvider(config);
+  const { provider, circuit } = getProviderWithCircuit(db, config);
   let useEmbedding = false;
 
   if (provider) {
     try {
-      await provider.load();
+      await provider.load(config);
       useEmbedding = provider.isLoaded();
     } catch {
       useEmbedding = false;
@@ -301,7 +301,7 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
       queryVec: null,
       cosineContribution: null,
       timing: lexical.timing,
-      retrievalPath: 'B-off'
+      retrievalPath: circuit === 'open' ? 'B-circuit' : 'B-off'
     };
   }
 
@@ -309,8 +309,10 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
   const tEmbed = Date.now();
   try {
     [queryVec] = await provider.embed([promptText], config);
+    recordEmbedSuccess(db);
   } catch (error) {
     const embedMs = Date.now() - tEmbed;
+    recordEmbedFailure(db, config);
     process.stderr.write(`ccmem: embedding API failed (${error.message}), falling back to lexical retrieval\n`);
     const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery);
     return {

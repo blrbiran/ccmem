@@ -614,6 +614,43 @@ test('cli admin diagnose --embedding-circuit can open report and close circuit s
   assert.equal(circuitRow ?? null, null);
 });
 
+test('cli admin retrieval-check prints recall and writes retrieval_check_run audit', async () => {
+  const db = openDb();
+  resetDiagnoseTables(db);
+  const memA = await cmdSave(db, { cwd: diagnoseCwd, content: 'pnpm workspace install command', scope: 'project', type: 'fact' });
+  const memB = await cmdSave(db, { cwd: diagnoseCwd, content: 'auth retry failures use bounded timeout handling', scope: 'project', type: 'fact' });
+  const corpusPath = path.join(dataRoot, 'retrieval-corpus.json');
+  writeFileSync(corpusPath, JSON.stringify([
+    { prompt: 'pnpm workspace install command', expected_ids: [memA.id], note: 'workspace' },
+    { prompt: 'auth retry failures', expected_ids: [memB.id], note: 'auth' },
+    { prompt: 'totally unrelated adversarial query', expected_ids: [], note: 'adversarial' }
+  ]));
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'retrieval-check', '--corpus', corpusPath, '--k', '1,3'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /recall@1:/);
+  assert.match(output, /precision@3:/);
+  assert.match(output, /Corpus: 3 items \(1 adversarial\)/);
+
+  const auditDb = openDb();
+  const audit = auditDb.prepare(`SELECT action, details FROM audit_log WHERE action = 'retrieval_check_run' ORDER BY id DESC LIMIT 1`).get();
+  auditDb.close();
+  assert.equal(audit.action, 'retrieval_check_run');
+  assert.equal(JSON.parse(audit.details).total, 3);
+
+  const retrievalOutput = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--retrieval'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+  assert.match(retrievalOutput, /Benchmark: recall@3=/);
+});
+
 test('cli admin diagnose --metrics prints rollup summary', () => {
   const db = openDb();
   resetDiagnoseTables(db);

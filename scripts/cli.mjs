@@ -2,6 +2,7 @@ import { cmdAdminAlias } from './lib/admin/alias.mjs';
 import { cmdAdminCron } from './lib/admin/cron.mjs';
 import { cmdAdminDaemon } from './lib/admin/daemon.mjs';
 import { cmdAdminDiagnose } from './lib/admin/diagnose.mjs';
+import { cmdRetrievalCheck } from './lib/admin/retrieval-check.mjs';
 import { cmdAdminSemantic } from './lib/admin/semantic.mjs';
 import { openDb } from './lib/db.mjs';
 import { readFileSync } from 'node:fs';
@@ -43,6 +44,7 @@ function printHelp() {
     '  admin daemon <status|start|stop|restart|install|uninstall>\n' +
     '  admin cron <list|run>\n' +
     '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina>]\n' +
+    '  admin retrieval-check [--corpus <path>] [--k 1,3,5]\n' +
     '  admin diagnose [--retrieval] [--embedding-circuit <open|close|status>] [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections|--context-history] [--session ID] [--hash HASH] [--days N]\n' +
     '  admin alias <old-project-key> <new-project-key>\n' +
     '  stats [--json|--buckets]\n' +
@@ -667,6 +669,17 @@ try {
     process.stdout.write(
       `ccmem: semantic ${result.status} enabled=${result.enabled} loaded=${result.loaded} provider=${result.provider} embedded=${result.embedded} pending=${result.pending} model=${result.model} dim=${result.dim}\n`
     );
+  } else if (verb === 'admin' && args[0] === 'retrieval-check') {
+    const result = await cmdRetrievalCheck(getDb(), {
+      cwd: process.cwd(),
+      corpus: getOptionValue('--corpus'),
+      k: getOptionValue('--k')
+    });
+    for (const metric of result.metrics) {
+      process.stdout.write(`recall@${metric.k}: ${(metric.recall * 100).toFixed(1)}%\n`);
+      process.stdout.write(`precision@${metric.k}: ${(metric.precision * 100).toFixed(1)}%\n`);
+    }
+    process.stdout.write(`\nCorpus: ${result.total} items (${result.adversarial} adversarial)\n`);
   } else if (verb === 'admin' && args[0] === 'alias' && args[1] && args[2]) {
     const readLine = createStdinLineReader();
     const result = await cmdAdminAlias(getDb(), {

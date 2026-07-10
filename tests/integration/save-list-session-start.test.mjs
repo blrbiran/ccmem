@@ -9,8 +9,60 @@ process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-flow-'));
 
 const NODE = '/usr/local/bin/node';
-const CLI = '/Users/biran/code/skills/ccmem/scripts/cli.mjs';
-const HOOK = '/Users/biran/code/skills/ccmem/scripts/hook.mjs';
+const TEST_CWD = '/Users/biran/code/skills/ccmem';
+const CLI = '/Users/biran/code/skills/ccmem_paper/reference/ccmem/scripts/cli.mjs';
+const HOOK = '/Users/biran/code/skills/ccmem_paper/reference/ccmem/scripts/hook.mjs';
+const TEST_REPO_CWD = '/Users/biran/code/skills/ccmem_paper/reference/ccmem';
+const PROJECT_CWD = '/Users/biran/code/skills/ccmem';
+const GLOBAL_CWD = TEST_REPO_CWD;
+
+function projectSave(db, content) {
+  return cmdSave(db, { cwd: PROJECT_CWD, content, scope: 'project' });
+}
+
+function globalSave(db, content) {
+  return cmdSave(db, { cwd: GLOBAL_CWD, content, scope: 'global' });
+}
+
+function promptSubmit(input) {
+  return handlePromptSubmit({ cwd: PROJECT_CWD, ...input });
+}
+
+function sessionStart(input) {
+  return handleSessionStart({ cwd: PROJECT_CWD, ...input });
+}
+
+const cliEnv = {
+  ...process.env,
+  CCMEM_TEST_MODE: '1',
+  CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT
+};
+
+function runCli(args) {
+  return execFileSync(NODE, [CLI, ...args], {
+    cwd: TEST_CWD,
+    env: cliEnv,
+    encoding: 'utf8'
+  });
+}
+
+function runHook(mode, payload, extraEnv = {}) {
+  return spawnSync(NODE, [HOOK, mode], {
+    cwd: TEST_CWD,
+    env: {
+      ...cliEnv,
+      ...extraEnv
+    },
+    encoding: 'utf8',
+    input: JSON.stringify(payload)
+  });
+}
+
+function hookPayload(payload) {
+  return { cwd: PROJECT_CWD, ...payload };
+}
+
+const saveIdRegex = /^ccmem: saved memory #\d+ \(project fact\)\n$/;
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { callClaudeP } = await import('../../scripts/daemon/claude-p.mjs');
@@ -128,6 +180,24 @@ test('cmdList returns never-injected active memories when requested', async () =
   assert.equal(rows.some((row) => row.id === never.id), true);
   assert.equal(rows.some((row) => row.id === injected.id), false);
   db.close();
+});
+
+test('cli save prints saved memory id with m-prefix convention', () => {
+  const db = openDb();
+  resetSaveListTables(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'save', 'CLI saved memory'], {
+    cwd: '/Users/biran/code/skills/ccmem',
+    env: {
+      ...process.env,
+      CCMEM_TEST_MODE: '1',
+      CCMEM_DATA_ROOT: process.env.CCMEM_DATA_ROOT
+    },
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /^ccmem: saved memory #\d+ \(project fact\)\n$/);
 });
 
 test('cli list --quarantined prints quarantined memories with reason', async () => {
@@ -255,7 +325,7 @@ test('cli list query --score prints score breakdown when semantic is enabled', a
      VALUES ('embedding.enabled', 'true', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
   ).run(Date.now());
-  await cmdSave(db, { cwd: process.cwd(), content: 'Semantic score target memory', scope: 'project' });
+  await cmdSave(db, { cwd: '/Users/biran/code/skills/ccmem', content: 'Semantic score target memory', scope: 'project' });
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'list', 'semantic', 'score', '--score', '--limit', '1'], {

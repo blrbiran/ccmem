@@ -16,7 +16,8 @@ const env = {
 };
 
 const NODE = '/usr/local/bin/node';
-const CLI = '/Users/biran/code/skills/ccmem/scripts/cli.mjs';
+const TEST_CWD = '/Users/biran/code/skills/ccmem';
+const CLI = '/Users/biran/code/skills/ccmem_paper/reference/ccmem/scripts/cli.mjs';
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { cmdStats } = await import('../../scripts/lib/cmd/stats.mjs');
@@ -356,6 +357,22 @@ test('cli stats --json returns structured stats', () => {
   assert.equal(parsed.security.alerts_pending, 0);
   assert.equal(parsed.security.contradictions_pending, 0);
   assert.equal(parsed.buckets.archived, 2);
+});
+
+test('cli stats --buckets preserves the human summary output path', () => {
+  const db = openDb();
+  resetStatsTables(db);
+  seedStatsFixture(db);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'stats', '--buckets'], {
+    cwd: TEST_CWD,
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.match(output, /Memories : 1 active \/ 1 probation \/ 0 quarantine \/ 2 archived/);
+  assert.match(output, /Feedback : helpful 2 \/ unhelpful 1 \/ unknown 1/);
 });
 
 test('cli stats prints the tuning hint when suggestions are available', () => {

@@ -1246,8 +1246,17 @@ export function inferL25FromTranscript(db, sessionId, transcriptPath) {
   inferImplicitReference(db, sessionId, transcriptPath);
 }
 
-export function inferPositiveFeedback(db, sessionId, prompt, queryVec) {
-  if (!queryVec) {
+/**
+ * `embeddingSig` is the signature the caller's queryVec was produced under, and
+ * it is REQUIRED whenever queryVec is: this is the only cosine consumer that
+ * mutates trust (applyOutcomeToSubset below), so a vector from an incomparable
+ * embedding space must not be allowed to win. retrieveMemories() returns the
+ * two together for exactly this reason — deriving the signature here instead
+ * would mean a second getProvider() on the hook path, each one reopening the
+ * database to read config_kv.
+ */
+export function inferPositiveFeedback(db, sessionId, prompt, queryVec, embeddingSig) {
+  if (!queryVec || !embeddingSig) {
     return;
   }
 
@@ -1278,14 +1287,18 @@ export function inferPositiveFeedback(db, sessionId, prompt, queryVec) {
     return;
   }
 
+  // Same predicate as retrieval.mjs's cosine lane: a vector stored under a
+  // different provider/model/dim is not comparable to this queryVec, and
+  // comparing it anyway yields silent garbage — here, garbage that writes trust.
   const memories = db.prepare(
     `SELECT id, embedding
      FROM memories
      WHERE id IN (${injectedIds.map(() => '?').join(',')})
        AND embedding IS NOT NULL
+       AND embedding_sig = ?
        AND status = 'active'
        AND decay_status IN ('active', 'probation')`
-  ).all(...injectedIds);
+  ).all(...injectedIds, embeddingSig);
   if (!memories.length) {
     return;
   }

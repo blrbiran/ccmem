@@ -490,6 +490,10 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
       semantic: row.cosineScore
     })),
     queryVec,
+    // The signature queryVec was produced under. Returned alongside it because
+    // any consumer that cosines this vector against stored ones must filter by
+    // it (see inferPositiveFeedback) — the two are only meaningful as a pair.
+    embeddingSig: sig,
     cosineContribution,
     retrievalPath: 'A',
     timing: {

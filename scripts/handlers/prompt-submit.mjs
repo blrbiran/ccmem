@@ -56,7 +56,13 @@ export async function handlePromptSubmit(hookData) {
     if (hookData.session_id) {
       inferPrevTurnOutcome(db, hookData.session_id, hookData.prompt ?? '');
       if (config.feedback?.l1_positive?.enabled !== false) {
-        inferPositiveFeedback(db, hookData.session_id, hookData.prompt ?? '', retrieval.queryVec);
+        inferPositiveFeedback(
+          db,
+          hookData.session_id,
+          hookData.prompt ?? '',
+          retrieval.queryVec,
+          retrieval.embeddingSig ?? null
+        );
       }
     }
 

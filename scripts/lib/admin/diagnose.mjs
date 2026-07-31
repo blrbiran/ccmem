@@ -56,9 +56,14 @@ function getRetrievalDiagnostics(db, cfg = loadConfig(), { days = 14 } = {}) {
   const metrics = getMetricsDiagnostics(db, { days, cfg });
   const circuitOpenUntil = Number(readConfigKv(db, 'embedding.circuit_open_until') ?? NaN);
   const sig = currentEmbeddingSig(getProvider(cfg), cfg);
+  // Must match vec_backfill's candidate population (status/decay_status)
+  // verbatim — otherwise this counts rows vec_backfill will never touch, and
+  // "will be re-embedded by vec_backfill" (cli.mjs) is false for some of them.
   const staleVectors = Number(db.prepare(
     `SELECT COUNT(*) n FROM memories
-     WHERE embedding IS NOT NULL AND (embedding_sig IS NULL OR embedding_sig <> ?)`
+     WHERE embedding IS NOT NULL AND (embedding_sig IS NULL OR embedding_sig <> ?)
+       AND status = 'active'
+       AND decay_status IN ('active', 'probation')`
   ).get(sig)?.n ?? 0);
   return {
     embedding_enabled: resolveEmbeddingEnabled(cfg, db),

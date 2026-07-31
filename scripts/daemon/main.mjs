@@ -1,6 +1,7 @@
 import { loadConfig } from '../lib/config.mjs';
 import { openDb } from '../lib/db.mjs';
 import { getProvider } from '../lib/embedding/provider.mjs';
+import { currentEmbeddingSig } from '../lib/embedding/signature.mjs';
 import { acquireDaemonLock, refreshHeartbeat, releaseDaemonLock } from './lock.mjs';
 import { dispatchTask } from './dispatch.mjs';
 import { pendingEmbeddings } from './tasks/vec-backfill.mjs';
@@ -24,12 +25,19 @@ async function warmSemanticProvider(db) {
     return;
   }
 
+  const cfg = loadConfig();
+  let provider = null;
   try {
-    const provider = getProvider(loadConfig());
+    provider = getProvider(cfg);
     await provider?.load?.();
   } catch {}
 
-  if (pendingEmbeddings(db) <= 0) {
+  // Signature-aware: after migration 016, every pre-v0.13 row has
+  // embedding_sig IS NULL. A NULL-only pending count would see "0 pending"
+  // on a store that is fully embedded but entirely stale, never queue
+  // vec_backfill, and leave semantic retrieval silently degraded to
+  // lexical-only forever — the exact failure mode this task exists to fix.
+  if (pendingEmbeddings(db, currentEmbeddingSig(provider, cfg)) <= 0) {
     return;
   }
 

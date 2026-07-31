@@ -569,6 +569,17 @@ test('cli admin diagnose --retrieval shows kv-aware embedding state and open cir
   // stale, not silently ignored.
   const legacyRow = await cmdSave(db, { cwd: diagnoseCwd, content: 'legacy pre-signature vector fixture' });
   db.prepare(`UPDATE memories SET embedding = ? WHERE id = ?`).run(Buffer.from(new Float32Array([1, 0, 0]).buffer), legacyRow.id);
+  // A second row embedded under the *current* signature (embedding.enabled
+  // is false here, so getProvider() is null and the sig falls back to the
+  // config-only default) must NOT be counted — this is what makes the
+  // assertion below discriminate a real signature comparison from a bare
+  // `embedding IS NOT NULL` count, which would report 2, not 1.
+  const currentRow = await cmdSave(db, { cwd: diagnoseCwd, content: 'current signature vector fixture' });
+  db.prepare(`UPDATE memories SET embedding = ?, embedding_sig = ? WHERE id = ?`).run(
+    Buffer.from(new Float32Array([0, 1, 0]).buffer),
+    'transformers-local:Xenova/all-MiniLM-L6-v2:0',
+    currentRow.id
+  );
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--retrieval'], {

@@ -346,6 +346,15 @@ test('cosine lane excludes vectors whose embedding_sig does not match the curren
     const projectKey = 'sig-filter/repo';
 
     let db = openDb();
+    // Baseline under this test's own sig, taken before this test's inserts —
+    // the DB is shared across this file's tests, so an absolute count would
+    // be fragile. Only `stale` (below) should be new stale-signature growth:
+    // `current` is embedded under the current sig and must not move this.
+    const staleBefore = db.prepare(
+      `SELECT COUNT(*) n FROM memories
+       WHERE embedding IS NOT NULL AND (embedding_sig IS NULL OR embedding_sig <> ?)
+         AND status = 'active' AND decay_status IN ('active', 'probation')`
+    ).get(sig).n;
     const current = await insertMemory(db, {
       cwd: process.cwd(),
       content: 'kappa-quokka-nine current signature fixture',
@@ -381,7 +390,10 @@ test('cosine lane excludes vectors whose embedding_sig does not match the curren
     const ids = result.rows.map((row) => row.id);
     assert.equal(ids.includes(current.id), true, 'current-signature vector should be found via cosine');
     assert.equal(ids.includes(stale.id), false, 'stale-signature vector must not be found via cosine');
-    assert.equal(result.timing.retrieval_stale_vecs >= 1, true);
+    // Exact delta, not >= 1: a broken predicate that counts every embedded
+    // row (current-sig included) would also add 2 here, not 1 — >= 1 can't
+    // tell the two apart, this can.
+    assert.equal(result.timing.retrieval_stale_vecs, staleBefore + 1);
   } finally {
     if (previousConfigPath == null) {
       delete process.env.CCMEM_CONFIG_PATH;

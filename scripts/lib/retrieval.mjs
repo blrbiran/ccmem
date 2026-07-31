@@ -429,9 +429,15 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
        AND decay_status IN ('active', 'probation')
        AND (scope = 'global' OR project_key = ?)`
   ).all(sig, projectKey);
+  // Same population vec_backfill will actually touch (status/decay_status
+  // predicate matches its candidate query verbatim) — otherwise archived,
+  // deleted, or quarantined rows inflate this count with vectors that will
+  // never be re-embedded, and diagnose's "will be re-embedded" claim is false.
   const staleVecs = db.prepare(
     `SELECT COUNT(*) n FROM memories
-     WHERE embedding IS NOT NULL AND (embedding_sig IS NULL OR embedding_sig <> ?)`
+     WHERE embedding IS NOT NULL AND (embedding_sig IS NULL OR embedding_sig <> ?)
+       AND status = 'active'
+       AND decay_status IN ('active', 'probation')`
   ).get(sig).n;
   const dbReadMs = Date.now() - tDbRead;
 

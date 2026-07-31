@@ -1,6 +1,8 @@
 import { writeAudit } from './audit.mjs';
 import { loadConfig } from './config.mjs';
 import { blobToVec, cosineSimilarity } from './embedding/cosine.mjs';
+import { getProvider } from './embedding/provider.mjs';
+import { currentEmbeddingSig } from './embedding/signature.mjs';
 import { sanitizeFtsQuery } from './retrieval.mjs';
 
 function trigramSet(text, size = 3) {
@@ -33,7 +35,7 @@ function jaccard(a, b) {
 function candidateRows(db, scope, projectKey, limit) {
   if (scope === 'global') {
     return db.prepare(
-      `SELECT id, content, embedding
+      `SELECT id, content, embedding, embedding_sig
        FROM memories
        WHERE scope = 'global'
          AND status = 'active'
@@ -44,7 +46,7 @@ function candidateRows(db, scope, projectKey, limit) {
   }
 
   return db.prepare(
-    `SELECT id, content, embedding
+    `SELECT id, content, embedding, embedding_sig
      FROM memories
      WHERE scope = 'project'
        AND project_key = ?
@@ -79,6 +81,14 @@ export function dedupCheck(db, { content, scope, projectKey, contentVec = null }
   const jaccardThreshold = Number(config?.dedup?.jaccard_threshold ?? 0.3);
   const cosineThreshold = Number(config?.dedup?.cosine_threshold ?? 0.85);
   const trigrams = trigramSet(content, Number(config?.dedup?.trigram_size ?? 3));
+  // Same-dimension, different-model vectors compare as plausible-but-wrong
+  // cosine scores, not the safe all-zero of a length mismatch — so a
+  // candidate embedded under a stale signature must be skipped from the
+  // cosine lane entirely (not just scored low), or a real duplicate check
+  // can silently pass a near-duplicate through, or worse, silently reject a
+  // genuinely new memory as a false duplicate. The trigram/jaccard lane is
+  // unaffected and still runs over every candidate regardless of signature.
+  const sig = contentVec ? currentEmbeddingSig(getProvider(config), config) : null;
   let bestCandidate = null;
   let bestJaccard = 0;
   let bestCosine = 0;
@@ -87,7 +97,7 @@ export function dedupCheck(db, { content, scope, projectKey, contentVec = null }
   for (const candidate of candidates) {
     const trigramScore = jaccard(trigrams, trigramSet(candidate.content, Number(config?.dedup?.trigram_size ?? 3)));
     let cosineScore = 0;
-    if (contentVec && candidate.embedding) {
+    if (contentVec && candidate.embedding && candidate.embedding_sig === sig) {
       cosineScore = cosineSimilarity(contentVec, blobToVec(candidate.embedding));
     }
     const score = Math.max(trigramScore, cosineScore);

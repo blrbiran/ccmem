@@ -4,38 +4,30 @@ import { vecToBlob } from '../../lib/embedding/cosine.mjs';
 import { getProvider } from '../../lib/embedding/provider.mjs';
 import { currentEmbeddingSig } from '../../lib/embedding/signature.mjs';
 
-// `sig`, when passed, also counts rows whose embedding_sig no longer matches
-// the current provider — the population this task's candidate query now
-// selects from. Callers that don't have (or don't care about) a signature —
-// e.g. the daemon-startup gate in daemon/main.mjs — keep the original
-// embedding-IS-NULL-only count.
-export function pendingEmbeddings(db, sig = null) {
-  if (sig) {
-    return Number(db.prepare(
-      `SELECT COUNT(*) AS n
-       FROM memories
-       WHERE (embedding IS NULL OR embedding_sig IS NULL OR embedding_sig <> ?)
-         AND status = 'active'
-         AND decay_status IN ('active', 'probation')`
-    ).get(sig)?.n ?? 0);
-  }
-
+// Counts rows a vec_backfill run under `sig` would still need to touch: never
+// embedded, or embedded under a different signature. `sig` is required (not
+// optional) on purpose — every caller, including the daemon-startup gate in
+// daemon/main.mjs, must derive it the same way (currentEmbeddingSig), so a
+// signature-unaware caller can no longer silently see "0 pending" on a store
+// that is fully embedded but entirely stale.
+export function pendingEmbeddings(db, sig) {
   return Number(db.prepare(
     `SELECT COUNT(*) AS n
      FROM memories
-     WHERE embedding IS NULL
+     WHERE (embedding IS NULL OR embedding_sig IS NULL OR embedding_sig <> ?)
        AND status = 'active'
        AND decay_status IN ('active', 'probation')`
-  ).get()?.n ?? 0);
+  ).get(sig)?.n ?? 0);
 }
 
 export async function runVecBackfill(db, _task = null) {
   const cfg = loadConfig();
   const startedAt = Date.now();
   const provider = getProvider(cfg);
+  const sig = currentEmbeddingSig(provider, cfg);
 
   if (!provider) {
-    const remaining = pendingEmbeddings(db);
+    const remaining = pendingEmbeddings(db, sig);
     writeAudit(db, 'vec_backfill_run', null, {
       embedded: 0,
       remaining,
@@ -43,8 +35,6 @@ export async function runVecBackfill(db, _task = null) {
     });
     return { embedded: 0, remaining, duration_ms: 0 };
   }
-
-  const sig = currentEmbeddingSig(provider, cfg);
 
   // Prefer rows whose signature doesn't match the current provider (NULL —
   // never embedded — or stale from a prior provider/model/dim) over rows
@@ -92,6 +82,14 @@ export async function runVecBackfill(db, _task = null) {
 
     const durationMs = Date.now() - startedAt;
     const remaining = pendingEmbeddings(db, sig);
+    if (remaining > 0) {
+      // One run only ever processes one backfill_batch_size batch, and
+      // vec_backfill isn't on the recurring cron schedule — it's only queued
+      // again at the next daemon startup (daemon/main.mjs) or by a manual
+      // `ccmem admin cron run vec_backfill`. Say so loudly rather than
+      // leaving a partially-healed store with no visible signal.
+      process.stderr.write(`ccmem: vec_backfill embedded ${rows.length}, ${remaining} still pending under signature ${sig} — run again (ccmem admin cron run vec_backfill) or wait for the next daemon start\n`);
+    }
     writeAudit(db, 'vec_backfill_run', null, {
       embedded: rows.length,
       remaining,

@@ -896,12 +896,12 @@ v0.12 全量测试必须 100% 通过。
 | 126 | quality gate 新规则可单独关闭 | `grep -c "enabled.env_failure !== false\|enabled.negative_assertion !== false" scripts/lib/quality-gate.mjs` | `2` |
 | 127 | `negative_assertion` regex 不含合法约定高频词 | `grep -n 'NEGATIVE_ASSERTION' scripts/lib/quality-gate.mjs` | 不含 `不支持`/`不要用`/`never use`/`avoid` |
 | 128 | `save.mjs` INSERT 含 temporal_type | `grep -c 'temporal_type' scripts/lib/cmd/save.mjs` | `≥ 1` |
-| 129 | v0.13 新增文件 100% 用 `writeAudit`，禁止 `logAudit(` | `grep -rn 'logAudit(' scripts/lib/embedding/signature.mjs` | 为空 |
+| 129 | v0.13 新增文件 100% 用 `writeAudit`，禁止 `logAudit(` | `grep -rl 'logAudit(' scripts/ \| wc -l` 且 `grep -c 'writeAudit(' scripts/daemon/tasks/vec-backfill.mjs` | `0` 且 `≥ 3`（原写法针对 `signature.mjs`，而该文件根本不写 audit，`logAudit(` 也不存在于整个 repo —— 任何改动都无法让它失败，故改为全仓禁令 + 一个真正写 audit 的 v0.13 文件的正向检查）|
 | **130** | **probe 数据源是 `recent_injections` 而非 `memory_feedback`（R1）** | `sed -n '/function latestPromptInjectionIds/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'recent_injections'` | `≥ 1` |
 | 131 | probe 排除 session_start 批量注入（R1）| `grep -c "inject_source = 'user_prompt_submit'" scripts/lib/feedback.mjs` | `≥ 1` |
 | 132 | probe 不读 `memory_feedback`（R1）| `sed -n '/export function recordL25Probe/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'lastUnknownFeedbackOrNull\|feedbackIds'` | `0` |
 | 133 | `metrics.jsonl` 有轮转上限（R7）| `grep -c 'MAX_METRICS_BYTES' scripts/lib/metrics.mjs` | `≥ 1` |
-| 134 | `readMetricsLines` 同时读轮转文件（R7）| `grep -c "metrics.jsonl.1\|\\.1'" scripts/lib/admin/diagnose.mjs` | `≥ 1` |
+| 134 | `readMetricsLines` 同时读轮转文件（R7）| `grep -cF '${base}.1' scripts/lib/admin/diagnose.mjs` | `≥ 1`（原写法**误报失败**：行为在 `` for (const file of [`${base}.1`, base]) `` 处是正确的，但模板字面量里既没有 `metrics.jsonl.1` 也没有 `.1'`，grep 恒返回 0；改为对字面量本身做定长匹配）|
 | 135 | `env_failure` 带长度闸门（R2）| `grep -c 'ENV_FAILURE_MAX_LEN' scripts/lib/quality-gate.mjs` | `≥ 2`（定义 + 使用）|
 
 ---

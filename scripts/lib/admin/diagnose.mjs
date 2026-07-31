@@ -1039,7 +1039,7 @@ export function readMetricsLines(days) {
       if (!line) continue;
       try {
         const parsed = JSON.parse(line);
-        if (Number(parsed.ts) >= cutoff) out.push(parsed);
+        if (typeof parsed.ts === 'number' && parsed.ts >= cutoff) out.push(parsed);
       } catch { /* skip malformed line */ }
     }
   }

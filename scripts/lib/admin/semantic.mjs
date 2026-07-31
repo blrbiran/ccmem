@@ -1,7 +1,14 @@
 import { writeAudit } from '../audit.mjs';
 import { loadConfig } from '../config.mjs';
 import { getProvider, _resetProviderCache } from '../embedding/provider.mjs';
+import { currentEmbeddingSig } from '../embedding/signature.mjs';
 import { transformersLocal } from '../embedding/transformers-local.mjs';
+// Imported, not redefined. A local signature-blind copy reported "pending: 0"
+// on a store that was fully embedded but entirely stale after migration 016,
+// while `admin diagnose --retrieval` reported thousands of stale vectors on the
+// same store — two ccmem commands contradicting each other during exactly the
+// incident the embedding signature exists to make legible.
+import { pendingEmbeddings } from '../../daemon/tasks/vec-backfill.mjs';
 
 function setConfigValue(db, key, value) {
   db.prepare(
@@ -22,16 +29,6 @@ function activeProviderName(db, cfg) {
     ?? 'transformers-local';
 }
 
-function pendingEmbeddings(db) {
-  return Number(db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM memories
-     WHERE embedding IS NULL
-       AND status = 'active'
-       AND decay_status IN ('active', 'probation')`
-  ).get()?.n ?? 0);
-}
-
 function embeddedCount(db) {
   return Number(db.prepare(
     `SELECT COUNT(*) AS n
@@ -45,8 +42,11 @@ function embeddedCount(db) {
 function semanticState(db, cfg) {
   const enabled = runtimeEnabled(db, cfg);
   const embedded = embeddedCount(db);
-  const pending = pendingEmbeddings(db);
   const providerName = activeProviderName(db, cfg);
+  // Signature-aware: "pending" means "rows a vec_backfill run would still
+  // touch", which includes rows embedded under a superseded provider/model/dim.
+  const sigCfg = { ...cfg, embedding: { ...cfg.embedding, enabled: true, provider: providerName } };
+  const pending = pendingEmbeddings(db, currentEmbeddingSig(getProvider(sigCfg), sigCfg));
 
   if (!enabled) {
     return {

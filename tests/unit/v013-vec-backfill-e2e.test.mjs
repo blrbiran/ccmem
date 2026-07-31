@@ -104,3 +104,63 @@ test('runVecBackfill re-embeds never-embedded and stale-signature rows, and leav
     db.close();
   }
 });
+
+// I3 regression. Migration 016 leaves every pre-existing row with
+// embedding_sig IS NULL, and retrieval.mjs now excludes those from the cosine
+// lane. runVecBackfill processes ONE backfill_batch_size batch per invocation
+// and was enqueued only at daemon startup — a 4,494-memory store needed ~90
+// daemon restarts before semantic retrieval came back. A stderr line from a
+// background daemon is not a channel users read, and "semantic retrieval is off
+// for weeks after upgrading" is exactly the silent degradation this release
+// exists to prevent. So a partial run must queue its own continuation.
+test('a partial vec_backfill run queues its own continuation, and does not pile up duplicates', async () => {
+  const db = openDb();
+  try {
+    db.prepare(
+      `INSERT OR REPLACE INTO config_kv (key, value, set_at) VALUES ('embedding.enabled', 'true', ?)`
+    ).run(Date.now());
+    db.prepare(`DELETE FROM tasks WHERE type = 'vec_backfill'`).run();
+
+    // batch_size defaults to 50; seed more than one batch so remaining > 0.
+    for (let i = 0; i < 55; i += 1) {
+      await insertMemory(db, {
+        cwd: process.cwd(),
+        content: `i3 continuation fixture number ${i} with enough words to store`,
+        scope: 'project',
+        projectKey: 'vec-backfill-i3/repo',
+        type: 'fact',
+        embedSync: false
+      });
+    }
+
+    const first = await runVecBackfill(db);
+    assert.ok(first.remaining > 0, 'fixture sanity: one batch must not finish the store');
+
+    const queued = () => Number(db.prepare(
+      `SELECT COUNT(*) AS n FROM tasks WHERE type = 'vec_backfill' AND status = 'queued'`
+    ).get().n);
+    assert.equal(queued(), 1,
+      'a partial run must enqueue its own continuation — otherwise the store stays half-stale until the next daemon start');
+
+    // Running again while that continuation is still queued must not add a
+    // second one: the queue would grow by one task per batch.
+    const second = await runVecBackfill(db);
+    assert.equal(queued(), 1, 'the queued/running guard must keep this idempotent');
+
+    // Drain to completion, then confirm the chain stops instead of self-feeding
+    // forever once there is nothing left to embed.
+    let guard = 0;
+    let last = second;
+    while (last.remaining > 0 && guard < 10) {
+      last = await runVecBackfill(db);
+      guard += 1;
+    }
+    assert.equal(last.remaining, 0, 'fixture sanity: the store must finish draining');
+
+    db.prepare(`DELETE FROM tasks WHERE type = 'vec_backfill'`).run();
+    await runVecBackfill(db);
+    assert.equal(queued(), 0, 'a run with nothing left to do must NOT enqueue another — that would spin forever');
+  } finally {
+    db.close();
+  }
+});

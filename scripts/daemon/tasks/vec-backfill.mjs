@@ -20,6 +20,38 @@ export function pendingEmbeddings(db, sig) {
   ).get(sig)?.n ?? 0);
 }
 
+/**
+ * Queue the next batch when a run finishes with work still outstanding.
+ *
+ * One run only ever processes one backfill_batch_size batch, and vec_backfill
+ * is on no recurring schedule — before this it was queued only at daemon
+ * startup, so a store with 4,494 memories needed ~90 daemon restarts before the
+ * semantic lane came back, degrading silently to lexical-only in the meantime.
+ *
+ * The guard counts only 'queued', deliberately NOT 'running': the run calling
+ * this IS the running one, so including 'running' would make the condition
+ * permanently true and the chain would never continue. daemon/main.mjs's
+ * startup guard correctly counts both, because nothing is running there.
+ */
+function enqueueContinuation(db) {
+  const alreadyQueued = Number(db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM tasks
+     WHERE type = 'vec_backfill'
+       AND status = 'queued'`
+  ).get()?.n ?? 0);
+  if (alreadyQueued > 0) {
+    return false;
+  }
+
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+     VALUES ('vec_backfill', '{}', ?, ?, 'queued')`
+  ).run(now, now);
+  return true;
+}
+
 export async function runVecBackfill(db, _task = null) {
   const cfg = loadConfig();
   const startedAt = Date.now();
@@ -83,12 +115,8 @@ export async function runVecBackfill(db, _task = null) {
     const durationMs = Date.now() - startedAt;
     const remaining = pendingEmbeddings(db, sig);
     if (remaining > 0) {
-      // One run only ever processes one backfill_batch_size batch, and
-      // vec_backfill isn't on the recurring cron schedule — it's only queued
-      // again at the next daemon startup (daemon/main.mjs) or by a manual
-      // `ccmem admin cron run vec_backfill`. Say so loudly rather than
-      // leaving a partially-healed store with no visible signal.
-      process.stderr.write(`ccmem: vec_backfill embedded ${rows.length}, ${remaining} still pending under signature ${sig} — run again (ccmem admin cron run vec_backfill) or wait for the next daemon start\n`);
+      const chained = enqueueContinuation(db);
+      process.stderr.write(`ccmem: vec_backfill embedded ${rows.length}, ${remaining} still pending under signature ${sig} — ${chained ? 'continuation queued' : 'continuation already queued'}\n`);
     }
     writeAudit(db, 'vec_backfill_run', null, {
       embedded: rows.length,

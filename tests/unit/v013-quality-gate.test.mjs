@@ -75,3 +75,25 @@ test('negative_assertion has no length gate — long text is still rejected', ()
     + 'the conclusion is that the MCP server does not work and we should give up on it';
   assert.equal(checkQuality(long).reason, 'negative_assertion');
 });
+
+// Script-aware threshold (controller ruling): .length treats a CJK char the same
+// as a Latin one, but CJK is far denser, so one flat threshold can't serve both
+// scripts. This 69-char English failure sits ABOVE the CJK threshold (50) but
+// BELOW the Latin one (120) — it proves the 120 branch is actually live for
+// Latin text; without it, a regression to a flat 50-everywhere threshold would
+// stay green.
+test('env_failure: a mid-length English environment failure is still rejected', () => {
+  const midEnglish = 'Error: ENOENT no such file or directory when running the setup script';
+  assert.equal(midEnglish.length > 50 && midEnglish.length < 120, true,
+    'fixture must sit strictly between the CJK and Latin thresholds');
+  assert.deepEqual(checkQuality(midEnglish), { pass: false, reason: 'env_failure' });
+});
+
+// Short CJK failure report must still be rejected — exercises the CJK
+// threshold (50) on the rejecting side, not just the passing side covered by
+// the "does not reject a remedy" test above.
+test('env_failure: a short CJK environment failure is rejected', () => {
+  const shortCjk = '找不到命令，请先安装 Node';
+  assert.equal(shortCjk.length < 50, true, 'fixture must sit under the CJK threshold');
+  assert.deepEqual(checkQuality(shortCjk), { pass: false, reason: 'env_failure' });
+});

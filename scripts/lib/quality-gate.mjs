@@ -14,15 +14,25 @@ const ENV_FAILURE = /(?:command not found|no such file or directory|\bENOENT\b|i
 // never use / avoid — those appear constantly in legitimate conventions.
 const NEGATIVE_ASSERTION = /(?:\b(?:doesn['’]?t|does not|will not|won['’]?t|cannot|can['’]?t)\s+work\b|\bis (?:not available|unavailable|broken)\b|用不了|没法用|跑不起来|不可用)/i;
 
+// Same script-detection range as CJK_RANGE in feedback.mjs (kept in sync by
+// eye, not import — feedback.mjs is heavy and this module sits on the intake
+// path, where every millisecond counts toward the hook budget).
+const CJK_RANGE = /[一-鿿぀-ヿ가-힯]/;
+
 // Short text containing a failure string IS the failure report; long text
 // containing one is usually the remedy, which the extraction prompt asks for.
-// NOTE: brief task-5-brief.md suggested 120, but CJK text is far denser than
-// English — a complete Chinese remedy ("遇到 command not found 时先跑 nvm use 22
-// ...") is only ~58 chars, well under 120, and would be misclassified as a bare
-// failure report. 50 is the midpoint of the range required by the brief's own
-// test vectors: > 41 (longest legitimate short failure report) and <= 58
-// (shortest legitimate remedy that mentions the failure it fixes).
-const ENV_FAILURE_MAX_LEN = 50;
+// `.length` counts a CJK character the same as a Latin one, but CJK carries
+// far more information per character: the same remedy runs ~58 chars in
+// Chinese ("遇到 command not found 时先跑 nvm use 22 ...") vs ~150 in English.
+// A single flat threshold can't serve both scripts — 120 lets short CJK
+// failure reports straight into the store, while 50 would let 60-120-char
+// English environment failures (e.g. "Error: ENOENT no such file or directory
+// when running the setup script") straight into the store too. So the gate
+// is script-aware, mirroring the has_cjk field in feedback.mjs (Task 3),
+// which also segments by script rather than blending one threshold across
+// both.
+const ENV_FAILURE_MAX_LEN_LATIN = 120;
+const ENV_FAILURE_MAX_LEN_CJK = 50;
 
 export function checkQuality(content, cfgOverride = null) {
   const text = String(content ?? '').trim();
@@ -66,10 +76,11 @@ export function checkQuality(content, cfgOverride = null) {
     }
   }
 
-  if (enabled.env_failure !== false
-      && ENV_FAILURE.test(text)
-      && text.length < ENV_FAILURE_MAX_LEN) {
-    return { pass: false, reason: 'env_failure' };
+  if (enabled.env_failure !== false && ENV_FAILURE.test(text)) {
+    const maxLen = CJK_RANGE.test(text) ? ENV_FAILURE_MAX_LEN_CJK : ENV_FAILURE_MAX_LEN_LATIN;
+    if (text.length < maxLen) {
+      return { pass: false, reason: 'env_failure' };
+    }
   }
 
   // No length gate here, by design: a blanket negation hardens into a refusal

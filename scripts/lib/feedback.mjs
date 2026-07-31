@@ -2,6 +2,7 @@ import { parseTranscript, extractAssistantText } from './transcript.mjs';
 import { loadConfig } from './config.mjs';
 import { blobToVec, cosineSimilarity } from './embedding/cosine.mjs';
 import { applyOutcomeToSubset, adjustTrust } from './trust.mjs';
+import { recordMetric } from './metrics.mjs';
 
 const NEGATIVE_FEEDBACK = /不对|重做|错了|wrong|redo|undo|revert/i;
 const SELF_CORRECT = /(actually|on second thought|i was wrong|更准确地说|我之前.*错了)/i;
@@ -1305,4 +1306,117 @@ export function inferPositiveFeedback(db, sessionId, prompt, queryVec) {
   }
 
   applyOutcomeToSubset(db, row.id, [bestId], 'helpful_implicit', `l1_positive_cosine:${bestCosine.toFixed(3)}`);
+}
+
+const CJK_OR_WORD = /[\p{L}\p{N}]+/gu;
+
+/** Normalize to a token set: lowercase, alphanumeric runs, drop 1-char tokens. */
+export function featureTokens(text) {
+  const out = new Set();
+  for (const m of String(text ?? '').toLowerCase().matchAll(CJK_OR_WORD)) {
+    if (m[0].length >= 2) out.add(m[0]);
+  }
+  return out;
+}
+
+/** Fraction of this memory's tokens that appear in the reply. */
+export function memoryCoverage(memTokens, replyTokens) {
+  if (memTokens.size === 0) return 0;
+  let hit = 0;
+  for (const t of memTokens) if (replyTokens.has(t)) hit += 1;
+  return hit / memTokens.size;
+}
+
+/** Length (in words) of the longest verbatim word-run shared with the reply. */
+export function longestCommonPhrase(memWords, replyText) {
+  const reply = replyText.toLowerCase();
+  let best = 0;
+  for (let i = 0; i < memWords.length; i += 1) {
+    // Only extend while there is still a chance to beat the current record.
+    for (let len = best + 1; i + len <= memWords.length; len += 1) {
+      if (!reply.includes(memWords.slice(i, i + len).join(' '))) break;
+      best = len;
+    }
+  }
+  return best;
+}
+
+/**
+ * Fetch memories for the probe. The existing getRecentMemories() selects only
+ * (id, content) and resolves ids its own way, so it is not reusable here.
+ */
+function probeMemoriesByIds(db, ids) {
+  if (!ids.length) return [];
+  return db.prepare(
+    `SELECT id, content, type, source
+     FROM memories
+     WHERE id IN (${ids.map(() => '?').join(',')})`
+  ).all(...ids);
+}
+
+/**
+ * Most recent UserPromptSubmit injection for this session.
+ *
+ * MUST read recent_injections, never memory_feedback: memory_feedback.outcome
+ * is rewritten in place by the feedback logic that runs before this probe, so
+ * reading it would drop exactly the turns where the legacy matcher fired.
+ * session_start injections are excluded because they are not turn-aligned.
+ */
+function latestPromptInjectionIds(db, sessionId) {
+  const row = db.prepare(
+    `SELECT mem_ids, prompt_idx
+     FROM recent_injections
+     WHERE session_id = ? AND inject_source = 'user_prompt_submit'
+     ORDER BY prompt_idx DESC, id DESC
+     LIMIT 1`
+  ).get(sessionId);
+  const ids = parseJsonArray(row?.mem_ids).map(Number).filter(Number.isFinite);
+  return { ids, promptIdx: row?.prompt_idx ?? null };
+}
+
+/**
+ * v0.13 A1: record L2.5 candidate features for the most recent prompt injection.
+ *
+ * OBSERVE-ONLY. This function and everything it calls must never modify
+ * trust, outcome, or decay_status. v0.14 sets a threshold from what this
+ * collects; deciding one now, without data, would inject noise into trust.
+ */
+export function recordL25Probe(db, sessionId, transcriptPath, config) {
+  if (config?.feedback?.l25_probe?.enabled === false) return;
+  if (!sessionId) return;
+
+  const replyText = lastAssistantTextOrEmpty(transcriptPath);
+  if (!replyText) return;
+
+  const { ids, promptIdx } = latestPromptInjectionIds(db, sessionId);
+  if (!ids.length) return;
+
+  const maxProbe = Number(config?.feedback?.l25_probe?.max_per_turn ?? 8);
+  const replyTokens = featureTokens(replyText);
+  const rows = probeMemoriesByIds(db, ids.slice(0, maxProbe));
+
+  for (const mem of rows) {
+    const content = String(mem.content ?? '');
+    const memTokens = featureTokens(content);
+    if (memTokens.size < 3) continue;
+
+    const memWords = [...content.toLowerCase().matchAll(CJK_OR_WORD)].map((m) => m[0]);
+
+    recordMetric({
+      hook: 'stop',
+      l25_probe: true,
+      prompt_idx: promptIdx,
+      mem_id: mem.id,
+      mem_type: mem.type,
+      mem_source: mem.source,
+      l25_cov: Number(memoryCoverage(memTokens, replyTokens).toFixed(4)),
+      l25_lcp: longestCommonPhrase(memWords, replyText),
+      l25_id_literal: new RegExp(`\\bm${mem.id}\\b`).test(replyText),
+      // The v0.12 matcher's verdict, kept as the control baseline for v0.14.
+      l25_legacy_hit: replyText.toLowerCase().includes(content.trim().toLowerCase()),
+      mem_len: content.length,
+      mem_tokens: memTokens.size,
+      reply_len: replyText.length
+    });
+  }
 }

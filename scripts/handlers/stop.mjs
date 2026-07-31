@@ -1,5 +1,6 @@
 import { touchWakeFile } from '../daemon/wake.mjs';
-import { inferFromTranscript, inferL25FromTranscript } from '../lib/feedback.mjs';
+import { inferFromTranscript, inferL25FromTranscript, recordL25Probe } from '../lib/feedback.mjs';
+import { loadConfig } from '../lib/config.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
 import { computeSessionStats, countTranscriptLines } from '../lib/transcript.mjs';
@@ -62,6 +63,14 @@ export async function handleStop(db, hookData) {
 
   inferFromTranscript(db, hookData.session_id, hookData.transcript_path);
   inferL25FromTranscript(db, hookData.session_id, hookData.transcript_path);
+
+  try {
+    recordL25Probe(db, hookData.session_id, hookData.transcript_path, loadConfig());
+  } catch (e) {
+    // Pure observation — never let it affect the Stop hook's real work.
+    process.stderr.write(`ccmem: l25 probe skipped (${e.message})\n`);
+  }
+
   touchWakeFile();
 
   return { additionalContext: '' };

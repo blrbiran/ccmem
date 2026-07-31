@@ -115,7 +115,15 @@ export function maybeRunTier15(db) {
     // here only fires if a user explicitly opted into bounded retention.
     const decisionCfg = cfg.metrics?.decision_data;
     if (decisionCfg?.retention_days > 0) {
-      pruneDecisionMetrics(decisionCfg, now - (decisionCfg.retention_days * 86400000));
+      // pruneDecisionMetrics propagates I/O failures on purpose (a prune that
+      // cannot run is a fact the operator needs), but it is opt-in housekeeping
+      // and must not take the rest of tier-1.5 maintenance down with it — a
+      // throw here would skip markLeaseComplete and strand the day's lease.
+      try {
+        pruneDecisionMetrics(decisionCfg, now - (decisionCfg.retention_days * 86400000));
+      } catch (error) {
+        process.stderr.write(`ccmem: decision-data prune failed (${String(error?.message ?? error).slice(0, 120)}) — stream left intact, retention not applied\n`);
+      }
     }
 
     db.prepare(

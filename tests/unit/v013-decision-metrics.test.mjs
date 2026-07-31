@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -78,4 +78,67 @@ test('pruneDecisionMetrics removes rows older than the cutoff and keeps recent o
   const rows = readLines(cfg.file);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].tag, 'recent');
+});
+
+// I7. This function rewrites the release's central artifact. Reading the whole
+// file and writeFileSync-ing over the original means a crash or a full disk
+// mid-write destroys the entire decision stream — the data v0.14's threshold
+// depends on, which recent_injections' retention already destroyed once.
+test('pruneDecisionMetrics never truncates the original: it writes a temp file and renames', () => {
+  const cfg = { enabled: true, file: 'decision-atomic.jsonl' };
+  const target = path.join(dataRoot, cfg.file);
+  const now = Date.now();
+  writeFileSync(target, [
+    JSON.stringify({ ts: now - (10 * 86400000), tag: 'old' }),
+    JSON.stringify({ ts: now, tag: 'keep' })
+  ].join('\n') + '\n', 'utf8');
+
+  // A directory at the temp path makes writeFileSync fail. If the
+  // implementation wrote to the target first, the stream would already be gone
+  // by the time it threw; writing to a temp file first means the original is
+  // still intact.
+  mkdirSync(`${target}.tmp`, { recursive: true });
+  try {
+    assert.throws(() => pruneDecisionMetrics(cfg, now - (5 * 86400000)),
+      'a failed prune must surface, not silently leave a half-written stream');
+  } finally {
+    rmSync(`${target}.tmp`, { recursive: true, force: true });
+  }
+
+  const survived = readLines(cfg.file);
+  assert.equal(survived.length, 2,
+    'the original stream must be byte-intact after a failed prune — this is the whole point of the temp-file write');
+
+  // And the happy path still prunes.
+  pruneDecisionMetrics(cfg, now - (5 * 86400000));
+  assert.deepEqual(readLines(cfg.file).map((r) => r.tag), ['keep']);
+  assert.throws(() => statSync(`${target}.tmp`), 'the temp file must not be left behind');
+});
+
+test('pruneDecisionMetrics reports unparseable lines instead of deleting them silently', () => {
+  const cfg = { enabled: true, file: 'decision-torn.jsonl' };
+  const now = Date.now();
+  // A line torn by a concurrent appendFileSync. Dropping it without a word
+  // means permanent, invisible data loss from the one file that must not lose
+  // data.
+  writeFileSync(path.join(dataRoot, cfg.file), [
+    JSON.stringify({ ts: now, tag: 'good' }),
+    '{"ts":17600000000',
+    JSON.stringify({ ts: now, tag: 'also-good' })
+  ].join('\n') + '\n', 'utf8');
+
+  const original = process.stderr.write;
+  const captured = [];
+  process.stderr.write = (chunk) => { captured.push(String(chunk)); return true; };
+  try {
+    pruneDecisionMetrics(cfg, now - 86400000);
+  } finally {
+    process.stderr.write = original;
+  }
+
+  const warning = captured.join('');
+  assert.match(warning, /1 unparseable line/,
+    'the count of dropped lines must be stated, not swallowed');
+  assert.match(warning, /decision-torn\.jsonl/, 'the warning must name the file it damaged');
+  assert.deepEqual(readLines(cfg.file).map((r) => r.tag), ['good', 'also-good']);
 });

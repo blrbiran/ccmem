@@ -86,17 +86,38 @@ export function pruneDecisionMetrics(decisionCfg, olderThanMs) {
     return;
   }
 
-  const kept = raw
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return null;
-      }
-    })
-    .filter((row) => row && Number(row.ts) >= olderThanMs);
+  const kept = [];
+  let unparseable = 0;
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      // A line torn by a concurrent appendFileSync, most likely. Dropping it
+      // without a word is permanent, invisible data loss from the one file in
+      // this codebase that must not lose data.
+      unparseable += 1;
+      continue;
+    }
+    if (Number(row?.ts) >= olderThanMs) kept.push(row);
+  }
 
-  writeFileSync(file, kept.length ? `${kept.map((row) => JSON.stringify(row)).join('\n')}\n` : '', 'utf8');
+  if (unparseable > 0) {
+    process.stderr.write(
+      `ccmem: prune dropped ${unparseable} unparseable line(s) from ${file} — decision data lost, check for a concurrent writer\n`
+    );
+  }
+
+  // Write-then-rename. The previous version read the whole file and
+  // writeFileSync'd over the original: a crash or a full disk mid-write
+  // destroyed the entire decision stream — the data v0.14's threshold depends
+  // on, which recent_injections' retention already destroyed once. rename is
+  // atomic on the same filesystem, so the original is either fully replaced or
+  // untouched. A failure propagates rather than being swallowed: the caller
+  // (tier15) has opted into pruning, and a prune that cannot run is a fact the
+  // operator needs.
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, kept.length ? `${kept.map((row) => JSON.stringify(row)).join('\n')}\n` : '', 'utf8');
+  renameSync(tmp, file);
 }

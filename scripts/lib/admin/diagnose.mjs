@@ -803,9 +803,42 @@ export function computeTuningSuggestions(db, cfg = loadConfig()) {
   ];
 }
 
+/**
+ * quality_gate_reject counts by reason over the tuning window.
+ *
+ * The intake gate's regexes are deliberately blunt — negative_assertion has no
+ * length or context qualifier at all — so they WILL reject some legitimate
+ * constraint memories ("the streaming field is not available in v2 of the API"
+ * is a fact, not a refusal). That trade-off is only defensible if the
+ * false-positive rate is actually looked at, and a rate nobody reads is not
+ * measured. summarize-pending.mjs already writes one audit row per rejection
+ * carrying the reason and an 80-char excerpt; this surfaces the aggregate where
+ * a human tuning ccmem will see it.
+ */
+function getQualityGateRejects(db, startMs) {
+  const rows = db.prepare(
+    `SELECT json_extract(details, '$.reason') AS reason, COUNT(*) AS n
+     FROM audit_log
+     WHERE action = 'quality_gate_reject'
+       AND ts >= ?
+     GROUP BY reason
+     ORDER BY n DESC, reason ASC`
+  ).all(startMs);
+
+  return {
+    window_days: TUNING_WINDOW_DAYS,
+    total: rows.reduce((sum, row) => sum + Number(row.n ?? 0), 0),
+    by_reason: rows.map((row) => ({ reason: row.reason ?? 'unknown', count: Number(row.n ?? 0) }))
+  };
+}
+
 export function getTuningDiagnostics(db, cfg = loadConfig()) {
   const minDays = Number(cfg.metrics_rollup?.min_days_for_tuning ?? 7);
   const daysAvailable = countRollupDays(db);
+  // Reported regardless of whether there is enough rollup data to suggest
+  // thresholds: the rejection rate is an intake observation, not a tuning
+  // computation, and it is most worth seeing on a young store.
+  const qualityGateRejects = getQualityGateRejects(db, windowStartMs(TUNING_WINDOW_DAYS));
 
   if (daysAvailable < minDays) {
     return {
@@ -814,6 +847,7 @@ export function getTuningDiagnostics(db, cfg = loadConfig()) {
       min_days: minDays,
       suggestions: [],
       suggestion_count: 0,
+      quality_gate_rejects: qualityGateRejects,
       audit_id: null
     };
   }
@@ -825,6 +859,7 @@ export function getTuningDiagnostics(db, cfg = loadConfig()) {
     min_days: minDays,
     suggestions,
     suggestion_count: suggestions.filter((item) => item.action !== 'keep').length,
+    quality_gate_rejects: qualityGateRejects,
     audit_id: null
   };
 }

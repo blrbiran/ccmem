@@ -12,7 +12,13 @@ const ENV_FAILURE = /(?:command not found|no such file or directory|\bENOENT\b|i
 
 // Blanket negations of a tool's usability. Deliberately excludes 不支持 / 不要用 /
 // never use / avoid — those appear constantly in legitimate conventions.
-const NEGATIVE_ASSERTION = /(?:\b(?:doesn['’]?t|does not|will not|won['’]?t|cannot|can['’]?t)\s+work\b|\bis (?:not available|unavailable|broken)\b|用不了|没法用|跑不起来|不可用)/i;
+//
+// `work(?:ing)?` covers the "is not working" family: the previous `\bwork\b`
+// anchor did not match "working", so the single most common phrasing of "this
+// tool is broken" walked past the gate while "does not work" was caught. The
+// negation list is enumerated rather than generalised so the widening stays
+// confined to that family — "when working on the parser..." must still pass.
+const NEGATIVE_ASSERTION = /(?:\b(?:doesn['’]?t|does not|isn['’]?t|is not|aren['’]?t|are not|will not|won['’]?t|cannot|can['’]?t)\s+work(?:ing)?\b|\bis (?:not available|unavailable|broken)\b|用不了|没法用|跑不起来|不可用)/i;
 
 // Same script-detection range as CJK_RANGE in feedback.mjs (kept in sync by
 // eye, not import — feedback.mjs is heavy and this module sits on the intake

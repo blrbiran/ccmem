@@ -97,3 +97,44 @@ test('env_failure: a short CJK environment failure is rejected', () => {
   assert.equal(shortCjk.length < 50, true, 'fixture must sit under the CJK threshold');
   assert.deepEqual(checkQuality(shortCjk), { pass: false, reason: 'env_failure' });
 });
+
+// Ledger T5, folded into I5. The blanket-negation regex anchored on `\bwork\b`,
+// which does not match "working" — so the single most common phrasing of "this
+// tool is broken" walked straight past the gate that exists to stop refusal
+// hardening. Same category as "does not work", which IS caught.
+test('negative_assertion catches the "is not working" family, not just "does not work"', () => {
+  for (const text of [
+    'the mcp server is not working and never has been',
+    'the mcp server isn’t working and never has been',
+    'these hooks are not working on this machine at all',
+    'these hooks aren’t working on this machine at all'
+  ]) {
+    assert.equal(checkQuality(text).reason, 'negative_assertion', `must reject: ${text}`);
+  }
+});
+
+// The gate must not widen into ordinary conventions that merely contain the
+// word "working" — the whole point of the narrow regex is that legitimate
+// convention memories outnumber refusal-hardening ones.
+test('negative_assertion does not fire on ordinary text containing "working"', () => {
+  for (const text of [
+    'when working on the parser prefer small pure functions over classes',
+    'the working directory for all scripts is the repository root'
+  ]) {
+    assert.equal(checkQuality(text).pass, true, `must pass: ${text}`);
+  }
+});
+
+// Invariant #127 as an executable test rather than only a CI grep: these tokens
+// are high-frequency in legitimate bilingual conventions, and the plan-mandated
+// regex was reviewed as if it contained the first one. It does not, and must
+// not start to.
+test('negative_assertion spares constraint memories that use 不支持 / never use / avoid', () => {
+  for (const text of [
+    '这个 API 不支持批量请求，需要逐条调用',
+    'never use console.log in committed code, use the logger instead',
+    'avoid default exports in this package, prefer named exports'
+  ]) {
+    assert.equal(checkQuality(text).pass, true, `must pass: ${text}`);
+  }
+});

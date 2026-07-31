@@ -333,8 +333,29 @@ function formatDurationSeconds(startedAt, completedAt) {
   return String(Math.round((completedAt - startedAt) / 1000));
 }
 
+// The intake gate's rejections are auditable but nobody was looking at them.
+// Printed before the insufficient-data bail so the rate is visible on a young
+// store too — that is when a badly-tuned regex does the most damage.
+function printQualityGateRejects(rejects) {
+  if (!rejects) {
+    return;
+  }
+
+  process.stdout.write(`Quality gate rejections (last ${rejects.window_days} days): ${rejects.total}\n`);
+  for (const row of rejects.by_reason) {
+    process.stdout.write(`  ${String(row.reason).padEnd(24)} ${row.count}\n`);
+  }
+  if (rejects.total > 0) {
+    process.stdout.write('  (use /ccmem:audit to read the 80-char excerpt on each quality_gate_reject row\n');
+    process.stdout.write('   and judge whether these were genuine noise or legitimate constraint memories)\n');
+  }
+  process.stdout.write('\n');
+}
+
 function printTuning(result) {
   const tuning = result.tuning;
+
+  printQualityGateRejects(tuning.quality_gate_rejects);
 
   if (tuning.insufficient) {
     process.stdout.write(`ccmem: insufficient data (have ${tuning.days_available} days, need >=${tuning.min_days})\n`);

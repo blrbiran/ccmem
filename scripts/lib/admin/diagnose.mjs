@@ -1310,7 +1310,25 @@ function readDecisionProbeRows(decisionCfg) {
   return out;
 }
 
-function formatFeedbackCohort(label, rows) {
+/**
+ * Cohort a probe row. `control` is the authoritative field (v0.13 C3), but rows
+ * written before it existed carry only `turn_aligned`, and those rows must not
+ * crash the reader or be silently mis-cohorted: a pre-C3 turn_aligned=false row
+ * means exactly what 'stale_injection' means today, so it maps there. Anything
+ * this function cannot place lands in 'unclassified' and is reported as such
+ * rather than being dropped into a cohort it does not belong to.
+ */
+function probeCohort(row) {
+  if (row.control === 'random') return 'random';
+  if (row.control === 'stale_injection') return 'stale';
+  if (row.control == null) {
+    if (row.turn_aligned === true) return 'aligned';
+    if (row.turn_aligned === false) return 'stale';
+  }
+  return 'unclassified';
+}
+
+function formatFeedbackCohort(label, rows, { warnOnZeroLegacy = true } = {}) {
   if (!rows.length) {
     return [`    ${label} (n=0)`];
   }
@@ -1330,7 +1348,9 @@ function formatFeedbackCohort(label, rows) {
   lines.push(`      legacy hits: ${legacy}/${rows.length}`);
   lines.push(`      id literal: ${idLit}/${rows.length}`);
 
-  if (legacy === 0) {
+  // A control cohort SHOULD have no legacy hits — that is what makes it a
+  // floor. Warning there would train the reader to ignore the warning.
+  if (legacy === 0 && warnOnZeroLegacy) {
     lines.push('      WARNING: no legacy hits recorded in this cohort — either the v0.12');
     lines.push('               matcher genuinely never fired here, or the probe is dropping');
     lines.push('               signal turns. Seed a memory that appears verbatim in a reply');
@@ -1355,18 +1375,27 @@ function formatFeedbackCohort(label, rows) {
  * readMetricsLines(days), because that is where recordDecisionMetric's own
  * fallback writes rows in that case — and the `days` window applies there.
  *
- * Segmentation (never filtering): turn_aligned=false rows are a negative
- * control — a memory injected for an earlier turn, scored against this
- * turn's unrelated reply — and are printed as their own section rather than
- * mixed into or dropped from the main distribution. has_cjk further splits
- * BOTH the turn-aligned rows and the negative-control rows, because CJK
- * text does not word-segment: it saturates l25_lcp and skews l25_cov toward
- * binary for Chinese memories, which means the CJK noise floor is
- * structurally different (higher) from the non-CJK noise floor. Blending
- * them into one negative-control number would let non-CJK volume drag the
- * floor down and make the CJK main distribution look like it clears a noise
- * floor it was never compared against — achievability is decided per
- * cohort, so the floor has to be reported per cohort too.
+ * Segmentation (never filtering): every row is printed under exactly one
+ * cohort (see probeCohort above), and no row is dropped.
+ *
+ *  - Turn-aligned: the memory was retrieved for THIS turn. The main
+ *    distribution.
+ *  - Random control: never injected this session, sampled at random and scored
+ *    against the same reply. THIS is the noise floor — the number the main
+ *    distribution has to clear for any threshold to be achievable.
+ *  - Stale injection: injected for an EARLIER turn this session. Deliberately
+ *    not called a noise floor: ccmem injects via additionalContext at
+ *    UserPromptSubmit, which persists in the model's context for the rest of
+ *    the session, so the memory is still in context — just not retrieved for
+ *    this turn. It is an interesting middle cohort, not a floor.
+ *
+ * has_cjk further splits every cohort, because CJK text does not word-segment
+ * (an unbroken run collapses to one long token that the reply must match
+ * whole), so both features are structurally harder to score in CJK and the CJK
+ * floor differs from the non-CJK floor. Blending them would let non-CJK volume
+ * drag the floor and make the CJK main distribution look like it clears a
+ * floor it was never compared against — achievability is decided per cohort,
+ * so the floor is reported per cohort too.
  *
  * This command is read-only: it deliberately does NOT call
  * maybeRunTier15(db) the way its sibling diagnose subcommands do, so that
@@ -1393,8 +1422,12 @@ export function cmdDiagnoseFeedback(db, { days = 7 } = {}) {
     return;
   }
 
-  const aligned = rows.filter((r) => r.turn_aligned === true);
-  const negControl = rows.filter((r) => r.turn_aligned === false);
+  const aligned = [];
+  const random = [];
+  const stale = [];
+  const unclassified = [];
+  const bucket = { aligned, random, stale, unclassified };
+  for (const row of rows) bucket[probeCohort(row)].push(row);
 
   const lines = [];
   lines.push(
@@ -1402,15 +1435,42 @@ export function cmdDiagnoseFeedback(db, { days = 7 } = {}) {
       ? `L2.5 probe — decision stream l25-probe.jsonl (${sizeBytes} bytes on disk, unbounded — all recorded samples, no day window)`
       : `L2.5 probe — metrics.jsonl fallback, last ${days} days (decision_data.enabled=false; decision file on disk: ${sizeBytes} bytes, not used for this report)`
   );
-  lines.push(`  samples: ${rows.length} total (${aligned.length} turn-aligned, ${negControl.length} negative-control)`);
-  lines.push('');
-  lines.push('  Turn-aligned (main distribution — memory was injected for this turn)');
-  lines.push(...formatFeedbackCohort('non-CJK', aligned.filter((r) => r.has_cjk !== true)));
-  lines.push(...formatFeedbackCohort('CJK', aligned.filter((r) => r.has_cjk === true)));
-  lines.push('');
-  lines.push('  Negative control (turn_aligned=false — earlier-turn memory scored against an unrelated reply; noise floor)');
-  lines.push(...formatFeedbackCohort('non-CJK', negControl.filter((r) => r.has_cjk !== true)));
-  lines.push(...formatFeedbackCohort('CJK', negControl.filter((r) => r.has_cjk === true)));
+  lines.push(
+    `  samples: ${rows.length} total (${aligned.length} turn-aligned, ` +
+    `${random.length} random-control, ${stale.length} stale-injection, ${unclassified.length} unclassified)`
+  );
+
+  const section = (heading, cohortRows, opts) => {
+    lines.push('');
+    lines.push(heading);
+    lines.push(...formatFeedbackCohort('non-CJK', cohortRows.filter((r) => r.has_cjk !== true), opts));
+    lines.push(...formatFeedbackCohort('CJK', cohortRows.filter((r) => r.has_cjk === true), opts));
+  };
+
+  section('  Turn-aligned (main distribution — memory was retrieved for this turn)', aligned);
+  section(
+    '  Random control (never injected this session, sampled at random against the same reply — THE noise floor)',
+    random,
+    { warnOnZeroLegacy: false }
+  );
+  section(
+    '  Stale injection (injected for an earlier turn this session — still in the model context via additionalContext, so NOT a noise floor)',
+    stale,
+    { warnOnZeroLegacy: false }
+  );
+
+  if (unclassified.length) {
+    lines.push('');
+    lines.push(`  Unclassified: ${unclassified.length} row(s) carry neither a known control label nor a boolean turn_aligned`);
+    lines.push('                — reported, never silently folded into a cohort they may not belong to.');
+  }
+
+  if (!random.length) {
+    lines.push('');
+    lines.push('  WARNING: no random-control rows. Without a noise floor the main distribution');
+    lines.push('           cannot be shown to clear anything, which is the question v0.13 exists');
+    lines.push('           to answer. Check feedback.l25_probe.control_sample_size (default 3).');
+  }
 
   process.stdout.write(`${lines.join('\n')}\n`);
 }

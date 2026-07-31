@@ -191,9 +191,79 @@ test('probe labels turn_aligned instead of suppressing repeated Stop calls', () 
   recordL25Probe(db, DEDUP_SESSION, transcript, {});
 
   const rows = probeLines().filter((r) => r.mem_id === 401);
-  assert.equal(rows.length, 2, 'both calls must record — the second is a negative control, not noise');
+  assert.equal(rows.length, 2, 'both calls must record — the second is a control row, not noise');
   assert.equal(rows[0].turn_aligned, true, 'the first call has a genuinely new injection');
   assert.equal(rows[1].turn_aligned, false, 'the second call re-measures the same injection against a new reply');
+
+  // C3: these rows are honestly labelled. They are NOT a noise floor — the
+  // memory is still in the model's context via additionalContext from the
+  // earlier turn, so it is a STALE injection, not an absent one.
+  assert.equal(rows[0].control, null, 'the turn-aligned row is the main distribution, not a control');
+  assert.equal(rows[1].control, 'stale_injection',
+    'a re-probe of an earlier turn\'s injection must be labelled for what it is');
+
+});
+
+// C3 regression. The pre-existing turn_aligned=false rows produced ZERO samples
+// across 281 live rows (retrieval's LIKE fallback means a populated store
+// retrieves something nearly every turn), and would not be a noise floor even
+// when they fire. The random cohort is the actual floor, and the exclusion is
+// what makes it one: a memory injected earlier THIS session is still in the
+// model's context and could legitimately appear in the reply.
+test('the random control cohort excludes memories injected this session and samples ones that were not', () => {
+  const db = openDb();
+  const RANDOM_SESSION = 'sess-probe-random';
+  seedMemory(db, 801, 'injected memory describing the pnpm workspace layout rules');
+  seedMemory(db, 802, 'never injected memory describing editor tab width settings');
+  seedInjection(db, 1, [801], 'user_prompt_submit', RANDOM_SESSION);
+
+  // A sample size larger than the store guarantees every eligible memory is
+  // drawn exactly once per emitting call, so "801 is absent" can only be the
+  // exclusion (never chance) and a duplicate mem_id can only mean a second
+  // cohort was emitted.
+  const probeCfg = { feedback: { l25_probe: { control_sample_size: 500 } } };
+  const transcript = writeTranscript('a reply about entirely unrelated things');
+  recordL25Probe(db, RANDOM_SESSION, transcript, probeCfg);
+  // Second Stop against the same injection: a stale re-probe, NOT a new turn.
+  recordL25Probe(db, RANDOM_SESSION, transcript, probeCfg);
+
+  const rows = probeLines().filter((r) => r.session_id === RANDOM_SESSION);
+  const main = rows.filter((r) => r.control === null);
+  const random = rows.filter((r) => r.control === 'random');
+
+  assert.deepEqual(main.map((r) => r.mem_id), [801], 'the injected memory is the main distribution');
+  assert.ok(random.length > 0, 'a random control cohort must actually be produced');
+  assert.equal(random.some((r) => r.mem_id === 801), false,
+    '801 was injected this session, so it is still in the model context and cannot be part of the noise floor');
+  assert.ok(random.some((r) => r.mem_id === 802),
+    'a never-injected memory must be reachable by the sampler');
+  assert.ok(random.every((r) => r.turn_aligned === false),
+    'random rows were never retrieved for this turn');
+  assert.ok(random.every((r) => Number.isFinite(r.l25_cov) && Number.isFinite(r.l25_lcp)),
+    'the control cohort must carry the SAME feature set, or it is not comparable');
+  assert.ok(random.every((r) => typeof r.reply_head === 'string' && r.transcript_path),
+    'control rows must be hand-labellable too');
+
+  const randomIds = random.map((r) => r.mem_id);
+  assert.equal(new Set(randomIds).size, randomIds.length,
+    'only the turn-aligned call may emit a random cohort — a zero-retrieval streak must not ' +
+    're-sample the floor once per repeated Stop and over-weight it against the main distribution');
+  assert.equal(rows.filter((r) => r.control === 'stale_injection').length, 1,
+    'the second Stop must still record its stale-injection row (the probe labels, it does not suppress)');
+});
+
+test('control_sample_size 0 disables the random cohort without disabling the probe', () => {
+  const db = openDb();
+  const OFF_SESSION = 'sess-probe-random-off';
+  seedMemory(db, 803, 'a memory injected in the control-disabled session here');
+  seedInjection(db, 1, [803], 'user_prompt_submit', OFF_SESSION);
+
+  recordL25Probe(db, OFF_SESSION, writeTranscript('a reply'),
+    { feedback: { l25_probe: { control_sample_size: 0 } } });
+
+  const rows = probeLines().filter((r) => r.session_id === OFF_SESSION);
+  assert.equal(rows.filter((r) => r.control === 'random').length, 0);
+  assert.equal(rows.filter((r) => r.control === null).length, 1, 'the main probe still runs');
 });
 
 // F4 regression: the real v0.12 matcher (matchesImplicitReference) lowercases
@@ -245,6 +315,42 @@ test('has_cjk is false for latin-only memory content', () => {
   const rows = probeLines().filter((r) => r.mem_id === 602);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].has_cjk, false);
+});
+
+// C1 regression: v0.14 cannot compute precision/recall without ~50 hand-labelled
+// samples ("did this reply actually use this memory?"), and by analysis time the
+// Claude Code transcript is gone — the same rotation problem that destroyed
+// recent_injections and is the reason v0.13 exists. A row that records only
+// reply_len is unlabellable. The excerpt MUST come from the same window the
+// features are measured over (last assistant message only), or the label will
+// not correspond to the features.
+test('probe rows carry a bounded reply excerpt, the transcript path, and a bounded memory excerpt', () => {
+  const db = openDb();
+  const C1_SESSION = 'sess-probe-c1';
+  const content = `prefer vitest over jest for unit tests ${'and always colocate the spec file '.repeat(10)}`;
+  assert.ok(content.length > 300, 'fixture sanity: memory must exceed the excerpt cap');
+  seedMemory(db, 701, content);
+  seedInjection(db, 1, [701], 'user_prompt_submit', C1_SESSION);
+
+  const reply = `Understood, I will prefer vitest over jest.${' padding words here'.repeat(60)}`;
+  assert.ok(reply.length > 600, 'fixture sanity: reply must exceed the excerpt cap');
+  const transcript = writeTranscript(reply);
+
+  recordL25Probe(db, C1_SESSION, transcript, {});
+
+  const rows = probeLines().filter((r) => r.mem_id === 701);
+  assert.equal(rows.length, 1);
+  const r = rows[0];
+
+  assert.equal(r.transcript_path, transcript,
+    'without the transcript path a sample cannot be traced back to its turn');
+  assert.equal(r.reply_head, reply.slice(0, 600),
+    'the excerpt must be the head of the SAME last-assistant reply the features measure');
+  assert.equal(r.mem_head, content.slice(0, 300),
+    'the memory excerpt is what a human reads to decide "was this memory used?"');
+  assert.equal(r.reply_len, reply.length,
+    'reply_len must still be the TRUE full length, not the truncated excerpt length');
+  assert.equal(r.mem_len, content.length, 'mem_len must still be the true full length');
 });
 
 test('probe is a no-op when the session has no prompt injections', () => {

@@ -29,6 +29,7 @@ function probeRow(overrides) {
     session_id: 's-1',
     prompt_idx: 1,
     turn_aligned: true,
+    control: null,
     mem_id: 1,
     mem_type: 'rule',
     mem_source: 'auto_inferred',
@@ -64,15 +65,17 @@ function withConfig(configObj, work) {
   }
 }
 
-test('diagnose --feedback (decision stream, default config): reads l25-probe.jsonl, segments turn_aligned and has_cjk, never metrics.jsonl', () => {
+test('diagnose --feedback (decision stream, default config): reads l25-probe.jsonl, segments by control cohort and has_cjk, never metrics.jsonl', () => {
   resetFiles();
 
-  // Decision stream: 4 rows — 2 turn-aligned non-CJK, 1 turn-aligned CJK, 1 negative control.
+  // Decision stream: 5 rows — 2 turn-aligned non-CJK, 1 turn-aligned CJK,
+  // 1 random control, 1 stale injection.
   const decisionRows = [
-    probeRow({ mem_id: 1, l25_cov: 0.10, l25_lcp: 1, l25_id_literal: false, l25_legacy_hit: false, has_cjk: false, turn_aligned: true }),
-    probeRow({ mem_id: 2, l25_cov: 0.20, l25_lcp: 2, l25_id_literal: false, l25_legacy_hit: false, has_cjk: false, turn_aligned: true }),
-    probeRow({ mem_id: 3, l25_cov: 0.95, l25_lcp: 9, l25_id_literal: true, l25_legacy_hit: true, has_cjk: true, turn_aligned: true }),
-    probeRow({ mem_id: 4, l25_cov: 0.05, l25_lcp: 1, l25_id_literal: false, l25_legacy_hit: false, has_cjk: false, turn_aligned: false })
+    probeRow({ mem_id: 1, l25_cov: 0.10, l25_lcp: 1, l25_id_literal: false, l25_legacy_hit: false, has_cjk: false, turn_aligned: true, control: null }),
+    probeRow({ mem_id: 2, l25_cov: 0.20, l25_lcp: 2, l25_id_literal: false, l25_legacy_hit: false, has_cjk: false, turn_aligned: true, control: null }),
+    probeRow({ mem_id: 3, l25_cov: 0.95, l25_lcp: 9, l25_id_literal: true, l25_legacy_hit: true, has_cjk: true, turn_aligned: true, control: null }),
+    probeRow({ mem_id: 4, l25_cov: 0.05, l25_lcp: 1, l25_id_literal: false, l25_legacy_hit: false, has_cjk: false, turn_aligned: false, control: 'random' }),
+    probeRow({ mem_id: 5, l25_cov: 0.07, l25_lcp: 1, l25_id_literal: false, l25_legacy_hit: false, has_cjk: false, turn_aligned: false, control: 'stale_injection' })
   ];
   writeFileSync(path.join(dataRoot, 'l25-probe.jsonl'), `${decisionRows.join('\n')}\n`, 'utf8');
 
@@ -86,22 +89,31 @@ test('diagnose --feedback (decision stream, default config): reads l25-probe.jso
   const out = captureStdout(() => cmdDiagnoseFeedback(openDb(), { days: 7 }));
 
   assert.match(out, /l25-probe\.jsonl/);
-  assert.match(out, /samples:\s*4 total \(3 turn-aligned, 1 negative-control\)/);
-  assert.match(out, /Negative control/);
+  assert.match(out, /samples:\s*5 total \(3 turn-aligned, 1 random-control, 1 stale-injection, 0 unclassified\)/);
   assert.match(out, /\d+ bytes/); // decision file size is surfaced
 
-  // Cohort headers, anchored to the exact 4-space indent + label so
-  // "non-CJK (n=1)" (negative control) can never satisfy an assertion meant
-  // for "CJK (n=1)" (aligned) via unanchored substring matching — both
-  // strings legitimately appear in this output.
-  assert.match(out, /^ {4}non-CJK \(n=2\)$/m); // aligned non-CJK: rows 1,2
+  // The three cohorts are reported separately. The random cohort is the one
+  // v0.14 compares against; conflating it with stale injections (which are
+  // still in the model's context) would report a floor that is not one.
+  assert.match(out, /Random control .*THE noise floor/);
+  assert.match(out, /Stale injection .*NOT a noise floor/);
+
+  // Cohort blocks pinned as whole sections so a "non-CJK (n=1)" belonging to
+  // one cohort can never satisfy an assertion meant for another — that exact
+  // string legitimately appears under two different headings here.
+  assert.match(out, /Turn-aligned[^\n]*\n {4}non-CJK \(n=2\)\n/);
+  assert.match(out, /Random control[^\n]*\n {4}non-CJK \(n=1\)\n(?: {6}[^\n]*\n)+ {4}CJK \(n=0\)/);
+  assert.match(out, /Stale injection[^\n]*\n {4}non-CJK \(n=1\)\n(?: {6}[^\n]*\n)+ {4}CJK \(n=0\)/);
   assert.match(out, /^ {4}CJK \(n=1\)$/m); // aligned CJK: row 3
-  assert.match(out, /^ {4}non-CJK \(n=1\)$/m); // negative-control non-CJK: row 4
-  assert.match(out, /^ {4}CJK \(n=0\)$/m); // negative-control CJK: none
 
   assert.match(out, /legacy hits:\s*0\/2/); // non-CJK aligned cohort
   assert.match(out, /legacy hits:\s*1\/1/); // CJK aligned cohort
-  assert.match(out, /no legacy hits/i);
+  assert.match(out, /no legacy hits/i); // the aligned non-CJK cohort still warns
+
+  // A control cohort with zero legacy hits is CORRECT — warning there would
+  // train the reader to ignore the warning that matters.
+  assert.equal((out.match(/WARNING: no legacy hits/g) ?? []).length, 1,
+    'only the turn-aligned cohort may warn about zero legacy hits');
 
   // Exact quantile lines, pinned per cohort. These close three failure
   // modes that pure count/ratio assertions above cannot see:
@@ -121,6 +133,37 @@ test('diagnose --feedback (decision stream, default config): reads l25-probe.jso
     out,
     /CJK \(n=1\)\n {6}l25_cov: p50=0\.950 p75=0\.950 p90=0\.950 p95=0\.950 max=0\.950\n {6}l25_lcp: p50=9\.000 p75=9\.000 p90=9\.000 p95=9\.000 max=9\.000/
   );
+});
+
+// C3 read-side regression. 281 rows were already on disk before `control`
+// existed. They carry only turn_aligned, and a pre-C3 turn_aligned=false row
+// means exactly what 'stale_injection' means now — it must land there, not in
+// the random cohort (which would report a floor that was never measured) and
+// not in 'unclassified' (which would hide 281 real samples).
+test('diagnose --feedback cohorts pre-C3 rows by turn_aligned and quarantines rows it cannot place', () => {
+  resetFiles();
+
+  const legacyAligned = JSON.parse(probeRow({ mem_id: 10, turn_aligned: true }));
+  delete legacyAligned.control;
+  const legacyStale = JSON.parse(probeRow({ mem_id: 11, turn_aligned: false }));
+  delete legacyStale.control;
+  // Neither a known control label nor a boolean turn_aligned: unplaceable.
+  const unplaceable = JSON.parse(probeRow({ mem_id: 12, control: 'something_v0_14_added' }));
+  delete unplaceable.turn_aligned;
+
+  writeFileSync(
+    path.join(dataRoot, 'l25-probe.jsonl'),
+    `${[legacyAligned, legacyStale, unplaceable].map((r) => JSON.stringify(r)).join('\n')}\n`,
+    'utf8'
+  );
+
+  const out = captureStdout(() => cmdDiagnoseFeedback(openDb(), { days: 7 }));
+
+  assert.match(out, /samples:\s*3 total \(1 turn-aligned, 0 random-control, 1 stale-injection, 1 unclassified\)/);
+  assert.match(out, /Unclassified: 1 row\(s\)/);
+  // With no random cohort the report must say so rather than let a reader
+  // assume the main distribution cleared a floor that was never measured.
+  assert.match(out, /WARNING: no random-control rows/);
 });
 
 test('diagnose --feedback degrades gracefully with no decision-stream samples', () => {
@@ -167,5 +210,5 @@ test('diagnose --feedback (decision_data.enabled=false): falls back to readMetri
   // out-of-window row had not been filtered by `days`, this would read
   // "2 total" instead of "1 total" — that's the proof this reads the right
   // file AND applies the day window, unlike the decision-stream path.
-  assert.match(out, /samples:\s*1 total \(1 turn-aligned, 0 negative-control\)/);
+  assert.match(out, /samples:\s*1 total \(1 turn-aligned, 0 random-control, 0 stale-injection, 0 unclassified\)/);
 });

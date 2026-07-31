@@ -1376,6 +1376,40 @@ function probeMemoriesByIds(db, ids) {
 }
 
 /**
+ * K random active memories that have NOT been injected at any point in this
+ * session — the genuine noise floor.
+ *
+ * The pre-existing turn_aligned=false rows are NOT that floor: ccmem injects
+ * via additionalContext at UserPromptSubmit, which persists in the model's
+ * context for every later turn of the session, so those rows measure a STALE
+ * INJECTION (still in context, just not retrieved for this turn), not an absent
+ * one. They also never fire in practice — retrieval's LIKE fallback means a
+ * populated store retrieves something nearly every turn, which is why 281 live
+ * rows contained zero of them — and when they do fire, a zero-retrieval streak
+ * re-probes the same few memories once per turn, which is a biased sample.
+ *
+ * "Not injected this session" is the exclusion that makes these rows a control:
+ * a memory that WAS injected earlier is still in the model's context and could
+ * legitimately show up in the reply, which would inflate the floor.
+ */
+function randomControlMemories(db, sessionId, k) {
+  if (!(k > 0)) return [];
+  return db.prepare(
+    `SELECT id, content, type, source
+     FROM memories
+     WHERE status = 'active'
+       AND decay_status IN ('active', 'probation')
+       AND id NOT IN (
+         SELECT CAST(je.value AS INTEGER)
+         FROM recent_injections AS ri, json_each(ri.mem_ids) AS je
+         WHERE ri.session_id = ?
+       )
+     ORDER BY RANDOM()
+     LIMIT ?`
+  ).all(sessionId, k);
+}
+
+/**
  * Most recent UserPromptSubmit injection for this session.
  *
  * MUST read recent_injections, never memory_feedback: memory_feedback.outcome
@@ -1430,6 +1464,82 @@ function setLastProbedPromptIdx(db, sessionId, promptIdx) {
 
 const CJK_RANGE = /[一-鿿぀-ヿ가-힯]/;
 
+// Bounded excerpts, not full text. ~1KB/row against a ~200KB/day budget, and
+// both live under the user's own data root alongside the transcripts and the
+// memory content they quote, so the privacy delta is nil.
+const PROBE_REPLY_HEAD_MAX = 600;
+const PROBE_MEM_HEAD_MAX = 300;
+
+/**
+ * Build one probe row. `control` is the cohort label and is the ONLY field an
+ * analyst should cohort on:
+ *   null               — the memory was injected for THIS turn (main distribution)
+ *   'stale_injection'  — injected earlier this session, still in the model's
+ *                        context, but not retrieved for this turn
+ *   'random'           — sampled at random from memories never injected this
+ *                        session (the real noise floor)
+ */
+function buildProbeRow(mem, ctx, control) {
+  const content = String(mem.content ?? '');
+  const memTokens = featureTokens(content);
+  if (memTokens.size < 3) return null;
+
+  const memWords = [...content.toLowerCase().matchAll(CJK_OR_WORD)].map((m) => m[0]);
+
+  // Reconstruct the real v0.12 matcher (matchesImplicitReference above):
+  // text.includes(content) || text.includes('m' + id), both lowercased.
+  const contentMatch = ctx.lowerReply.includes(content.trim().toLowerCase());
+  const idLiteralMatch = ctx.lowerReply.includes(`m${mem.id}`);
+
+  return {
+    hook: 'stop',
+    l25_probe: true,
+    session_id: ctx.sessionId,
+    prompt_idx: ctx.promptIdx,
+    // Retained for continuity with rows already on disk. `control` is the
+    // authoritative cohort field; this stays "was this memory retrieved for
+    // this turn", which is false for both control cohorts.
+    turn_aligned: control === null ? ctx.turnAligned : false,
+    control,
+    mem_id: mem.id,
+    mem_type: mem.type,
+    mem_source: mem.source,
+    l25_cov: Number(memoryCoverage(memTokens, ctx.replyTokens).toFixed(4)),
+    l25_lcp: longestCommonPhrase(memWords, ctx.replyText),
+    // True when the reply contains the memory's bare id token (e.g. "m101"),
+    // case-insensitively. Kept as its own field (separate from
+    // l25_legacy_hit below) so v0.14 can analyse the content-match and
+    // id-literal branches independently.
+    l25_id_literal: idLiteralMatch,
+    // The actual v0.12 matcher's verdict — content-substring match OR the
+    // bare id literal, both case-insensitive — kept as the real control
+    // baseline for v0.14, not an approximation of it.
+    l25_legacy_hit: contentMatch || idLiteralMatch,
+    // Live data (281 rows) confirms the decision to segment by script, though
+    // not the direction originally guessed: CJK coverage is LOWER, not
+    // near-binary (cov p50 0.042 vs 0.111 non-CJK), and CJK l25_lcp reaches 2
+    // rather than saturating at 1. featureTokens does not word-segment CJK —
+    // an unbroken run collapses to one long token that the reply must match
+    // whole — so both features are structurally harder to score in CJK. One
+    // threshold across both scripts would therefore be wrong in a known
+    // direction; flag the script so v0.14 can fit each cohort separately.
+    has_cjk: CJK_RANGE.test(content),
+    mem_len: content.length,
+    mem_tokens: memTokens.size,
+    reply_len: ctx.replyText.length,
+    // C1: without these three a row cannot be hand-labelled. v0.14 needs ~50
+    // human labels ("did this reply actually use this memory?") to compute
+    // precision/recall, and by then the Claude Code transcript is gone — the
+    // same rotation problem that destroyed recent_injections and is the whole
+    // reason v0.13 exists. reply_head is the head of the SAME window the
+    // features measure (last assistant message only), so the label
+    // corresponds to the features.
+    transcript_path: ctx.transcriptPath,
+    reply_head: ctx.replyText.slice(0, PROBE_REPLY_HEAD_MAX),
+    mem_head: content.slice(0, PROBE_MEM_HEAD_MAX)
+  };
+}
+
 /**
  * v0.13 A1: record L2.5 candidate features for the most recent prompt injection.
  *
@@ -1449,66 +1559,46 @@ export function recordL25Probe(db, sessionId, transcriptPath, config) {
 
   // A turn that retrieved nothing writes no recent_injections row, so Stop
   // would otherwise re-pick the previous turn's row on this turn's reply.
-  // That is not noise to suppress — it is a NEGATIVE CONTROL: a memory
-  // definitely not in context, scored against a reply. v0.14's question is
-  // not just "which threshold" but "is any threshold achievable at all", and
-  // that needs the noise floor these rows measure. So: still record every
-  // row, labelled turn_aligned=false, and only advance the probed-floor on
-  // turn_aligned=true turns — a long zero-retrieval streak then keeps
-  // producing one labelled negative-control set per turn (each has a
-  // distinct reply, so these are not duplicates of each other).
+  // The probe LABELS, it does not suppress: still record every row, and only
+  // advance the probed-floor on turn_aligned=true turns.
+  //
+  // These rows are labelled control='stale_injection', NOT a noise floor.
+  // ccmem injects via additionalContext at UserPromptSubmit, which persists in
+  // the model's context for the rest of the session, so the memory is still in
+  // context — just not retrieved for this turn. The genuine floor is the
+  // random cohort sampled below.
   const lastProbedIdx = getLastProbedPromptIdx(db, sessionId);
   const turnAligned = lastProbedIdx === null || promptIdx > lastProbedIdx;
   if (turnAligned) {
     setLastProbedPromptIdx(db, sessionId, promptIdx);
   }
 
+  const probeCfg = config?.feedback?.l25_probe ?? {};
   const decisionCfg = config?.metrics?.decision_data;
-  const maxProbe = Number(config?.feedback?.l25_probe?.max_per_turn ?? 8);
-  const replyTokens = featureTokens(replyText);
-  const lowerReply = replyText.toLowerCase();
-  const rows = probeMemoriesByIds(db, ids.slice(0, maxProbe));
+  const maxProbe = Number(probeCfg.max_per_turn ?? 8);
+  const ctx = {
+    sessionId,
+    promptIdx,
+    turnAligned,
+    transcriptPath,
+    replyText,
+    replyTokens: featureTokens(replyText),
+    lowerReply: replyText.toLowerCase()
+  };
 
-  for (const mem of rows) {
-    const content = String(mem.content ?? '');
-    const memTokens = featureTokens(content);
-    if (memTokens.size < 3) continue;
+  for (const mem of probeMemoriesByIds(db, ids.slice(0, maxProbe))) {
+    const row = buildProbeRow(mem, ctx, turnAligned ? null : 'stale_injection');
+    if (row) recordDecisionMetric(row, decisionCfg);
+  }
 
-    const memWords = [...content.toLowerCase().matchAll(CJK_OR_WORD)].map((m) => m[0]);
+  // Only on turn-aligned turns: a zero-retrieval streak would otherwise emit a
+  // fresh random cohort per repeated Stop against the same injection, which
+  // over-weights the floor relative to the main distribution.
+  if (!turnAligned) return;
 
-    // Reconstruct the real v0.12 matcher (matchesImplicitReference above):
-    // text.includes(content) || text.includes('m' + id), both lowercased.
-    const contentMatch = lowerReply.includes(content.trim().toLowerCase());
-    const idLiteralMatch = lowerReply.includes(`m${mem.id}`);
-
-    recordDecisionMetric({
-      hook: 'stop',
-      l25_probe: true,
-      session_id: sessionId,
-      prompt_idx: promptIdx,
-      turn_aligned: turnAligned,
-      mem_id: mem.id,
-      mem_type: mem.type,
-      mem_source: mem.source,
-      l25_cov: Number(memoryCoverage(memTokens, replyTokens).toFixed(4)),
-      l25_lcp: longestCommonPhrase(memWords, replyText),
-      // True when the reply contains the memory's bare id token (e.g. "m101"),
-      // case-insensitively. Kept as its own field (separate from
-      // l25_legacy_hit below) so v0.14 can analyse the content-match and
-      // id-literal branches independently.
-      l25_id_literal: idLiteralMatch,
-      // The actual v0.12 matcher's verdict — content-substring match OR the
-      // bare id literal, both case-insensitive — kept as the real control
-      // baseline for v0.14, not an approximation of it.
-      l25_legacy_hit: contentMatch || idLiteralMatch,
-      // CJK runs are not word-segmented by featureTokens (an unbroken run
-      // collapses to one token), which saturates l25_lcp at 1 and skews
-      // l25_cov toward binary for CJK memories. Flag it so v0.14 can segment
-      // the distribution instead of setting one threshold across both.
-      has_cjk: CJK_RANGE.test(content),
-      mem_len: content.length,
-      mem_tokens: memTokens.size,
-      reply_len: replyText.length
-    }, decisionCfg);
+  const k = Number(probeCfg.control_sample_size ?? 3);
+  for (const mem of randomControlMemories(db, sessionId, k)) {
+    const row = buildProbeRow(mem, ctx, 'random');
+    if (row) recordDecisionMetric(row, decisionCfg);
   }
 }

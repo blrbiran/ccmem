@@ -41,6 +41,12 @@
     "l1_positive": {
       "enabled": true,
       "cosine_threshold": 0.65
+    },
+    "l25_probe": {
+      "_comment": "enabled gates EXISTENCE of L2.5 probe rows (false = none are produced). Not to be confused with metrics.decision_data.enabled, which gates only DURABILITY. control_sample_size is how many random never-injected-this-session memories are scored against the same reply per turn-aligned turn (the noise floor); 0 disables the cohort without disabling the probe.",
+      "enabled": true,
+      "max_per_turn": 8,
+      "control_sample_size": 3
     }
   },
   "recent_injections": { "retention_days": 14, "max_per_session": 20 },
@@ -186,6 +192,7 @@
   },
   "metrics": {
     "decision_data": {
+      "_comment": "enabled gates DURABILITY only: when false, probe rows are NOT dropped — they fall back to the rotated metrics.jsonl. retention_days is deliberately the INVERSE of every other retention setting in this file: 0 means never auto-delete, because decision data must be removed by explicit human action, not silently by a background job. Any value > 0 opts in to bounded retention.",
       "enabled": true,
       "file": "l25-probe.jsonl",
       "retention_days": 0

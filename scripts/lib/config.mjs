@@ -43,6 +43,18 @@ export const DEFAULT_CONFIG = {
     l1_positive: {
       enabled: true,
       cosine_threshold: 0.65
+    },
+    // `enabled` here gates EXISTENCE (false = no probe rows are produced at
+    // all). Do not confuse it with metrics.decision_data.enabled, which gates
+    // only DURABILITY — rows are still produced, they just fall back to the
+    // rotated metrics.jsonl.
+    l25_probe: {
+      enabled: true,
+      max_per_turn: 8,
+      // Random never-injected-this-session memories scored against the same
+      // reply, per turn-aligned turn — the noise floor v0.14 compares the main
+      // distribution against. 0 disables the cohort without disabling the probe.
+      control_sample_size: 3
     }
   },
   recent_injections: { retention_days: 14, max_per_session: 20 },

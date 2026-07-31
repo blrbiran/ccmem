@@ -5,7 +5,7 @@ import { loadConfig } from '../config.mjs';
 import { getDbPath, getSchemaVersion } from '../db.mjs';
 import { getProvider } from '../embedding/provider.mjs';
 import { currentEmbeddingSig } from '../embedding/signature.mjs';
-import { decisionDataFile, decisionDataSizeBytes } from '../metrics.mjs';
+import { decisionDataFile, decisionDataSizeBytes, metricsFile } from '../metrics.mjs';
 import { fallbackProjectKey, resolveProjectKey } from '../project-key.mjs';
 import { collectInjectionRows, countNeverInjected } from '../recent-injections.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
@@ -690,7 +690,7 @@ function computeRevalidationThresholdSuggestion(db, cfg, startMs) {
 
 function computeEmbeddingWeightSuggestion(db, cfg, startMs) {
   const current = Number(cfg.retrieval?.weights?.semantic ?? 0.4);
-  const metricsPath = `${getDbPath().replace(/global\.db$/, 'metrics.jsonl')}`;
+  const metricsPath = metricsFile();
   let lines = [];
 
   try {
@@ -1073,7 +1073,7 @@ export function getMetricsDiagnostics(db, { days = 14, cfg = loadConfig() } = {}
 
 export function readMetricsLines(days) {
   const cutoff = windowStartMs(days);
-  const base = `${getDbPath().replace(/global\.db$/, 'metrics.jsonl')}`;
+  const base = metricsFile();
   const out = [];
 
   // Oldest generation first so chronological order is preserved.

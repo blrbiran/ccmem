@@ -6,9 +6,16 @@ import { getDataRoot } from './db.mjs';
 // more than one rotated generation buys nothing and costs disk.
 export const MAX_METRICS_BYTES = 8 * 1024 * 1024;
 
+/** The runtime-metrics stream's on-disk path. Exported for the same reason
+ * decisionDataFile() is: readers (diagnose) must resolve the exact path this
+ * writer uses rather than re-deriving it from getDbPath() and drifting. */
+export function metricsFile() {
+  return path.join(getDataRoot(), 'metrics.jsonl');
+}
+
 export function recordMetric(event) {
   mkdirSync(getDataRoot(), { recursive: true });
-  const file = path.join(getDataRoot(), 'metrics.jsonl');
+  const file = metricsFile();
 
   try {
     if (statSync(file).size > MAX_METRICS_BYTES) {

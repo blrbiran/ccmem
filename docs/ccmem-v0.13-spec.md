@@ -70,7 +70,7 @@ v0.12 已 ship 以下能力，v0.13 在其上叠加，**不重写**：
 | 全生命周期 `archived` | **23**（0.6%） | 出口速率 ≈ 0 |
 | `memory_feedback` outcome | unknown **1879** / unhelpful 48 / **helpful_implicit 2** | 反馈闭环停摆 |
 | active `auto_inferred` 停在初始 trust | **3437 / 3544（97%）** | trust 从未分化 |
-| active `auto_inferred` 中 `type='rule'` | **2571**（71%） | type 通胀（rule = 最高 base_priority）|
+| active `auto_inferred` 中 `type='rule'` | **2571 / 3544（72.5%）** | type 通胀（rule = 最高 base_priority）|
 | 有 embedding 的记忆 | **0** | 语义路从未启用 |
 
 **根因（已定位到行）**：`scripts/lib/feedback.mjs:68`
@@ -158,7 +158,7 @@ Finding 16 半截 migration）的又一实例——**只是这次 inert 的是�
 | 注入即算正向用量（hermes `view` 语义）| 需单独论证 | 与已废弃的 L3「沉默不算正反馈」同构（§0.5）|
 | 出口参数调整（归档阈值 / 半衰期）| v0.14+ | **出口没坏，是没有输入**——先修信号再谈参数 |
 | type 通胀治理（71% 被标 `rule`）| v0.14 | 需先确认是 prompt 导致还是 LLM 倾向；A2 的负面清单可能已部分缓解 |
-| 图检索 / 多跳 / GraphRAG | 不做 | 注入预算 ≤6 条、库千条量级，非真实痛点；见 §0.7 |
+| 图检索 / 多跳 / GraphRAG | 不做 | 注入预算 ≤6 条、库千条量级，多跳推理与"语料级全局问题"均非真实痛点；`retrieval-technology` §3 亦警告"别反过来过度设计" |
 | rerank（cross-encoder）| 不做 | hook 内禁模型调用；库规模下收益远低于文档 RAG 场景 |
 | benchmark corpus ≥100 + per-lane recall | v0.14 | v0.12 Finding 6 遗留，与本版主线无关 |
 | better-sqlite3 + sqlite-vec ANN | v0.14+ | 0 条记忆有向量，无性能压力 |
@@ -177,34 +177,39 @@ Finding 16 半截 migration）的又一实例——**只是这次 inert 的是�
 ### 1.4 完成判据（M14）
 
 **A1 — 反馈闭环量表**：
-1. 每个有注入的 turn，Stop hook 为每条被注入记忆写一行 `metrics.jsonl`，含 `l25_cov` / `l25_lcp` / `l25_id_literal` / `mem_len` / `reply_len`
+1. 每个有注入的 turn，Stop hook 为每条被注入记忆写一行 `metrics.jsonl`，含 `prompt_idx` / `l25_cov` / `l25_lcp` / `l25_id_literal` / `l25_legacy_hit` / `mem_len` / `reply_len`
 2. **trust 零变化**：A1 代码路径不调用 `adjustTrust` / `markOutcomeForIds`（不变量 #121）
-3. probe 失败（transcript 缺失 / 解析失败）不阻断 Stop hook 其余逻辑
-4. Stop hook p95 仍 `< 200ms`（≤6 条记忆 × 1 次回复的 token set 运算）
-5. `diagnose --feedback` 新子命令输出 probe 特征分布（p50/p75/p90/p95/max + 各阈值命中率）
-6. `feedback.l25_probe.enabled=false` 时完全不产生 probe 记录
+3. **probe 数据源是 `recent_injections` 而非 `memory_feedback`**，且只取 `inject_source='user_prompt_submit'`（不变量 #129；理由见 §4.1 R1）
+4. **`l25_legacy_hit=true` 的样本确实会出现**——即 legacy 命中的 turn 不被 probe 漏掉（这是 #3 的可观测证据；构造性测试）
+5. probe 失败（transcript 缺失 / 解析失败）不阻断 Stop hook 其余逻辑
+6. Stop hook p95 仍 `< 200ms`（≤6 条记忆 × 1 次回复的 token set 运算）
+7. `diagnose --feedback` 新子命令输出 probe 特征分布（p50/p75/p90/p95/max + 各阈值命中率）
+8. `feedback.l25_probe.enabled=false` 时完全不产生 probe 记录
+9. **`metrics.jsonl` 轮转已落地**（8MB 单代）**且 `readMetricsLines` 同时读 `.1`**（§5.1.1）
 
 **A2 — 入口收紧**：
-7. summarize prompt 含"环境性失败"与"否定性断言"两条 DO-NOT-EXTRACT
-8. `checkQuality` 新增 `env_failure` / `negative_assertion` 两条规则，均可经 `rules_enabled` 单独关闭
-9. **误伤回归**：一组合法记忆样本（含"这个项目不支持 CommonJS"这类合法否定式约定）全部 `pass`（§5.2.2）
-10. 新规则命中时 `quality_gate_reject` audit 的 `reason` 字段能区分到具体规则名
+10. summarize prompt 含"环境性失败"与"否定性断言"两条 DO-NOT-EXTRACT
+11. `checkQuality` 新增 `env_failure` / `negative_assertion` 两条规则，均可经 `rules_enabled` 单独关闭
+12. **误伤回归**：§5.2.2 表中标 `pass` 的**四行**全部通过——含"这个项目不支持 CommonJS"这类
+    合法否定式约定，**以及"遇到 command not found 时先跑 nvm use 22"这类带补救措施的长文本**（R2）
+13. `env_failure` 带 `text.length < 120` 闸门（§5.2.2 (a)）；`negative_assertion` **不带**长度闸门
+14. 新规则命中时 `quality_gate_reject` audit 的 `reason` 字段能区分到具体规则名
 
 **B1 — embedding 签名**：
-11. `memories.embedding_sig` 列存在；写入向量时同步写签名 `provider:model:dim`
-12. cosine 路只对 `embedding_sig = <当前签名>` 的行计算；签名不符的行被排除且计数
-13. `query_embedding_cache` 的 key 含 dim（改用签名而非裸 model 名）
-14. `diagnose --retrieval` 输出 stale 向量数（签名不符 / 签名为 NULL 但 embedding 非空）
-15. `vec_backfill` 优先处理签名不符的行
+15. `memories.embedding_sig` 列存在；写入向量时同步写签名 `provider:model:dim`
+16. cosine 路只对 `embedding_sig = <当前签名>` 的行计算；签名不符的行被排除且计数
+17. `query_embedding_cache` 的 key 含 dim（改用签名而非裸 model 名）
+18. `diagnose --retrieval` 输出 stale 向量数（签名不符 / 签名为 NULL 但 embedding 非空）
+19. `vec_backfill` 优先处理签名不符的行
 
 **B2 / B3**：
-16. `cmd/save.mjs` 的 INSERT 列清单含 `temporal_type` / `summary_meta`，显式传 NULL
-17. 新增不变量测试：含 ccmem 注入标记的 fixture transcript 经 `extractEntryText` 后**不含**任何标记
+20. `cmd/save.mjs` 的 INSERT 列清单含 `temporal_type` / `summary_meta`，显式传 NULL
+21. 新增不变量测试：含 ccmem 注入标记的 fixture transcript 经 `extractEntryText` 后**不含**任何标记
 
 **通用**：
-18. v0.12 测试套全量回归 100% 通过
-19. `config.default.json::version` = `"0.13"`
-20. **Migration 不可变纪律**：已执行过的 migration 文件内容不再修改；补充改动一律新开下一号
+22. v0.12 测试套全量回归 100% 通过
+23. `config.default.json::version` = `"0.13"`（文件在**仓库根**，不在 `scripts/` 下）
+24. **Migration 不可变纪律**：已执行过的 migration 文件内容不再修改；补充改动一律新开下一号
     `.cjs` 幂等 migration（Finding 16 的防复发措施，见 §3.1）
 
 ### 1.5 与两篇参考文章的对应关系
@@ -267,6 +272,7 @@ scripts/
 │   └── stop.mjs                  # 【改】调用 recordL25Probe (A1)
 ├── lib/
 │   ├── feedback.mjs              # 【改】新增 recordL25Probe + 特征计算 (A1)
+│   ├── metrics.mjs               # 【改】8MB 单代轮转 (A1 前置, R7)
 │   ├── quality-gate.mjs          # 【改】+env_failure +negative_assertion (A2)
 │   ├── retrieval.mjs             # 【改】cosine 路签名过滤 + cache key 用 sig (B1)
 │   ├── cmd/save.mjs              # 【改】INSERT 补 temporal_type / summary_meta (B2)
@@ -275,9 +281,11 @@ scripts/
 ├── daemon/tasks/
 │   ├── summarize-pending.mjs     # 【改】prompt +2 条 DO-NOT-EXTRACT (A2)
 │   └── vec-backfill.mjs          # 【改】优先处理签名不符行 (B1)
-├── config.default.json           # 【改】version 0.13 + feedback.l25_probe 段
 └── migrations/
     └── 016_v013.sql              # 【新增】embedding_sig + version bump
+
+config.default.json               # 【改】仓库根（不在 scripts/ 下）：
+                                  #       version 0.13 + feedback.l25_probe 段
 tests/
 └── unit/v013-*.test.mjs          # 【新增】
 ```
@@ -330,6 +338,7 @@ v0.13 **无新增 audit action**。A2 的新拒绝理由复用现有 `quality_ga
 | v0.12 daemon（in-memory schema=15）看到 DB schema=16 | v0.5 self-restart 自动处理 |
 | 存量 `embedding IS NOT NULL AND embedding_sig IS NULL` | 视为 stale：排除出 cosine 路 + 计入 `diagnose --retrieval` + 交给 `vec_backfill` 重算。**live DB 实测此类 0 行**（0 条记忆有向量），故实际迁移无痛 |
 | v0.1–v0.12 升级链 | `runMigration` 按 fileVersion > currentVersion 依次应用 |
+| 存量 `query_embedding_cache` 行（R9）| B1 把 hash 输入从 `modelId` 改为签名 → **所有存量行的 `prompt_hash` 再也命中不了**，成为孤儿。无害（只是白占空间），由 daily_maintenance 的 30 天清理自然回收。**不**做一次性 purge——多写一段迁移代码去删一批注定过期的缓存不值得 |
 
 ---
 
@@ -343,10 +352,13 @@ v0.13 变更：**在现有 L2.5 之后追加一次 probe**，只记录特征，�
 ```javascript
 // scripts/handlers/stop.mjs (v0.13 增量)
 
+// 现有导入（v0.12）：
+//   import { inferFromTranscript, inferL25FromTranscript } from '../lib/feedback.mjs';
+// v0.13 追加：
 import { recordL25Probe } from '../lib/feedback.mjs';
 
 // ... 现有 runStop 逻辑完全不变 ...
-// 在现有 applyStopFeedback(...) 之后追加：
+// 在现有 inferL25FromTranscript(...) 调用之后追加：
 
 try {
   recordL25Probe(db, hookData.session_id, hookData.transcript_path, config);
@@ -357,8 +369,27 @@ try {
 ```
 
 **关键约束**：
-- probe **必须**在现有反馈逻辑**之后**——它读的是同一批 `injected_ids`，
-  但绝不能影响那批逻辑看到的状态
+
+- probe 的数据源**必须是 `recent_injections`，不能是 `memory_feedback`** ⚠
+
+  > **为什么（R1，spec review 抓到的阻塞级设计缺陷）**：`memory_feedback.outcome` 会被
+  > 现有反馈逻辑就地改写——`updateImplicitHelpful`（`feedback.mjs:175`）在 L2.5 命中时调
+  > `updateUnknownFeedback(..., 'helpful_implicit', ...)`（`:184`），`updateSelfCorrection`（`:194`）
+  > 与 neg_keyword 路径（`:213`）同理。而 `getLastUnknownFeedback`（`:28`）**只返回仍是 `unknown` 的行**。
+  >
+  > 若 probe 跑在现有逻辑之后又去读 `memory_feedback`，则**凡是 legacy L2.5 命中的 turn，
+  > probe 都会 early-return 什么都不记** → 采集到的 `l25_legacy_hit` **恒为 false**，
+  > §5.1 决策表里"记录 legacy 判定作对照基线"整条失效。
+  >
+  > 更危险的是采样偏差方向：所有产生过任何反馈信号的 turn 都被排除，样本被系统性偏向
+  > "无信号"那一侧——**这会把 v0.14 推向"词汇层无分离度"的结论，且从数据上看不出来。**
+  >
+  > `recent_injections` 从不被反馈逻辑改写，读它可让 probe 与反馈状态**完全解耦**，
+  > 这也更符合 observe-only 的本意。
+
+- probe **只取 `inject_source = 'user_prompt_submit'` 的注入行** ⚠
+  SessionStart 的 `prompt_idx = 0` 批量注入（20–50 条）**必须排除**：它不是 turn-aligned，
+  且 design.md 本就规定 session_start 反馈跳过 L1。混进来会污染分布。
 - probe **绝不**调用 `adjustTrust` / `markOutcomeForIds` / `noteFeedback`（不变量 #121）
 - probe 失败被 try/catch 吞掉并 stderr 告警——与 v0.11 `recordWriteHistory` 的失败处理一致
 
@@ -422,7 +453,30 @@ function longestCommonPhrase(memWords, replyText) {
 }
 
 /**
- * v0.13 A1：为最近一次 unknown feedback 的每条被注入记忆记录 L2.5 候选特征。
+ * 取本 session 最近一次 **UserPromptSubmit** 注入的 mem_ids。
+ *
+ * ⚠ 数据源必须是 recent_injections 而非 memory_feedback——后者的 outcome 会被
+ * 现有反馈逻辑就地改写，probe 跑在其后会系统性漏掉所有"有信号"的 turn（见 §4.1 R1）。
+ * recent_injections 从不被反馈逻辑改写，读它可让 probe 与反馈状态完全解耦。
+ *
+ * inject_source 过滤排除 SessionStart 的 prompt_idx=0 批量注入（非 turn-aligned）。
+ */
+function latestPromptInjectionIds(db, sessionId) {
+  const row = db.prepare(
+    `SELECT mem_ids, prompt_idx
+     FROM recent_injections
+     WHERE session_id = ? AND inject_source = 'user_prompt_submit'
+     ORDER BY prompt_idx DESC, id DESC
+     LIMIT 1`
+  ).get(sessionId);
+  const ids = parseJsonArray(row?.mem_ids)
+    .map(Number)
+    .filter(Number.isFinite);
+  return { ids, promptIdx: row?.prompt_idx ?? null };
+}
+
+/**
+ * v0.13 A1：为本 session 最近一次 prompt 注入的每条记忆记录 L2.5 候选特征。
  * OBSERVE-ONLY —— 本函数及其调用链绝不修改 trust / outcome / decay_status。
  * 输出进 metrics.jsonl，供 v0.14 用实测分布定阈值。
  */
@@ -433,8 +487,7 @@ export function recordL25Probe(db, sessionId, transcriptPath, config) {
   const replyText = lastAssistantTextOrEmpty(transcriptPath);
   if (!replyText) return;
 
-  const feedback = lastUnknownFeedbackOrNull(db, sessionId);
-  const ids = feedbackIds(feedback);
+  const { ids, promptIdx } = latestPromptInjectionIds(db, sessionId);
   if (!ids.length) return;
 
   const maxProbe = Number(config?.feedback?.l25_probe?.max_per_turn ?? 8);
@@ -451,6 +504,7 @@ export function recordL25Probe(db, sessionId, transcriptPath, config) {
     recordMetric({
       hook: 'stop',
       l25_probe: true,
+      prompt_idx: promptIdx,   // turn 对齐锚点，供 v0.14 复原上下文
       mem_id: mem.id,
       mem_type: mem.type,
       mem_source: mem.source,
@@ -471,7 +525,8 @@ export function recordL25Probe(db, sessionId, transcriptPath, config) {
 
 | 决策 | 选择 | 理由 |
 |---|---|---|
-| 输出位置 | `metrics.jsonl` | 每 turn ≤8 行的高频观测；进 `audit_log` 会淹没 audit（与 v0.10 同取向）|
+| 输出位置 | `metrics.jsonl` | 每 turn ≤8 行的高频观测；进 `audit_log` 会淹没 audit（与 v0.10 同取向）。**须配轮转，见 §5.1.1** |
+| **数据源** | **`recent_injections`** | `memory_feedback.outcome` 会被现有逻辑就地改写 → 对照基线失效 + 采样偏差（§4.1 R1）|
 | 是否改 trust | **否** | §0.5——阈值未知时改 trust 比不改更糟 |
 | 同时记录 legacy 判定 | 是（`l25_legacy_hit`）| v0.14 需要"新指标 vs 现役匹配器"的对照，否则无法证明改进 |
 | `max_per_turn` 上限 | 8 | 注入默认 ≤6；留 buffer 同时防止异常 feedback 行导致 hook 超预算 |
@@ -480,6 +535,44 @@ export function recordL25Probe(db, sessionId, transcriptPath, config) {
 > **诚实的限定**：这三个特征都是**词汇层面**的。若 v0.14 的实测数据显示三者**都**没有分离度，
 > 那么结论就是"引用信号在词汇层不可得"，v0.14 必须转向别的信号源（而不是继续调阈值）。
 > **A1 的价值在于它能把这个结论证伪或证实**，而不在于它假设了哪个特征会赢。
+
+#### 5.1.1 `metrics.jsonl` 轮转（R7，A1 的前置条件）
+
+`recordMetric`（`scripts/lib/metrics.mjs`）当前是**裸 `appendFileSync`，无任何大小上限或轮转**：
+
+```javascript
+export function recordMetric(event) {
+  mkdirSync(getDataRoot(), { recursive: true });
+  appendFileSync(path.join(getDataRoot(), 'metrics.jsonl'),
+    `${JSON.stringify({ ts: Date.now(), ...event })}\n`);
+}
+```
+
+live 环境该文件已达 **218KB**，而 A1 要在**频率最高的 hook** 上每 turn 再加 ≤8 行。
+按 §0.4 的实测节奏，这是数倍增长——**不加轮转，A1 会把一个已知无上限的文件推到不可控。**
+
+因此 A1 **必须**同时落地轮转，否则不得合入：
+
+```javascript
+// scripts/lib/metrics.mjs (v0.13 增量)
+const MAX_METRICS_BYTES = 8 * 1024 * 1024;   // 8MB
+
+export function recordMetric(event) {
+  mkdirSync(getDataRoot(), { recursive: true });
+  const file = path.join(getDataRoot(), 'metrics.jsonl');
+  try {
+    if (statSync(file).size > MAX_METRICS_BYTES) {
+      // 单代轮转：.1 被覆盖，不做多代归档（诊断只需近期数据）
+      renameSync(file, `${file}.1`);
+    }
+  } catch { /* 文件不存在或 stat 失败 → 直接写 */ }
+  appendFileSync(file, `${JSON.stringify({ ts: Date.now(), ...event })}\n`);
+}
+```
+
+> **读取侧同步改造**：`readMetricsLines`（v0.10 从 `aggregateRetrievalTiming` 抽出的工具函数）
+> 需在 `metrics.jsonl` 之外**也读 `metrics.jsonl.1`**，否则轮转当天所有 diagnose 输出会突然塌陷。
+> 这是本条最容易漏的一半——轮转不是只加一个 rename。
 
 ### 5.2 A2 — 入口收紧
 
@@ -513,7 +606,14 @@ const NEGATIVE_ASSERTION = /(?:\b(?:doesn['’]?t|does not|will not|won['’]?t|
 
 // ... 在 checkQuality 内，置于 path_list 规则之后：
 
-if (enabled.env_failure !== false && ENV_FAILURE.test(text)) {
+// R2: 长度闸门——短文本里出现故障串 = 就是在记这个故障；
+// 长文本里出现 = 多半是在记"遇到 X 时该怎么办"，那正是 prompt 鼓励产出的东西。
+// 沿用本文件既有的 version_snapshot 规则（`&& text.length < 60`）同款手法。
+const ENV_FAILURE_MAX_LEN = 120;
+
+if (enabled.env_failure !== false
+    && ENV_FAILURE.test(text)
+    && text.length < ENV_FAILURE_MAX_LEN) {
   return { pass: false, reason: 'env_failure' };
 }
 
@@ -524,13 +624,24 @@ if (enabled.negative_assertion !== false && NEGATIVE_ASSERTION.test(text)) {
 
 **⚠ 误伤风险与取舍（必须实施时守住）**：
 
-`NEGATIVE_ASSERTION` 是本版**唯一有实质误伤风险**的改动。合法的项目约定经常是否定式的：
+**两条新规则都有实质误伤风险**，而且危险方式不同。
+
+**（a）`ENV_FAILURE` 会误伤 prompt 自己要求产出的东西（R2）。**
+§5.2.1 的 prompt 写的是"Record the FIX ... never record the failure itself"——
+但一条**照此要求写成**的记忆（如「遇到 `command not found` 时先跑 `nvm use 22`」）
+必然包含那个故障串，裸 regex 会把它连同故障一起拒掉。**prompt 鼓励的产出被 gate 拒收，
+是本版最讽刺的失效模式。** 因此加 `text.length < 120` 闸门：短文本≈纯故障记录，
+长文本≈带补救措施。这不完美（长故障报告会漏），但**方向偏向"宁可漏，不可误伤"**。
+
+**（b）`NEGATIVE_ASSERTION` 会误伤否定式的合法约定。** 合法项目约定经常是否定句式：
 
 | 样本 | 期望 | 为什么 |
 |---|---|---|
 | `这个项目不支持 CommonJS，一律用 ESM` | **pass** | 合法约定；regex 不含"不支持" |
 | `不要用 npm，这个项目用 pnpm` | **pass** | 合法偏好；regex 不含"不要用" |
 | `Never use console.log in production code` | **pass** | 合法规则；regex 不含 "never use" |
+| `遇到 command not found 时先跑 nvm use 22 切到项目要求的 Node 版本` | **pass** | **（a）的长度闸门**：>120 字符，是补救措施不是故障记录 |
+| `npm: command not found` | reject | 短文本纯故障记录 |
 | `sqlite-vec 在这台机器上跑不起来` | reject | 环境性否定断言 |
 | `The MCP server doesn't work` | reject | 无依据的全称否定 |
 
@@ -538,7 +649,10 @@ if (enabled.negative_assertion !== false && NEGATIVE_ASSERTION.test(text)) {
 因此刻意**不**收录 `不支持` / `不要用` / `never use` / `avoid` 这些高频出现在合法约定里的词。
 宁可漏（prompt 侧兜底），不可误伤——**误伤会直接丢掉最有价值的一类记忆**。
 
-§1.4 判据 #9 要求把上表前三行做成必过回归测试。
+`NEGATIVE_ASSERTION` **不加**长度闸门：一条全称否定无论多长都会硬化成 agent 拒绝自己的理由，
+长度不改变它的危害性质。这与（a）的取舍不同，是有意的不对称。
+
+§1.4 判据 #9 要求把上表标 **pass** 的四行全部做成必过回归测试。
 
 ### 5.3 B1 — embedding 签名/版本化
 
@@ -658,14 +772,15 @@ const staleVecs = db.prepare(
 
 | 类别 | 预计数 | 覆盖对象 |
 |---|---|---|
-| v013-l25-probe | 9 | 写 metrics 各字段 / **不调 trust（关键）** / `enabled=false` 静默 / `max_per_turn` 截断 / 无 unknown feedback 时 no-op / transcript 缺失不抛 / mem_tokens<3 跳过 / `l25_legacy_hit` 与现役匹配器一致 / Stop 主流程不受 probe 失败影响 |
-| v013-quality-gate | 10 | env_failure 命中 ×2 / negative_assertion 命中 ×2 / **误伤回归 ×3**（§5.2.2 前三行）/ rules_enabled 单独关 ×2 / reason 字段可区分 |
+| v013-l25-probe | 12 | 写 metrics 各字段（含 `prompt_idx`）/ **不调 trust（关键）** / **数据源是 recent_injections（R1）** / **legacy 命中的 turn 仍被 probe 记录且 `l25_legacy_hit=true`（R1 回归）** / **`inject_source='session_start'` 的注入被排除** / `enabled=false` 静默 / `max_per_turn` 截断 / 无注入时 no-op / transcript 缺失不抛 / mem_tokens<3 跳过 / `l25_legacy_hit` 与现役匹配器判定一致 / Stop 主流程不受 probe 失败影响 |
+| v013-metrics-rotate | 3 | 超 8MB 触发 rename 到 `.1` / `readMetricsLines` 同时读 `.1`（R7）/ 首次写入无 `.1` 时不抛 |
+| v013-quality-gate | 12 | env_failure 命中 ×2 / negative_assertion 命中 ×2 / **误伤回归 ×4**（§5.2.2 标 pass 的四行，含 R2 的长文本补救措施样本）/ 长度闸门边界 ×2 / rules_enabled 单独关 ×2 |
 | v013-embedding-sig | 8 | 签名格式 / dim 变化改签名 / cosine 路过滤 stale / stale 计数 / cache key 含 dim / 写入同步写签名 / NULL 签名视为 stale / backfill 优先处理 |
 | v013-save-temporal | 3 | INSERT 含两列 / 显式 NULL / 与 insertMemory 行为一致 |
 | v013-recall-loop | 3 | 三种标记形状均不进入 `extractEntryText` |
 | migration-016 | 3 | schema 15→16 / 幂等 / v0.1–v0.12 升级链兼容 |
 
-**预计新增**：~36 个测试。
+**预计新增**：~44 个测试（12+3+12+8+3+3 = 41 个 `v013-*` + 3 个 `migration-016`）。
 
 ### 7.2 回归测试
 
@@ -706,7 +821,12 @@ v0.12 全量测试必须 100% 通过。
 ### P1 — 首周收集（v0.14 的决策依据）
 
 **V4. L2.5 特征分布（本版的核心产出）**
+- [ ] **先验证 R1 修复真的生效**：确认样本里存在 `l25_legacy_hit:true` 的行。
+      若一条都没有，**先别信任何分布结论**——要么 R1 没修对（probe 仍漏掉有信号的 turn），
+      要么 legacy 匹配器在本周确实一次没命中（也可能，0.1% 命中率下 1000 样本期望仅 1 条）。
+      两者靠"构造一条与回复逐字重合的记忆"来区分
 - [ ] 累计 ≥1000 条 turn-aligned probe 样本
+- [ ] 确认 `metrics.jsonl` 未失控增长；若已轮转，确认 `diagnose --feedback` 数字没有塌陷（R7）
 - [ ] `diagnose --feedback` 看 `l25_cov` / `l25_lcp` / `l25_id_literal` 各自分布
 - [ ] **决策点**：三者中是否有任一存在双峰 / 可用分离度？
   - 有 → v0.14 用它做匹配器，阈值取自实测
@@ -731,6 +851,8 @@ v0.12 全量测试必须 100% 通过。
 | 不变量 | 验证方式 |
 |---|---|
 | **A1 probe 不改任何 trust / outcome / decay_status** | 单元测试 + grep #121 + dogfood V1 |
+| **A1 probe 读 `recent_injections`，与反馈状态解耦（R1）** | 单元测试 + grep #129/#131 + dogfood V4 首项 |
+| `metrics.jsonl` 有大小上限且读取侧覆盖轮转文件（R7）| 单元测试 + grep #132/#133 |
 | Trust 系数 / 优先级公式 / 归档阈值零变化 | 回归测试 |
 | L1 / L2 / L2.5 / L4 判定逻辑零变化 | 回归测试 |
 | 三路检索融合算法零变化（仅新增签名过滤）| 回归测试 |
@@ -766,11 +888,17 @@ v0.12 全量测试必须 100% 通过。
 | 121 | **A1 probe 绝不调 trust** | `sed -n '/export function recordL25Probe/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'adjustTrust\|markOutcomeForIds\|noteFeedback'` | `0` |
 | 122 | probe 输出走 metrics 而非 audit | `sed -n '/export function recordL25Probe/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'writeAudit'` | `0` |
 | 123 | cosine 路带签名过滤 | `grep -c 'embedding_sig = ?' scripts/lib/retrieval.mjs` | `≥ 1` |
-| 124 | query cache key 用签名而非裸 model 名 | `grep -n 'promptHash(' scripts/lib/retrieval.mjs` | 参数为 sig，不含 `modelId` |
+| 124 | query cache key 用签名而非裸 model 名 | `grep -c 'promptHash(modelId' scripts/lib/retrieval.mjs` | `0`（机械可检；R8 修正了原来那条需人判断的写法）|
 | 125 | quality gate 新规则可单独关闭 | `grep -c "enabled.env_failure !== false\|enabled.negative_assertion !== false" scripts/lib/quality-gate.mjs` | `2` |
 | 126 | `negative_assertion` regex 不含合法约定高频词 | `grep -n 'NEGATIVE_ASSERTION' scripts/lib/quality-gate.mjs` | 不含 `不支持`/`不要用`/`never use`/`avoid` |
 | 127 | `save.mjs` INSERT 含 temporal_type | `grep -c 'temporal_type' scripts/lib/cmd/save.mjs` | `≥ 1` |
 | 128 | v0.13 新增文件 100% 用 `writeAudit`，禁止 `logAudit(` | `grep -rn 'logAudit(' scripts/lib/embedding/signature.mjs` | 为空 |
+| **129** | **probe 数据源是 `recent_injections` 而非 `memory_feedback`（R1）** | `sed -n '/function latestPromptInjectionIds/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'recent_injections'` | `≥ 1` |
+| 130 | probe 排除 session_start 批量注入（R1）| `grep -c "inject_source = 'user_prompt_submit'" scripts/lib/feedback.mjs` | `≥ 1` |
+| 131 | probe 不读 `memory_feedback`（R1）| `sed -n '/export function recordL25Probe/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'lastUnknownFeedbackOrNull\|feedbackIds'` | `0` |
+| 132 | `metrics.jsonl` 有轮转上限（R7）| `grep -c 'MAX_METRICS_BYTES' scripts/lib/metrics.mjs` | `≥ 1` |
+| 133 | `readMetricsLines` 同时读轮转文件（R7）| `grep -c "metrics.jsonl.1\|\\.1'" scripts/lib/admin/diagnose.mjs` | `≥ 1` |
+| 134 | `env_failure` 带长度闸门（R2）| `grep -c 'ENV_FAILURE_MAX_LEN' scripts/lib/quality-gate.mjs` | `≥ 2`（定义 + 使用）|
 
 ---
 

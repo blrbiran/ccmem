@@ -46,12 +46,15 @@ v0.12 已 ship 以下能力，v0.13 在其上叠加，**不重写**：
 
 ### 0.3 版本号
 
-- `config.default.json::version` 从 `"0.11"` 升到 `"0.13"`
+- **DEFAULT_CONFIG（runtime 权威）** 版本号从 `'0.11'` 升到 `'0.13'` 
+- `config.default.json` 版本号从 `"0.11"` 升到 `"0.13"`（用户可见参考 + 测试保持同步）
 
-  > ⚠ **已发现的遗留问题**：根 `config.default.json` 当前是 `"0.11"`，而 schema 已是 15（v0.12）。
-  > **v0.12 漏了这次 version bump。** v0.13 一并补上，直接跳到 `"0.13"`（不补写 `"0.12"`，
-  > 因为该版本已 ship，回填一个从未存在过的中间值没有意义）。
-  > 同时新增不变量 #120（附录 A）防止再次漏 bump。
+  > ⚠ **已发现的遗留问题**：`loadConfig()` 从不读 `config.default.json`——它合并的是 in-code `DEFAULT_CONFIG` 与用户配置。
+  > 因此版本号的权威来源是 `scripts/lib/config.mjs:3` 的 `DEFAULT_CONFIG.version`，不是 `config.default.json`。
+  > **v0.12 漏了同步 DEFAULT_CONFIG，导致 runtime 版本恒为 `"0.11"` 而 CI 检查只看文件。**
+  > v0.13 同时补上两处：(1) `DEFAULT_CONFIG.version` 升到 `'0.13'`；(2) `config.default.json::version` 升到 `"0.13"`；
+  > (3) 新增测试（不变量 #120 + #122）确保两者保持同步，防止再次漏 bump。
+  > 直接跳到 `"0.13"`（不补写 `"0.12"`，因为该版本已 ship，回填一个从未存在过的中间值没有意义）。
 
 - schema `schema_meta.version` 从 `15` 升到 `16`（migration `016_v013.sql`）
 - `config.default.json::security.scan_patterns_version` **不 bump**（v0.13 不动 Tier 1/2 patterns）
@@ -884,21 +887,22 @@ v0.12 全量测试必须 100% 通过。
 
 | # | 不变量 | grep 命令 | 预期 |
 |---|---|---|---|
-| 120 | `config.default.json` version 与当前版本一致 | `grep -m1 '"version"' config.default.json` | `"0.13"` |
-| 121 | **A1 probe 绝不调 trust** | `sed -n '/export function recordL25Probe/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'adjustTrust\|markOutcomeForIds\|noteFeedback'` | `0` |
-| 122 | probe 输出走 metrics 而非 audit | `sed -n '/export function recordL25Probe/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'writeAudit'` | `0` |
-| 123 | cosine 路带签名过滤 | `grep -c 'embedding_sig = ?' scripts/lib/retrieval.mjs` | `≥ 1` |
-| 124 | query cache key 用签名而非裸 model 名 | `grep -c 'promptHash(modelId' scripts/lib/retrieval.mjs` | `0`（机械可检；R8 修正了原来那条需人判断的写法）|
-| 125 | quality gate 新规则可单独关闭 | `grep -c "enabled.env_failure !== false\|enabled.negative_assertion !== false" scripts/lib/quality-gate.mjs` | `2` |
-| 126 | `negative_assertion` regex 不含合法约定高频词 | `grep -n 'NEGATIVE_ASSERTION' scripts/lib/quality-gate.mjs` | 不含 `不支持`/`不要用`/`never use`/`avoid` |
-| 127 | `save.mjs` INSERT 含 temporal_type | `grep -c 'temporal_type' scripts/lib/cmd/save.mjs` | `≥ 1` |
-| 128 | v0.13 新增文件 100% 用 `writeAudit`，禁止 `logAudit(` | `grep -rn 'logAudit(' scripts/lib/embedding/signature.mjs` | 为空 |
-| **129** | **probe 数据源是 `recent_injections` 而非 `memory_feedback`（R1）** | `sed -n '/function latestPromptInjectionIds/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'recent_injections'` | `≥ 1` |
-| 130 | probe 排除 session_start 批量注入（R1）| `grep -c "inject_source = 'user_prompt_submit'" scripts/lib/feedback.mjs` | `≥ 1` |
-| 131 | probe 不读 `memory_feedback`（R1）| `sed -n '/export function recordL25Probe/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'lastUnknownFeedbackOrNull\|feedbackIds'` | `0` |
-| 132 | `metrics.jsonl` 有轮转上限（R7）| `grep -c 'MAX_METRICS_BYTES' scripts/lib/metrics.mjs` | `≥ 1` |
-| 133 | `readMetricsLines` 同时读轮转文件（R7）| `grep -c "metrics.jsonl.1\|\\.1'" scripts/lib/admin/diagnose.mjs` | `≥ 1` |
-| 134 | `env_failure` 带长度闸门（R2）| `grep -c 'ENV_FAILURE_MAX_LEN' scripts/lib/quality-gate.mjs` | `≥ 2`（定义 + 使用）|
+| 120 | DEFAULT_CONFIG（runtime 权威）version 与当前版本一致 | `grep "version: '" scripts/lib/config.mjs \| head -1` | `version: '0.13'` |
+| 121 | config drift 测试存在且可检测 | `ls -1 tests/unit/v013-config-sync.test.mjs` | 文件存在；测试验证 DEFAULT_CONFIG.version ≠ config.default.json.version 时失败 |
+| 122 | **A1 probe 绝不调 trust** | `sed -n '/export function recordL25Probe/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'adjustTrust\|markOutcomeForIds\|noteFeedback'` | `0` |
+| 123 | probe 输出走 metrics 而非 audit | `sed -n '/export function recordL25Probe/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'writeAudit'` | `0` |
+| 124 | cosine 路带签名过滤 | `grep -c 'embedding_sig = ?' scripts/lib/retrieval.mjs` | `≥ 1` |
+| 125 | query cache key 用签名而非裸 model 名 | `grep -c 'promptHash(modelId' scripts/lib/retrieval.mjs` | `0`（机械可检；R8 修正了原来那条需人判断的写法）|
+| 126 | quality gate 新规则可单独关闭 | `grep -c "enabled.env_failure !== false\|enabled.negative_assertion !== false" scripts/lib/quality-gate.mjs` | `2` |
+| 127 | `negative_assertion` regex 不含合法约定高频词 | `grep -n 'NEGATIVE_ASSERTION' scripts/lib/quality-gate.mjs` | 不含 `不支持`/`不要用`/`never use`/`avoid` |
+| 128 | `save.mjs` INSERT 含 temporal_type | `grep -c 'temporal_type' scripts/lib/cmd/save.mjs` | `≥ 1` |
+| 129 | v0.13 新增文件 100% 用 `writeAudit`，禁止 `logAudit(` | `grep -rn 'logAudit(' scripts/lib/embedding/signature.mjs` | 为空 |
+| **130** | **probe 数据源是 `recent_injections` 而非 `memory_feedback`（R1）** | `sed -n '/function latestPromptInjectionIds/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'recent_injections'` | `≥ 1` |
+| 131 | probe 排除 session_start 批量注入（R1）| `grep -c "inject_source = 'user_prompt_submit'" scripts/lib/feedback.mjs` | `≥ 1` |
+| 132 | probe 不读 `memory_feedback`（R1）| `sed -n '/export function recordL25Probe/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'lastUnknownFeedbackOrNull\|feedbackIds'` | `0` |
+| 133 | `metrics.jsonl` 有轮转上限（R7）| `grep -c 'MAX_METRICS_BYTES' scripts/lib/metrics.mjs` | `≥ 1` |
+| 134 | `readMetricsLines` 同时读轮转文件（R7）| `grep -c "metrics.jsonl.1\|\\.1'" scripts/lib/admin/diagnose.mjs` | `≥ 1` |
+| 135 | `env_failure` 带长度闸门（R2）| `grep -c 'ENV_FAILURE_MAX_LEN' scripts/lib/quality-gate.mjs` | `≥ 2`（定义 + 使用）|
 
 ---
 

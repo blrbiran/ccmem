@@ -243,7 +243,25 @@ export const DEFAULT_CONFIG = {
 
 // Freeze DEFAULT_CONFIG to prevent accidental runtime mutations process-wide.
 // All callers should use structuredClone before modifying the config.
-Object.freeze(DEFAULT_CONFIG);
+//
+// Deep, not shallow: Object.freeze alone left every nested section writable, so
+// one caller mutating e.g. DEFAULT_CONFIG.metrics.decision_data in place would
+// silently change what every later loadConfig() in the process returns — and
+// almost all of this config lives at depth 2 or 3. structuredClone (used by
+// mergeConfig and applyV08Compatibility) returns unfrozen copies, so callers
+// are unaffected.
+function deepFreeze(value) {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) {
+    return value;
+  }
+  Object.freeze(value);
+  for (const child of Object.values(value)) {
+    deepFreeze(child);
+  }
+  return value;
+}
+
+deepFreeze(DEFAULT_CONFIG);
 
 function mergeConfig(base, override) {
   if (Array.isArray(base) || Array.isArray(override)) {

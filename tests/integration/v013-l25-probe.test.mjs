@@ -47,8 +47,16 @@ function writeTranscript(assistantText) {
   return file;
 }
 
+// Decision-data rows default to enabled (config.metrics.decision_data.enabled
+// defaults to true), so with the `{}` config most tests pass, the probe now
+// writes to the durable decision stream (l25-probe.jsonl), not metrics.jsonl.
 function probeLines() {
-  const raw = readFileSync(path.join(dataRoot, 'metrics.jsonl'), 'utf8');
+  let raw;
+  try {
+    raw = readFileSync(path.join(dataRoot, 'l25-probe.jsonl'), 'utf8');
+  } catch {
+    return [];
+  }
   return raw.split('\n').filter(Boolean).map((l) => JSON.parse(l))
     .filter((r) => r.l25_probe === true);
 }
@@ -165,22 +173,27 @@ test('probe skips memories with fewer than 3 usable tokens', () => {
   assert.equal(probeLines().filter((r) => r.mem_id === 106).length, 0);
 });
 
-// F1 regression: a turn that retrieves nothing writes no recent_injections
-// row, but Stop still fires (e.g. "yes" / "continue" / a retried Stop call).
-// Without a once-per-injection guard, a repeated Stop call for the same turn
-// would re-pick the same recent_injections row and record it again.
-test('probe records at most once per injection, even across repeated Stop calls', () => {
+// F1 regression (amended per design discussion): a turn that retrieves
+// nothing writes no recent_injections row, but Stop still fires (e.g. "yes" /
+// "continue" / a retried Stop call). Re-picking the previous turn's injection
+// is not noise to suppress — it is a NEGATIVE CONTROL (a memory definitely
+// not in context, scored against a reply), which v0.14 needs to know the
+// noise floor. So both calls must record, labelled by whether the injection
+// was actually new for that turn.
+test('probe labels turn_aligned instead of suppressing repeated Stop calls', () => {
   const db = openDb();
   const DEDUP_SESSION = 'sess-probe-dedup';
-  seedMemory(db, 401, 'a memory used to test the once per injection guard');
+  seedMemory(db, 401, 'a memory used to test the turn_aligned label');
   seedInjection(db, 1, [401], 'user_prompt_submit', DEDUP_SESSION);
-  const transcript = writeTranscript('a reply mentioning the once per injection guard');
+  const transcript = writeTranscript('a reply mentioning the turn_aligned label');
 
   recordL25Probe(db, DEDUP_SESSION, transcript, {});
   recordL25Probe(db, DEDUP_SESSION, transcript, {});
 
   const rows = probeLines().filter((r) => r.mem_id === 401);
-  assert.equal(rows.length, 1, 'the second call must not re-probe the same prompt_idx');
+  assert.equal(rows.length, 2, 'both calls must record — the second is a negative control, not noise');
+  assert.equal(rows[0].turn_aligned, true, 'the first call has a genuinely new injection');
+  assert.equal(rows[1].turn_aligned, false, 'the second call re-measures the same injection against a new reply');
 });
 
 // F4 regression: the real v0.12 matcher (matchesImplicitReference) lowercases

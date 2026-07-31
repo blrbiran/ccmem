@@ -3,6 +3,7 @@ import { loadConfig } from './config.mjs';
 import { rebuildInjectionCache } from './injection-cache.mjs';
 import { getMode } from './mode.mjs';
 import { writeAudit } from './audit.mjs';
+import { pruneDecisionMetrics } from './metrics.mjs';
 import { revalidationAuditCore } from './revalidation.mjs';
 import { markLeaseComplete, RAN_BY, tryClaimLease } from './task-runs.mjs';
 
@@ -30,6 +31,15 @@ export function runSessionStartMiniPrelude(db) {
   db.prepare(
     `DELETE FROM recent_injections
      WHERE created_at < ?`
+  ).run(Date.now() - (cfg.recent_injections.retention_days * 86400000));
+
+  // config_kv is the one table with no retention logic of its own, and the
+  // L2.5 probe's per-session l25_probe_last_idx:<sessionId> keys are the
+  // first per-session-cardinality rows ever written there — left alone they
+  // accumulate one row per session forever. Piggyback on the same retention
+  // window as recent_injections since it is the closest analogue.
+  db.prepare(
+    `DELETE FROM config_kv WHERE key LIKE 'l25_probe_last_idx:%' AND set_at < ?`
   ).run(Date.now() - (cfg.recent_injections.retention_days * 86400000));
 
   db.prepare(
@@ -94,6 +104,19 @@ export function maybeRunTier15(db) {
       `DELETE FROM recent_injections
        WHERE created_at < ?`
     ).run(now - (cfg.recent_injections.retention_days * 86400000));
+
+    // See runSessionStartMiniPrelude above for why this piggybacks on
+    // recent_injections' retention window.
+    db.prepare(
+      `DELETE FROM config_kv WHERE key LIKE 'l25_probe_last_idx:%' AND set_at < ?`
+    ).run(now - (cfg.recent_injections.retention_days * 86400000));
+
+    // Decision data is unbounded by design (retention_days: 0) — pruning
+    // here only fires if a user explicitly opted into bounded retention.
+    const decisionCfg = cfg.metrics?.decision_data;
+    if (decisionCfg?.retention_days > 0) {
+      pruneDecisionMetrics(decisionCfg, now - (decisionCfg.retention_days * 86400000));
+    }
 
     db.prepare(
       `DELETE FROM task_runs

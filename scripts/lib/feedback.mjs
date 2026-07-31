@@ -2,7 +2,7 @@ import { parseTranscript, extractAssistantText } from './transcript.mjs';
 import { loadConfig } from './config.mjs';
 import { blobToVec, cosineSimilarity } from './embedding/cosine.mjs';
 import { applyOutcomeToSubset, adjustTrust } from './trust.mjs';
-import { recordMetric } from './metrics.mjs';
+import { recordDecisionMetric } from './metrics.mjs';
 
 const NEGATIVE_FEEDBACK = /不对|重做|错了|wrong|redo|undo|revert/i;
 const SELF_CORRECT = /(actually|on second thought|i was wrong|更准确地说|我之前.*错了)/i;
@@ -1426,14 +1426,23 @@ export function recordL25Probe(db, sessionId, transcriptPath, config) {
   const { ids, promptIdx } = latestPromptInjectionIds(db, sessionId);
   if (!ids.length) return;
 
-  // Probe each injection at most once per session: a turn that retrieved
-  // nothing writes no recent_injections row, so Stop would otherwise re-pick
-  // the previous turn's row and measure those memories against a reply they
-  // were never injected into (phantom low-coverage rows biasing the sample).
+  // A turn that retrieved nothing writes no recent_injections row, so Stop
+  // would otherwise re-pick the previous turn's row on this turn's reply.
+  // That is not noise to suppress — it is a NEGATIVE CONTROL: a memory
+  // definitely not in context, scored against a reply. v0.14's question is
+  // not just "which threshold" but "is any threshold achievable at all", and
+  // that needs the noise floor these rows measure. So: still record every
+  // row, labelled turn_aligned=false, and only advance the probed-floor on
+  // turn_aligned=true turns — a long zero-retrieval streak then keeps
+  // producing one labelled negative-control set per turn (each has a
+  // distinct reply, so these are not duplicates of each other).
   const lastProbedIdx = getLastProbedPromptIdx(db, sessionId);
-  if (lastProbedIdx !== null && promptIdx <= lastProbedIdx) return;
-  setLastProbedPromptIdx(db, sessionId, promptIdx);
+  const turnAligned = lastProbedIdx === null || promptIdx > lastProbedIdx;
+  if (turnAligned) {
+    setLastProbedPromptIdx(db, sessionId, promptIdx);
+  }
 
+  const decisionCfg = config?.metrics?.decision_data;
   const maxProbe = Number(config?.feedback?.l25_probe?.max_per_turn ?? 8);
   const replyTokens = featureTokens(replyText);
   const lowerReply = replyText.toLowerCase();
@@ -1451,11 +1460,12 @@ export function recordL25Probe(db, sessionId, transcriptPath, config) {
     const contentMatch = lowerReply.includes(content.trim().toLowerCase());
     const idLiteralMatch = lowerReply.includes(`m${mem.id}`);
 
-    recordMetric({
+    recordDecisionMetric({
       hook: 'stop',
       l25_probe: true,
       session_id: sessionId,
       prompt_idx: promptIdx,
+      turn_aligned: turnAligned,
       mem_id: mem.id,
       mem_type: mem.type,
       mem_source: mem.source,
@@ -1478,6 +1488,6 @@ export function recordL25Probe(db, sessionId, transcriptPath, config) {
       mem_len: content.length,
       mem_tokens: memTokens.size,
       reply_len: replyText.length
-    });
+    }, decisionCfg);
   }
 }

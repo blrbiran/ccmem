@@ -184,6 +184,13 @@ const DEFAULT_CONFIG = {
     retention_days: 90,
     min_days_for_tuning: 7
   },
+  metrics: {
+    decision_data: {
+      enabled: true,
+      file: 'l25-probe.jsonl',
+      retention_days: 0
+    }
+  },
   consolidation: {
     minBatchSize: 5,
     maxClusterSize: 15,

@@ -65,7 +65,9 @@ export const DEFAULT_CONFIG = {
         version_snapshot: true,
         test_count: true,
         timestamp_dominant: true,
-        path_list: true
+        path_list: true,
+        env_failure: true,
+        negative_assertion: true
       }
     }
   },

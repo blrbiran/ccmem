@@ -7,6 +7,23 @@ const ISO_DATE = /\d{4}-\d{2}-\d{2}/g;
 const FILE_PATH = /[\w.-]+\/[\w./-]+/g;
 const PATH_LIST_VERB = /\b(?:use|add|create|remove|change|update|prefer|avoid)\b/i;
 
+// High-confidence traces of "the tool is not installed / not configured".
+const ENV_FAILURE = /(?:command not found|no such file or directory|\bENOENT\b|is not recognized as|not installed|could not be found|找不到命令|未安装|无法找到该?命令)/i;
+
+// Blanket negations of a tool's usability. Deliberately excludes 不支持 / 不要用 /
+// never use / avoid — those appear constantly in legitimate conventions.
+const NEGATIVE_ASSERTION = /(?:\b(?:doesn['’]?t|does not|will not|won['’]?t|cannot|can['’]?t)\s+work\b|\bis (?:not available|unavailable|broken)\b|用不了|没法用|跑不起来|不可用)/i;
+
+// Short text containing a failure string IS the failure report; long text
+// containing one is usually the remedy, which the extraction prompt asks for.
+// NOTE: brief task-5-brief.md suggested 120, but CJK text is far denser than
+// English — a complete Chinese remedy ("遇到 command not found 时先跑 nvm use 22
+// ...") is only ~58 chars, well under 120, and would be misclassified as a bare
+// failure report. 50 is the midpoint of the range required by the brief's own
+// test vectors: > 41 (longest legitimate short failure report) and <= 58
+// (shortest legitimate remedy that mentions the failure it fixes).
+const ENV_FAILURE_MAX_LEN = 50;
+
 export function checkQuality(content, cfgOverride = null) {
   const text = String(content ?? '').trim();
   const cfg = cfgOverride ?? {};
@@ -47,6 +64,18 @@ export function checkQuality(content, cfgOverride = null) {
     if (paths.length >= 3 && !PATH_LIST_VERB.test(text)) {
       return { pass: false, reason: 'path_list' };
     }
+  }
+
+  if (enabled.env_failure !== false
+      && ENV_FAILURE.test(text)
+      && text.length < ENV_FAILURE_MAX_LEN) {
+    return { pass: false, reason: 'env_failure' };
+  }
+
+  // No length gate here, by design: a blanket negation hardens into a refusal
+  // regardless of length.
+  if (enabled.negative_assertion !== false && NEGATIVE_ASSERTION.test(text)) {
+    return { pass: false, reason: 'negative_assertion' };
   }
 
   return { pass: true, reason: null };

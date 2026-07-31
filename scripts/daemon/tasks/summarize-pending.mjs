@@ -75,6 +75,12 @@ function buildSummarizePrompt(transcript) {
     '  - Schema/version numbers',
     '  - Commit hashes or PR numbers',
     '  - "Fixed bug X by doing Y" unless Y reveals a durable convention',
+    '  - Environment/setup failures (missing binary, command not found, not installed,',
+    '    unconfigured tool). Record the FIX (what to install/configure) under an existing',
+    '    convention instead — never record the failure itself.',
+    '  - Negative assertions about tools ("X does not work", "X is unavailable").',
+    '    These harden into refusals the agent cites against itself long after the',
+    '    problem was fixed.',
     'Do NOT extract implementation churn, test-only results, commit info, version bumps, or one-off debugging notes.',
     '',
     transcript

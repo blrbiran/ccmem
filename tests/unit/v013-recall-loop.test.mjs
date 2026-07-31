@@ -10,6 +10,20 @@ const MARKERS = [
 
 // Shapes in which ccmem-injected content actually appears in a transcript.
 // None of these may survive extraction, or the agent will re-learn its own output.
+//
+// Each case below has a demonstrated failure mode: a specific widening of
+// extractContentText (in scripts/lib/transcript.mjs) that reddens it. Confirmed
+// manually during v0.13 Task 8 by applying each widening, re-running this file,
+// and reverting (see task-8-report.md for the full before/after diffs and output):
+//   - Case 1 and case 3 (tool_result shapes) redden when extractContentText is
+//     widened to also accept `part.type === 'tool_result'` parts (reading
+//     `part.content`).
+//   - Case 2 (tool_use/additionalContext shape) does NOT redden under that same
+//     tool_result widening — it travels a different field path. It reddens under
+//     a separate widening: extractContentText also accepting `part.type ===
+//     'tool_use'` parts and reading `part.input.additionalContext`. This is a
+//     realistic future change (capturing hook-payload context), so this case is
+//     not dead weight — do not remove it.
 const ENTRIES = [
   {
     name: 'tool_result (the Read of .ccmem/context-*.md)',

@@ -53,7 +53,7 @@ v0.12 已 ship 以下能力，v0.13 在其上叠加，**不重写**：
   > 因此版本号的权威来源是 `scripts/lib/config.mjs:3` 的 `DEFAULT_CONFIG.version`，不是 `config.default.json`。
   > **v0.12 漏了同步 DEFAULT_CONFIG，导致 runtime 版本恒为 `"0.11"` 而 CI 检查只看文件。**
   > v0.13 同时补上两处：(1) `DEFAULT_CONFIG.version` 升到 `'0.13'`；(2) `config.default.json::version` 升到 `"0.13"`；
-  > (3) 新增测试（不变量 #120 + #122）确保两者保持同步，防止再次漏 bump。
+  > (3) 新增测试（不变量 #120 + #121）确保两者保持同步，防止再次漏 bump。
   > 直接跳到 `"0.13"`（不补写 `"0.12"`，因为该版本已 ship，回填一个从未存在过的中间值没有意义）。
 
 - schema `schema_meta.version` 从 `15` 升到 `16`（migration `016_v013.sql`）
@@ -887,7 +887,7 @@ v0.12 全量测试必须 100% 通过。
 
 | # | 不变量 | grep 命令 | 预期 |
 |---|---|---|---|
-| 120 | DEFAULT_CONFIG（runtime 权威）version 与当前版本一致 | `grep "version: '" scripts/lib/config.mjs \| head -1` | `version: '0.13'` |
+| 120 | DEFAULT_CONFIG（runtime 权威）version 与当前版本一致 | `grep "version: '" scripts/lib/config.mjs \| head -1` | contains `version: '0.13'` |
 | 121 | config drift 测试存在且可检测 | `ls -1 tests/unit/v013-config-sync.test.mjs` | 文件存在；测试验证 DEFAULT_CONFIG.version ≠ config.default.json.version 时失败 |
 | 122 | **A1 probe 绝不调 trust** | `sed -n '/export function recordL25Probe/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'adjustTrust\|markOutcomeForIds\|noteFeedback'` | `0` |
 | 123 | probe 输出走 metrics 而非 audit | `sed -n '/export function recordL25Probe/,/^}/p' scripts/lib/feedback.mjs \| grep -c 'writeAudit'` | `0` |

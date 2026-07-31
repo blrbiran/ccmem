@@ -35,25 +35,12 @@ test('config.default.json and DEFAULT_CONFIG share the same top-level keys', () 
   const fileKeys = Object.keys(fileConfig).sort();
   const defaultKeys = Object.keys(DEFAULT_CONFIG).sort();
 
-  // Try exact key-set match first
-  if (JSON.stringify(fileKeys) !== JSON.stringify(defaultKeys)) {
-    // Fall back to asserting that every key in config.default.json also exists in DEFAULT_CONFIG
-    // (the direction that matters: a documented key that doesn't actually exist is a lie to users)
-    const asymmetry = fileKeys.filter(k => !defaultKeys.includes(k));
-
-    if (asymmetry.length > 0) {
-      throw new Error(
-        `config.default.json has keys not in DEFAULT_CONFIG (documented but not implemented): ${asymmetry.join(', ')}\n` +
-        `file keys: ${fileKeys.join(', ')}\n` +
-        `DEFAULT_CONFIG keys: ${defaultKeys.join(', ')}`
-      );
-    }
-
-    // If we got here, it means DEFAULT_CONFIG has extra keys not in the file
-    // (acceptable—internal keys not documented)
-    const extraInDefault = defaultKeys.filter(k => !fileKeys.includes(k));
-    if (extraInDefault.length > 0) {
-      console.log(`Note: DEFAULT_CONFIG has undocumented keys: ${extraInDefault.join(', ')}`);
-    }
-  }
+  // Enforce symmetric key-set match in both directions:
+  // - Keys in DEFAULT_CONFIG missing from config.default.json = undocumented config sections
+  // - Keys in config.default.json missing from DEFAULT_CONFIG = documented but unimplemented sections
+  // Both directions indicate drift that must be caught
+  assert.deepEqual(fileKeys, defaultKeys,
+    `config.default.json and DEFAULT_CONFIG have different top-level keys:\n` +
+    `file keys:   ${fileKeys.join(', ')}\n` +
+    `runtime keys: ${defaultKeys.join(', ')}`);
 });

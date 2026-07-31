@@ -227,6 +227,10 @@ export const DEFAULT_CONFIG = {
   }
 };
 
+// Freeze DEFAULT_CONFIG to prevent accidental runtime mutations process-wide.
+// All callers should use structuredClone before modifying the config.
+Object.freeze(DEFAULT_CONFIG);
+
 function mergeConfig(base, override) {
   if (Array.isArray(base) || Array.isArray(override)) {
     return structuredClone(override ?? base);

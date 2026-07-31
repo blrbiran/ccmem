@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { writeAudit } from '../audit.mjs';
 import { loadConfig } from '../config.mjs';
-import { getDbPath, getSchemaVersion } from '../db.mjs';
+import { getDataRoot, getDbPath, getSchemaVersion } from '../db.mjs';
+import { decisionDataSizeBytes } from '../metrics.mjs';
 import { fallbackProjectKey, resolveProjectKey } from '../project-key.mjs';
 import { collectInjectionRows, countNeverInjected } from '../recent-injections.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
@@ -1270,4 +1272,129 @@ export async function cmdAdminDiagnose(
         }))
       : null
   };
+}
+
+const DEFAULT_DECISION_DATA_FILE = 'l25-probe.jsonl';
+
+function quantile(sorted, p) {
+  if (!sorted.length) return 0;
+  return sorted[Math.floor(p * (sorted.length - 1))];
+}
+
+function decisionProbeFilePath(decisionCfg) {
+  return path.join(getDataRoot(), decisionCfg?.file || DEFAULT_DECISION_DATA_FILE);
+}
+
+function readDecisionProbeRows(decisionCfg) {
+  let raw;
+  try {
+    raw = readFileSync(decisionProbeFilePath(decisionCfg), 'utf8');
+  } catch {
+    return []; // file not created yet is normal (no probes recorded)
+  }
+
+  const out = [];
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed.l25_probe === true) out.push(parsed);
+    } catch { /* skip malformed line */ }
+  }
+  return out;
+}
+
+function formatFeedbackCohort(label, rows) {
+  if (!rows.length) {
+    return [`    ${label} (n=0)`];
+  }
+
+  const lines = [`    ${label} (n=${rows.length})`];
+  for (const field of ['l25_cov', 'l25_lcp']) {
+    const vals = rows.map((r) => Number(r[field]) || 0).sort((a, b) => a - b);
+    lines.push(
+      `      ${field}: p50=${quantile(vals, 0.5).toFixed(3)} p75=${quantile(vals, 0.75).toFixed(3)} ` +
+      `p90=${quantile(vals, 0.90).toFixed(3)} p95=${quantile(vals, 0.95).toFixed(3)} ` +
+      `max=${quantile(vals, 1).toFixed(3)}`
+    );
+  }
+
+  const legacy = rows.filter((r) => r.l25_legacy_hit === true).length;
+  const idLit = rows.filter((r) => r.l25_id_literal === true).length;
+  lines.push(`      legacy hits: ${legacy}/${rows.length}`);
+  lines.push(`      id literal: ${idLit}/${rows.length}`);
+
+  if (legacy === 0) {
+    lines.push('      WARNING: no legacy hits recorded in this cohort — either the v0.12');
+    lines.push('               matcher genuinely never fired here, or the probe is dropping');
+    lines.push('               signal turns. Seed a memory that appears verbatim in a reply');
+    lines.push('               before trusting this distribution.');
+  }
+
+  return lines;
+}
+
+/**
+ * v0.13 A1 read side: report the L2.5 probe's observed distributions.
+ * OBSERVE-ONLY — computes and prints nothing that feeds trust, scoring, or
+ * decay. v0.14 decides a threshold from this data; this command must not
+ * pre-judge one.
+ *
+ * Where the rows live (ccmem v0.13 task-4 ruling): probe rows go to the
+ * durable decision stream at <dataRoot>/l25-probe.jsonl whenever
+ * metrics.decision_data.enabled is not explicitly false (the default). That
+ * file has no day-based rotation (retention_days: 0 means never
+ * auto-delete), so it is read in full rather than windowed by `days`. Only
+ * when decision_data is explicitly disabled does this fall back to
+ * readMetricsLines(days), because that is where recordDecisionMetric's own
+ * fallback writes rows in that case — and the `days` window applies there.
+ *
+ * Segmentation (never filtering): turn_aligned=false rows are a negative
+ * control — a memory injected for an earlier turn, scored against this
+ * turn's unrelated reply — and are printed as their own section rather than
+ * mixed into or dropped from the main distribution. has_cjk further splits
+ * the turn-aligned rows because CJK text does not word-segment, which
+ * saturates l25_lcp and skews l25_cov for Chinese memories; a single
+ * threshold across both cohorts would be un-triggerable for CJK.
+ */
+export function cmdDiagnoseFeedback(db, { days = 7 } = {}) {
+  try { maybeRunTier15(db); } catch { /* prelude is best-effort */ }
+
+  const cfg = loadConfig();
+  const decisionCfg = cfg.metrics?.decision_data;
+  const decisionEnabled = decisionCfg?.enabled !== false;
+  const sizeBytes = decisionDataSizeBytes(decisionCfg);
+
+  const rows = decisionEnabled
+    ? readDecisionProbeRows(decisionCfg)
+    : readMetricsLines(days).filter((r) => r.l25_probe === true);
+
+  if (!rows.length) {
+    process.stdout.write(
+      decisionEnabled
+        ? `no L2.5 probe samples in the decision stream (l25-probe.jsonl, ${sizeBytes} bytes)\n`
+        : `no L2.5 probe samples in the last ${days} days (metrics.jsonl fallback — decision_data disabled)\n`
+    );
+    return;
+  }
+
+  const aligned = rows.filter((r) => r.turn_aligned === true);
+  const negControl = rows.filter((r) => r.turn_aligned === false);
+
+  const lines = [];
+  lines.push(
+    decisionEnabled
+      ? `L2.5 probe — decision stream l25-probe.jsonl (${sizeBytes} bytes on disk, unbounded — all recorded samples, no day window)`
+      : `L2.5 probe — metrics.jsonl fallback, last ${days} days (decision_data.enabled=false; decision file on disk: ${sizeBytes} bytes, not used for this report)`
+  );
+  lines.push(`  samples: ${rows.length} total (${aligned.length} turn-aligned, ${negControl.length} negative-control)`);
+  lines.push('');
+  lines.push('  Turn-aligned (main distribution — memory was injected for this turn)');
+  lines.push(...formatFeedbackCohort('non-CJK', aligned.filter((r) => r.has_cjk !== true)));
+  lines.push(...formatFeedbackCohort('CJK', aligned.filter((r) => r.has_cjk === true)));
+  lines.push('');
+  lines.push('  Negative control (turn_aligned=false — earlier-turn memory scored against an unrelated reply; noise floor)');
+  lines.push(...formatFeedbackCohort('all', negControl));
+
+  process.stdout.write(`${lines.join('\n')}\n`);
 }

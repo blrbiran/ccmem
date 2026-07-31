@@ -1,7 +1,7 @@
 import { cmdAdminAlias } from './lib/admin/alias.mjs';
 import { cmdAdminCron } from './lib/admin/cron.mjs';
 import { cmdAdminDaemon } from './lib/admin/daemon.mjs';
-import { cmdAdminDiagnose } from './lib/admin/diagnose.mjs';
+import { cmdAdminDiagnose, cmdDiagnoseFeedback } from './lib/admin/diagnose.mjs';
 import { cmdRetrievalCheck } from './lib/admin/retrieval-check.mjs';
 import { cmdAdminSemantic } from './lib/admin/semantic.mjs';
 import { openDb } from './lib/db.mjs';
@@ -45,7 +45,7 @@ function printHelp() {
     '  admin cron <list|run>\n' +
     '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina>]\n' +
     '  admin retrieval-check [--corpus <path>] [--k 1,3,5]\n' +
-    '  admin diagnose [--retrieval] [--embedding-circuit <open|close|status>] [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections|--context-history] [--session ID] [--hash HASH] [--days N]\n' +
+    '  admin diagnose [--retrieval] [--embedding-circuit <open|close|status>] [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections|--context-history|--feedback] [--session ID] [--hash HASH] [--days N]\n' +
     '  admin alias <old-project-key> <new-project-key>\n' +
     '  stats [--json|--buckets]\n' +
     '  promote <id> [--global]\n' +
@@ -702,6 +702,10 @@ try {
     } else {
       process.stdout.write(`ccmem: aliased ${result.updated_count} memories from "${result.oldKey}" → "${result.newKey}"\n`);
     }
+  } else if (verb === 'admin' && args[0] === 'diagnose' && args.includes('--feedback')) {
+    cmdDiagnoseFeedback(getDb(), {
+      days: Number(getOptionValue('--days') ?? 7)
+    });
   } else if (verb === 'admin' && args[0] === 'diagnose') {
     const result = await cmdAdminDiagnose(getDb(), {
       cwd: process.cwd(),

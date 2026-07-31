@@ -87,13 +87,40 @@ test('diagnose --feedback (decision stream, default config): reads l25-probe.jso
 
   assert.match(out, /l25-probe\.jsonl/);
   assert.match(out, /samples:\s*4 total \(3 turn-aligned, 1 negative-control\)/);
-  assert.match(out, /non-CJK \(n=2\)/);
-  assert.match(out, /CJK \(n=1\)/);
   assert.match(out, /Negative control/);
+  assert.match(out, /\d+ bytes/); // decision file size is surfaced
+
+  // Cohort headers, anchored to the exact 4-space indent + label so
+  // "non-CJK (n=1)" (negative control) can never satisfy an assertion meant
+  // for "CJK (n=1)" (aligned) via unanchored substring matching — both
+  // strings legitimately appear in this output.
+  assert.match(out, /^ {4}non-CJK \(n=2\)$/m); // aligned non-CJK: rows 1,2
+  assert.match(out, /^ {4}CJK \(n=1\)$/m); // aligned CJK: row 3
+  assert.match(out, /^ {4}non-CJK \(n=1\)$/m); // negative-control non-CJK: row 4
+  assert.match(out, /^ {4}CJK \(n=0\)$/m); // negative-control CJK: none
+
   assert.match(out, /legacy hits:\s*0\/2/); // non-CJK aligned cohort
   assert.match(out, /legacy hits:\s*1\/1/); // CJK aligned cohort
   assert.match(out, /no legacy hits/i);
-  assert.match(out, /\d+ bytes/); // decision file size is surfaced
+
+  // Exact quantile lines, pinned per cohort. These close three failure
+  // modes that pure count/ratio assertions above cannot see:
+  //  - quantile() collapsing to the min (e.g. `sorted[0]` for every
+  //    percentile): the 2-row non-CJK cohort's max (0.200/2.000) would
+  //    incorrectly read the same as its p50 (0.100/1.000).
+  //  - l25_cov/l25_lcp field labels swapped: the CJK cohort's cov line
+  //    (0.950) is numerically distinguishable from its lcp line (9.000),
+  //    so a swap prints the wrong number under each label.
+  //  - `Number(r[field]) || 0` silently zeroed: every value below is
+  //    non-zero, so a always-0 mutation cannot produce any of these lines.
+  assert.match(
+    out,
+    /non-CJK \(n=2\)\n {6}l25_cov: p50=0\.100 p75=0\.100 p90=0\.100 p95=0\.100 max=0\.200\n {6}l25_lcp: p50=1\.000 p75=1\.000 p90=1\.000 p95=1\.000 max=2\.000/
+  );
+  assert.match(
+    out,
+    /CJK \(n=1\)\n {6}l25_cov: p50=0\.950 p75=0\.950 p90=0\.950 p95=0\.950 max=0\.950\n {6}l25_lcp: p50=9\.000 p75=9\.000 p90=9\.000 p95=9\.000 max=9\.000/
+  );
 });
 
 test('diagnose --feedback degrades gracefully with no decision-stream samples', () => {

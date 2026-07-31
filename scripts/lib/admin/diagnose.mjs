@@ -1,10 +1,9 @@
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { writeAudit } from '../audit.mjs';
 import { loadConfig } from '../config.mjs';
-import { getDataRoot, getDbPath, getSchemaVersion } from '../db.mjs';
-import { decisionDataSizeBytes } from '../metrics.mjs';
+import { getDbPath, getSchemaVersion } from '../db.mjs';
+import { decisionDataFile, decisionDataSizeBytes } from '../metrics.mjs';
 import { fallbackProjectKey, resolveProjectKey } from '../project-key.mjs';
 import { collectInjectionRows, countNeverInjected } from '../recent-injections.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
@@ -1274,21 +1273,15 @@ export async function cmdAdminDiagnose(
   };
 }
 
-const DEFAULT_DECISION_DATA_FILE = 'l25-probe.jsonl';
-
 function quantile(sorted, p) {
   if (!sorted.length) return 0;
   return sorted[Math.floor(p * (sorted.length - 1))];
 }
 
-function decisionProbeFilePath(decisionCfg) {
-  return path.join(getDataRoot(), decisionCfg?.file || DEFAULT_DECISION_DATA_FILE);
-}
-
 function readDecisionProbeRows(decisionCfg) {
   let raw;
   try {
-    raw = readFileSync(decisionProbeFilePath(decisionCfg), 'utf8');
+    raw = readFileSync(decisionDataFile(decisionCfg), 'utf8');
   } catch {
     return []; // file not created yet is normal (no probes recorded)
   }
@@ -1353,13 +1346,22 @@ function formatFeedbackCohort(label, rows) {
  * control — a memory injected for an earlier turn, scored against this
  * turn's unrelated reply — and are printed as their own section rather than
  * mixed into or dropped from the main distribution. has_cjk further splits
- * the turn-aligned rows because CJK text does not word-segment, which
- * saturates l25_lcp and skews l25_cov for Chinese memories; a single
- * threshold across both cohorts would be un-triggerable for CJK.
+ * BOTH the turn-aligned rows and the negative-control rows, because CJK
+ * text does not word-segment: it saturates l25_lcp and skews l25_cov toward
+ * binary for Chinese memories, which means the CJK noise floor is
+ * structurally different (higher) from the non-CJK noise floor. Blending
+ * them into one negative-control number would let non-CJK volume drag the
+ * floor down and make the CJK main distribution look like it clears a noise
+ * floor it was never compared against — achievability is decided per
+ * cohort, so the floor has to be reported per cohort too.
+ *
+ * This command is read-only: it deliberately does NOT call
+ * maybeRunTier15(db) the way its sibling diagnose subcommands do, so that
+ * "v0.13 writes no decay/trust state" holds without a carve-out for this
+ * report. `db` is accepted (and unused) only to keep the call signature
+ * uniform with those siblings for CLI routing.
  */
 export function cmdDiagnoseFeedback(db, { days = 7 } = {}) {
-  try { maybeRunTier15(db); } catch { /* prelude is best-effort */ }
-
   const cfg = loadConfig();
   const decisionCfg = cfg.metrics?.decision_data;
   const decisionEnabled = decisionCfg?.enabled !== false;
@@ -1394,7 +1396,8 @@ export function cmdDiagnoseFeedback(db, { days = 7 } = {}) {
   lines.push(...formatFeedbackCohort('CJK', aligned.filter((r) => r.has_cjk === true)));
   lines.push('');
   lines.push('  Negative control (turn_aligned=false — earlier-turn memory scored against an unrelated reply; noise floor)');
-  lines.push(...formatFeedbackCohort('all', negControl));
+  lines.push(...formatFeedbackCohort('non-CJK', negControl.filter((r) => r.has_cjk !== true)));
+  lines.push(...formatFeedbackCohort('CJK', negControl.filter((r) => r.has_cjk === true)));
 
   process.stdout.write(`${lines.join('\n')}\n`);
 }

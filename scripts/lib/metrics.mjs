@@ -27,7 +27,10 @@ export function recordMetric(event) {
 
 const DEFAULT_DECISION_DATA_FILE = 'l25-probe.jsonl';
 
-function decisionDataFile(decisionCfg) {
+/** The decision-data stream's on-disk path. Exported so readers (diagnose
+ * --feedback) resolve the exact same path as this writer, instead of
+ * duplicating the rule and silently drifting if it ever changes here. */
+export function decisionDataFile(decisionCfg) {
   return path.join(getDataRoot(), decisionCfg?.file || DEFAULT_DECISION_DATA_FILE);
 }
 

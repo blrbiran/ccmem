@@ -24,11 +24,18 @@ function seedMemory(db, id, content) {
   ).run(id, content, Date.now(), Date.now(), Date.now());
 }
 
-function seedInjection(db, promptIdx, memIds, source = 'user_prompt_submit') {
+function seedInjection(db, promptIdx, memIds, source = 'user_prompt_submit', sessionId = SESSION) {
   db.prepare(
     `INSERT INTO recent_injections (session_id, prompt_idx, inject_source, mem_ids, created_at)
      VALUES (?, ?, ?, ?, ?)`
-  ).run(SESSION, promptIdx, source, JSON.stringify(memIds), Date.now());
+  ).run(sessionId, promptIdx, source, JSON.stringify(memIds), Date.now());
+}
+
+function seedMemoryFeedback(db, sessionId, injectedIds) {
+  db.prepare(
+    `INSERT INTO memory_feedback (session_id, injection_source, injected_ids, recorded_at)
+     VALUES (?, 'user_prompt_submit', ?, ?)`
+  ).run(sessionId, JSON.stringify(injectedIds), Date.now());
 }
 
 function writeTranscript(assistantText) {
@@ -86,9 +93,14 @@ test('probe still records turns where the legacy matcher would have fired', () =
 test('probe ignores session_start bulk injections', () => {
   const db = openDb();
   seedMemory(db, 103, 'this memory came from the session start bundle');
-  seedInjection(db, 0, [103], 'session_start');
+  // prompt_idx is deliberately far higher than any other row seeded in this
+  // file (in either source) so that ORDER BY prompt_idx DESC would pick THIS
+  // row over every user_prompt_submit row if the inject_source filter were
+  // ever removed — the test must fail for that reason alone, not because a
+  // session_start row happens to lose a prompt_idx tie-break.
+  seedInjection(db, 1_000_000, [103], 'session_start', SESSION);
 
-  recordL25Probe(db, SESSION + '-ss', writeTranscript('unrelated reply'), {});
+  recordL25Probe(db, SESSION, writeTranscript('unrelated reply'), {});
 
   assert.equal(probeLines().filter((r) => r.mem_id === 103).length, 0,
     'session_start injections are not turn-aligned and must be excluded');
@@ -98,15 +110,25 @@ test('probe does not modify trust, outcome, or decay_status', () => {
   const db = openDb();
   seedMemory(db, 104, 'some durable project convention worth keeping');
   seedInjection(db, 3, [104]);
+  // outcome lives in memory_feedback, not memories — a regression that calls
+  // noteFeedback() instead of adjustTrust() would rewrite outcome here while
+  // leaving every memories column untouched, so it must be checked too.
+  seedMemoryFeedback(db, SESSION, [104]);
 
-  const before = db.prepare(
+  const beforeMemory = db.prepare(
     `SELECT trust_score, decay_status, status FROM memories WHERE id = 104`).get();
+  const beforeFeedback = db.prepare(
+    `SELECT id, outcome, outcome_locked FROM memory_feedback WHERE session_id = ?`).all(SESSION);
 
   recordL25Probe(db, SESSION, writeTranscript('a reply mentioning conventions'), {});
 
-  const after = db.prepare(
+  const afterMemory = db.prepare(
     `SELECT trust_score, decay_status, status FROM memories WHERE id = 104`).get();
-  assert.deepEqual(after, before, 'the probe is observe-only');
+  const afterFeedback = db.prepare(
+    `SELECT id, outcome, outcome_locked FROM memory_feedback WHERE session_id = ?`).all(SESSION);
+
+  assert.deepEqual(afterMemory, beforeMemory, 'the probe is observe-only (memories)');
+  assert.deepEqual(afterFeedback, beforeFeedback, 'the probe is observe-only (memory_feedback.outcome)');
 });
 
 test('probe honours enabled=false', () => {
@@ -141,6 +163,75 @@ test('probe skips memories with fewer than 3 usable tokens', () => {
   recordL25Probe(db, SESSION, writeTranscript('ok go'), {});
 
   assert.equal(probeLines().filter((r) => r.mem_id === 106).length, 0);
+});
+
+// F1 regression: a turn that retrieves nothing writes no recent_injections
+// row, but Stop still fires (e.g. "yes" / "continue" / a retried Stop call).
+// Without a once-per-injection guard, a repeated Stop call for the same turn
+// would re-pick the same recent_injections row and record it again.
+test('probe records at most once per injection, even across repeated Stop calls', () => {
+  const db = openDb();
+  const DEDUP_SESSION = 'sess-probe-dedup';
+  seedMemory(db, 401, 'a memory used to test the once per injection guard');
+  seedInjection(db, 1, [401], 'user_prompt_submit', DEDUP_SESSION);
+  const transcript = writeTranscript('a reply mentioning the once per injection guard');
+
+  recordL25Probe(db, DEDUP_SESSION, transcript, {});
+  recordL25Probe(db, DEDUP_SESSION, transcript, {});
+
+  const rows = probeLines().filter((r) => r.mem_id === 401);
+  assert.equal(rows.length, 1, 'the second call must not re-probe the same prompt_idx');
+});
+
+// F4 regression: the real v0.12 matcher (matchesImplicitReference) lowercases
+// the reply before checking `text.includes('m' + id)`, with no word boundary.
+// A reply containing the id literal in a different case must still count.
+test('l25_id_literal and l25_legacy_hit match the real matcher\'s case-insensitive id semantics', () => {
+  const db = openDb();
+  const ID_LITERAL_SESSION = 'sess-probe-idlit';
+  seedMemory(db, 501, 'an unrelated memory used only to exercise the id literal check');
+  seedInjection(db, 1, [501], 'user_prompt_submit', ID_LITERAL_SESSION);
+
+  // The reply does not repeat the memory content, so the content-match branch
+  // is false here; only the (differently-cased) id literal should hit.
+  recordL25Probe(db, ID_LITERAL_SESSION,
+    writeTranscript('See M501 for context, nothing else matches here'), {});
+
+  const rows = probeLines().filter((r) => r.mem_id === 501);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].l25_id_literal, true,
+    'uppercase "M501" must still match — the real matcher lowercases before comparing');
+  assert.equal(rows[0].l25_legacy_hit, true,
+    'the id-literal branch must be folded into the legacy baseline, matching the real matcher');
+});
+
+// F5 ruling: do not change the tokenizer, but flag CJK content so v0.14 can
+// segment the distribution (an unbroken CJK run collapses to one token,
+// which saturates l25_lcp and skews l25_cov for CJK memories).
+test('has_cjk flags memory content containing CJK characters', () => {
+  const db = openDb();
+  const CJK_SESSION = 'sess-probe-cjk';
+  seedMemory(db, 601, '总是 使用 拼音输入法');
+  seedInjection(db, 1, [601], 'user_prompt_submit', CJK_SESSION);
+
+  recordL25Probe(db, CJK_SESSION, writeTranscript('好的，已经确认'), {});
+
+  const rows = probeLines().filter((r) => r.mem_id === 601);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].has_cjk, true, 'CJK memory content must be flagged for later segmentation');
+});
+
+test('has_cjk is false for latin-only memory content', () => {
+  const db = openDb();
+  const CJK_NEG_SESSION = 'sess-probe-cjk-neg';
+  seedMemory(db, 602, 'always use pnpm in every latin only memory here');
+  seedInjection(db, 1, [602], 'user_prompt_submit', CJK_NEG_SESSION);
+
+  recordL25Probe(db, CJK_NEG_SESSION, writeTranscript('always use pnpm somewhere else'), {});
+
+  const rows = probeLines().filter((r) => r.mem_id === 602);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].has_cjk, false);
 });
 
 test('probe is a no-op when the session has no prompt injections', () => {

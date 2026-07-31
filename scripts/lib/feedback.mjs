@@ -1374,6 +1374,41 @@ function latestPromptInjectionIds(db, sessionId) {
   return { ids, promptIdx: row?.prompt_idx ?? null };
 }
 
+function l25ProbeStateKey(sessionId) {
+  return `l25_probe_last_idx:${sessionId}`;
+}
+
+/**
+ * Best-effort "has this injection already been probed" bookkeeping, keyed per
+ * session. There is no free-form column on session_context for this, and this
+ * task must not add schema, so it piggybacks on the existing config_kv
+ * key/value table (already used for e.g. 'mode') with a namespaced key.
+ * A failure here must never break the probe or the Stop hook: at worst a
+ * turn gets re-probed once, which is far cheaper than the hook failing.
+ */
+function getLastProbedPromptIdx(db, sessionId) {
+  try {
+    const row = db.prepare(`SELECT value FROM config_kv WHERE key = ?`).get(l25ProbeStateKey(sessionId));
+    return row ? Number(row.value) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setLastProbedPromptIdx(db, sessionId, promptIdx) {
+  try {
+    db.prepare(
+      `INSERT INTO config_kv (key, value, set_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+    ).run(l25ProbeStateKey(sessionId), String(promptIdx), Date.now());
+  } catch {
+    // Best-effort only — see comment above.
+  }
+}
+
+const CJK_RANGE = /[一-鿿぀-ヿ가-힯]/;
+
 /**
  * v0.13 A1: record L2.5 candidate features for the most recent prompt injection.
  *
@@ -1391,8 +1426,17 @@ export function recordL25Probe(db, sessionId, transcriptPath, config) {
   const { ids, promptIdx } = latestPromptInjectionIds(db, sessionId);
   if (!ids.length) return;
 
+  // Probe each injection at most once per session: a turn that retrieved
+  // nothing writes no recent_injections row, so Stop would otherwise re-pick
+  // the previous turn's row and measure those memories against a reply they
+  // were never injected into (phantom low-coverage rows biasing the sample).
+  const lastProbedIdx = getLastProbedPromptIdx(db, sessionId);
+  if (lastProbedIdx !== null && promptIdx <= lastProbedIdx) return;
+  setLastProbedPromptIdx(db, sessionId, promptIdx);
+
   const maxProbe = Number(config?.feedback?.l25_probe?.max_per_turn ?? 8);
   const replyTokens = featureTokens(replyText);
+  const lowerReply = replyText.toLowerCase();
   const rows = probeMemoriesByIds(db, ids.slice(0, maxProbe));
 
   for (const mem of rows) {
@@ -1402,18 +1446,35 @@ export function recordL25Probe(db, sessionId, transcriptPath, config) {
 
     const memWords = [...content.toLowerCase().matchAll(CJK_OR_WORD)].map((m) => m[0]);
 
+    // Reconstruct the real v0.12 matcher (matchesImplicitReference above):
+    // text.includes(content) || text.includes('m' + id), both lowercased.
+    const contentMatch = lowerReply.includes(content.trim().toLowerCase());
+    const idLiteralMatch = lowerReply.includes(`m${mem.id}`);
+
     recordMetric({
       hook: 'stop',
       l25_probe: true,
+      session_id: sessionId,
       prompt_idx: promptIdx,
       mem_id: mem.id,
       mem_type: mem.type,
       mem_source: mem.source,
       l25_cov: Number(memoryCoverage(memTokens, replyTokens).toFixed(4)),
       l25_lcp: longestCommonPhrase(memWords, replyText),
-      l25_id_literal: new RegExp(`\\bm${mem.id}\\b`).test(replyText),
-      // The v0.12 matcher's verdict, kept as the control baseline for v0.14.
-      l25_legacy_hit: replyText.toLowerCase().includes(content.trim().toLowerCase()),
+      // True when the reply contains the memory's bare id token (e.g. "m101"),
+      // case-insensitively. Kept as its own field (separate from
+      // l25_legacy_hit below) so v0.14 can analyse the content-match and
+      // id-literal branches independently.
+      l25_id_literal: idLiteralMatch,
+      // The actual v0.12 matcher's verdict — content-substring match OR the
+      // bare id literal, both case-insensitive — kept as the real control
+      // baseline for v0.14, not an approximation of it.
+      l25_legacy_hit: contentMatch || idLiteralMatch,
+      // CJK runs are not word-segmented by featureTokens (an unbroken run
+      // collapses to one token), which saturates l25_lcp at 1 and skews
+      // l25_cov toward binary for CJK memories. Flag it so v0.14 can segment
+      // the distribution instead of setting one threshold across both.
+      has_cjk: CJK_RANGE.test(content),
       mem_len: content.length,
       mem_tokens: memTokens.size,
       reply_len: replyText.length

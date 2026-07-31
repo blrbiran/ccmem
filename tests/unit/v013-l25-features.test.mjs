@@ -48,3 +48,32 @@ test('longestCommonPhrase finds the longest verbatim run of words', () => {
 test('longestCommonPhrase returns 0 when nothing overlaps', () => {
   assert.equal(longestCommonPhrase(['alpha', 'beta'], 'completely different text'), 0);
 });
+
+// C2 regression. The memory side is normalized to alphanumeric runs joined by
+// single spaces before it reaches this function, so the reply MUST be
+// normalized the same way. Searching the raw reply makes a perfect verbatim
+// quote score 3/7 here — two commas truncate it — which would make v0.14's
+// analyst conclude l25_lcp carries no signal when in fact the measurement was
+// broken. Comma-separated convention memories are the dominant form ccmem's
+// extractor produces, so this is not an edge case.
+test('longestCommonPhrase scores a verbatim quote at its full word count despite punctuation in the reply', () => {
+  const memory = 'Use pnpm, not npm, for installing dependencies';
+  const memWords = [...memory.toLowerCase().matchAll(/[\p{L}\p{N}]+/gu)].map((m) => m[0]);
+  assert.equal(memWords.length, 7, 'fixture sanity: the memory is 7 words');
+
+  assert.equal(
+    longestCommonPhrase(memWords, 'You should use pnpm, not npm, for installing dependencies in this repo.'),
+    7,
+    'a verbatim match must score the FULL word count; searching the raw reply scores 3 because the first comma breaks the run'
+  );
+});
+
+// The same asymmetry in CJK clothing: CJK replies carry full-width punctuation
+// (，。、) between runs, which truncated the phrase exactly the same way.
+test('longestCommonPhrase is not truncated by full-width CJK punctuation in the reply', () => {
+  assert.equal(
+    longestCommonPhrase(['总是', '使用', '拼音输入法'], '好的，总是、使用。拼音输入法'),
+    3,
+    'full-width punctuation between CJK runs must not break the verbatim run'
+  );
+});

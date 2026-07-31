@@ -1327,9 +1327,30 @@ export function memoryCoverage(memTokens, replyTokens) {
   return hit / memTokens.size;
 }
 
-/** Length (in words) of the longest verbatim word-run shared with the reply. */
+/**
+ * Normalize free text to the same shape memWords is in: lowercased
+ * alphanumeric runs joined by single spaces. Idempotent — normalizing an
+ * already-normalized string returns it unchanged.
+ */
+function phraseNormalize(text) {
+  return [...String(text ?? '').toLowerCase().matchAll(CJK_OR_WORD)].map((m) => m[0]).join(' ');
+}
+
+/**
+ * Length (in words) of the longest verbatim word-run shared with the reply.
+ *
+ * The reply is normalized here, not at the call site: memWords arrives already
+ * normalized to alphanumeric runs, and searching a RAW reply for that needle
+ * made every punctuation mark a hard stop — a verbatim quote of
+ * "Use pnpm, not npm, for installing dependencies" scored 3/7 because of two
+ * commas. That truncation is content-dependent and worst for exactly the
+ * comma-separated convention memories ccmem's extractor produces most, so the
+ * feature read as non-discriminating when the measurement, not the signal, was
+ * what was broken. Normalizing inside the function means no future caller can
+ * reintroduce the asymmetry.
+ */
 export function longestCommonPhrase(memWords, replyText) {
-  const reply = replyText.toLowerCase();
+  const reply = phraseNormalize(replyText);
   let best = 0;
   for (let i = 0; i < memWords.length; i += 1) {
     // Only extend while there is still a chance to beat the current record.

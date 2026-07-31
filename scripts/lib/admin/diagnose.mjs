@@ -1022,19 +1022,28 @@ export function getMetricsDiagnostics(db, { days = 14, cfg = loadConfig() } = {}
   };
 }
 
-function readMetricsLines(days) {
+export function readMetricsLines(days) {
   const cutoff = windowStartMs(days);
-  const metricsPath = `${getDbPath().replace(/global\.db$/, 'metrics.jsonl')}`;
+  const base = `${getDbPath().replace(/global\.db$/, 'metrics.jsonl')}`;
+  const out = [];
 
-  try {
-    return readFileSync(metricsPath, 'utf8')
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line))
-      .filter((row) => typeof row.ts === 'number' && row.ts >= cutoff);
-  } catch {
-    return [];
+  // Oldest generation first so chronological order is preserved.
+  for (const file of [`${base}.1`, base]) {
+    let raw;
+    try {
+      raw = readFileSync(file, 'utf8');
+    } catch {
+      continue;   // missing generation is normal
+    }
+    for (const line of raw.split('\n')) {
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (Number(parsed.ts) >= cutoff) out.push(parsed);
+      } catch { /* skip malformed line */ }
+    }
   }
+  return out;
 }
 
 function aggregateRetrievalTiming(days) {

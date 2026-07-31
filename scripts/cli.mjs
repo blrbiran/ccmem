@@ -360,6 +360,7 @@ function printTuning(result) {
 function printRetrieval(result) {
   const retrieval = result.retrieval;
   process.stdout.write(`Embedding: ${retrieval.embedding_enabled ? 'enabled' : 'disabled'} (${retrieval.embedding_provider})\n`);
+  process.stdout.write(`    stale vectors:          ${retrieval.stale_vectors} (signature mismatch — will be re-embedded by vec_backfill)\n`);
   process.stdout.write(`Circuit: ${retrieval.circuit}`);
   if (retrieval.circuit_open_until != null) {
     process.stdout.write(` until ${formatLocalTimestamp(retrieval.circuit_open_until)}`);

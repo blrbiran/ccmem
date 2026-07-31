@@ -2,6 +2,7 @@ import { writeAudit } from '../audit.mjs';
 import { loadConfig } from '../config.mjs';
 import { vecToBlob } from '../embedding/cosine.mjs';
 import { getProvider } from '../embedding/provider.mjs';
+import { currentEmbeddingSig } from '../embedding/signature.mjs';
 import { rebuildInjectionCache } from '../injection-cache.mjs';
 import { resolveProjectKey } from '../project-key.mjs';
 import { evaluateTier1, evaluateTier2, evaluateTier3 } from '../threat-scan.mjs';
@@ -88,6 +89,12 @@ export async function insertMemory(db, {
   const embedding = embeddingBlob !== undefined
     ? embeddingBlob
     : (resolvedDecayStatus === 'quarantine' || !embedSync ? null : await buildEmbedding(content, cfg));
+  // Record what produced the vector (provider:model:dim), not just that a
+  // vector exists — this is what lets the cosine lane tell "comparable" from
+  // "silently wrong" later. Every path that lands a value in `embedding`
+  // (buildEmbedding here, or a caller-supplied embeddingBlob) funnels through
+  // this one INSERT, so this is the single place that needs to set it.
+  const embeddingSig = embedding != null ? currentEmbeddingSig(getProvider(cfg), cfg) : null;
   const now = Date.now();
   const touchedAt = Number.isFinite(Number(lastTouchedAt)) ? Number(lastTouchedAt) : now;
   const resolvedDepth = Number.isFinite(Number(consolidationDepth)) ? Number(consolidationDepth) : 0;
@@ -103,6 +110,7 @@ export async function insertMemory(db, {
       temporal_type,
       summary_meta,
       embedding,
+      embedding_sig,
       pinned,
       source,
       trust_score,
@@ -115,7 +123,7 @@ export async function insertMemory(db, {
       last_touched_at,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     resolvedScope,
     resolvedProjectKey,
@@ -124,6 +132,7 @@ export async function insertMemory(db, {
     resolvedTemporalType,
     resolvedSummaryMeta,
     embedding,
+    embeddingSig,
     Number(pinned) ? 1 : 0,
     source,
     trustScore,

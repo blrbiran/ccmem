@@ -226,30 +226,12 @@ test('query embedding cache hit does not close an open circuit and increments hi
   const { createHash } = await import('node:crypto');
   const { insertMemory } = await import('../../scripts/lib/cmd/save.mjs');
   const { vecToBlob } = await import('../../scripts/lib/embedding/cosine.mjs');
+  const { getProvider } = await import('../../scripts/lib/embedding/provider.mjs');
+  const { currentEmbeddingSig } = await import('../../scripts/lib/embedding/signature.mjs');
+  const { loadConfig } = await import('../../scripts/lib/config.mjs');
   const prompt = 'semantic cache query for retry guidance';
   const model = 'text-embedding-3-small';
   const vectorBlob = vecToBlob(new Float32Array([1, 0, 0]));
-
-  let db = openDb();
-  await insertMemory(db, {
-    cwd: process.cwd(),
-    content: 'semantic cache query for retry guidance memory',
-    scope: 'project',
-    type: 'fact',
-    embedSync: false,
-    embeddingBlob: vectorBlob
-  });
-  const promptHash = createHash('sha256').update(`${model}\n${prompt}`).digest('hex');
-  db.prepare(
-    `INSERT INTO query_embedding_cache (prompt_hash, embedding, model, prompt_len, created_at, hit_count)
-     VALUES (?, ?, ?, ?, ?, 1)`
-  ).run(promptHash, vectorBlob, model, prompt.length, Date.now());
-  db.prepare(
-    `INSERT INTO config_kv (key, value, set_at)
-     VALUES ('embedding.circuit_open_until', ?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
-  ).run(String(Date.now() + 60000), Date.now());
-  db.close();
 
   const configPath = path.join(process.env.CCMEM_DATA_ROOT, 'query-cache-config.json');
   const previousConfigPath = process.env.CCMEM_CONFIG_PATH;
@@ -266,6 +248,33 @@ test('query embedding cache hit does not close an open circuit and increments hi
   }));
   process.env.CCMEM_CONFIG_PATH = configPath;
   process.env.OPENAI_API_KEY = 'test-key';
+
+  // The query-embedding cache is keyed on the provider:model:dim signature, not
+  // the bare model name (v0.13) — derive it the same way retrieveMemories does,
+  // so this fixture's cache row is actually reachable by the sig-aware lookup.
+  const cfg = loadConfig();
+  const sig = currentEmbeddingSig(getProvider(cfg), cfg);
+  const promptHash = createHash('sha256').update(`${sig}\n${prompt}`).digest('hex');
+
+  let db = openDb();
+  await insertMemory(db, {
+    cwd: process.cwd(),
+    content: 'semantic cache query for retry guidance memory',
+    scope: 'project',
+    type: 'fact',
+    embedSync: false,
+    embeddingBlob: vectorBlob
+  });
+  db.prepare(
+    `INSERT INTO query_embedding_cache (prompt_hash, embedding, model, prompt_len, created_at, hit_count)
+     VALUES (?, ?, ?, ?, ?, 1)`
+  ).run(promptHash, vectorBlob, sig, prompt.length, Date.now());
+  db.prepare(
+    `INSERT INTO config_kv (key, value, set_at)
+     VALUES ('embedding.circuit_open_until', ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+  ).run(String(Date.now() + 60000), Date.now());
+  db.close();
 
   try {
     const result = await runPromptSubmit({
@@ -285,6 +294,94 @@ test('query embedding cache hit does not close an open circuit and increments hi
 
     assert.equal(cacheRow.hit_count, 2);
     assert.equal(Number(circuitRow.value) > Date.now(), true);
+  } finally {
+    if (previousConfigPath == null) {
+      delete process.env.CCMEM_CONFIG_PATH;
+    } else {
+      process.env.CCMEM_CONFIG_PATH = previousConfigPath;
+    }
+    if (previousKey == null) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = previousKey;
+    }
+  }
+});
+
+test('cosine lane excludes vectors whose embedding_sig does not match the current provider', async () => {
+  const { createHash } = await import('node:crypto');
+  const { insertMemory } = await import('../../scripts/lib/cmd/save.mjs');
+  const { vecToBlob } = await import('../../scripts/lib/embedding/cosine.mjs');
+  const { getProvider } = await import('../../scripts/lib/embedding/provider.mjs');
+  const { currentEmbeddingSig } = await import('../../scripts/lib/embedding/signature.mjs');
+  const { loadConfig } = await import('../../scripts/lib/config.mjs');
+  const { retrieveMemories } = await import('../../scripts/lib/retrieval.mjs');
+
+  const configPath = path.join(process.env.CCMEM_DATA_ROOT, 'sig-filter-config.json');
+  const previousConfigPath = process.env.CCMEM_CONFIG_PATH;
+  const previousKey = process.env.OPENAI_API_KEY;
+  writeFileSync(configPath, JSON.stringify({
+    injection: { file_based: true },
+    embedding: {
+      enabled: true,
+      provider: 'openai',
+      openai_api_key: 'test-key',
+      openai_base_url: 'http://127.0.0.1:1',
+      openai_model: 'text-embedding-3-small'
+    }
+  }));
+  process.env.CCMEM_CONFIG_PATH = configPath;
+  process.env.OPENAI_API_KEY = 'test-key';
+
+  try {
+    const cfg = loadConfig();
+    const sig = currentEmbeddingSig(getProvider(cfg), cfg);
+    // Both memories get the identical vector, so if the sig predicate were
+    // dropped, both would tie for a perfect cosine match and both would
+    // surface. Content is deliberately disjoint from the prompt and from each
+    // other so neither can be found through the FTS/LIKE lexical lanes —
+    // the only way either id can appear in `rows` is via the cosine lane.
+    const vectorBlob = vecToBlob(new Float32Array([1, 0, 0]));
+    const prompt = 'zzqpfxx wibblefrotz query marker unique probe';
+    const projectKey = 'sig-filter/repo';
+
+    let db = openDb();
+    const current = await insertMemory(db, {
+      cwd: process.cwd(),
+      content: 'kappa-quokka-nine current signature fixture',
+      scope: 'project',
+      projectKey,
+      type: 'fact',
+      embedSync: false,
+      embeddingBlob: vectorBlob
+    });
+    const stale = await insertMemory(db, {
+      cwd: process.cwd(),
+      content: 'lambda-yonder-five stale signature fixture',
+      scope: 'project',
+      projectKey,
+      type: 'fact',
+      embedSync: false,
+      embeddingBlob: vectorBlob
+    });
+    // Simulate a vector written by a since-replaced provider/model/dim.
+    db.prepare(`UPDATE memories SET embedding_sig = ? WHERE id = ?`).run('local:Xenova/all-MiniLM-L6-v2:384', stale.id);
+
+    const promptHash = createHash('sha256').update(`${sig}\n${prompt}`).digest('hex');
+    db.prepare(
+      `INSERT INTO query_embedding_cache (prompt_hash, embedding, model, prompt_len, created_at, hit_count)
+       VALUES (?, ?, ?, ?, ?, 1)`
+    ).run(promptHash, vectorBlob, sig, prompt.length, Date.now());
+    db.close();
+
+    db = openDb();
+    const result = await retrieveMemories(db, prompt, projectKey, cfg);
+    db.close();
+
+    const ids = result.rows.map((row) => row.id);
+    assert.equal(ids.includes(current.id), true, 'current-signature vector should be found via cosine');
+    assert.equal(ids.includes(stale.id), false, 'stale-signature vector must not be found via cosine');
+    assert.equal(result.timing.retrieval_stale_vecs >= 1, true);
   } finally {
     if (previousConfigPath == null) {
       delete process.env.CCMEM_CONFIG_PATH;

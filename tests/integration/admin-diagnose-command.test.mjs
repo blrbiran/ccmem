@@ -556,7 +556,7 @@ test('metrics rollup persists v0.12 retrieval path counts', () => {
   db.close();
 });
 
-test('cli admin diagnose --retrieval shows kv-aware embedding state and open circuit', () => {
+test('cli admin diagnose --retrieval shows kv-aware embedding state and open circuit', async () => {
   const db = openDb();
   resetDiagnoseTables(db);
   const now = Date.now();
@@ -564,6 +564,11 @@ test('cli admin diagnose --retrieval shows kv-aware embedding state and open cir
     `INSERT INTO config_kv (key, value, set_at)
      VALUES ('embedding.enabled', 'false', ?), ('embedding.active_provider', 'openai', ?), ('embedding.circuit_open_until', ?, ?)`
   ).run(now, now, String(now + 60000), now);
+  // Simulate a legacy (pre-v0.13) vector: embedding present, embedding_sig
+  // NULL because it predates provenance tracking. It must be reported as
+  // stale, not silently ignored.
+  const legacyRow = await cmdSave(db, { cwd: diagnoseCwd, content: 'legacy pre-signature vector fixture' });
+  db.prepare(`UPDATE memories SET embedding = ? WHERE id = ?`).run(Buffer.from(new Float32Array([1, 0, 0]).buffer), legacyRow.id);
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--retrieval'], {
@@ -574,6 +579,7 @@ test('cli admin diagnose --retrieval shows kv-aware embedding state and open cir
 
   assert.match(output, /Embedding: disabled \(openai\)/);
   assert.match(output, /Circuit: OPEN/);
+  assert.match(output, /stale vectors:\s+1 \(signature mismatch/);
 });
 
 test('cli admin diagnose --embedding-circuit can open report and close circuit state', () => {

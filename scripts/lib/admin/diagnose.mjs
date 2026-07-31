@@ -3,6 +3,8 @@ import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { writeAudit } from '../audit.mjs';
 import { loadConfig } from '../config.mjs';
 import { getDbPath, getSchemaVersion } from '../db.mjs';
+import { getProvider } from '../embedding/provider.mjs';
+import { currentEmbeddingSig } from '../embedding/signature.mjs';
 import { decisionDataFile, decisionDataSizeBytes } from '../metrics.mjs';
 import { fallbackProjectKey, resolveProjectKey } from '../project-key.mjs';
 import { collectInjectionRows, countNeverInjected } from '../recent-injections.mjs';
@@ -53,11 +55,17 @@ function getRetrievalCheckAudit(db) {
 function getRetrievalDiagnostics(db, cfg = loadConfig(), { days = 14 } = {}) {
   const metrics = getMetricsDiagnostics(db, { days, cfg });
   const circuitOpenUntil = Number(readConfigKv(db, 'embedding.circuit_open_until') ?? NaN);
+  const sig = currentEmbeddingSig(getProvider(cfg), cfg);
+  const staleVectors = Number(db.prepare(
+    `SELECT COUNT(*) n FROM memories
+     WHERE embedding IS NOT NULL AND (embedding_sig IS NULL OR embedding_sig <> ?)`
+  ).get(sig)?.n ?? 0);
   return {
     embedding_enabled: resolveEmbeddingEnabled(cfg, db),
     embedding_provider: resolveEmbeddingProvider(cfg, db),
     circuit: Number.isFinite(circuitOpenUntil) && circuitOpenUntil > Date.now() ? 'OPEN' : 'CLOSED',
     circuit_open_until: Number.isFinite(circuitOpenUntil) ? circuitOpenUntil : null,
+    stale_vectors: staleVectors,
     metrics
   };
 }

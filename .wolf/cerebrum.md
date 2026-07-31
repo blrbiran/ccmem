@@ -44,6 +44,7 @@
 - Do not rely on empty-stderr assertions in hook or daemon suites.
 - Do not hard-code inserted memory ids or project keys in integration fixtures.
 - After large same-file helper extraction or replacement, grep for duplicate declarations before broad test runs.
+- 2026-07-31: When a cache/lookup key format changes (e.g. `query_embedding_cache.prompt_hash` moving from bare `modelId` to a `provider:model:dim` signature in v0.13 B1), any test fixture that hand-computes that key with the old inputs silently misses — it doesn't error, the code just falls through to the next retrieval path. Grep test fixtures for the old key-input variable name whenever a hash/key derivation changes, not just for direct assertions on the changed field.
 
 ## Long-Lived Decisions
 

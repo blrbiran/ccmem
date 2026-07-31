@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { hasUsableFts } from './db.mjs';
 import { blobToVec, cosineSimilarity, vecToBlob } from './embedding/cosine.mjs';
 import { getProvider, getProviderWithCircuit, recordEmbedFailure, recordEmbedSuccess } from './embedding/provider.mjs';
+import { currentEmbeddingSig } from './embedding/signature.mjs';
 
 export function sanitizeFtsQuery(prompt) {
   return String(prompt ?? '')
@@ -211,22 +212,6 @@ function renderRow(row, score = null) {
   };
 }
 
-function currentModelId(provider, config = null) {
-  if (provider?.modelId) {
-    return String(provider.modelId);
-  }
-
-  const embedding = config?.embedding ?? {};
-  switch (embedding.provider) {
-    case 'openai':
-      return String(embedding.openai_model ?? 'text-embedding-3-small');
-    case 'jina':
-      return 'jina-embeddings-v3';
-    default:
-      return String(embedding.model ?? 'Xenova/all-MiniLM-L6-v2');
-  }
-}
-
 function toFloat32Vec(vec) {
   if (!vec) {
     return null;
@@ -234,17 +219,17 @@ function toFloat32Vec(vec) {
   return vec instanceof Float32Array ? vec : new Float32Array(vec);
 }
 
-function promptHash(modelId, promptText) {
-  return createHash('sha256').update(`${modelId}\n${promptText}`).digest('hex');
+function promptHash(sig, promptText) {
+  return createHash('sha256').update(`${sig}\n${promptText}`).digest('hex');
 }
 
-function readQueryEmbeddingCache(db, promptText, modelId) {
-  const hash = promptHash(modelId, promptText);
+function readQueryEmbeddingCache(db, promptText, sig) {
+  const hash = promptHash(sig, promptText);
   const row = db.prepare(
     `SELECT embedding
      FROM query_embedding_cache
      WHERE prompt_hash = ? AND model = ?`
-  ).get(hash, modelId);
+  ).get(hash, sig);
   if (!row?.embedding) {
     return null;
   }
@@ -261,7 +246,7 @@ function readQueryEmbeddingCache(db, promptText, modelId) {
   };
 }
 
-function writeQueryEmbeddingCache(db, promptText, modelId, queryVec) {
+function writeQueryEmbeddingCache(db, promptText, sig, queryVec) {
   const normalized = toFloat32Vec(queryVec);
   if (!normalized) {
     return;
@@ -276,9 +261,9 @@ function writeQueryEmbeddingCache(db, promptText, modelId, queryVec) {
        prompt_len = excluded.prompt_len,
        created_at = excluded.created_at`
   ).run(
-    promptHash(modelId, promptText),
+    promptHash(sig, promptText),
     vecToBlob(normalized),
-    modelId,
+    sig,
     promptText.length,
     Date.now()
   );
@@ -357,8 +342,15 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
   const ftsQuery = sanitizeFtsQuery(promptText);
   const useFts = hasUsableFts(db);
   const baseProvider = getProvider(config);
-  const modelId = baseProvider ? currentModelId(baseProvider, config) : null;
-  const cachedQuery = modelId ? readQueryEmbeddingCache(db, promptText, modelId) : null;
+  // Signature reflects the configured provider's identity (provider:model:dim),
+  // resolved from applyConfig() at getProvider() time — independent of the
+  // circuit breaker below, which only gates whether we can reach the API right
+  // now, not what "current" means. Using the circuit-gated provider here would
+  // wrongly fall back to config-only dim guessing (e.g. openai_dim defaults to
+  // null in DEFAULT_CONFIG, not the provider's real 1536) whenever the circuit
+  // is open — even on a query-cache hit, where no live provider is needed at all.
+  const sig = baseProvider ? currentEmbeddingSig(baseProvider, config) : null;
+  const cachedQuery = sig ? readQueryEmbeddingCache(db, promptText, sig) : null;
   const { provider, circuit } = getProviderWithCircuit(db, config);
   let useEmbedding = false;
   let queryVec = cachedQuery?.queryVec ?? null;
@@ -392,8 +384,8 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
       [queryVec] = await provider.embed([promptText], config);
       queryVec = toFloat32Vec(queryVec);
       recordEmbedSuccess(db);
-      if (modelId && queryVec) {
-        writeQueryEmbeddingCache(db, promptText, modelId, queryVec);
+      if (sig && queryVec) {
+        writeQueryEmbeddingCache(db, promptText, sig, queryVec);
       }
     } catch (error) {
       embedMs = Date.now() - tEmbed;
@@ -432,11 +424,15 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
   const allVecs = db.prepare(
     `SELECT id, embedding
      FROM memories
-     WHERE embedding IS NOT NULL
+     WHERE embedding IS NOT NULL AND embedding_sig = ?
        AND status = 'active'
        AND decay_status IN ('active', 'probation')
        AND (scope = 'global' OR project_key = ?)`
-  ).all(projectKey);
+  ).all(sig, projectKey);
+  const staleVecs = db.prepare(
+    `SELECT COUNT(*) n FROM memories
+     WHERE embedding IS NOT NULL AND (embedding_sig IS NULL OR embedding_sig <> ?)`
+  ).get(sig).n;
   const dbReadMs = Date.now() - tDbRead;
 
   const tCosine = Date.now();
@@ -494,7 +490,8 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
       embedMs,
       dbReadMs,
       cosineMs,
-      candidatePool: allVecs.length
+      candidatePool: allVecs.length,
+      retrieval_stale_vecs: staleVecs
     }
   };
 }

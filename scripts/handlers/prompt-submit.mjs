@@ -128,6 +128,7 @@ export async function handlePromptSubmit(hookData) {
         retrieval_db_ms: retrieval.timing?.dbReadMs ?? null,
         retrieval_cosine_ms: retrieval.timing?.cosineMs ?? null,
         retrieval_pool: retrieval.timing?.candidatePool ?? null,
+        retrieval_stale_vecs: retrieval.timing?.retrieval_stale_vecs ?? null,
         retrieval_path: path,
         retrieval_embed_error: embedError,
         retrieval_fallback: fallback,

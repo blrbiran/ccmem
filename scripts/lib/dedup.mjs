@@ -97,7 +97,10 @@ export function dedupCheck(db, { content, scope, projectKey, contentVec = null }
   for (const candidate of candidates) {
     const trigramScore = jaccard(trigrams, trigramSet(candidate.content, Number(config?.dedup?.trigram_size ?? 3)));
     let cosineScore = 0;
-    if (contentVec && candidate.embedding && candidate.embedding_sig === sig) {
+    // `sig &&` matters now that a missing provider yields null rather than a
+    // never-matching string: without it, a null signature would compare equal to
+    // every pre-signature row and re-open the exact cosine lane this guard closes.
+    if (contentVec && candidate.embedding && sig && candidate.embedding_sig === sig) {
       cosineScore = cosineSimilarity(contentVec, blobToVec(candidate.embedding));
     }
     const score = Math.max(trigramScore, cosineScore);

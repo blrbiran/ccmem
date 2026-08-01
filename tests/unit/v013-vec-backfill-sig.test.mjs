@@ -72,3 +72,38 @@ test('pendingEmbeddings(db, sig) counts NULL and stale-signature rows, excludes 
     db.close();
   }
 });
+
+// CONTROL for the Finding 9 signature contract. currentEmbeddingSig returns null
+// when no provider is loaded, so pendingEmbeddings must be given null in exactly
+// that case. SQL's `embedding_sig <> NULL` is NULL, not true, which makes the count
+// mean "rows with no vector at all" — the only honest answer when there is no
+// current signature to be stale against.
+//
+// Green before and after the contract change by design: it exists so that a later
+// "simplification" of this WHERE clause cannot quietly turn embedding-disabled into
+// "every embedded row is pending", which is what the old `?? 0` signature did.
+test('pendingEmbeddings with no signature counts only never-embedded rows', () => {
+  const db = openDb();
+  try {
+    const embedded = db.prepare(
+      `SELECT COUNT(*) n FROM memories
+       WHERE embedding IS NOT NULL AND embedding_sig IS NOT NULL
+         AND status = 'active' AND decay_status IN ('active', 'probation')`
+    ).get().n;
+    assert.equal(embedded >= 1, true, 'fixture precondition: at least one embedded row exists');
+
+    const neverEmbedded = db.prepare(
+      `SELECT COUNT(*) n FROM memories
+       WHERE embedding IS NULL
+         AND status = 'active' AND decay_status IN ('active', 'probation')`
+    ).get().n;
+
+    assert.equal(
+      pendingEmbeddings(db, null),
+      neverEmbedded,
+      'with no provider there is nothing to be stale against; embedded rows must not be counted'
+    );
+  } finally {
+    db.close();
+  }
+});

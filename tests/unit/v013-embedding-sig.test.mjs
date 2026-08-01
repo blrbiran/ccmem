@@ -3,17 +3,25 @@ import assert from 'node:assert/strict';
 import { currentEmbeddingSig } from '../../scripts/lib/embedding/signature.mjs';
 import { transformersLocal } from '../../scripts/lib/embedding/transformers-local.mjs';
 
+// These two used to pass `null` for the provider and read model/dim out of config.
+// Production never does that: every call site derives the signature from a loaded
+// provider (ledger, Task 6). Fixtures now match the shape production actually uses.
 test('signature is provider:model:dim', () => {
   assert.equal(
-    currentEmbeddingSig(null, { embedding: { provider: 'openai', openai_model: 'text-embedding-3-small', openai_dim: 1536 } }),
+    currentEmbeddingSig(
+      { modelId: 'text-embedding-3-small', dim: 1536 },
+      { embedding: { provider: 'openai' } }
+    ),
     'openai:text-embedding-3-small:1536'
   );
 });
 
 test('changing only the dimension changes the signature', () => {
-  const base = { embedding: { provider: 'openai', openai_model: 'text-embedding-3-small', openai_dim: 1536 } };
-  const narrowed = { embedding: { ...base.embedding, openai_dim: 512 } };
-  assert.notEqual(currentEmbeddingSig(null, base), currentEmbeddingSig(null, narrowed));
+  const cfg = { embedding: { provider: 'openai' } };
+  assert.notEqual(
+    currentEmbeddingSig({ modelId: 'text-embedding-3-small', dim: 1536 }, cfg),
+    currentEmbeddingSig({ modelId: 'text-embedding-3-small', dim: 512 }, cfg)
+  );
 });
 
 // The live provider's modelId MUST win over the config fallback. The previous
@@ -36,8 +44,30 @@ test('local provider defaults produce a stable signature', () => {
   );
 });
 
-test('missing provider field falls back to local', () => {
-  assert.match(currentEmbeddingSig(null, {}), /^local:/);
+// Finding 9. Without a provider there is no signature, and saying so is the whole
+// job of this module. The old code answered with a synthesised string whose dim came
+// from `?? 0` — a width no vector can ever have — so every consumer compared stored
+// rows against a signature nothing could match: `diagnose --retrieval` reported the
+// entire store as stale, and the daemon's pending count stayed permanently above zero
+// and re-queued vec_backfill forever, all while embedding was switched off.
+//
+// null is the honest answer, and every consumer already treats a null signature as
+// "the cosine lane is unavailable" rather than "nothing matches".
+test('no provider means no signature', () => {
+  assert.equal(
+    currentEmbeddingSig(null, { embedding: { provider: 'openai', openai_model: 'text-embedding-3-small', openai_dim: 1536 } }),
+    null,
+    'a config declaration is a guess about a provider that is not loaded, not a signature'
+  );
+  assert.equal(currentEmbeddingSig(null, {}), null);
+});
+
+test('a provider with no usable dimension has no signature', () => {
+  assert.equal(
+    currentEmbeddingSig({ modelId: 'text-embedding-3-small' }, { embedding: { provider: 'openai' } }),
+    null,
+    'dim 0 is not a dimension; emitting it would silently mismatch every stored row'
+  );
 });
 
 // I1 regression. `embedding.model` is the single supported way to change the

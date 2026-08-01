@@ -19,13 +19,22 @@
 需要知道的事实：
 
 - 本轮新增 **6 个修复提交 + 3 个文档提交**（修复：daemon 环境、换模型检测器、签名契约、回填超时、回填接线、孤儿任务回收），全部在本地 `main` 上。
+- **2026-08-01 深夜追加 3 个文档提交**（Finding 12、V4 实测记录、本文档同步）。
 - 本地 `main` **领先 `origin/main`，尚未推送**。人类自己处理所有 push —— 不要代为推送。
+  （`origin/main` 上次核对时在 `3dc7951`；**别信这个 SHA，用 `git rev-list --count origin/main..main` 自己数。**）
 - 分支 `v0.13-spec`、`v0.13-dogfood-fixes` 均未删除（删分支必须先问）。
 - 当前套件：**466 pass / 0 fail**。跑测试用 `npm test`（脚本已内置 `env -u CCMEM_CONFIG_PATH`）。
 
-## ✅ G1 达成：OpenAI 回填跑通，dogfood V3 的 OpenAI 分支完成
+## ⚠️ G1 只达成了一半：库里有向量，检索大部分时间没在用
 
-**`pending = 0`，`semantic status` 从 `pending backfill` 转为 `active`。**
+**`pending = 0`，`semantic status` 从 `pending backfill` 转为 `active`。回填这一半是真的。**
+
+**但 2026-08-01 深夜发现 Finding 12（P0，未修复）**：`loadConfig()` 在 `CCMEM_CONFIG_PATH`
+未设时直接返回 `DEFAULT_CONFIG`（`transformers-local`），**不回落到 `~/.claude/ccmem/config.json`**。
+于是没有该变量的 **hook 进程**用 MiniLM 嵌入查询，签名与库里 4454 条 openai 向量无一匹配，
+`retrieval_pool=0`、`cosine_contribution=0`，检索静默退化为纯词法 —— 而 `retrieval_path` 仍报 `'A'`。
+**这是 Finding 9 的同一种病换了当事人**（那次是 daemon，已修；这次是 hook，未修）。
+详见 dogfood 文档 Finding 12。**改回落语义会动到 `npm test` 赖以隔离的那层（Finding 8），需要人类裁决，不要顺手改。**
 
 | 指标 | 值 |
 |---|---|
@@ -83,9 +92,11 @@
 3. **附录 A 不变量仍欠** Finding 6/7/8 + 本轮全部修复的对应条目。
    **加之前必须先验证 grep 在破坏代码时真能变红**，否则重蹈 final review I9 的空不变量。
 
-4. **V4/V5 现在第一次具备验证条件** —— 库里终于有一整套非空且签名一致的向量（4367 条 openai 签名）。
-   V4 是签名过滤的三个消费点（检索侧 / dedup / **写 trust 的 feedback.mjs**，后者优先级最高）；
-   V5 是 `semantic status` 与 `diagnose --retrieval` 的口径一致性。
+4. ~~**V4/V5 现在第一次具备验证条件**~~ —— **V4 已于 2026-08-01 深夜完成，三个消费点全部两面验证通过**
+   （证据在 dogfood §五 V4，方法是在 live 库的 `VACUUM INTO` 副本上跑真实代码路径 + 真实 1536 维向量，
+   live 库零写入；`feedback.mjs` 另做了代码突变确认过滤是承重的）。
+   **V4 仍欠的只有生产计数** —— 而它被 Finding 12 压着，修好之前拿不到。
+   **V5 尚未做**（`semantic status` 与 `diagnose --retrieval` 的口径一致性），现在仍具备条件。
 
 ## 当前运行时状态（会变，用命令核对）
 
@@ -102,6 +113,12 @@
 - **纯函数有测试不等于接线有测试。** 回填超时的第一版提交**实际上什么都没改变**：override 只传给了 `getProvider()`，而 `load()`/`embed()` 各自回到 `loadConfig()` 把超时又拿了回来。这正是 Finding 7 记过的「包装器有测试、接线只靠人看」。
 - **0 计数 / 不动的数字，先解释来源再当结论。** 本轮 `pending` 两次停滞：一次是超时杀死链条，一次是孤儿 `running` 行。两次都不是"再等等就好"。
 - **查证要查对表。** 我在 live 库上一度查了 `task_runs`（实为 `tasks`），结论侥幸没错但证据是错的。
+- **单面的绿在同签名库上恒真。** 库里 4454 条全是一个签名，签名过滤在这样的库上是 no-op ——
+  只做正面等于 Finding 3 的分母为 0。V4 的每一项都必须构造异签名（**同维不同模型**，
+  维度不同会被长度检查安全挡掉）再看观测量是否移动。
+- **反面的"什么都没发生"需要正面对照才可信** —— 否则可能只是探针本身坏了。
+- **V4 又栽了一次红错**：dedup 探针首版 `duplicate=false` 看着像反面成立，实为挑错了记忆
+  （`candidateRows()` 取"最近 touch 的 20 条"，不是 FTS 捞的）。
 
 ## 人类裁决 —— 不得静默推翻
 

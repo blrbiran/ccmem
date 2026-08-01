@@ -81,6 +81,22 @@ export async function cmdAdminSemantic(db, { verb, provider: requestedProvider =
     const providerName = requestedProvider ?? cfg.embedding?.provider ?? 'transformers-local';
     const providerCfg = { embedding: { ...cfg.embedding, enabled: true, provider: providerName } };
     const currentModel = db.prepare(`SELECT value FROM config_kv WHERE key = 'embedding.active_model'`).get()?.value ?? null;
+
+    // Settle the provider override BEFORE resolving the provider. resolveProviderName
+    // reads config_kv ahead of the config file, so a leftover row here would make
+    // getProvider load a DIFFERENT provider than the one named above — and, since the
+    // row was written unconditionally, one `semantic on` used to shadow the file's
+    // `embedding.provider` permanently with no command able to clear it.
+    //
+    // No --provider means "enable what the config file declares", so the override is
+    // deleted rather than re-pinned. An explicit --provider is a deliberate runtime
+    // override and still persists.
+    if (requestedProvider) {
+      setConfigValue(db, 'embedding.active_provider', requestedProvider);
+    } else {
+      db.prepare(`DELETE FROM config_kv WHERE key = 'embedding.active_provider'`).run();
+    }
+
     _resetProviderCache();
     const provider = getProvider(providerCfg);
     await provider.load(providerCfg);
@@ -97,7 +113,6 @@ export async function cmdAdminSemantic(db, { verb, provider: requestedProvider =
 
     setConfigValue(db, 'embedding.enabled', 'true');
     setConfigValue(db, 'embedding.active_model', newModel);
-    setConfigValue(db, 'embedding.active_provider', providerName);
     writeAudit(db, 'semantic_enabled', null, { model: newModel, dim: provider.dim, provider: providerName });
     return semanticState(db, cfg);
   }

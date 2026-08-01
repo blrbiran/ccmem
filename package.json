@@ -11,8 +11,8 @@
     "openai": "^4.104.0"
   },
   "scripts": {
-    "test": "env -u CCMEM_CONFIG_PATH /usr/local/bin/node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
-    "test:unit": "env -u CCMEM_CONFIG_PATH /usr/local/bin/node --test tests/unit/*.test.mjs",
-    "test:integration": "env -u CCMEM_CONFIG_PATH /usr/local/bin/node --test tests/integration/*.test.mjs"
+    "test": "env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT=\"$(mktemp -d)\" /usr/local/bin/node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
+    "test:unit": "env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT=\"$(mktemp -d)\" /usr/local/bin/node --test tests/unit/*.test.mjs",
+    "test:integration": "env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT=\"$(mktemp -d)\" /usr/local/bin/node --test tests/integration/*.test.mjs"
   }
 }

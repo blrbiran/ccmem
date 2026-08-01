@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from './config.mjs';
+import { getDataRoot } from './paths.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.resolve(HERE, '../migrations');
@@ -12,9 +13,10 @@ const require = createRequire(import.meta.url);
 const BACKUP_DEDUPE_WINDOW_MS = 60_000;
 let cachedFtsSupport;
 
-export function getDataRoot() {
-  return process.env.CCMEM_DATA_ROOT ?? path.join(os.homedir(), '.claude', 'ccmem');
-}
+// Defined in paths.mjs so config.mjs can share it without importing this
+// module (which imports config.mjs). Re-exported here because six modules
+// already import getDataRoot from db.mjs.
+export { getDataRoot };
 
 export function getDbPath() {
   return path.join(getDataRoot(), 'global.db');

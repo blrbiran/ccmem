@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { getConfigPath } from './paths.mjs';
 
 export const DEFAULT_CONFIG = {
   version: '0.13',
@@ -289,10 +290,21 @@ function applyV08Compatibility(config) {
 }
 
 export function loadConfig() {
+  // CCMEM_CONFIG_PATH has no persistent source — it is in no shell rc, no
+  // launchctl environment and no Claude setting — so it is present only in
+  // shells where someone exported it by hand, and absent in every process
+  // launched any other way. Returning DEFAULT_CONFIG when it is missing meant
+  // those processes silently ran a different embedding provider against the
+  // same store than the ones that had it (Finding 12): hooks embedded queries
+  // with MiniLM, produced a signature no stored vector carried, and retrieval
+  // degraded to lexical without a single error. The store's own config.json is
+  // the answer they should have had all along; the variable now only overrides
+  // it.
   const userPath = process.env.CCMEM_CONFIG_PATH;
-  if (!userPath || !existsSync(userPath)) {
+  const path = userPath && existsSync(userPath) ? userPath : getConfigPath();
+  if (!existsSync(path)) {
     return applyV08Compatibility(DEFAULT_CONFIG);
   }
 
-  return applyV08Compatibility(mergeConfig(DEFAULT_CONFIG, JSON.parse(readFileSync(userPath, 'utf8'))));
+  return applyV08Compatibility(mergeConfig(DEFAULT_CONFIG, JSON.parse(readFileSync(path, 'utf8'))));
 }

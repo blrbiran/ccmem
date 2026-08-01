@@ -1,97 +1,121 @@
 # ccmem v0.13 — Handoff
 
-> v0.13 是 **已完成并合并** 状态。本文档面向接手 v0.14（或收尾 v0.13 残留事务）的 agent。
-> 更新于 2026-08-01，最终全分支 review + 单轮修复波 + scoped re-review 全部结束之后。
+> v0.13 **已发布并合并**，其后完成了 **第一轮 dogfood**（2026-08-01）。
+> 本文档面向接手 **v0.13 dogfood 收尾** 或 **v0.14** 的 agent。
+> 本文档只做索引与状态提要 —— **不要仅凭它重建状态**，实质内容在下表的材料里。
 
 ## 先读这些，按顺序
 
 | 材料 | 是什么 | 为什么需要 |
 |---|---|---|
-| `.superpowers/sdd/2026-07-31-ccmem-v0.13/progress.md` | SDD ledger | **每一条人类裁决及其理由**，全部延期项，以及 7 次「计划本身有缺陷」的记录。这是唯一记录了「什么改变了计划」的地方，git 历史一条都不记。 |
-| `.superpowers/sdd/2026-07-31-ccmem-v0.13/final-review-findings.md` | 最终 review 的完整发现清单 | 3 Critical + 10 Important 的原文、证据与修复要求，末尾附 **明确不在本次范围内的 follow-up 清单** —— 那就是 v0.14 的待办来源。 |
-| `docs/ccmem-v0.13-spec.md` | v0.13 规范 | §0.4（live-DB 证据）与 §0.5（为什么 L2.5 的真修复被推迟）是承重的。 |
-| `docs/superpowers/plans/2026-07-31-ccmem-v0.13.md` | 实施计划 | 已全部执行完。末尾 Final Verification 一节已按落地实际修正过（附录 A 不变量现为 120–135，共 16 条）。 |
-
-本文档只做索引与提要，不要仅凭它重建状态。
+| **`docs/ccmem-v0.13-dogfood.md`** | **第一轮 dogfood 的计划与记录** | **最重要，先读。** 9 条 finding（含根因、证据、修复方案、取舍）、V1–V8 验证清单、真实基线数据、两个门禁。接手工作的全部上下文在这里。 |
+| `.superpowers/sdd/2026-07-31-ccmem-v0.13/progress.md` | SDD ledger | 每一条人类裁决及其理由、全部延期项、7 次「计划本身有缺陷」的记录。git 历史一条都不记。**dogfood Finding 9 正是两条被判 minor 的延期项合成的 P0** —— 这份 ledger 是判断"某个 minor 会不会咬人"的唯一依据。 |
+| `.superpowers/sdd/2026-07-31-ccmem-v0.13/final-review-findings.md` | 最终 review findings | 末尾「NOT in this wave」清单 = v0.14 待办来源。 |
+| `docs/ccmem-v0.13-spec.md` | v0.13 规范 | §0.4、§0.5 承重。**附录 A 不变量（120–135）尚未涵盖 dogfood 的三个修复** —— 见下方未竟事项。 |
 
 ## Git 状态
 
-**不要相信本文档里出现的任何 commit SHA** —— 提交这份文档本身就会移动 HEAD。用 `git log --oneline` 确认真实位置，并与 ledger 中各 `Task N: complete (commits …)` 行交叉验证（那些范围记录的是任务关闭当时的状态）。
+**不要相信本文档里出现的任何 commit SHA** —— 提交这份文档本身就会移动 HEAD。用 `git log --oneline` 确认真实位置。
 
 需要知道的事实，而非 SHA：
 
-- v0.13 的全部工作 **已 fast-forward 合并进本地 `main`**，合并结果上重跑过完整套件。
+- v0.13 本体与 **dogfood 修复（4 个提交）** 均已 fast-forward 合并进本地 `main`，两次都在合并结果上重跑过完整套件。
 - 本地 `main` **领先 `origin/main`，尚未推送**。人类自己处理所有 push —— 不要代为推送。
-- 分支 `v0.13-spec` **未删除**（全局规则：删分支必须先问）。远程 `origin/v0.13-spec` 仍在，落后于本地。工作已在 `main` 上，删不删都不影响正确性。
-- 工作区在交接时干净，没有未 review 的提交。
+- 分支 `v0.13-spec`、`v0.13-dogfood-fixes` **均未删除**（全局规则：删分支必须先问）。
+- 交接时工作区干净。
 
-## v0.13 实际交付了什么
+## ⚠ 第一优先级：Finding 9（P0，未修复）
 
-三条线：**A1** 观察型 L2.5 探针 + `admin diagnose --feedback`；**A2** 入库收紧（两条 quality-gate 规则）；**B1/B2/B3** embedding 签名版本化、`temporal_type` 回归测试、recall-loop 回归测试。
+**语义检索目前静默退化为纯词法**，无任何报错。三个签名互不相同：
 
-结项验证（可复跑）：完整套件 **449 通过 / 0 失败**；附录 A 不变量 **16/16**；live DB `SUM(trust_score)` 在真实使用前后**完全不变**（期间 hooks 实际运行并新增了 63 条探针行，因此这不是走过场）。
+| 来源 | 签名 |
+|---|---|
+| 库里 4223 行实际写入的 | `transformers-local:Xenova/all-MiniLM-L6-v2:384` |
+| CLI `semantic status` 比对用的 | `local:Xenova/all-MiniLM-L6-v2:0` |
+| 操作者选择的 | `openai:text-embedding-3-small:1536` |
 
-**v0.13 不改 trust 行为**，记忆库在本版仍会持续增长 —— 这是预期，不是回归。
+根因、修复方向、以及**一个未解开的疑点**（daemon 在 `semantic on` 报告 `provider=openai` 后仍以本地 provider 写入）全部记在 dogfood 文档 Finding 9。不要在此处重复推导。
 
-## ⚠ 给 v0.14 的核心情报：第一批真实数据
+三条纪律，照做：
 
-这是本次发布存在的全部意义，也是你接手后最该先看的东西。跑 `node scripts/cli.mjs admin diagnose --feedback` 看当前值。交接时的首批结果：
+1. **不要重跑 `semantic on` 或重启 daemon 来"试试看"** —— 签名函数没修之前，重嵌多少次结果都一样。当前状态稳定。
+2. **不要信任 `tests/unit/v013-embedding-sig.test.mjs`** —— ledger 已记：它 5 个测试里有 4 个走的是生产永不到达的 config-only 回退分支。
+3. **Finding 4（`openai_timeout_ms: 800`）至今未被真实检验** —— 因为 OpenAI provider 实际从未跑起来过。修好 Finding 9 之后它才第一次成为真问题。
 
-- 信号组（turn-aligned, non-CJK）`l25_cov` p50 ≈ 0.103
-- **随机对照组**（never-injected-this-session, non-CJK）`l25_cov` p50 ≈ 0.125
+## 本轮 dogfood 的结果摘要
 
-**噪声底可能高于信号本身。** 样本量还很小（随机组个位数），不能定论，但这正是 v0.14 必须回答的问题：*任何阈值是否可行*。在最终 review 的修复波补上随机对照组之前，这个问题根本无法提出。
+修复并合入（详见 dogfood 文档 Finding 6/7/8 与对应提交信息）：
+- **Finding 6**：`admin semantic on` 的 config_kv 副作用永久遮蔽配置文件
+- **Finding 7**：`openai` 包从未被声明为依赖；两个 provider 的动态 import 现在给出可操作错误
+- **Finding 8**：测试套件未隔离 `CCMEM_CONFIG_PATH`，用户配置会污染测试结果
 
-同时注意：`l25_legacy_hit` 在全部已收集行中 **恒为 0**。旧匹配器确实几乎不触发（这印证了发布前提），但也意味着**没有任何正例标签**用于校准。
+已记录未修：**Finding 9**（P0）、**Finding 5**（`loadConfig()` 的 `JSON.parse` 无 try/catch，配置文件是全 hook 单点故障）。
 
-计划明确写了：**必须人工标注约 50 个样本**（"这条回复真的用到了这条记忆吗"）才能算 precision/recall，分布本身定不出阈值。探针行现在带 `reply_head` / `mem_head` / `transcript_path` 就是为此 —— 早期行没有这些字段，读取端会把它们归入 `unclassified`。
+已验证通过：**V3 在本地 provider 上达成** —— `pending` 4155→0，零手工干预，`vec_backfill_run` 审计 136 次对 2 次 daemon 重启。这是 review I3「回填后自动重排队」修复在真实库上的首次确认。
 
-## 人类裁决 —— v0.14 同样受约束，不得静默推翻
+当前套件：**454 pass / 0 fail**。新增 5 个测试，**全部先被亲眼看着变红**。
+
+## ⚠ 未竟事项（人类要求过，本轮未完成）
+
+**spec / 附录 A 不变量未更新。** Finding 6/7/8 三个修复都没有对应不变量。上一轮因上下文耗尽主动停手，理由是：在截断状态下改不变量编号区间，极可能产出又一条永远不可能失败的空不变量（final review 的 I9 就是两条这样的）。
+
+候选（**两条都必须先验证 grep 在破坏代码时真能返回失败**，否则就是重蹈 I9）：
+- grep `semantic.mjs`，确保 `active_provider` 不再被无条件 `setConfigValue`
+- grep `scripts/lib/embedding/`，确保动态 import 全部走 `importOptional`
+
+## 人类裁决 —— 不得静默推翻
 
 完整理由在 ledger。最容易被误伤的：
 
-1. **探针读 `recent_injections`，绝不读 `memory_feedback`。** 后者的 `outcome` 会被先于探针运行的反馈逻辑就地改写，读它会静默丢掉所有旧匹配器触发过的轮次。由不变量 #130/#131 守护。
-2. **探针只标注，不抑制。** 无新注入的轮次仍然记录。此裁决有效。
-   *经最终 review（C3）修正*：这些行曾被当作**负对照组**，但它们不是。ccmem 经 `additionalContext` 注入，内容会在该会话后续每一轮持续存在于模型上下文中，所以被重复测量的是**陈旧注入**而非"不在上下文里的记忆"；而且在 281 条真实行里它们触发了 **0 次**。现已标为 `control: 'stale_injection'`；真正的噪声底是独立队列：每轮随机抽取 K 条**本会话从未注入**的记忆对同一条回复打分，标为 `control: 'random'`。**`control` 是权威的队列字段**，`turn_aligned` 仅为兼容更早的行而保留。
-3. **`metrics.decision_data.enabled` 控制的是持久性，不是存在性。** 为 false 时探针行回落到 `metrics.jsonl`，绝不丢弃。
-4. **`retention_days: 0` 表示永不自动删除** —— 刻意与运行时清理语义相反，因为 ccmem 自己的 14 天 `recent_injections` 保留策略已经销毁过本次发布最需要的数据一次。
-5. **清理逻辑放 `scripts/lib/tier15.mjs`，不放 `daily-maintenance.mjs`** —— ccmem 的 daemon 是可选的。
-6. **`scripts/lib/config.mjs` 里的 `DEFAULT_CONFIG` 是权威配置源**，`config.default.json` 是由测试保持同步的面向用户的镜像，`loadConfig()` 从不读它。新增配置键**两边都要加**（同步测试是递归全深度比较）。
-7. **`diagnose --feedback` 不跑 tier-1.5 前奏**（与其兄弟子命令不同），以保证"v0.13 不写 decay 状态"对它字面成立。
-8. **`env_failure` 长度门限按脚本分档**（含 CJK 用 50，其余 120）—— `.length` 把一个汉字与一个拉丁字母同等计数，单一阈值无法同时服务两者。
+1. **探针读 `recent_injections`，绝不读 `memory_feedback`**（后者 `outcome` 会被先于探针运行的反馈逻辑就地改写）。由不变量 #130/#131 守护。
+2. **探针只标注，不抑制**；`control` 是**权威队列字段** —— `random` 才是噪声底，`stale_injection` 不是，`turn_aligned` 仅为兼容旧行保留。
+3. `metrics.decision_data.enabled` 控制**持久性而非存在性**（false 时回落 `metrics.jsonl`，绝不丢弃）。
+4. `retention_days: 0` = **永不自动删除**（刻意与运行时清理语义相反）。
+5. 清理逻辑放 `tier15.mjs` 而非 `daily-maintenance.mjs`（daemon 是可选的）。
+6. **`config.mjs` 的 `DEFAULT_CONFIG` 是权威配置源**，`config.default.json` 是测试保持同步的镜像，`loadConfig()` 从不读它。新增配置键**两边都要加**（递归全深度比较）。
+7. `diagnose --feedback` 不跑 tier-1.5 前奏。
+8. `env_failure` 长度门限按脚本分档（含 CJK 50，其余 120）。
 
-## v0.14 的待办来源
+dogfood 期新增一条：
+9. **`semantic on` 不带 `--provider` 时删除 kv 覆盖而非跳过** —— 已中招的用户跑一次裸命令即可自愈，不新增 `semantic reset`。已知取舍（显式 `--provider X` 会被后续裸命令清掉）经人类裁决可接受。
 
-`final-review-findings.md` 末尾的「NOT in this wave」清单是权威版本。其中两条建议优先：
+## v0.14 待办来源
 
-- `semantic.mjs` 强制 `enabled: true` 构造签名配置，而 `diagnose.mjs` 用原始 cfg —— 当「配置文件禁用 embedding 且 `config_kv` 未设」时，`admin semantic status` 与 `admin diagnose --retrieval` 仍会给出互相矛盾的答案（这是最终 review I4 修掉的那类问题的残留窄化版本）。
-- 随机对照组的排除范围只有 `recent_injections` 那么宽，而 tier15 会把它裁到每会话 20 条 —— 超长会话有约 1.8% 的污染率（k=3）。误差方向保守（会抬高噪声底），但应记入分析笔记。
+`final-review-findings.md` 末尾的「NOT in this wave」清单是权威版本。另需并入：
 
-另有两个 daemon 测试抖动（`stop-daemon-flow`、`admin-daemon-command`）多次复现、每次隔离运行均通过、确认早于本分支 —— 建议合并为一个 issue 跟进，不阻塞。
+- dogfood **Finding 5、9**
+- `@xenova/transformers` **已停止维护**，1.x 与 2.x 均带 critical 通告（1.x 是 canvas→node-pre-gyp→tar 任意文件写入链；2.x 是 onnxruntime-web→protobufjs + sharp）。`npm audit fix --force` 的"修复"是降级回 1.4.2，即换一组漏洞。真解是迁移到 `@huggingface/transformers`；权宜之计是转 OpenAI 后 `npm install --omit=optional`（这些全是 optional 依赖）。
+- 两个 daemon 测试抖动（`stop-daemon-flow`、`admin-daemon-command`）合并为一个 issue，不阻塞。
+
+## v0.14 的核心问题仍未改变
+
+`l25_cov` **是否存在任何可行阈值**。dogfood 期间新增一条关键情报：
+
+上一版 handoff 记录的「随机对照 p50 0.125 > 信号 0.103」**已随样本增长翻转**（随机组 n 从 ~9 到 21 后降至 0.075）。**正确结论不是"有信号了"，而是分位数对比这个方法本身不可靠** —— 判据必须是分布级的（AUC / Mann-Whitney U）。且 `l25_legacy_hit` 恒为 0，**无任何正例标签**，仍需人工标注约 50 个样本才能算 precision/recall。详见 dogfood 文档 Finding 2 与 V2。
 
 ## 这套流程为什么值得继续用
 
-八个任务里有五个需要 fix round，失败形态高度一致：**代码能跑、测试全绿、缺陷只表现为悄悄错掉的数据**。**七次**问题根源在规范/计划/review 本身而非实现（包括最终 review 自己有一条发现是错的，被修复者成功反驳）。
+v0.13 八个任务里五个需要 fix round，失败形态高度一致：**代码能跑、测试全绿、缺陷只表现为悄悄错掉的数据**。**dogfood 又贡献了两次**：`negative_assertion` 计数为 0 看起来像规则坏了、实为 daemon 比代码早 13.4 小时；Finding 9 的三个签名分歧全程无任何报错。
 
 两条实践几乎抓住了全部：
 
-- **每轮 fix 之后做 scoped re-review** —— 不是重跑任务 review，而是只针对修复 diff 对每条发现判定 ADDRESSED / NOT ADDRESSED。
-- **每个回归测试都必须先被亲眼看着变红才接受。** 破坏行为 → 确认红 → 还原 → 记录证据。仅此一条就抓出了多个恒绿无效测试，最终 review 中还有两条发现（I1、I6）的存在原因正是「测试根本不可能失败」。
+- **每轮 fix 之后做 scoped re-review** —— 只针对修复 diff 逐条判定 ADDRESSED / NOT ADDRESSED。
+- **每个回归测试都必须先被亲眼看着变红才接受。** 破坏 → 确认红 → 还原 → 记录证据。dogfood 期新增的 5 个测试全部照此办理，其中两个"防过度修正的对照"在代码注释里被明确标注为修复前后皆绿，作用是抓错误实现而非证明正确实现。
 
-不要让实现者的自评替代任务 review，也不要把"测试通过"当成"测试能失败"的证据。
+**不要把"测试通过"当成"测试能失败"的证据；也不要把 0 计数当结论 —— 先解释它的来源。**
 
 ## 建议使用的 skills
 
-- **`superpowers:brainstorming`** —— v0.14 要先定"阈值是否可行"的判定方法，属于设计问题，先发散。
-- **`superpowers:writing-plans`** —— 定下方向之后。v0.13 的计划本身被证明有 4 处缺陷，新计划里的测试代码要当作草稿而非圣经。
+- **`superpowers:systematic-debugging`** —— Finding 9 是典型的"证据充分但机制未明"，先定位 daemon 为何解析到本地 provider，再改代码。
+- **`superpowers:test-driven-development`** —— 本项目的硬性纪律就是红-绿，与该 skill 一致。
+- **`superpowers:brainstorming`** —— 若转向 v0.14 的阈值可行性判据（设计问题，先发散）。
+- **`superpowers:writing-plans`** —— 定下方向之后。v0.13 的计划本身有 4 处缺陷，**新计划里的测试代码要当作草稿而非圣经**。
 - **`superpowers:subagent-driven-development`** —— 有计划之后的执行工作流。ledger 中带 `Task N: complete` 的不要重派。
-- **`superpowers:systematic-debugging`** —— 若从"噪声底 ≥ 信号"这个现象入手排查。
-
-v0.13 的 spec 与 plan 都已履行完毕，不需要再读作待办。
 
 ## 备注
 
-- OpenWolf 记账文件（`.wolf/buglog.json`、`.wolf/memory.md`、`.wolf/anatomy.md`）已 gitignore，单独维护。**bug-052（L2.5 匹配器）按设计保持 open** —— v0.13 只做了插桩，真修复是 v0.14 且依赖本版收集的数据。bug-053/054 已标记修复。
-- SDD workspace 被**刻意保留**而非按工作流默认删除：它承载全部人类裁决及理由、最终 review findings、8 份任务报告，git 历史一条都不记录，而 v0.14 直接依赖这些决策。
-- 探针决策流 `l25-probe.jsonl` 无上限设计（`retention_days: 0`），单行约 1.3 KB，每个 turn-aligned 轮次最多 11 行。`diagnose --feedback` 会打印其磁盘占用 —— 这是刻意让运行时成本可见，不要"优化"掉。
-- 本次运行的所有产物中不含任何凭据或个人数据。
+- OpenWolf 记账文件（`.wolf/buglog.json`、`.wolf/memory.md`、`.wolf/anatomy.md`）已 gitignore。**bug-052（L2.5 匹配器）按设计保持 open** —— v0.13 只做插桩，真修复属 v0.14 且依赖本版收集的数据。
+- SDD workspace **刻意保留**：它承载全部人类裁决及理由、final review findings、8 份任务报告，git 历史一条都不记录。
+- 探针决策流 `l25-probe.jsonl` 无上限设计（`retention_days: 0`），单行约 1.3 KB。`diagnose --feedback` 打印其磁盘占用 —— 刻意让运行时成本可见，**不要"优化"掉**。
+- ccmem **没有默认配置文件路径**：`loadConfig()` 仅在 `CCMEM_CONFIG_PATH` 指向存在文件时读盘，否则直接用 `DEFAULT_CONFIG`。当前环境已设置该变量（方案 A），因此 Finding 5 那条未经检验的路径**已在真实运行中**。
+- 本次运行的所有产物中不含任何凭据或个人数据；API key 存放于仓库外的用户配置文件，从未进入仓库或本文档。

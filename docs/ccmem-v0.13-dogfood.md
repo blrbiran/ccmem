@@ -458,11 +458,17 @@ if (!userPath || !existsSync(userPath)) {
 - [ ] **关注 Finding 3**：回填前的 `stale vectors: 0` 是分母为 0，不是健康
 
 ### V4. B1 签名过滤三个消费点在非空向量集上生效（需 G1）
-- [ ] `retrieval.mjs:427` —— 检索侧 cosine 通道只取当前签名的行
-- [ ] `dedup.mjs` —— 签名不匹配的候选跳过 cosine 通道（防止同维度换模型时静默丢弃真实记忆）
-- [ ] `feedback.mjs`（review I2）—— **写 trust 的那个消费点**，`helpful_implicit` 不再施加到任意记忆上
-- [ ] 验证手段：回填完成后，检索/保存/反馈各走一遍真实流程，确认无静默空结果
-- [ ] **注意**：I2 是 review 中唯一"签名盲且写 trust"的消费点，优先级高于检索侧漏检
+
+**✅ 2026-08-01 深夜三项全部通过 —— 实测记录见 §五 V4。**
+
+- [x] `retrieval.mjs:427` —— 检索侧 cosine 通道只取当前签名的行
+- [x] `dedup.mjs` —— 签名不匹配的候选跳过 cosine 通道（防止同维度换模型时静默丢弃真实记忆）
+- [x] `feedback.mjs`（review I2）—— **写 trust 的那个消费点**，`helpful_implicit` 不再施加到任意记忆上
+- [x] 验证手段：**每个消费点都做正反两面** —— 只做正面等于 Finding 3 的分母为 0，
+      因为库里 4454 条全是同一签名，过滤条件在这样的库上是恒真的 no-op，绿了什么也没证明
+- [x] **注意**：I2 是 review 中唯一"签名盲且写 trust"的消费点，优先级高于检索侧漏检 —— 已按此顺序先做
+- [ ] **仍欠：生产计数**。上述证据是"真实数据 + 真实代码路径"，不是"生产里跑过多少次"。
+      按 §六 的纪律这两者不能混为一谈，实际生产计数见 §五 V4 的第二张表（且已被 Finding 12 压住）
 
 ### V5. 配置面一致性：`config_kv` override 与两条命令的口径（需 G1）
 - [ ] `admin semantic status` 与 `admin diagnose --retrieval` 对 enabled 状态口径一致
@@ -596,7 +602,38 @@ daemon（重启后）: pid=82700, startup_schema=16
 
 ### V1–V8 实测
 
-⏳ 待回填。V1 自 daemon 重启（09:41）起计；V3–V5 待 G1。
+V1 自 daemon 重启（09:41）起计，待回填。V3 的 OpenAI 分支已跑通（`pending=0`，待逐条回填）。
+V5 现已具备条件，待做。**V4 已完成，记录如下。**
+
+#### V4. 签名过滤三个消费点（2026-08-01 深夜）
+
+**方法**：`sqlite3 global.db "VACUUM INTO <副本>"` 取 live 库的一致性快照，
+在副本上跑**真实代码路径 + 真实 1536 维向量**（不是 mock provider、不是 `:memory:` 库）。
+**live 库全程零写入。** 异签名一律构造为 `openai:text-embedding-3-large:1536` ——
+**同维不同模型**才是注释里说的 plausible-but-wrong 危险情形；维度不同会被长度检查安全挡掉，验不出东西。
+
+| 消费点 | 正面（同签名） | 反面（异签名） | 承重性证据 |
+|---|---|---|---|
+| `feedback.mjs:1293`（写 trust） | trust `0.200 → 0.225`、`helpful_count 0 → 1`、feedback 行 `helpful_implicit_partial`、`evidence=l1_positive_cosine:1.000` | 异签名行是 **cosine 1.0 的完美匹配**，trust `0.5 → 0.5` 纹丝不动，feedback 行仍 `unknown`/`locked=0` | **代码突变**：`embedding_sig = ?` 改为恒真 ⇒ 异签名行立刻拿到 trust（`0.5 → 0.525`）。还原后复跑双绿，`git diff` 空 |
+| `retrieval.mjs:427` | `retrievalPath=A`、`candidatePool=2281`、`cosineContribution=0.957` | 翻掉最高 cosine 行（id 4633，semantic 0.5007）⇒ `pool` 减 1、`stale` 加 1、该行**整条掉出 top-6** | 三个数字按预测精确咬合移动，等价于突变 |
+| `dedup.mjs:101` | `lane=cosine`、audit 记 `cosine=0.9999999999999998` | `lane=trigram`、`cosine=null`，且 `duplicate` 仍 true、`existingId` 不变 | 同时证伪了两种失效：cosine 没被误用，**候选也没被整条丢掉**（守卫不过度） |
+
+**正面对照是必需的，不是冗余**：`feedback.mjs` 的反面结论是"什么都没发生"，
+而"什么都没发生"也可能只是探针本身坏了。同签名那一路必须能真的写进 trust，反面的空结果才可信。
+
+**过程中栽的一次红错，如实记**：dedup 探针第一版报 `duplicate=false`，看着像反面成立。
+取证后是挑错了记忆 —— `candidateRows()` 取的是**最近 touch 的 20 条**
+（`ORDER BY last_touched_at DESC, id DESC LIMIT 20`），**不是 FTS 捞的**，`ftsQuery` 只作内容合法性闸门。
+我挑的是 `ORDER BY id` 的最老一条，压根不在候选池里。按同一口径重挑才是真绿。
+**这正是 §六"红得对吗"那条纪律的第二次应验。**
+
+**生产真实计数（与上面的构造证据严格分开）**：
+
+| 消费点 | 生产计数 | 说明 |
+|---|---|---|
+| `dedup.mjs` | `lane=cosine` **3 次** / `lane=trigram` 355 次 | 3 次 cosine 命中分别在 08-01 11:31、12:04、23:10，均在回填期之后 —— **这是三个消费点里唯一有真实生产执行的** |
+| `retrieval.mjs` | 有执行，但 `cosine_contribution` 近期恒为 0 | 见 **Finding 12** —— hook 进程读到 `transformers-local` 配置，`pool=0` |
+| `feedback.mjs` | **0 次** | `memory_feedback` 中 `evidence LIKE 'l1_positive_cosine%'` 计数为 0。**先解释来源再下结论**：该路径要求"注入 → 用户回肯定语"且当时 embedding 必须真的可用，而 embedding 直到本日才真正接通（Finding 9），叠加 Finding 12 后 hook 侧至今仍拿不到可用向量。0 是合理的，但**它意味着这条写 trust 的路径在生产里一次都没跑过** |
 
 ---
 

@@ -18,22 +18,24 @@
 
 需要知道的事实：
 
-- 本轮新增 **5 个修复提交**（daemon 环境、换模型检测器、签名契约、回填超时、回填接线），全部在本地 `main` 上。
+- 本轮新增 **6 个修复提交**（daemon 环境、换模型检测器、签名契约、回填超时、回填接线、孤儿任务回收），全部在本地 `main` 上。
 - 本地 `main` **领先 `origin/main`，尚未推送**。人类自己处理所有 push —— 不要代为推送。
 - 分支 `v0.13-spec`、`v0.13-dogfood-fixes` 均未删除（删分支必须先问）。
-- 当前套件：**464 pass / 0 fail**。跑测试用 `npm test`（脚本已内置 `env -u CCMEM_CONFIG_PATH`）。
+- 当前套件：**466 pass / 0 fail**。跑测试用 `npm test`（脚本已内置 `env -u CCMEM_CONFIG_PATH`）。
 
-## ⚠ 现在就卡着的事：回填链条被一个孤儿任务堵死
+## ✅ G1 达成：OpenAI 回填跑通，dogfood V3 的 OpenAI 分支完成
 
-**症状**：`admin semantic status` 的 `pending` 停在 1159 不动，无任何报错。
+**`pending = 0`，`semantic status` 从 `pending backfill` 转为 `active`。**
 
-**已查明**：`tasks` 表里有一行 `type='vec_backfill' status='running'`，是被 daemon 重启杀掉的上一个进程领走后再没人收尾的。
-`enqueueContinuation`（`vec-backfill.mjs:36-53`）的 guard **只数 `queued` 不数 `running`**（这是刻意的，否则运行中的那次会让条件恒真、链条永不继续），
-于是孤儿 `running` 行既不会被执行，也不会被任何人替换 —— **链条永久停摆，且没有任何信号**。
+| 指标 | 值 |
+|---|---|
+| `openai:text-embedding-3-small:1536` | 4367 |
+| `transformers-local:...:384` 残留 | 2（均为 `decay_status='quarantine'`，**落在回填 population 之外**，故两个计数为 0 是对的，不是分母为 0） |
+| `diagnose --retrieval` | `stale vectors: 0`，Circuit **CLOSED** |
+| 修复后超时次数 | **0** |
+| 孤儿 `running` 任务 | 0（daemon 启动时打印 `reclaimed 6 task(s)`） |
 
-这是**新发现，不是本轮改动引入的** —— 重启只是把它暴露出来。属 crash-recovery / stale-lease 缺口。
-
-**下一步**：先给它一条 finding 编号，再定修复方向（超时回收 `running` 行？启动时清理？）。**动手前先确认孤儿行仍在**，别照抄这里的数字。
+**dogfood 文档 §三 V3 的 OpenAI 清单可以据此回填**，V4/V5 仍待做。
 
 ## 本轮修复波（已提交）
 
@@ -44,6 +46,7 @@
 | 签名契约 | 无 provider 即无签名，返回 `null`（不再伪造 `dim:0`） |
 | 回填超时 | 新增 `embedding.backfill_timeout_ms`（默认 30000），hook 路径保持 800ms |
 | 回填接线 | override 必须传给 `load()`/`embed()`，只传给 `getProvider()` 不生效 |
+| 孤儿任务回收 | daemon 启动时把 owner 已死的 `running` 任务标记 `failed`（Finding 11） |
 
 每条的完整根因、证据、取舍在**提交信息里**，不在这里重复。`git log` 读它们。
 
@@ -58,14 +61,17 @@
    实测数据：批次耗时 685–1427ms，`{"error":"Request timed out.","embedded_before_fail":0}`。修复后零超时。
 3. **新增 Finding 10：launchd plist 冻结环境快照。** `admin daemon restart` **不重新生成 plist**，所以任何环境相关修复对已安装用户都不会自动生效，且无任何提示。必须 `admin daemon uninstall && install`。
    影响面比 Finding 9 更广 —— 它让「改了代码就该生效」这个心智模型整体失效。
-4. **新增 Finding 11：孤儿 `running` 任务堵死链条**（见上一节）。
+4. **新增 Finding 11：孤儿 `running` 任务堵死链条 —— 已修复。**
+   两个各自正确的 guard 合起来成死锁：`enqueueContinuation` 只数 `queued`（刻意），`daemon/main.mjs` 数 `queued` 或 `running`。
+   owner 已死的 `running` 行两边都不动它 ⇒ 链条永久停摆且无任何信号。实测冻结 12 分钟、1159 条待办。
+   修复：`acquireDaemonLock` 保证单实例，故启动时任何 `running` 行必然是孤儿，统一标记 `failed`。**这是 tasks 表层面的属性，不是回填局部问题** —— 当时库里还躺着 5 行孤儿 `summarize_pending`。
 5. 附录 A 不变量仍欠 Finding 6/7/8 + 本轮的对应条目。**加之前必须先验证 grep 在破坏代码时真能变红**，否则重蹈 I9 的空不变量。
 
 ## 当前运行时状态（会变，用命令核对）
 
 - daemon 由 **launchd 托管**，plist 已重装并携带 `CCMEM_CONFIG_PATH`。
 - embedding provider = **openai / text-embedding-3-small / 1536**，配置来自 `~/.claude/ccmem/config.json`（仓库外，含 API key，**从未进入仓库或本文档**）。
-- 库里两种签名并存，是回填中途的正常过渡态：`openai:...:1536` 与 `transformers-local:...:384`。
+- 回填已完成：`openai:...:1536` 4367 条，`pending=0`。
 - `config_kv` 里 `embedding.active_model` 那行还在，但已**无害** —— 唯一读它的代码已删。
 
 核对命令：`ccmem admin semantic status`、`tail ~/.claude/ccmem/daemon.err.log`、查 `tasks` 表。

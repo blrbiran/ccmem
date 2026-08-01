@@ -1,8 +1,15 @@
 {
   "version": "0.13",
-  "inject": { "max_chars": 4000, "max_per_prompt": 6 },
-  "save": { "max_chars_per_memory": 500 },
-  "injection": { "file_based": true },
+  "inject": {
+    "max_chars": 4000,
+    "max_per_prompt": 6
+  },
+  "save": {
+    "max_chars_per_memory": 500
+  },
+  "injection": {
+    "file_based": true
+  },
   "embedding": {
     "enabled": false,
     "provider": "transformers-local",
@@ -13,6 +20,7 @@
     "jina_api_key": null,
     "api_timeout_ms": 30000,
     "openai_timeout_ms": 800,
+    "backfill_timeout_ms": 30000,
     "openai_base_url": null,
     "openai_model": "text-embedding-3-small",
     "openai_dim": null
@@ -49,7 +57,10 @@
       "control_sample_size": 3
     }
   },
-  "recent_injections": { "retention_days": 14, "max_per_session": 20 },
+  "recent_injections": {
+    "retention_days": 14,
+    "max_per_session": 20
+  },
   "summarize": {
     "min_transcript_after_clean": 200,
     "transcript_cleaner": {
@@ -111,9 +122,18 @@
     }
   },
   "hook_budget_ms": {
-    "session_start": { "p50": 50, "p95": 300 },
-    "prompt_submit": { "p50": 50, "p95": 100 },
-    "stop": { "p50": 50, "p95": 200 }
+    "session_start": {
+      "p50": 50,
+      "p95": 300
+    },
+    "prompt_submit": {
+      "p50": 50,
+      "p95": 100
+    },
+    "stop": {
+      "p50": 50,
+      "p95": 200
+    }
   },
   "cron": {
     "daily_at": "02:17",

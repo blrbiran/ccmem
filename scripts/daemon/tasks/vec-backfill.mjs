@@ -52,10 +52,33 @@ function enqueueContinuation(db) {
   return true;
 }
 
+/**
+ * The backfill's provider call is not the hook's. `openai_timeout_ms` is kept
+ * small because embedding also sits on the prompt-submit retrieval path, where a
+ * slow provider must fail fast and degrade to lexical. A backfill request carries
+ * backfill_batch_size rows at once and cannot fit that budget: on the dogfood
+ * store the first batch squeaked through at 894ms and the second died with
+ * "Request timed out", which stopped the continuation chain with 4259 rows still
+ * pending. Both provider keys are overridden so openai and jina behave alike.
+ *
+ * Returns a copy — the caller's config is shared with the hot path.
+ */
+export function backfillEmbeddingConfig(cfg) {
+  const timeout = Number(cfg?.embedding?.backfill_timeout_ms ?? 30000);
+  if (!Number.isFinite(timeout) || timeout <= 0) {
+    return cfg;
+  }
+
+  return {
+    ...cfg,
+    embedding: { ...cfg?.embedding, openai_timeout_ms: timeout, api_timeout_ms: timeout }
+  };
+}
+
 export async function runVecBackfill(db, _task = null) {
   const cfg = loadConfig();
   const startedAt = Date.now();
-  const provider = getProvider(cfg);
+  const provider = getProvider(backfillEmbeddingConfig(cfg));
   const sig = currentEmbeddingSig(provider, cfg);
 
   if (!provider) {
@@ -125,10 +148,21 @@ export async function runVecBackfill(db, _task = null) {
     });
     return { embedded: rows.length, remaining, duration_ms: durationMs };
   } catch (error) {
+    const message = String(error?.message ?? error).slice(0, 200);
     writeAudit(db, 'vec_backfill_error', null, {
-      error: String(error?.message ?? error).slice(0, 200),
+      error: message,
       embedded_before_fail: 0
     });
+    // The common failures here are transient — a timeout, a rate limit. Success
+    // queues its own continuation; without the same on failure one bad batch ends
+    // the chain, `pending` freezes at whatever it was, and the audit row is the
+    // only trace: daemon.err.log stays silent, `semantic status` shows a number
+    // that simply stops moving, and a single failure is below the circuit
+    // breaker's threshold so nothing else notices either.
+    const chained = enqueueContinuation(db);
+    process.stderr.write(
+      `ccmem: vec_backfill failed: ${message} — ${chained ? 'continuation queued' : 'continuation already queued'}\n`
+    );
     throw error;
   }
 }

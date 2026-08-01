@@ -111,22 +111,56 @@ follow-up 清单里那条（`semantic.mjs:103` 强制 `enabled:true` 而 `diagno
 
 ---
 
-### Finding 4：`openai_timeout_ms` 默认 800ms 与 50 条批量冲突（P1，G1 执行风险）
+### Finding 4：一个超时值服务两种相反的负载（P1 → **已修复，实测证实**）
 
-**现象**：`config.mjs:19` 默认 `openai_timeout_ms: 800`，`openai.mjs:53` 直接作为 OpenAI client 超时；
-而 `openai.mjs:66-72` 的 `embed()` 一次提交 `backfill_batch_size`（默认 50）条。
+> **本条已按实测重写（2026-08-01 下午）。** 原记述把它写成「默认值调小了、有超时风险」，
+> 方向对但表述不对 —— 真正的缺陷是**一个配置项被两个需求相反的调用方共用**。
 
-**风险**：50 条 `text-embedding-3-small` 的实际延迟通常 200–600ms，**擦着 800ms 门限走**，
-是回填阶段最可能的失败点。
+**原计划**：先按默认 800ms 跑，把回填当作对这个默认值的第一次实测。**这个决定是对的，实测把它证伪了。**
 
-**为什么不能简单调大**：该值不是随意的 —— embedding 同时位于 prompt-submit **检索热路径**上，
-短超时是为保护 hook 延迟预算，失败由熔断器接管并退化为纯词法检索。调大它有真实代价。
-且 `config_kv` 中没有 timeout 键，要改**必须**引入配置文件 + 为 daemon 与 hooks 都设置 `CCMEM_CONFIG_PATH`。
+**实测数据**（OpenAI provider 首次真正跑起来之后）：
 
-**决定**：**先按默认 800ms 跑，把回填当作对这个默认值的第一次实测。**
-超时会表现为 `pending` 停滞不降。这个观测结果本身比预防性调参更有记录价值。
+| 时刻 | 事件 |
+|---|---|
+| 13:58:08 | 第一批成功 `{"embedded":50,"remaining":4259,"duration_ms":894}` |
+| 13:58:11 | 第二批 `{"error":"Request timed out.","embedded_before_fail":0}` |
+| 之后 | **再无任何 `vec_backfill_run`**，`pending` 冻在 4259 |
 
-**验证状态**：⏳ 待 G1，见 V3。
+后续观测到的批次耗时区间是 **685–1427ms**，正好骑在 800ms 门限上。
+（`duration_ms` 是整个 run 的耗时，含 DB 写入；API 调用本身的超时是 800ms。第一批是侥幸。）
+
+**真正的根因 —— 一个值，两种相反的需求**：
+
+| 调用方 | 负载 | 需要 | 失败代价 |
+|---|---|---|---|
+| prompt-submit 检索 hook | 1 条 query 向量 | **快**（hook 延迟预算 200ms） | 低 —— 退化为纯词法 |
+| daemon `vec_backfill` | `backfill_batch_size`（50）条一次请求 | **慢**（网络往返 × 批量） | 高 —— **整条链死掉** |
+
+`openai_timeout_ms: 800` 是为前者选的，且**这个选择是对的**（`openai.mjs` 内部按 100 分块，所以 50 条就是一次 API 请求）。
+后者只是借用了同一个键。所以正确的修复不是"调大它"（那会牺牲 hook 预算），而是**让两条路径各有各的超时**。
+
+**另外两个独立缺陷，同一次实测暴露**：
+
+1. **一次超时就让整条链死掉。** review I3 的"回填后自动重排队"只覆盖**成功**路径；
+   `catch` 分支写完 audit 直接 rethrow，不排队。所以症状不是"慢"，是"停"。
+2. **这个失败完全不可见。** 错误只进 `audit_log`，`daemon.err.log` 一个字都没有，
+   `semantic status` 只显示一个不再变化的 `pending`，熔断器也没响（阈值 3 次，只失败了 1 次）。
+   **又一次"代码在跑、没有报错、数据悄悄错着"。**
+
+**修复（三处，各自先红后绿）**：
+- 新增 `embedding.backfill_timeout_ms`（默认 30000），只覆盖回填自己的 provider 调用；
+  hook 路径保留 800ms。同时覆盖 `openai_timeout_ms` 与 `api_timeout_ms`，使 openai 与 jina 行为一致。
+  按裁决 #6，`config.mjs` 的 `DEFAULT_CONFIG` 与 `config.default.json` **两边都加**。
+- 失败路径也排队续链，并像成功路径那样打 stderr。
+- **接线修正**：override 必须同时传给 `load()` 与 `embed()` —— 只传给 `getProvider()` **完全无效**，
+  因为这两个方法在不带 override 时各自回到 `loadConfig()` 重新算超时，把 800 又拿了回来。
+  **第一版提交因此实际上什么都没改变**，这正是 Finding 7 记过的「包装器有测试、接线只靠人看」。
+
+**已知取舍（刻意接受）**：失败现在会重新排队，所以**永久性失败**（key 失效、账单停用）
+会按 daemon 的队列节奏一直重试并逐次打日志。冻结的库比吵闹的日志更糟，故如此选择；
+failure-aware backoff 列入 v0.14。
+
+**验证状态**：✅ **已修复并实测**。修复上线后**零超时**，回填 `pending` 一路降到 **0**。
 
 ---
 
@@ -259,47 +293,70 @@ Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'openai'
 
 ---
 
-### Finding 9：三个互不相同的签名，语义检索静默为空（P0，未修复 — 交接给新会话）
+### Finding 9：daemon 与 CLI 读到两份不同配置，语义检索静默为空（P0 → **已修复**）
 
-**现象**（2026-08-01 11:51，`semantic on --provider openai` + daemon 重启之后）：
-```
-ccmem admin semantic status
-  enabled=true loaded=false provider=openai embedded=4223 pending=4223
-                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^ 全部已嵌入，却全部待办
-```
+> **本条已按实测重写（2026-08-01 下午）。原记述的根因是错的，不要照着它去修。**
+>
+> 原文写「三个互不相同的签名」「签名函数有缺陷」。实测结论相反：
+> **签名函数是对的，它被喂了两份不同的配置。**
+> 原文列的第三个签名 `local:Xenova/all-MiniLM-L6-v2:0` **在当时的代码里就复现不出来** ——
+> 它是 `currentEmbeddingSig(cfg)` **只传一个参数**的产物（`provider=cfg, config=null` ⇒ 标签 `'local'`、`dim 0`），
+> 而生产的 17 个调用点全是两参数。**那是上一轮的测量误差，不是运行时行为。**
 
-| 来源 | 签名 |
-|---|---|
-| 库里 4223 行实际写入的 | `transformers-local:Xenova/all-MiniLM-L6-v2:384` |
-| CLI `semantic status` 比对用的（`currentEmbeddingSig(cfg)`） | `local:Xenova/all-MiniLM-L6-v2:0` |
-| 操作者以为在用的 | `openai:text-embedding-3-small:1536` |
+**现象**：`semantic status` 显示 `enabled=true provider=openai embedded=4223 pending=4223`
+—— 全部已嵌入，却全部待办。无任何报错。
 
-**两个已知 minor 合成 P0**。二者都在 v0.13 ledger 里被记为 deferred：
-1. Task 6 minor —— `signature.mjs` 的 provider 标签用 `local`，而 `provider.mjs` 命名为
-   `transformers-local`，`providerByName('local')` 会抛。
-2. Task 6 minor —— `signature.mjs` 的 `?? 0` 产出 `dim:0`，**一个没有任何向量拥有的维度**。
-   原文评语已经预言了后果："在一个以大声失败为职责的模块里静默失败"。
+**取证（只读，同一个函数、两种环境）**：
 
-**后果**：`retrieval.mjs:427` 按这个签名过滤 cosine 通道 ⇒ 匹配不到任何行 ⇒
-**语义检索静默退化为纯词法**，且 `pending` 永远不会归零。
-这正是 B1 存在要防止的那种静默退化，由 B1 自己的签名函数造成。
+| 进程 | `cfg.embedding.provider` | `currentEmbeddingSig` 输出 |
+|---|---|---|
+| CLI / hooks（有 `CCMEM_CONFIG_PATH`） | `"openai"` | `openai:text-embedding-3-small:1536` |
+| daemon（**没有**） | `"transformers-local"` | `transformers-local:Xenova/all-MiniLM-L6-v2:384` |
 
-**未解之谜（交接项）**：daemon 在 `semantic on` 报告 `provider=openai` 之后，
-仍以本地 provider 写入（批次耗时 401–510ms，与之前本地的 405–491ms 一致，
-远快于网络往返）。需查 daemon 进程实际解析到的 provider —— 可能是
-`CCMEM_CONFIG_PATH` 未被 daemon 继承，也可能是 `getProvider` 的进程内缓存。
-**注意：这意味着 Finding 4（`openai_timeout_ms: 800`）至今仍未被真实检验。**
+库里 4223 行全是后者，`daemon.err.log` 逐批打印的也是后者 —— 完全吻合。**只有两个签名，不是三个。**
 
-**好消息**：没有产生 OpenAI 费用；`vec_backfill` 在 daemon 侧已收敛（`remaining:0`），不是无限循环。
+**根因**：`scripts/lib/admin/daemon.mjs:47` 的 `buildDaemonEnv()`
+**不是继承环境，而是用白名单重建环境**（PATH / `CCMEM_DATA_ROOT` / `CCMEM_CLAUDE_P_*` / 9 个 `ANTHROPIC_*`）。
+`CCMEM_CONFIG_PATH` 从来不在这个名单里，于是 daemon 的 `loadConfig()` **永远返回 `DEFAULT_CONFIG`**
+（`provider: 'transformers-local'`），而 CLI 与 hooks 继承用户 shell、读到 config.json 的 `provider: "openai"`。
 
-**修复方向（未实施，需新会话）**：
-- `signature.mjs` 的 provider 标签与 `providerByName` 的命名对齐（`transformers-local`）
-- 移除 `?? 0`，取不到真实维度时**抛错而非产出不可能的 0**
-- 补一条断言：任何 `currentEmbeddingSig` 的输出都必须能匹配到至少一行，或显式报告零匹配
-- 回归测试必须先被看着变红 —— 现有 `v013-embedding-sig.test.mjs` 的 5 个测试里
-  有 4 个走的是生产永不到达的 config-only 回退分支（ledger 已记）
+这个白名单的来历值得记：`git log -S` 显示它只被引入过一次（`31c5831`，2026-06-04），
+提交信息是 *"**propagate** daemon bridge/auth environment so launchd summarization can write memories"*
+—— **它是"补齐"清单，不是"收窄"清单**，因为 launchd 启动的进程本来就不继承任何 shell。
+v0.13 的 ledger 里对它零记录，**从未有过人类裁决**。
 
-**验证状态**：⏳ **未修复**。这是接手 v0.13 dogfood 的下一个会话的第一优先级。
+**为什么这次才炸**：`config_kv` 的 `embedding.active_provider` 行曾是**唯一能跨进程传递 provider 的通道**（daemon 读 DB）。
+**Finding 6 的修复在裸 `semantic on` 时删掉那一行**，把权威交还给配置文件 —— 而 daemon 读不到配置文件。
+Finding 6 的裁决本身是对的，但它切断了 daemon 的最后一条通道。**两条各自正确的改动合成一个静默故障。**
+
+**修复（四处，各自先红后绿）**：
+1. `CCMEM_CONFIG_PATH` 进 daemon 环境白名单（根因）。
+   **API key 刻意不进** —— `renderPlist` 会把环境字典明文写进 `~/Library/LaunchAgents`；
+   daemon 靠读配置文件拿 key，只要 ① 成立 ② 自动成立。
+2. 签名契约改为 **无 provider 即无签名，返回 `null`**（不再由 `?? 0` 伪造一个没有任何向量拥有的 `dim:0`）。
+   **注意：dogfood 原文写的「抛错」方案会打断 daemon 主循环** —— `daemon/main.mjs:40` 与
+   `vec-backfill.mjs:59` 都合法地传 null provider 并在之后处理。
+3. provider 标签默认值 `'local'` → `'transformers-local'`，使签名不会命名一个 `providerByName` 拒绝的 provider。
+   （**如实声明：这一条没有生产可达的红测** —— `DEFAULT_CONFIG` 永远带 `provider`，该分支进不去。不为它编一个恒绿的测试。）
+4. 移除 `semantic on` 里那个换模型检测器 —— 见下方"顺带拆掉的定时炸弹"。
+
+**必须同时知道的第二层（应单独成条，见待办）**：daemon 由 **launchd 托管**，
+`~/Library/LaunchAgents/com.ccmem.daemon.plist` 的 `EnvironmentVariables` 是**安装时冻结的快照**，
+**`admin daemon restart` 不会重新生成它**。所以第 1 条修复对已安装的用户**不会自动生效**，
+必须 `admin daemon uninstall && install`，且没有任何提示告诉用户这件事。
+本轮就是靠 `ps eww -p <pid> | grep CCMEM_CONFIG_PATH` 才发现 restart 白做了 —— **这条验证不可省**。
+
+**顺带拆掉的定时炸弹**：`config_kv` 当时的状态是 `active_model=text-embedding-3-small` 但**无 `active_provider`**
+（Finding 6 的修复只删了后者）。两个键来自不同层，于是在一个没有 `CCMEM_CONFIG_PATH` 的 shell 里跑一次裸的
+`semantic on` ⇒ `newModel ≠ currentModel` ⇒ 触发 `UPDATE memories SET embedding = NULL`，**4292 条向量全清**。
+经人类裁决**整体移除该检测器**：签名机制已经正确且非破坏性地覆盖了换模型（vec_backfill 按签名不匹配逐批重嵌，
+从不在替代品就位前丢弃向量），检测器唯一的独特效果就是数据丢失，且 review 早已把它列为 v0.14 移除项。
+
+**验证状态**：✅ **已修复并端到端验证**。daemon 现在写 `openai:text-embedding-3-small:1536`，
+`pending` 归零，`diagnose --retrieval` 的 `stale vectors: 0`、Circuit CLOSED。
+
+**教训**：本条原记述之所以错，是因为上一轮**用一个与生产不同的调用形态去测量生产行为**。
+「三个签名」这个说法本身就该引起警觉 —— 生产里只有两个进程，不可能有三个当事人。
 
 ---
 

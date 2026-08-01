@@ -358,6 +358,51 @@ Finding 6 的裁决本身是对的，但它切断了 daemon 的最后一条通�
 **教训**：本条原记述之所以错，是因为上一轮**用一个与生产不同的调用形态去测量生产行为**。
 「三个签名」这个说法本身就该引起警觉 —— 生产里只有两个进程，不可能有三个当事人。
 
+### Finding 12：hook 进程与 CLI 读到两份不同配置，语义贡献恒为 0（P0，**未修复**）
+
+**Finding 9 的同一种病，换了个当事人。** Finding 9 修的是 daemon 侧（白名单缺 `CCMEM_CONFIG_PATH`）；
+本条是 **hook 侧**，至今未修。发现于 2026-08-01 深夜做 V4 验证时。
+
+**现象**：`metrics.jsonl` 的 `prompt_submit` 行，两种结果在时间上**交错出现**：
+
+```
+19:16:52  pool=1322  stale=0     cos_contribution=0.985  path=A
+19:17:27  pool=0     stale=4406  cos_contribution=0      path=A   ← 35 秒后
+23:54:35  pool=0     stale=4449  cos_contribution=0      path=A   ← 此后连续 27 次
+```
+
+交错 ⇒ **不是代码变更，是不同进程读到不同配置**。`stale` 恰好等于库中全部已嵌入行
+（4454 条 `openai:text-embedding-3-small:1536`，差值来自采样间隔内的新增），即该进程认为**没有一条向量可用**。
+
+**根因**（`scripts/lib/config.mjs:291-297`）：
+
+```js
+const userPath = process.env.CCMEM_CONFIG_PATH;
+if (!userPath || !existsSync(userPath)) {
+  return applyV08Compatibility(DEFAULT_CONFIG);   // ← 不回落到 ~/.claude/ccmem/config.json
+}
+```
+
+`loadConfig()` 在该环境变量缺失时**直接返回 `DEFAULT_CONFIG`**，而不是回落到用户配置文件。
+`DEFAULT_CONFIG.embedding.provider = 'transformers-local'`，`config_kv` 的 `embedding.enabled=true`
+又把它打开 ⇒ 这类 hook 进程**用 MiniLM 嵌入查询**，算出 `transformers-local:...:384`，
+与库里 4454 条 openai 签名无一匹配。
+
+**三个必须一起看的后果**：
+
+1. **检索静默退化为纯词法**，而 `retrieval_path` 仍报 `'A'` —— 该字段只说明"embedding 可用、走了融合分支"，
+   **不说明 cosine 有没有贡献**。真正的判据是 `cosine_contribution` 与 `retrieval_pool`。
+2. **「G1 已达成」的口径必须收窄**：回填确实跑通了（4454 条向量、`pending=0`），
+   但**消费端大部分时间没在用它们**。「库里有向量」≠「检索在用向量」。
+3. **V4 的三个消费点全部正确工作 —— 正是它们的正确工作，才让这次配置分歧表现为静默的 0
+   而不是错误的检索结果。** 签名过滤按设计把不可比的向量全部排除了。
+
+**尚需人类裁决**：`loadConfig()` 的回落语义要不要改（未设变量时读 `~/.claude/ccmem/config.json`）。
+影响面覆盖全部 hook / CLI / daemon / 测试 —— `npm test` 正是靠 `env -u CCMEM_CONFIG_PATH` 做隔离的
+（Finding 8），改回落语义会直接动到那层隔离。**不要顺手改。**
+
+**验证状态**：❌ 未修复。已记为 `bug-058`。
+
 ---
 
 ## 三、Dogfood 验证清单

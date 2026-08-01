@@ -51,3 +51,10 @@
 - **Runtime architecture**: the daemon-optional model remains — Tier 1 works without daemon, Tier 1.5 runs opportunistically, Tier 2 needs daemon.
 - **Retrieval architecture**: FTS-backed retrieval is an optimization, not a schema requirement.
 - **Operational file policy**: `.wolf` files may be compacted periodically, but only after creating dated archive snapshots.
+
+### 2026-08-01 · V4 验证过程中的接口事实（省下一次重复发现）
+- `retrieveMemories()` 每行的分数在 `row.score.{fused,fts,jaccard,semantic}`，**不是** `row.meta`（`renderRow` 只在 score 非空时挂 `score` 键）。
+- `dedup.mjs` 的候选池**不是 FTS 捞的**：`candidateRows()` 取「最近 touch 的 20 条」（`ORDER BY last_touched_at DESC, id DESC LIMIT 20`）。`ftsQuery` 只作内容合法性闸门。用不在这 20 条里的记忆做查重探针，会得到 `duplicate=false` —— 红得毫无意义。
+- `audit_log` 的列是 `details`（不是 `detail`）；`memory_feedback` 的列是 `evidence`（不是 `reason`）。
+- 验证签名过滤时，异签名要用**同维不同模型**（如 `openai:text-embedding-3-large:1536`），这才是注释里说的 plausible-but-wrong 危险情形；维度不同会被长度检查安全地挡掉，验不出东西。
+- `retrieveMemories` 的 `timing.candidatePool` / `retrieval_stale_vecs` 是只属于 cosine 通道的量化观测量，能绕开词法回退造成的假绿。

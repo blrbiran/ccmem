@@ -64,3 +64,8 @@
 - 可靠替身：`zsh -f -c 'echo $VAR'`（`-f` 不读任何 rc，仍有值 ⇒ 来自父进程继承）；进程自身写出的产物（daemon 写的签名）；`memory_feedback.session_id` + 时间戳（判定某次 hook 属于哪个会话）。
 - `~/.claude/plugins/ccmem` 是指向 `~/code/skills/ccmem` 的**符号链接** ⇒ hook 侧代码改动下次调用即生效；只有 daemon 需要 uninstall/install（plist 冻结安装时环境快照）。
 - 加了配置回落之后，`env -u CCMEM_CONFIG_PATH` **不再构成测试隔离** —— 必须同时钉 `CCMEM_DATA_ROOT`，否则测试读到真实用户配置（含 API key）。
+
+### 2026-08-02 · hook 超时的两个坑
+- `hooks/hooks.json` 的 `timeout` 单位是**秒**，且必须**严格大于** `withHookSafety` 的内部预算（`PROMPT_SUBMIT_BUDGET_MS`），否则 harness 会在内部降级路径跑完之前杀掉进程，stdout 与 metrics 都写不出来。余量还要覆盖 node 启动与模块加载（`ms_total` 不含这两段）。
+- **metrics.jsonl 的延迟统计有幸存者偏差** —— 行是 hook 自己写的，被杀的那次不会留下行。所以"超预算样本 = 0"绝不能当作"没有超时"。
+- OpenAI SDK 默认 `maxRetries: 2`，会把 `timeout` 变成它自己的倍数（800ms 配置实测 1683ms）。**设了超时就要同时设 maxRetries**，否则超时不是预算。

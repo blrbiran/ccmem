@@ -522,8 +522,10 @@ Finding 8 的隔离不但保住，而且更强（库也是临时的了）。
 ### V8. hook 延迟预算
 - [x] 探针 C1+C3（reply 摘录 + 随机对照队列）实测：p50 1.36→2.88ms，p95 2.82→3.66ms
       （4,500 条记忆的库，每 turn-aligned Stop 一次 `ORDER BY RANDOM()`，预算 200ms）
-- [ ] G1 之后复测：启用 OpenAI embedding 后检索路径的真实 hook 延迟（含熔断器介入时的退化延迟）
-- [ ] **关注 Finding 4**：熔断打开时应快速失败并退化为词法，而非等满超时
+- [x] G1 之后复测：启用 OpenAI embedding 后检索路径的真实 hook 延迟 —— **已测，见 §五 V8。
+      结果是超时真的发生了**（用户报告 `UserPromptSubmit hook timed out after 2s`），已修复
+- [ ] **熔断器介入时的退化延迟仍未测** —— 熔断至今一次都没打开过（`Circuit: CLOSED`），无样本
+- [ ] **关注 Finding 4**：熔断打开时应快速失败并退化为词法，而非等满超时 —— **同上，未检验**
 
 ---
 
@@ -661,10 +663,40 @@ V5 现已具备条件，待做。**V4 已完成，记录如下。**
 | 消费点 | 生产计数 | 说明 |
 |---|---|---|
 | `dedup.mjs` | `lane=cosine` **3 次** / `lane=trigram` 355 次 | 3 次 cosine 命中分别在 08-01 11:31、12:04、23:10，均在回填期之后 —— **这是三个消费点里唯一有真实生产执行的** |
-| `retrieval.mjs` | 有执行，但 `cosine_contribution` 近期恒为 0 | 见 **Finding 12** —— hook 进程读到 `transformers-local` 配置，`pool=0` |
+| `retrieval.mjs` | 有执行；`cosine_contribution` 曾连续 27 次为 0，**Finding 12 修复后恢复**（实测 0.967） | 那 27 次是 hook 进程读到 `transformers-local` 配置所致（`pool=0`），不是过滤器有问题 —— 见 **Finding 12** |
 | `feedback.mjs` | **0 次** | `memory_feedback` 中 `evidence LIKE 'l1_positive_cosine%'` 计数为 0。**先解释来源再下结论**：该路径要求"注入 → 用户回肯定语"且当时 embedding 必须真的可用，而 embedding 直到本日才真正接通（Finding 9），叠加 Finding 12 后 hook 侧至今仍拿不到可用向量。0 是合理的，但**它意味着这条写 trust 的路径在生产里一次都没跑过** |
 
 ---
+
+#### V8. hook 延迟预算（2026-08-02，由用户报告触发）
+
+**用户报告**：多次看到 `UserPromptSubmit hook timed out after 2s — output discarded`。
+**结论：是 ccmem 的 hook**（`hooks/hooks.json` 的 `UserPromptSubmit` `"timeout": 2`），且已修复。
+
+| 窗口 | n | p50 | p95 | max |
+|---|---|---|---|---|
+| embedding 接通前 | 2506 | 64.5ms | 90.4ms | 318ms |
+| **接通后** | 62 | **397ms** | **1787ms** | **1901ms** |
+
+**这份数据里"超 2000ms 的样本 = 0"必须先解释再看** —— metrics 行是 hook 自己写的，
+**被杀在 2s 的那次根本来不及写**。0 是幸存者偏差，超时的样本恰恰是缺失的那些行。
+这正是 §六「0 计数先解释来源」的又一次应验：报告与数据看似矛盾，其实是数据有幸存者选择。
+
+**两个成因**：
+
+1. `hooks.json` 给 harness 的超时（2s）**等于** `withHookSafety` 的内部预算（2000ms）。
+   内部预算的意义是"慢了就降级成空上下文，并且仍然写 stdout 与 metrics" ——
+   而进程在预算到点的同一刻被杀，这条降级路径**永远跑不完**。
+   已改为 harness 5s，并把预算导出成常量，让测试能断言这个先后关系而不是靠两处数字各自漂移。
+   余量还必须覆盖 **node 启动与模块加载** —— 它们发生在内部计时器启动之前，`ms_total` 不含它们。
+2. OpenAI 客户端构造时**没设 `maxRetries`**，SDK 默认重试 2 次，于是 `openai_timeout_ms` 变成它自己的倍数：
+   配置 800ms，**实测 embed 1683ms**（一次尝试 + 一次重试）。已改为 `maxRetries: 0` ——
+   重试没有丢失，只是回到它该在的地方：回填失败会重新排队，provider 整体挂掉由熔断器接管。
+
+两条判据都做了突变验证（改回 `timeout: 2` 或 `maxRetries: 2` 各自变红）。套件 472 pass / 0 fail。
+
+**同时发现、未处理，留给下一轮**：`stop` hook 的 p95 = 678ms、**max 1787ms，而它的 harness 超时只有 1s**；
+其内部预算 200ms 甚至低于实测 p50（245ms）。形态与本条相同但证据链未走完，**不在没证据时顺手改**。
 
 ## Closure checklist
 

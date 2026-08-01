@@ -259,6 +259,50 @@ Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'openai'
 
 ---
 
+### Finding 9：三个互不相同的签名，语义检索静默为空（P0，未修复 — 交接给新会话）
+
+**现象**（2026-08-01 11:51，`semantic on --provider openai` + daemon 重启之后）：
+```
+ccmem admin semantic status
+  enabled=true loaded=false provider=openai embedded=4223 pending=4223
+                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^ 全部已嵌入，却全部待办
+```
+
+| 来源 | 签名 |
+|---|---|
+| 库里 4223 行实际写入的 | `transformers-local:Xenova/all-MiniLM-L6-v2:384` |
+| CLI `semantic status` 比对用的（`currentEmbeddingSig(cfg)`） | `local:Xenova/all-MiniLM-L6-v2:0` |
+| 操作者以为在用的 | `openai:text-embedding-3-small:1536` |
+
+**两个已知 minor 合成 P0**。二者都在 v0.13 ledger 里被记为 deferred：
+1. Task 6 minor —— `signature.mjs` 的 provider 标签用 `local`，而 `provider.mjs` 命名为
+   `transformers-local`，`providerByName('local')` 会抛。
+2. Task 6 minor —— `signature.mjs` 的 `?? 0` 产出 `dim:0`，**一个没有任何向量拥有的维度**。
+   原文评语已经预言了后果："在一个以大声失败为职责的模块里静默失败"。
+
+**后果**：`retrieval.mjs:427` 按这个签名过滤 cosine 通道 ⇒ 匹配不到任何行 ⇒
+**语义检索静默退化为纯词法**，且 `pending` 永远不会归零。
+这正是 B1 存在要防止的那种静默退化，由 B1 自己的签名函数造成。
+
+**未解之谜（交接项）**：daemon 在 `semantic on` 报告 `provider=openai` 之后，
+仍以本地 provider 写入（批次耗时 401–510ms，与之前本地的 405–491ms 一致，
+远快于网络往返）。需查 daemon 进程实际解析到的 provider —— 可能是
+`CCMEM_CONFIG_PATH` 未被 daemon 继承，也可能是 `getProvider` 的进程内缓存。
+**注意：这意味着 Finding 4（`openai_timeout_ms: 800`）至今仍未被真实检验。**
+
+**好消息**：没有产生 OpenAI 费用；`vec_backfill` 在 daemon 侧已收敛（`remaining:0`），不是无限循环。
+
+**修复方向（未实施，需新会话）**：
+- `signature.mjs` 的 provider 标签与 `providerByName` 的命名对齐（`transformers-local`）
+- 移除 `?? 0`，取不到真实维度时**抛错而非产出不可能的 0**
+- 补一条断言：任何 `currentEmbeddingSig` 的输出都必须能匹配到至少一行，或显式报告零匹配
+- 回归测试必须先被看着变红 —— 现有 `v013-embedding-sig.test.mjs` 的 5 个测试里
+  有 4 个走的是生产永不到达的 config-only 回退分支（ledger 已记）
+
+**验证状态**：⏳ **未修复**。这是接手 v0.13 dogfood 的下一个会话的第一优先级。
+
+---
+
 ## 三、Dogfood 验证清单
 
 > 单元/集成测试用 mock provider 与 `:memory:` DB。下列项必须在**真实环境**验证。

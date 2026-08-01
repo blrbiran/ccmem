@@ -63,9 +63,9 @@ if (mode === 'session-start') {
 }
 
 if (mode === 'prompt-submit') {
-  const { withHookSafety } = await import('./lib/hook-safety.mjs');
+  const { withHookSafety, PROMPT_SUBMIT_BUDGET_MS } = await import('./lib/hook-safety.mjs');
   const { handlePromptSubmit } = await import('./handlers/prompt-submit.mjs');
-  await withHookSafety('prompt_submit', 2000, () => handlePromptSubmit(hookData), T_ENTRY);
+  await withHookSafety('prompt_submit', PROMPT_SUBMIT_BUDGET_MS, () => handlePromptSubmit(hookData), T_ENTRY);
 }
 
 if (mode === 'stop') {

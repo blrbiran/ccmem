@@ -4,7 +4,7 @@ import { importOptional } from './optional-import.mjs';
 let client = null;
 let currentConfigKey = null;
 
-function configFrom(override = null) {
+export function openaiConfigFrom(override = null) {
   const embedding = override?.embedding ?? loadConfig().embedding ?? {};
   const modelId = String(embedding.openai_model ?? 'text-embedding-3-small');
   const baseURL = process.env.OPENAI_BASE_URL ?? embedding.openai_base_url ?? null;
@@ -16,12 +16,19 @@ function configFrom(override = null) {
     baseURL,
     apiKey,
     timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : 30000,
+    // The SDK retries twice by default, which turns a timeout into a multiple
+    // of itself: openai_timeout_ms: 800 measured 1683ms of wall clock on the
+    // hook path — one attempt plus one retry — against a 2000ms hook budget.
+    // A timeout is only a budget if nothing silently repeats it. Failures are
+    // not lost: the backfill re-queues them and the circuit breaker covers a
+    // provider that is down.
+    maxRetries: 0,
     dim: Number.isFinite(dim) && dim > 0 ? dim : 1536
   };
 }
 
 function configKey(cfg) {
-  return JSON.stringify([cfg.modelId, cfg.baseURL, cfg.apiKey, cfg.timeoutMs]);
+  return JSON.stringify([cfg.modelId, cfg.baseURL, cfg.apiKey, cfg.timeoutMs, cfg.maxRetries]);
 }
 
 export const openaiEmbedding = {
@@ -33,7 +40,7 @@ export const openaiEmbedding = {
   },
 
   applyConfig(override = null) {
-    const cfg = configFrom(override);
+    const cfg = openaiConfigFrom(override);
     this.modelId = cfg.modelId;
     this.dim = cfg.dim;
     return cfg;
@@ -54,7 +61,8 @@ export const openaiEmbedding = {
     client = new OpenAI({
       apiKey: cfg.apiKey,
       baseURL: cfg.baseURL ?? undefined,
-      timeout: cfg.timeoutMs
+      timeout: cfg.timeoutMs,
+      maxRetries: cfg.maxRetries
     });
     currentConfigKey = nextKey;
   },

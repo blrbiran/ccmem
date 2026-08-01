@@ -1,5 +1,13 @@
 import { recordMetric } from './metrics.mjs';
 
+/**
+ * The prompt-submit budget, exported so hooks.json can be checked against it.
+ * It is the point at which ccmem gives up and returns an empty context; the
+ * harness timeout in hooks.json must be strictly larger, or the process is
+ * killed before the graceful path can write stdout and its metrics row.
+ */
+export const PROMPT_SUBMIT_BUDGET_MS = 2000;
+
 const HOOK_EVENT_NAMES = {
   session_start: 'SessionStart',
   prompt_submit: 'UserPromptSubmit'

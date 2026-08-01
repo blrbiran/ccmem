@@ -149,7 +149,113 @@ export function loadConfig() {
 **修复（PROPOSED，未应用）**：`JSON.parse` 包 try/catch，解析失败时 warn 到 stderr 并回落 `DEFAULT_CONFIG`。
 属 v0.14 候选，非 v0.13 缺陷。
 
-**规避**：G1 采用**方案 B**（密钥走环境变量），不引入配置文件，从而不激活这条路径。见 §四。
+**实际选择**：人类选了**方案 A**（配置文件 + `CCMEM_CONFIG_PATH`），即这条路径**已被激活**。
+实测该文件被正确读取、JSON 可解析、key 长度 164。此路径现已进入真实运行，风险由 dogfood 承担。
+
+---
+
+### Finding 6：`admin semantic on` 的 `config_kv` 副作用永久遮蔽配置文件（P0）
+
+**现象**：人类在 `~/.claude/ccmem/config.json` 里配好 `openai_api_key` 后执行 `ccmem admin semantic on`，
+结果启用的是**本地 provider** 而非 OpenAI：
+```
+provider=transformers-local  model=Xenova/all-MiniLM-L6-v2  dim=384  enabled=true
+```
+
+**根因（两层）**：
+1. `semantic.mjs:81` 的 provider 解析是 `requestedProvider ?? cfg.embedding?.provider ?? 'transformers-local'`。
+   config.json 只写了 `openai_api_key`、没写 `provider` ⇒ 回落默认本地模型。
+2. **真正的缺陷在这里**：`semantic.mjs:98-100` 把 `embedding.enabled` / `active_provider` / `active_model`
+   作为**副作用**写进 `config_kv`，而 `resolveProviderName`（`provider.mjs:69-79`）**先读 kv**。
+   于是一旦跑过一次 `semantic on`，配置文件里的 `provider` 就**永久失效**，且：
+   - 没有任何命令能清除这些 kv 行（`semantic off` 只把 `enabled` 写成 `false`，不删行）
+   - 文件侧无法覆盖 kv
+   - 用户看不到任何提示说明"你的配置文件被 kv 遮蔽了"
+
+**为什么是 P0**：这不是"少打一个参数"。一个**开关动作**顺手把**声明式配置**钉死了，
+而用户的合理心智模型是"改配置文件 + 重启 daemon 即生效" —— 这个模型在**全新安装上本来是成立的**
+（`resolveEnabled`/`resolveProviderName` 都会回落文件层），只是被 `semantic on` 的副作用破坏。
+要求用户记住 `ccmem admin semantic on --provider openai` 是不合理的补偿。
+
+**修复（本版内，人类裁决通过）**：`semantic.mjs` 的 `on` 分支 ——
+**给了 `--provider` 就写 kv；没给就删掉这一行**，且该操作移到 `getProvider` **之前**。
+
+移到之前是修复的第二半：`providerName` 由配置文件算出，而 `getProvider` 独立解析且 kv 优先，
+两者原本会分歧 —— 命令加载 A 却记录 B。现在二者必然一致。
+
+不新增命令（Rule 2）：删除而非跳过，意味着已中招的用户跑一次裸的 `ccmem admin semantic on`
+就自动解除遮蔽，无需 `semantic reset`，也无需手工 DELETE 数据库。
+
+**已知取舍（人类裁决：可接受）**：若曾用 `--provider X` 显式设过，之后跑一次裸的 `semantic on`
+会丢掉该设置。理由：文件层立即接管，行为可预测且可见。
+
+**回归测试**（3 个，均先被看着变红）：`tests/integration/v013-semantic-provider-kv.test.mjs`
+1. 裸 `semantic on` 后 kv 行必须**不存在**，且文件声明的 provider 真正生效 — RED（`JINA_API_KEY not set`，
+   即残留 kv 赢过文件、加载了错误 provider）→ GREEN
+2. `--provider` 仍写入 kv —— **防过度修正的对照**，按设计修复前后皆绿，作用是抓"总是删除"的错误实现
+3. 命令报告的 provider 与实际加载的一致 — RED（同 1）→ GREEN
+
+**验证状态**：✅ **已修复（2026-08-01）**。全量 **452 pass / 0 fail**（原 449，+3）。
+
+---
+
+### Finding 7：`openai` 包从未被声明为依赖，选它必崩（P0）
+
+**现象**：Finding 6 修复后，`ccmem admin semantic on` 终于真的去加载 OpenAI provider，随即裸崩：
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'openai'
+    imported from .../scripts/lib/embedding/openai.mjs
+```
+
+**根因**：`package.json` 的 `optionalDependencies` 只有 `@xenova/transformers`。
+`openai.mjs:52` 的 `await import('openai')` 所需的包**在 package.json 里没有任何声明**。
+而 `provider: "openai"` 是一等公民配置项 —— `config.mjs` 为它准备了 6 个键
+（`openai_api_key` / `openai_base_url` / `openai_model` / `openai_dim` / `openai_timeout_ms` / `provider`），
+`providerByName` 也把它列为三个合法 provider 之一。**任何全新安装都不可能跑起来。**
+
+失败形态同样是缺陷：一个裸的 ESM 解析器栈回溯，指向内部文件路径，不提 npm，不给补救办法。
+`transformers-local.mjs:76` 是同款动态 import，只是它的包被声明了才没暴露；
+`npm install --omit=optional` 会走进完全相同的死胡同。
+
+**修复（人类裁决：两个 provider 一起修）**：
+1. 新增 `scripts/lib/embedding/optional-import.mjs`，把 `ERR_MODULE_NOT_FOUND` 翻译成可操作错误
+   （`embedding provider 'X' requires the optional 'Y' package — run: npm install Y`，
+   错误码 `CCMEM_OPTIONAL_DEP_MISSING`）。两个 provider 共用，避免第二份消息格式（同 I4/I10 的教训）。
+2. `openai.mjs` 与 `transformers-local.mjs` 的动态 import 均改走该 helper。
+3. `package.json` 的 `optionalDependencies` 补上 `"openai": "^4.104.0"`。
+
+**回归测试**（`tests/unit/v013-optional-import.test.mjs`）：
+1. 缺失包给出可操作错误而非 ESM 栈 —— **突变验证**：把 `ERR_MODULE_NOT_FOUND` 分支改成 `if (false)`
+   ⇒ pass 1 / fail 1（红），还原后绿
+2. 可解析模块原样返回 —— **防过度修正的对照**，抓"包装器吞掉/改形成功路径"的错误实现
+
+**未覆盖并如实声明**：包装器本身有测试，但两个 provider 的**接线**只经人工检查 ——
+包装后无法在已安装该包的环境里触发缺失路径。
+
+**验证状态**：✅ **已修复（2026-08-01）**。全量 **454 pass / 0 fail**。
+
+---
+
+### Finding 8：测试套件未隔离 `CCMEM_CONFIG_PATH`，用户配置会污染测试（P1，未修复）
+
+**现象**：`npm test` 在本机 **443 pass / 11 fail**；`env -u CCMEM_CONFIG_PATH npm test` 则 **454 / 0**。
+
+**根因**：测试文件统一设置了 `CCMEM_TEST_MODE` 与 `CCMEM_DATA_ROOT` 来隔离环境，
+但**没有隔离 `CCMEM_CONFIG_PATH`**。`loadConfig()`（`config.mjs:291`）照读不误，
+于是测试进程加载了用户真实的 `~/.claude/ccmem/config.json`。
+人类今天往该文件加入 `provider: "openai"` 后，11 个测试跑去加载 OpenAI provider 而失败。
+
+**影响面**：**任何通过配置文件设置了非默认 provider 的用户，跑 `npm test` 都会看到失败**，
+且失败原因与被测代码无关。这与 ledger 反复记录的失败形态同构：绿/红都不代表代码的真实状态。
+
+**与 Finding 7 无关**：修复前这些测试同样失败，只是错误信息是裸的 `ERR_MODULE_NOT_FOUND`。
+
+**修复（PROPOSED，未应用）**：测试入口统一 `delete process.env.CCMEM_CONFIG_PATH`
+（与既有的 `CCMEM_DATA_ROOT` 处理一致），或在 `package.json` 的 test 脚本里 `env -u`。
+前者更稳（不依赖调用方式）。
+
+**验证状态**：⏳ 未修复，待裁决是否纳入本版。
+**临时规避**：本机跑套件请用 `env -u CCMEM_CONFIG_PATH npm test`。
 
 ---
 
@@ -180,13 +286,29 @@ export function loadConfig() {
       而 tier15 裁到每会话 20 条，超长会话约 1.8% 污染率（k=3），方向保守（抬高噪声底）
 - [ ] **关注 Finding 2**：不要把 p50 的任何一次翻转当作结论
 
-### V3. B1 首次启用与回填恢复路径（需 G1）
-- [ ] 前置：G1 执行完毕（见 §四），`admin semantic on --provider openai` 成功返回
+### V3. B1 首次启用与回填恢复路径
+
+**本地 provider（transformers-local）：✅ 2026-08-01 已通过**
+
+- [x] **成功判据达成**：`pending` 4155 → 0，**全程零手工 `admin cron run vec_backfill`**
+- [x] 证据：`audit_log` 中 `vec_backfill_run` **136 次**，而人类仅重启 daemon 2 次；
+      4161 条 ÷ 50/批 = 84 批 —— 链式自动排队确实在跑
+- [x] 机制：`vec-backfill.mjs:36` `enqueueContinuation()` 在每批结束后排下一批，
+      guard 只计 `queued` 不计 `running`（否则条件恒真、链条永不继续）
+- [x] **这就是 review I3 修复的全部意义**：修复前 vec_backfill 仅在 daemon 启动时入队、无重复调度，
+      4161 条需 `ceil(4161/50) = 84` 次 daemon 重启才能恢复语义检索 —— 用户既想不到也做不到
+- [x] 签名分布干净：`transformers-local:Xenova/all-MiniLM-L6-v2:384 -> 4161`（单一签名，无混杂）
+
+**OpenAI provider：⏳ 待 Finding 6 修复后执行**
+
 - [ ] 签名为 `openai:text-embedding-3-small:1536`
-- [ ] **成功判据**：在**不做任何手工 `admin cron run vec_backfill`** 的前提下，`pending` 从 4093 单调降至 0
-      —— 这是 review I3 修复（回填后重排队）的全部意义；旧行为需 `ceil(4093/50) = 82` 次 daemon 重启
-- [ ] `diagnose --retrieval` 的 `stale vectors` 同步归零
-- [ ] **关注 Finding 4**：若 `pending` 停滞不降，检查是否 800ms 超时；这是对该默认值的第一次实测
+- [ ] 4161 条既有向量因签名不匹配被 `vec-backfill.mjs:74-76`
+      （`WHERE embedding IS NULL OR embedding_sig IS NULL OR embedding_sig <> ?`）捡走并重嵌
+- [ ] **验证 B1 的设计意图**：签名机制自身即可优雅处理换模型，
+      **无需** `semantic.mjs:89-96` 那个批量 `UPDATE ... SET embedding = NULL`
+      —— 后者是重叠的旧机制，已在 review follow-up 中列为 v0.14 移除项
+- [ ] `diagnose --retrieval` 的 `stale vectors` 先升后归零
+- [ ] **关注 Finding 4**：这是 `openai_timeout_ms: 800` 的第一次真实检验（本地 provider 不走该超时）
 - [ ] **关注 Finding 3**：回填前的 `stale vectors: 0` 是分母为 0，不是健康
 
 ### V4. B1 签名过滤三个消费点在非空向量集上生效（需 G1）

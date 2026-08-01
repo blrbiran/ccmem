@@ -57,9 +57,9 @@ if (process.env.CCMEM_INTERNAL === '1' || await isBlacklistedSession(hookData.se
 }
 
 if (mode === 'session-start') {
-  const { withHookSafety } = await import('./lib/hook-safety.mjs');
+  const { withHookSafety, HOOK_BUDGET_MS } = await import('./lib/hook-safety.mjs');
   const { handleSessionStart } = await import('./handlers/session-start.mjs');
-  await withHookSafety('session_start', 200, () => handleSessionStart(hookData), T_ENTRY);
+  await withHookSafety('session_start', HOOK_BUDGET_MS.session_start, () => handleSessionStart(hookData), T_ENTRY);
 }
 
 if (mode === 'prompt-submit') {
@@ -69,11 +69,11 @@ if (mode === 'prompt-submit') {
 }
 
 if (mode === 'stop') {
-  const { withHookSafety } = await import('./lib/hook-safety.mjs');
+  const { withHookSafety, HOOK_BUDGET_MS } = await import('./lib/hook-safety.mjs');
   const { openDb } = await import('./lib/db.mjs');
   const { handleStop } = await import('./handlers/stop.mjs');
   const db = openDb();
-  await withHookSafety('stop', 200, async () => {
+  await withHookSafety('stop', HOOK_BUDGET_MS.stop, async () => {
     try {
       return await handleStop(db, hookData);
     } finally {

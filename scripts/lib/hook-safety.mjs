@@ -1,12 +1,29 @@
 import { recordMetric } from './metrics.mjs';
 
 /**
- * The prompt-submit budget, exported so hooks.json can be checked against it.
- * It is the point at which ccmem gives up and returns an empty context; the
- * harness timeout in hooks.json must be strictly larger, or the process is
+ * Per-hook budgets, exported so hooks.json can be checked against them.
+ *
+ * A budget is the point at which ccmem gives up and returns an empty context.
+ * The harness timeout in hooks.json must be strictly larger, or the process is
  * killed before the graceful path can write stdout and its metrics row.
+ *
+ * Read the limitation below before trusting these numbers: the budget only
+ * bounds ASYNC work. It cannot interrupt a synchronous run, and ccmem's hooks
+ * are mostly synchronous — node:sqlite is a synchronous API and the stop hook
+ * reads the whole transcript before touching the database. Measured: the stop
+ * hook exceeded its 200ms budget in 50.2% of 2547 runs and recorded a timeout
+ * in exactly none of them. So the harness timeout is not merely a backstop
+ * behind the budget — for synchronous work it is the ONLY limit, and it has to
+ * be sized against the work's real p99, not against the budget.
  */
-export const PROMPT_SUBMIT_BUDGET_MS = 2000;
+export const HOOK_BUDGET_MS = {
+  session_start: 200,
+  prompt_submit: 2000,
+  stop: 200
+};
+
+/** Kept for callers that import the prompt-submit budget by name. */
+export const PROMPT_SUBMIT_BUDGET_MS = HOOK_BUDGET_MS.prompt_submit;
 
 const HOOK_EVENT_NAMES = {
   session_start: 'SessionStart',

@@ -78,7 +78,12 @@ export function backfillEmbeddingConfig(cfg) {
 export async function runVecBackfill(db, _task = null) {
   const cfg = loadConfig();
   const startedAt = Date.now();
-  const provider = getProvider(backfillEmbeddingConfig(cfg));
+  // The override must reach load() and embed() too, not just getProvider():
+  // both recompute their config from loadConfig() when called bare, which puts
+  // the hot-path timeout straight back and was why the first version of this fix
+  // changed nothing observable.
+  const backfillCfg = backfillEmbeddingConfig(cfg);
+  const provider = getProvider(backfillCfg);
   const sig = currentEmbeddingSig(provider, cfg);
 
   if (!provider) {
@@ -115,8 +120,8 @@ export async function runVecBackfill(db, _task = null) {
   }
 
   try {
-    await provider.load();
-    const vectors = await provider.embed(rows.map((row) => row.content));
+    await provider.load(backfillCfg);
+    const vectors = await provider.embed(rows.map((row) => row.content), backfillCfg);
     const update = db.prepare(
       `UPDATE memories
        SET embedding = ?, embedding_sig = ?, updated_at = ?

@@ -1,4 +1,5 @@
 import { loadConfig } from '../config.mjs';
+import { importOptional } from './optional-import.mjs';
 
 let client = null;
 let currentConfigKey = null;
@@ -49,7 +50,7 @@ export const openaiEmbedding = {
       return;
     }
 
-    const { default: OpenAI } = await import('openai');
+    const { default: OpenAI } = await importOptional('openai', 'openai');
     client = new OpenAI({
       apiKey: cfg.apiKey,
       baseURL: cfg.baseURL ?? undefined,

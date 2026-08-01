@@ -1,4 +1,5 @@
 import { loadConfig } from '../config.mjs';
+import { importOptional } from './optional-import.mjs';
 
 let extractor = null;
 
@@ -73,7 +74,7 @@ export const transformersLocal = {
     }
 
     const cfg = this.applyConfig(override);
-    const { pipeline, env } = await import('@xenova/transformers');
+    const { pipeline, env } = await importOptional('@xenova/transformers', 'transformers-local');
     if (cfg.remote_host) {
       env.remoteHost = String(cfg.remote_host);
     }

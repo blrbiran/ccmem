@@ -7,7 +7,7 @@
 
 | 材料 | 为什么需要 |
 |---|---|
-| **`docs/ccmem-v0.13-dogfood.md`** | **最重要，先读。** 9 条 finding、V1–V8 验证清单、门禁。**但注意：Finding 9 与 Finding 4 的记述已被实测推翻，见下方「必须改写的文档」。** |
+| **`docs/ccmem-v0.13-dogfood.md`** | **最重要，先读。** 9 条 finding、V1–V8 验证清单、门禁。**Finding 4 与 Finding 9 已按实测重写，可信；但 §三/§四/§五 的状态栏仍停留在 G1 之前，见下方「文档内部矛盾」。** |
 | `.superpowers/sdd/2026-07-31-ccmem-v0.13/progress.md` | SDD ledger —— 每条人类裁决及理由、全部延期项。git 历史一条都不记。 |
 | `.superpowers/sdd/2026-07-31-ccmem-v0.13/final-review-findings.md` | 末尾「NOT in this wave」= v0.14 待办来源。 |
 | `docs/ccmem-v0.13-spec.md` | 附录 A 不变量 **仍未涵盖 dogfood 的任何修复**。 |
@@ -18,7 +18,7 @@
 
 需要知道的事实：
 
-- 本轮新增 **6 个修复提交**（daemon 环境、换模型检测器、签名契约、回填超时、回填接线、孤儿任务回收），全部在本地 `main` 上。
+- 本轮新增 **6 个修复提交 + 3 个文档提交**（修复：daemon 环境、换模型检测器、签名契约、回填超时、回填接线、孤儿任务回收），全部在本地 `main` 上。
 - 本地 `main` **领先 `origin/main`，尚未推送**。人类自己处理所有 push —— 不要代为推送。
 - 分支 `v0.13-spec`、`v0.13-dogfood-fixes` 均未删除（删分支必须先问）。
 - 当前套件：**466 pass / 0 fail**。跑测试用 `npm test`（脚本已内置 `env -u CCMEM_CONFIG_PATH`）。
@@ -50,22 +50,42 @@
 
 每条的完整根因、证据、取舍在**提交信息里**，不在这里重复。`git log` 读它们。
 
-## ⚠ 必须改写的文档（本轮实测推翻了原记述）
+## 文档状态：改完了什么，还欠什么
 
-**这是下一个会话最优先的文书工作** —— 不改的话，接手者会照着错误结论去修不存在的 bug。
+**已完成（本轮）**：dogfood 文档的 **Finding 4 与 Finding 9 已按实测整条重写**，提交信息里写明了为什么原记述是错的。
+两条都在开头用引用块标注了"原记述已被推翻，不要照着修"。**这两条现在可信。**
 
-1. **Finding 9 的根因是错的。** 原文写「三个签名互不相同、签名函数有缺陷」。实测：**一个正确的签名函数被喂了两份不同的配置**（daemon 读不到 `CCMEM_CONFIG_PATH` ⇒ 永远用 `DEFAULT_CONFIG`；CLI/hooks 读用户 config.json）。
-   原文列的第三个签名 `local:Xenova/all-MiniLM-L6-v2:0` **在当前代码里复现不出来** —— 它是 `currentEmbeddingSig(cfg)` 只传一个参数的产物，是上一轮的**测量误差**，不是运行时行为。
-   `?? 0` 与 `?? 'local'` 确是隐患（已修），但**在本次症状里一次都没被执行到**。
-2. **Finding 4 的表述要重写。** 不是「默认值调小了」，而是 **一个超时值服务两种相反负载**：hook 检索（1 条 query、200ms 预算、失败退化为词法）vs 回填（50 条批量、daemon 内、失败让链条死掉）。
-   实测数据：批次耗时 685–1427ms，`{"error":"Request timed out.","embedded_before_fail":0}`。修复后零超时。
-3. **新增 Finding 10：launchd plist 冻结环境快照。** `admin daemon restart` **不重新生成 plist**，所以任何环境相关修复对已安装用户都不会自动生效，且无任何提示。必须 `admin daemon uninstall && install`。
-   影响面比 Finding 9 更广 —— 它让「改了代码就该生效」这个心智模型整体失效。
-4. **新增 Finding 11：孤儿 `running` 任务堵死链条 —— 已修复。**
-   两个各自正确的 guard 合起来成死锁：`enqueueContinuation` 只数 `queued`（刻意），`daemon/main.mjs` 数 `queued` 或 `running`。
-   owner 已死的 `running` 行两边都不动它 ⇒ 链条永久停摆且无任何信号。实测冻结 12 分钟、1159 条待办。
-   修复：`acquireDaemonLock` 保证单实例，故启动时任何 `running` 行必然是孤儿，统一标记 `failed`。**这是 tasks 表层面的属性，不是回填局部问题** —— 当时库里还躺着 5 行孤儿 `summarize_pending`。
-5. 附录 A 不变量仍欠 Finding 6/7/8 + 本轮的对应条目。**加之前必须先验证 grep 在破坏代码时真能变红**，否则重蹈 I9 的空不变量。
+**还欠的文书工作，按优先级**：
+
+1. **Finding 10 与 Finding 11 还没有自己的条目** —— 目前只在 Finding 9 里以交叉引用形式各提了一句。
+   - **Finding 10：launchd plist 冻结环境快照。** `admin daemon restart` **不重新生成 plist**，
+     所以任何环境相关修复对已安装用户都不会自动生效，且无任何提示。必须 `admin daemon uninstall && install`。
+     影响面比 Finding 9 更广 —— 它让「改了代码就该生效」这个心智模型整体失效。
+     验证手段只有一个：`ps eww -p <pid> | grep CCMEM_CONFIG_PATH`。
+   - **Finding 11：孤儿 `running` 任务堵死链条（已修复）。** 两个各自正确的 guard 合成死锁：
+     `enqueueContinuation` 只数 `queued`（刻意），`daemon/main.mjs` 数 `queued` 或 `running`。
+     owner 已死的 `running` 行两边都不动 ⇒ 链条永久停摆且无信号。实测冻结 12 分钟、1159 条待办。
+     修复：`acquireDaemonLock` 保证单实例，故启动时任何 `running` 行必然是孤儿，统一标记 `failed`。
+     **这是 tasks 表层面的属性** —— 当时库里还躺着 5 行孤儿 `summarize_pending`。
+
+2. **dogfood 文档现在自相矛盾** —— Finding 4/9 说"已修复、G1 已达成"，但下列位置仍停在 G1 之前。
+   这些是纯回填，彼此独立，很适合小步做：
+
+   | 位置 | 现状 | 应改为 |
+   |---|---|---|
+   | Finding 3 验证状态 | `⏳ 待 G1` | 已解除 |
+   | §三 V3「OpenAI provider」整份清单 | 全未勾 | 已跑通，`pending=0`，可逐条回填 |
+   | §四 门禁表 G1 | `⏳ 方案已定，待执行` | ✅ 已达成 |
+   | §四 优先级第 2 条 | `⏳ 待执行：G1` | 已完成 |
+   | §五 实测结果 | `⏳ 待回填。V3–V5 待 G1` | V3 可写，V4/V5 现在才第一次具备条件 |
+   | §三 V8「关注 Finding 4：熔断打开时应快速失败」 | —— | **熔断至今一次都没打开过，未检验，要如实标注** |
+
+3. **附录 A 不变量仍欠** Finding 6/7/8 + 本轮全部修复的对应条目。
+   **加之前必须先验证 grep 在破坏代码时真能变红**，否则重蹈 final review I9 的空不变量。
+
+4. **V4/V5 现在第一次具备验证条件** —— 库里终于有一整套非空且签名一致的向量（4367 条 openai 签名）。
+   V4 是签名过滤的三个消费点（检索侧 / dedup / **写 trust 的 feedback.mjs**，后者优先级最高）；
+   V5 是 `semantic status` 与 `diagnose --retrieval` 的口径一致性。
 
 ## 当前运行时状态（会变，用命令核对）
 
@@ -117,7 +137,7 @@
 
 ## 备注
 
-- OpenWolf 记账文件（`.wolf/buglog.json`、`.wolf/memory.md`、`.wolf/anatomy.md`）已 gitignore。本轮新增 `bug-056`（daemon 环境白名单）。
+- OpenWolf 记账文件（`.wolf/buglog.json`、`.wolf/memory.md`、`.wolf/anatomy.md`）已 gitignore。本轮新增 `bug-056`（daemon 环境白名单）与 `bug-057`（孤儿 running 任务）。
 - SDD workspace **刻意保留**：它承载全部人类裁决及理由、final review findings、8 份任务报告。
 - 探针决策流 `l25-probe.jsonl` 无上限设计（`retention_days: 0`）。`diagnose --feedback` 打印其磁盘占用 —— 刻意让运行时成本可见，**不要"优化"掉**。
 - 本次运行的所有产物中不含任何凭据或个人数据；API key 存放于仓库外的用户配置文件，从未进入仓库或本文档。

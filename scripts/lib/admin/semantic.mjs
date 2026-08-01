@@ -80,7 +80,6 @@ export async function cmdAdminSemantic(db, { verb, provider: requestedProvider =
   if (verb === 'on') {
     const providerName = requestedProvider ?? cfg.embedding?.provider ?? 'transformers-local';
     const providerCfg = { embedding: { ...cfg.embedding, enabled: true, provider: providerName } };
-    const currentModel = db.prepare(`SELECT value FROM config_kv WHERE key = 'embedding.active_model'`).get()?.value ?? null;
 
     // Settle the provider override BEFORE resolving the provider. resolveProviderName
     // reads config_kv ahead of the config file, so a leftover row here would make
@@ -102,17 +101,16 @@ export async function cmdAdminSemantic(db, { verb, provider: requestedProvider =
     await provider.load(providerCfg);
     const newModel = provider.modelId;
 
-    if (currentModel && currentModel !== newModel) {
-      const nullified = db.prepare(`UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL`).run().changes;
-      writeAudit(db, 'embedding_model_switched', null, {
-        from_model: currentModel,
-        to_model: newModel,
-        nullified_count: nullified
-      });
-    }
-
+    // No model-change detector here. v0.13's embedding signature already handles a
+    // changed model correctly and non-destructively: rows whose signature no longer
+    // matches are re-embedded by vec_backfill, in batches, without ever discarding a
+    // vector before its replacement exists. The detector this replaced compared the
+    // loaded model against an `embedding.active_model` row and ran
+    // `UPDATE memories SET embedding = NULL` across the whole store on any mismatch —
+    // an overlapping second mechanism whose only distinct effect was data loss. It
+    // became reachable by accident once the Finding 6 fix cleared `active_provider`
+    // but left `active_model` behind, so the two keys resolved from different layers.
     setConfigValue(db, 'embedding.enabled', 'true');
-    setConfigValue(db, 'embedding.active_model', newModel);
     writeAudit(db, 'semantic_enabled', null, { model: newModel, dim: provider.dim, provider: providerName });
     return semanticState(db, cfg);
   }

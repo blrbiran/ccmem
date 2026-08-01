@@ -83,3 +83,46 @@ test('the loaded provider matches the provider the command reports', async () =>
   assert.equal(result.provider, 'transformers-local', 'reported provider comes from the config file');
   assert.equal(result.model, 'Xenova/all-MiniLM-L6-v2', 'and the model reported is the one actually loaded');
 });
+
+// Finding 9 follow-up. `semantic on` carried a second, overlapping model-change
+// detector: it compared the freshly loaded model against an `embedding.active_model`
+// row and, on any difference, ran `UPDATE memories SET embedding = NULL` across the
+// whole store. The signature mechanism (v0.13 B1) already handles a model change
+// correctly and non-destructively — vec_backfill re-embeds rows whose signature no
+// longer matches — so the detector only added a way to lose data.
+//
+// The Finding 6 fix made it reachable by accident: it deletes `active_provider` but
+// left `active_model` behind, so the two keys came from different layers. A store
+// carrying `active_model = text-embedding-3-small` from an OpenAI run would have
+// every vector wiped by one bare `semantic on` in a shell that resolves to the
+// local provider.
+test('semantic on preserves existing vectors when the recorded model differs', async () => {
+  const db = openDb();
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO memories (
+      scope, project_key, type, content, pinned, source, trust_score,
+      decay_status, helpful_count, unhelpful_count, last_touched_at, created_at, updated_at,
+      embedding, embedding_sig
+    ) VALUES ('project', 'demo/repo', 'fact', 'vector must survive semantic on', 0, 'user_explicit', 0.5,
+      'active', 0, 0, ?, ?, ?, ?, 'transformers-local:Xenova/all-MiniLM-L6-v2:384')`
+  ).run(now, now, now, Buffer.from(new Float32Array([0.1, 0.2, 0.3]).buffer));
+
+  // Residue from a previous OpenAI run: a model name the local provider will never match.
+  db.prepare(
+    `INSERT INTO config_kv (key, value, set_at) VALUES ('embedding.active_model', 'text-embedding-3-small', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+  ).run(Date.now());
+
+  await cmdAdminSemantic(db, { verb: 'on' });
+
+  const row = db.prepare(
+    `SELECT embedding, embedding_sig FROM memories WHERE content = 'vector must survive semantic on'`
+  ).get();
+  assert.notEqual(row.embedding, null, 'enabling semantic search must never destroy stored vectors');
+  assert.equal(
+    row.embedding_sig,
+    'transformers-local:Xenova/all-MiniLM-L6-v2:384',
+    'the signature stays intact; vec_backfill re-embeds by signature mismatch, not by mass deletion'
+  );
+});

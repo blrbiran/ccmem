@@ -69,3 +69,8 @@
 - `hooks/hooks.json` 的 `timeout` 单位是**秒**，且必须**严格大于** `withHookSafety` 的内部预算（`PROMPT_SUBMIT_BUDGET_MS`），否则 harness 会在内部降级路径跑完之前杀掉进程，stdout 与 metrics 都写不出来。余量还要覆盖 node 启动与模块加载（`ms_total` 不含这两段）。
 - **metrics.jsonl 的延迟统计有幸存者偏差** —— 行是 hook 自己写的，被杀的那次不会留下行。所以"超预算样本 = 0"绝不能当作"没有超时"。
 - OpenAI SDK 默认 `maxRetries: 2`，会把 `timeout` 变成它自己的倍数（800ms 配置实测 1683ms）。**设了超时就要同时设 maxRetries**，否则超时不是预算。
+
+### 2026-08-02 · withHookSafety 的预算对同步工作是空的
+- `Promise.race([fn(), setTimeout(reject, ms)])` **只能切断异步工作**。定时器回调要等事件循环空闲，而 `node:sqlite` 是同步 API —— 同步工作会跑满全程。实测：异步 800ms 在 201ms 被切断，同步 800ms 跑满。
+- 因此 **harness 超时（hooks.json）对同步工作是唯一的限制**，必须按工作本身的实测 p99 定尺寸，不能按内部预算定。
+- 证据形态记住：内部预算「触发 0 次」+ 实测「50.2% 超预算」同时成立 ⇒ 计时器坏了，不是工作快。

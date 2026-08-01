@@ -44,7 +44,7 @@ function resolveCommandFromPath(command, envPath) {
   return null;
 }
 
-function buildDaemonEnv(baseEnv = process.env) {
+export function buildDaemonEnv(baseEnv = process.env) {
   const dataRoot = getDataRoot();
   const daemonEnv = {
     PATH: baseEnv.PATH ?? DEFAULT_PATH,
@@ -64,7 +64,13 @@ function buildDaemonEnv(baseEnv = process.env) {
 
   const passthroughKeys = [
     'CCMEM_CLAUDE_P_ARGS_JSON',
-    'CCMEM_CLAUDE_P_TIMEOUT_MS'
+    'CCMEM_CLAUDE_P_TIMEOUT_MS',
+    // Without this the daemon's loadConfig() silently falls back to DEFAULT_CONFIG
+    // while the CLI and hooks read the operator's file, so the two processes derive
+    // different embedding signatures and semantic retrieval degrades to lexical with
+    // nothing reported. The file is the only channel for the key too, which is why
+    // provider API keys deliberately stay off this list (see the daemon env test).
+    'CCMEM_CONFIG_PATH'
   ];
 
   for (const key of passthroughKeys) {

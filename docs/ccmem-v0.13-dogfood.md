@@ -1,61 +1,297 @@
-# ccmem v0.13 — Dogfood 计划与记录
+# ccmem v0.13 Dogfood 文档
 
-> 目的：在真实使用中验证 v0.13 **实际交付的运行时行为**，而不是重跑测试套件。
-> 套件（449/449）和不变量（16/16）已在合并时验证过，dogfood 要回答的是另一个问题：
-> **这些代码路径在生产里到底有没有被执行过，执行结果是否符合预期。**
+> 验证 v0.13「L2.5 观察型探针 + 入库收紧 + embedding 签名版本化」的**运行时行为**是否符合 spec。
+> 对照 [`ccmem-v0.13-spec.md`](./ccmem-v0.13-spec.md) 与
+> [`.superpowers/sdd/2026-07-31-ccmem-v0.13/final-review-findings.md`](../.superpowers/sdd/2026-07-31-ccmem-v0.13/final-review-findings.md)。
+> 验证方法：真实 live DB（`~/.claude/ccmem/global.db`）+ 真实 daemon + 真实 hook，逐项附命令证据。
 >
-> 起始基线记录于 2026-08-01 09:35，v0.13 合并入 main 后约 7.7 小时。
-> 本文档是活文档：计划在上半部分，观测记录按轮次追加在下半部分。
+> **背景**：v0.13 已通过 449 测试 + 附录 A grep 不变量 120–135（16/16），
+> 并已 fast-forward 合并进 `main`（`3bd3092`，已推送）。最终 review 的 3 Critical + 10 Important
+> 已在单轮 fix wave 中全部修复并经 scoped re-review 确认。
+> **本文档要回答的是另一个问题：这些代码路径在生产里到底有没有被执行过。**
+> 套件全绿不构成证据 —— 单测用 mock provider 与 `:memory:` DB，本文档只接受真实运行计数。
 
 ---
 
-## 0. 首要发现（在写计划的过程中就已命中）
+## 一、v0.13 实现状态
 
-**运行中的 daemon 早于 v0.13 的代码，因此 daemon 侧的 v0.13 功能一次都没有执行过。**
+| 能力 | 状态 | 可 dogfood | 关键文件 |
+|---|---|---|---|
+| A1 L2.5 观察型探针 | ✅ ship | ✅ 已在跑（389 行） | `lib/feedback.mjs:1281-1500`、`lib/metrics.mjs` |
+| A1b 决策流 `l25-probe.jsonl` + `retention_days:0` | ✅ ship | ✅ 观测磁盘增长 | `lib/metrics.mjs`、`lib/tier15.mjs`（config_kv 清理） |
+| A1c `admin diagnose --feedback` 四队列分段 | ✅ ship | ✅ 已验证可用 | `lib/admin/diagnose.mjs` |
+| A2 质量门 `env_failure` + `negative_assertion` | ✅ ship | ⚠️ 见 Finding 1 | `lib/quality-gate.mjs:82-97`、`daemon/tasks/summarize-pending.mjs:283` |
+| A2b `quality_gate_reject` 按 reason 拆分 | ✅ ship | ✅ **已验证可用** | `lib/admin/diagnose.mjs:807-890` |
+| B1 embedding 签名版本化（迁移 016） | ✅ ship | ❌ 见 Finding 3 | `lib/embedding/signature.mjs`、`retrieval.mjs:427`、`dedup.mjs`、`feedback.mjs`、`daemon/tasks/vec-backfill.mjs` |
+| B2 `temporal_type` 显式写入 | ✅ 早于本分支已修 | ❌ 纯测试 | `tests/integration/v013-save-temporal.test.mjs` |
+| B3 recall-loop 不变量 | ✅ ship | ❌ 纯测试 | `tests/unit/v013-recall-loop.test.mjs` |
+| 配置版本 0.13 + 递归同步测试 | ✅ ship | ✅ 一行核对 | `lib/config.mjs:3`、`tests/unit/v013-config-sync.test.mjs` |
 
-| 事实 | 时间 |
+当前回归：**449 pass / 0 fail**；附录 A 不变量 **16/16**；
+trust 守恒 `SUM(trust_score)` 真实使用前后不变（期间 hooks 实际运行并新增 63 条探针行）。
+
+**B2/B3 不列入 dogfood** —— 它们没有可观测的运行时行为变化（ledger T7 已确认 B2 的修复早于本分支）。
+把它们写进验证清单只会制造"覆盖了"的假象。
+
+---
+
+## 二、Dogfood 前置发现（2026-08-01）
+
+> 严重度：**P0** = 阻塞 dogfood / 观测结果无效；**P1** = 会导致误读或执行失败；**P2** = 打磨。
+> v0.13 的 code review findings 不在此节 —— 它们已全部修复并记录于 `final-review-findings.md`。
+> 本节记录的是**开始 dogfood 时才暴露的问题**。
+
+### Finding 1：运行中的 daemon 早于 v0.13 代码，daemon 侧功能零执行（P0）
+
+**现象**：`admin diagnose --tuning` 显示近 30 天 146 次质量门拒绝，
+但 reason 全部是 v0.13 之前就存在的规则（`path_list` 140 / `too_specific` 3 / `test_count` 2 / `too_short` 1），
+两条新规则 `negative_assertion` / `env_failure` **计数为 0**。
+
+**根因**：daemon 在启动时 import 一次模块，此后持有内存中的那份代码。时间线：
+
+| 事件 | 时间 |
 |---|---|
-| 当前 daemon 进程启动（pid 8813，uptime 24h23m） | 2026-07-31 09:12 |
-| A2 质量门两条新规则首次提交（`d95f35b`） | 2026-07-31 22:34 |
+| 当时运行的 daemon 启动（pid 8813，uptime 24h23m） | 2026-07-31 09:12 |
+| A2 两条新规则首次提交（`d95f35b`） | 2026-07-31 22:34 |
 | A2 脚本分档长度门修正（`4e7b931`） | 2026-07-31 23:02 |
 | v0.13 合并进 main（`dfc7f93`） | 2026-08-01 01:49 |
 
-daemon 在启动时 import 一次模块，之后持有内存里的那份代码。它比新规则早 **13.4 小时**，
-所以 `admin diagnose --tuning` 里 `negative_assertion` / `env_failure` 计数为 0
-**是被完全解释的，不是缺陷信号**。在重启 daemon 之前，任何针对 A2 的观测都无意义。
+daemon 比新规则早 **13.4 小时** ⇒ 它不可能执行过这两条规则。
 
-反过来，**A1 探针跑在 Stop hook 上**（每轮一个全新 node 进程，每次从磁盘读代码），
-所以它确实在跑 v0.13 的代码 —— 证据是探针行里已经出现 `control: 'random'` 队列，
-而那是最终 review 修复波才加的字段。这不是推断，是数据。
+**为什么这不是缺陷**：0 计数被完全解释。**若不查进程启动时间就直接下"规则坏了"的结论，会是一次误报。**
 
-> **门禁 G0（需人类批准）**：重启 ccmem daemon。
-> 不重启 ⇒ 本文档的 A2 与 B1 两条线全部无法开始。
+**对照证据（说明 A1 不受影响）**：A1 探针跑在 **Stop hook** 上 —— 每轮一个全新 node 进程，每次从磁盘读代码。
+证据是探针行里已出现 `control: 'random'` 队列，而该字段是最终 review 修复波才加入的。这是数据，不是推断。
+
+**修复**：重启 daemon。
+
+**验证状态**：✅ **已解除（2026-08-01 09:41，人类手动执行 `ccmem admin daemon restart`）**
+—— `pid=82700`、uptime 归零、`startup_schema=16`。
 
 ---
 
-## 1. v0.13 交付物 × 可 dogfood 性
+### Finding 2：首批探针情报已翻转，p50 对比方法本身不可靠（P1）
 
-| # | 功能 | 观测面 | 运行位置 | 可 dogfood？ |
+**现象**：交接文档记录的核心情报是「随机对照组 `l25_cov` p50 ≈ 0.125 **高于**信号组 ≈ 0.103」，
+即"噪声底高于信号"。实测已翻转：随机组从 n≈9 增至 n=21 后，p50 降至 **0.075，低于信号**。
+
+**根因**：n=21 时 p50 的置信区间宽到两组完全重叠。两次结论都是小样本抖动。
+
+**为什么重要**：正确的读法**不是**"所以有信号了"，而是 **"分位数对比这个方法不能用作判据"**。
+v0.14 的判据必须是分布级的（AUC / Mann-Whitney U），不是分位数比较。
+
+**修复**：dogfood 期继续采集（V2），并记录 p50 随 n 的漂移轨迹 —— 漂移本身就是"方法不可用"的证据。
+
+**验证状态**：⏳ 采集中，见 V2。
+
+---
+
+### Finding 3：B1 在本机完全休眠，`stale vectors: 0` 是分母为 0（P1）
+
+**现象**：
+```
+admin semantic status    : enabled=false loaded=false provider=transformers-local
+                           embedded=0 pending=4093 model=Xenova/all-MiniLM-L6-v2 dim=384
+admin diagnose --retrieval: Embedding: disabled / stale vectors: 0 / Circuit: CLOSED
+```
+
+**根因**：embedding 全局关闭，0 条记忆有向量。整条 B1 机制（签名派生、三处过滤、vec_backfill 恢复路径）
+**在本机从未执行过一次**。
+
+**观测误读风险**：`stale vectors: 0` 看起来像"健康"，实际是**分母为 0** —— 签名不匹配的行数当然是 0，因为一个向量都没有。
+
+**顺带澄清**：`semantic status` 的 `pending=4093` 与 `diagnose --retrieval` 的 `stale vectors: 0`
+**不构成 review 中 I4 那类矛盾**（二者分母不同：前者"无向量"，后者"有向量但签名过期"，当前状态下两个数都对）。
+follow-up 清单里那条（`semantic.mjs:103` 强制 `enabled:true` 而 `diagnose.mjs:58` 用原始 cfg）
+**要等 embedding 打开后才具备显形条件**。
+
+**修复**：门禁 G1，见 §四。
+
+**验证状态**：⏳ 待 G1，见 V3–V5。
+
+---
+
+### Finding 4：`openai_timeout_ms` 默认 800ms 与 50 条批量冲突（P1，G1 执行风险）
+
+**现象**：`config.mjs:19` 默认 `openai_timeout_ms: 800`，`openai.mjs:53` 直接作为 OpenAI client 超时；
+而 `openai.mjs:66-72` 的 `embed()` 一次提交 `backfill_batch_size`（默认 50）条。
+
+**风险**：50 条 `text-embedding-3-small` 的实际延迟通常 200–600ms，**擦着 800ms 门限走**，
+是回填阶段最可能的失败点。
+
+**为什么不能简单调大**：该值不是随意的 —— embedding 同时位于 prompt-submit **检索热路径**上，
+短超时是为保护 hook 延迟预算，失败由熔断器接管并退化为纯词法检索。调大它有真实代价。
+且 `config_kv` 中没有 timeout 键，要改**必须**引入配置文件 + 为 daemon 与 hooks 都设置 `CCMEM_CONFIG_PATH`。
+
+**决定**：**先按默认 800ms 跑，把回填当作对这个默认值的第一次实测。**
+超时会表现为 `pending` 停滞不降。这个观测结果本身比预防性调参更有记录价值。
+
+**验证状态**：⏳ 待 G1，见 V3。
+
+---
+
+### Finding 5：`loadConfig()` 的 `JSON.parse` 无 try/catch，配置文件是全 hook 单点故障（P1）
+
+**现象**：`config.mjs:290-296`
+```javascript
+export function loadConfig() {
+  const userPath = process.env.CCMEM_CONFIG_PATH;
+  if (!userPath || !existsSync(userPath)) return applyV08Compatibility(DEFAULT_CONFIG);
+  return applyV08Compatibility(mergeConfig(DEFAULT_CONFIG, JSON.parse(readFileSync(userPath, 'utf8'))));
+}
+```
+`JSON.parse` 无保护 —— 配置文件写坏一个逗号，**每个 hook 进程都会抛异常**。
+
+**为什么现在才相关**：本环境从未设置过 `CCMEM_CONFIG_PATH`（`~/.claude/ccmem/` 下无 `config.json`），
+所以 `mergeConfig` 这条路径**从未被执行过**（ledger 亦记录：`v013-config-sync.test.mjs` 从不设置该变量）。
+一旦为了配置 API key 或 timeout 而引入配置文件，就同时激活了这条未经真实检验的路径。
+
+**修复（PROPOSED，未应用）**：`JSON.parse` 包 try/catch，解析失败时 warn 到 stderr 并回落 `DEFAULT_CONFIG`。
+属 v0.14 候选，非 v0.13 缺陷。
+
+**规避**：G1 采用**方案 B**（密钥走环境变量），不引入配置文件，从而不激活这条路径。见 §四。
+
+---
+
+## 三、Dogfood 验证清单
+
+> 单元/集成测试用 mock provider 与 `:memory:` DB。下列项必须在**真实环境**验证。
+
+### V1. A2 质量门两条新规则在真实入库流上的行为
+- [ ] 前置：daemon 已重启（Finding 1）✅
+- [ ] 正常使用 3–7 天，让 `summarize_pending` 自然处理真实待入库内容
+- [ ] `admin diagnose --tuning` 中 `negative_assertion` / `env_failure` 出现非零计数
+- [ ] **重点是误杀，不是漏杀**：用 `/ccmem:audit` 读每条 `quality_gate_reject` 的 80 字符摘录，人工判断是噪声还是合法约束
+  - 预期误杀形态（review I5）：`"这个 API 不支持批量请求，需要逐条调用"`（合法 API 约束）、
+    `"prettier is not installed globally; use npx prettier"`（51 字符，低于 Latin 120 门限，却正是提取提示词要求的 remedy 形式）
+- [ ] **计数为 0 时不得直接下结论 —— 存在规则遮蔽**：`env_failure`(`:88`) 与 `negative_assertion`(`:95`)
+      是 9 条规则中的第 8、9 条，命中即返回。同时像 `path_list` 又像 `negative_assertion` 的内容会被记成前者。
+      要区分需离线把候选内容逐规则喂给 `checkQuality`，而非看线上计数。
+- [ ] **成功判据**：≥ 20 条经这两条规则的拒绝被人工判读，误杀率有一个数（数值高低不由 dogfood 裁决）
+- [ ] **关注 Finding 1**：确认观测窗口起点晚于 daemon 重启时刻，否则计数仍是旧代码的
+
+### V2. A1 探针数据积累与判据可行性
+- [ ] 不改动任何东西，让探针继续采集；每日快照一次 `admin diagnose --feedback` 并追加到 §五
+- [ ] **成功判据**：随机对照非 CJK 样本 **n ≥ 60**（当前 21）
+- [ ] 记录 p50 随 n 的漂移轨迹；若 n 翻倍后仍在 ±0.03 内摆动，即证明分位数不可作判据
+- [ ] **已知限制**：`l25_legacy_hit` 恒为 0/389，**无任何正例标签**，采集再多也算不出 precision/recall
+      —— 该限制由 v0.14 的人工标注解决，不属 dogfood 范围
+- [ ] **已知偏差，记入分析笔记不修**：随机组排除范围只有 `recent_injections` 那么宽，
+      而 tier15 裁到每会话 20 条，超长会话约 1.8% 污染率（k=3），方向保守（抬高噪声底）
+- [ ] **关注 Finding 2**：不要把 p50 的任何一次翻转当作结论
+
+### V3. B1 首次启用与回填恢复路径（需 G1）
+- [ ] 前置：G1 执行完毕（见 §四），`admin semantic on --provider openai` 成功返回
+- [ ] 签名为 `openai:text-embedding-3-small:1536`
+- [ ] **成功判据**：在**不做任何手工 `admin cron run vec_backfill`** 的前提下，`pending` 从 4093 单调降至 0
+      —— 这是 review I3 修复（回填后重排队）的全部意义；旧行为需 `ceil(4093/50) = 82` 次 daemon 重启
+- [ ] `diagnose --retrieval` 的 `stale vectors` 同步归零
+- [ ] **关注 Finding 4**：若 `pending` 停滞不降，检查是否 800ms 超时；这是对该默认值的第一次实测
+- [ ] **关注 Finding 3**：回填前的 `stale vectors: 0` 是分母为 0，不是健康
+
+### V4. B1 签名过滤三个消费点在非空向量集上生效（需 G1）
+- [ ] `retrieval.mjs:427` —— 检索侧 cosine 通道只取当前签名的行
+- [ ] `dedup.mjs` —— 签名不匹配的候选跳过 cosine 通道（防止同维度换模型时静默丢弃真实记忆）
+- [ ] `feedback.mjs`（review I2）—— **写 trust 的那个消费点**，`helpful_implicit` 不再施加到任意记忆上
+- [ ] 验证手段：回填完成后，检索/保存/反馈各走一遍真实流程，确认无静默空结果
+- [ ] **注意**：I2 是 review 中唯一"签名盲且写 trust"的消费点，优先级高于检索侧漏检
+
+### V5. 配置面一致性：`config_kv` override 与两条命令的口径（需 G1）
+- [ ] `admin semantic status` 与 `admin diagnose --retrieval` 对 enabled 状态口径一致
+- [ ] **关注 follow-up**：`semantic.mjs:103` 强制 `enabled:true` 构造签名配置，而 `diagnose.mjs:58` 用原始 cfg
+      —— 当「文件配置禁用 embedding 且 `config_kv` 未设」时二者可再次分歧（I4 的残留窄化版）。
+      本次经 `admin semantic on` 写入 `config_kv`，两者应一致；**要复现分歧需刻意构造该组合**
+- [ ] `admin semantic on` 的模型切换分支（`semantic.mjs:89-96`，"换模型即清空全部 embedding"）
+      本次**不应触发**（`active_model` 为 null）；**日后换模型时必须重新评估**
+
+### V6. 决策流磁盘成本与 `retention_days: 0` 语义
+- [ ] `diagnose --feedback` 头部持续显示 `l25-probe.jsonl` 磁盘占用（刻意让运行时成本可见，不要"优化"掉）
+- [ ] 实测每行体积与增速，对照设计估算（~1.3 KB/行，每 turn-aligned 轮次 ≤11 行，~200 KB/天）
+- [ ] 确认 `retention_days: 0` 表示**永不自动删除**（刻意与运行时清理语义相反 —— 人类裁决 #4）
+- [ ] 确认 `metrics.decision_data.enabled` 控制的是**持久性而非存在性**：为 false 时探针行回落 `metrics.jsonl`，绝不丢弃（裁决 #3）
+
+### V7. 升级链兼容（migration 016 在真实库上）
+- [x] 迁移 016 按文件名自动发现、事务内执行，已干净应用于 live store（schema 15→16）
+- [x] `EXPLAIN QUERY PLAN` 在真实 14MB store 的副本上确认部分索引 `idx_memories_embedding_sig`
+      对 allVecs seek 与 stale-count scan 均被选中 —— 非 hook 预算问题
+- [ ] 迁移后既有行 `embedding_sig IS NULL`，由 V3 的回填路径恢复（这正是 I3 存在的原因）
+
+### V8. hook 延迟预算
+- [x] 探针 C1+C3（reply 摘录 + 随机对照队列）实测：p50 1.36→2.88ms，p95 2.82→3.66ms
+      （4,500 条记忆的库，每 turn-aligned Stop 一次 `ORDER BY RANDOM()`，预算 200ms）
+- [ ] G1 之后复测：启用 OpenAI embedding 后检索路径的真实 hook 延迟（含熔断器介入时的退化延迟）
+- [ ] **关注 Finding 4**：熔断打开时应快速失败并退化为词法，而非等满超时
+
+---
+
+## 四、门禁与优先级
+
+| 门禁 | 内容 | 不做的后果 | 成本/风险 | 状态 |
 |---|---|---|---|---|
-| A1 | L2.5 观察型探针 | `l25-probe.jsonl` + `admin diagnose --feedback` | Stop hook | ✅ **已在跑**，389 行 |
-| A1b | 决策流配置（`metrics.decision_data`，`retention_days: 0`） | 文件体积、tier15 清理 | Stop hook + tier15 | ✅ 观测磁盘增长 |
-| A2 | 质量门新规则 `env_failure` + `negative_assertion` | `admin diagnose --tuning` 按 reason 拆分 | daemon `summarize-pending` | ⚠️ **被 G0 阻塞** |
-| A2b | `quality_gate_reject` 按 reason 拆分展示（I5 修复） | `admin diagnose --tuning` | CLI | ✅ 今日已验证可用 |
-| B1 | embedding 签名版本化（`embedding_sig`、迁移 016、检索/dedup/feedback 三处过滤、vec_backfill 重排队） | `admin semantic status`、`diagnose --retrieval` | daemon + hooks | ❌ **被 G1 阻塞**（见 §4） |
-| B2 | `temporal_type` 回归测试 | — | — | ❌ 纯测试，无运行时变化（ledger T7：修复早于本分支） |
-| B3 | recall-loop 不变量测试 | — | — | ❌ 纯测试 |
-| — | 配置版本 0.13 + 递归同步测试 | `loadConfig().version` | 全局 | ✅ 一行核对 |
-| — | `pruneDecisionMetrics` 原子化（I7） | — | — | ❌ 仅 `retention_days > 0` 时才走到，默认关闭 |
+| **G0** | 重启 ccmem daemon | V1 完全无法开始；`--tuning` 的 0 计数永远是假象 | 低 | ✅ **2026-08-01 09:41 人类手动执行**（`pid=82700`） |
+| **G1** | 在真实库上打开 embedding | V3/V4/V5 永远零执行，B1 正确性只有单测背书 | < $0.02；检索行为改变，非观察型 | ⏳ 方案已定，待执行 |
 
-**dogfood 实际范围 = A1（继续并深化）、A2（解阻后测量）、B1（需先做一个有成本的决定）。**
-B2/B3 没有可观测行为，不列入；把它们写进 dogfood 计划只会制造"覆盖了"的假象。
+### G1 执行方案 —— OpenAI `text-embedding-3-small`
+
+**不需要写 ccmem 配置文件。** `config_kv` 优先级高于文件配置（`provider.mjs:59-79`），
+且 `embedding.openai_model` 默认值本就是 `text-embedding-3-small`（`config.mjs:20`）。
+
+**密钥落位（方案 B，规避 Finding 5）** —— `.zshrc` 只增加一行**非机密**代码：
+```bash
+# ~/.zshrc（可提交，无机密）
+[ -f ~/.zshrc.local ] && source ~/.zshrc.local
+
+# ~/.zshrc.local（不进 git，chmod 600）
+export OPENAI_API_KEY='sk-...'
+```
+
+> **备选方案 A**（key 完全不进环境变量）：把 `{"embedding":{"openai_api_key":"..."}}` 写入
+> `~/.claude/ccmem/config.json`（仓库外，chmod 600），`.zshrc` 只导出非机密的
+> `CCMEM_CONFIG_PATH`。代价是激活 Finding 5 那条未经检验的路径。
+> 日后若需调整 `openai_timeout_ms`（Finding 4）则必须走 A。
+>
+> ⚠️ **不要用 `.claude/settings.local.json` 存密钥** —— 本仓库 `.gitignore` 并未忽略它。
+
+**执行顺序（不可颠倒）**：
+```bash
+# 1. 密钥就位并 source
+# 2. 启用（会真实验证 key）
+node scripts/cli.mjs admin semantic on --provider openai
+# 3. 重启 daemon —— 回填在 daemon 进程里跑，它必须继承到 OPENAI_API_KEY
+```
+
+`admin semantic on`（`semantic.mjs:80-102`）先 `provider.load()` **真实验证 key**
+（无 key 直接抛 `OPENAI_API_KEY not set`，不留半开状态），再写入三个 `config_kv` 键：
+`embedding.enabled=true` / `embedding.active_provider=openai` / `embedding.active_model=text-embedding-3-small`。
+
+**两个进程都要拿到 key**：daemon（回填）与 hook（检索）。
+若 key 只存在于某个终端会话，hook 取不到 ⇒ 熔断器打开 ⇒ 检索静默退回词法，**V4 就 dogfood 不到**。
+
+**签名预期**：`openai:text-embedding-3-small:1536`。`openai_dim` 默认 null ⇒ `applyConfig` 取 1536
+（`openai.mjs:17`），与该模型实际输出维度一致。注意签名在 `load()` **之前**计算（ledger I1 deviation），
+用的是配置声明值而非观测值 —— 本例相符，但这是 ledger 记过的一个 minor。
+
+**成本**：4093 条 × ≤500 字符（`save.max_chars_per_memory` 上限）≈ ≤50 万 token，
+$0.02/1M ⇒ **总计 < $0.02**，不构成决策因素。
+
+### 优先级
+
+1. **✅ 已解除**：Finding 1（daemon 陈旧，P0）—— 解除 V1 阻塞。
+2. **⏳ 待执行**：G1 —— 解除 V3/V4/V5 阻塞。V3 的 `pending` 下降曲线同时验证 I3 修复与 Finding 4。
+3. **dogfood 期间持续收集**：V1（误杀率）与 V2（样本量 + p50 漂移）—— 这两项是 v0.14 的决策依据。
+4. **后续（v0.14 候选）**：Finding 5（`JSON.parse` 无保护）；
+   `final-review-findings.md` 末尾「NOT in this wave」清单；两个 daemon 测试抖动合并为一个 issue。
 
 ---
 
-## 2. 基线快照（2026-08-01 09:35）
+## 五、Dogfood 验证结果
 
-### A1 — L2.5 探针
+> 按 §三 V1–V8 逐项实测回填，每项附命令证据。
+> 需要真实 infra 而当前不可得的子项标注 🔶 blocked，并说明已验证的替代面。
 
+### 基线快照（2026-08-01 09:35）
+
+**A1 探针** —— `node scripts/cli.mjs admin diagnose --feedback`
 ```
 l25-probe.jsonl: 228,090 bytes
 samples: 389 total (365 turn-aligned, 24 random-control, 0 stale-injection, 0 unclassified)
@@ -73,134 +309,54 @@ Random control（噪声底）
 legacy hits: 0/389        id literal: 0/389
 ```
 
-**与交接文档相比，核心情报已经翻转。** handoff 记录的是随机组 p50 ≈ 0.125 > 信号组 ≈ 0.103
-（"噪声底高于信号"）。随机组从 n≈9 涨到 n=21 后，p50 落到 **0.075，低于信号**。
-
-正确的读法不是"所以有信号了"，而是：**两次结论都是小样本抖动，p50 对比这个方法本身不可靠。**
-n=21 时 p50 的置信区间宽到两组完全重叠。这条要带进 v0.14 —— 判据必须是分布级的
-（AUC / Mann-Whitney U），不是分位数对比。dogfood 阶段的任务是**把样本量攒起来**，
-并记录 p50 随 n 的漂移轨迹，用漂移本身证明"分位数对比不可用"。
-
-### A2 — 质量门
-
+**A2 质量门** —— `node scripts/cli.mjs admin diagnose --tuning`
 ```
 Quality gate rejections (last 30 days): 146
-  path_list      140
-  too_specific     3
-  test_count       2
-  too_short        1
+  path_list 140 / too_specific 3 / test_count 2 / too_short 1
+```
+四种 reason 全部是 v0.13 之前的规则（Finding 1 已解释）。
+**按 reason 拆分这个展示本身是 review I5 的修复产物 —— 它工作正常，
+是 v0.13 第一个被真实数据确认可用的新功能。**
+
+**B1** —— 见 Finding 3 的命令输出。
+
+**环境**
+```
+main = origin/main = 3bd3092（已推送）；分支 v0.13-spec 仍在，未删
+daemon（重启后）: pid=82700, startup_schema=16
 ```
 
-四种 reason 全部是 v0.13 之前就存在的规则。两条新规则 0 次 —— 已由 §0 解释（daemon 太老）。
-按 reason 拆分这个展示本身是 I5 的修复产物，**它工作正常，这是 v0.13 第一个被真实数据确认可用的新功能**。
+### V1–V8 实测
 
-### B1 — embedding 签名
-
-```
-admin semantic status   : enabled=false loaded=false provider=transformers-local
-                          embedded=0 pending=4093 model=Xenova/all-MiniLM-L6-v2 dim=384
-admin diagnose --retrieval: Embedding: disabled / stale vectors: 0 / Circuit: CLOSED
-```
-
-**整条 B1 机制在本机从未执行过**：embedding 全局关闭，0 条记忆有向量。
-`stale vectors: 0` 不是"健康"，是"分母为 0" —— 签名不匹配的行数当然是 0，因为一个向量都没有。
-
-顺带澄清一个容易误判的点：`semantic status` 的 `pending=4093` 与 `diagnose --retrieval` 的
-`stale vectors: 0` **不构成 review 里 I4 那种矛盾**。二者分母不同（前者是"无向量"，后者是
-"有向量但签名过期"），在当前状态下两个数都对。follow-up 清单里那条
-（`semantic.mjs` 强制 `enabled:true` 而 `diagnose.mjs` 用原始 cfg）**要等 embedding 打开后才可能显形**。
-
-### 环境
-
-```
-main = origin/main = 3bd3092（已推送，handoff 里"未推送"已过时）
-分支 v0.13-spec 仍在，未删
-daemon: pid 8813, startup_schema=16, running=summarize_pending#40
-loadConfig().version 期望 '0.13'
-```
+⏳ 待回填。V1 自 daemon 重启（09:41）起计；V3–V5 待 G1。
 
 ---
 
-## 3. Dogfood 轮次设计
+## Closure checklist
 
-### 轮次 1 — A1 持续采集（不阻塞，现在就在跑）
+- [x] 实现状态表区分「ship」与「可 dogfood」——纯测试项不列入验证清单
+- [x] 每条 finding 标注验证状态，已解除项注明解除时间与证据
+- [ ] 每个 V 项在 §五 有对应实测记录或 🔶 blocked 说明
+- [ ] real-infra 受阻项显式标记，不以"测试通过"顶替
+- [ ] Admin 命令面与 `scripts/cli.mjs` + `commands/admin.md` 一致
 
-- **做什么**：不改任何东西，让探针继续跑。每日快照一次 `admin diagnose --feedback`，追加到 §5。
-- **成功判据**：随机对照非 CJK 样本 **n ≥ 60**（当前 21）。到这个量级 p50 才开始稳定。
-- **同时要记的**：p50 随 n 的漂移轨迹。若 n 翻倍后 p50 仍在 ±0.03 内摆动，
-  就已经证明了"分位数不可作为 v0.14 判据"，这是一条独立于阈值题的产出。
-- **风险**：`l25_legacy_hit` 仍是 0/389，**没有任何正例标签**。
-  采集再多也算不出 precision/recall。这条限制不由 dogfood 解决，属于 v0.14。
-- **已知偏差，记入分析笔记不修**：随机组的排除范围只有 `recent_injections` 那么宽，
-  而 tier15 把它裁到每会话 20 条，超长会话约 1.8% 污染率（k=3）。方向保守（抬高噪声底）。
+## Closure review
 
-### 轮次 2 — A2 质量门（需 G0：重启 daemon）
-
-- **前置**：重启 daemon，用 `admin daemon status` 确认 uptime 归零。
-- **做什么**：正常使用 3–7 天，让 `summarize-pending` 自然处理真实待入库内容。
-- **主要观测**：`admin diagnose --tuning` 里 `negative_assertion` / `env_failure` 的计数与占比。
-- **真正要盯的风险是误杀，不是漏杀**（review I5）：
-  - `"这个 API 不支持批量请求，需要逐条调用"` —— 有价值的 API 约束，会被 `negative_assertion` 拒
-  - `"prettier is not installed globally; use npx prettier"` —— 51 字符，低于 Latin 的 120 门限，
-    却正是提取提示词要求的 remedy 形式，会被 `env_failure` 拒
-  - 判定手段：`/ccmem:audit` 读每条 `quality_gate_reject` 的 80 字符摘录，**人工判断是噪声还是合法约束**。
-    这是本轮唯一需要人肉的环节，也是 A2 唯一能被证伪的地方。
-- **计数为 0 时不要直接下结论 —— 存在规则遮蔽**：`quality-gate.mjs` 里 `env_failure`（:88）
-  和 `negative_assertion`（:95）是 9 条规则里的第 8、9 条，命中即返回。
-  一条同时像 path_list 又像 negative_assertion 的内容会被记成 `path_list`。
-  所以 0 计数的含义是"没有内容先绕过前 7 条再命中这 2 条"，不是"这 2 条从未匹配"。
-  若要区分，需要一次性把候选内容离线喂给 `checkQuality` 逐规则跑，而不是看线上计数。
-- **成功判据**：≥ 20 条经由这两条规则的拒绝被人工判读，误杀率有一个数。
-  误杀率本身高不高不是 dogfood 要裁决的 —— 拿到数字就算成功。
-
-### 轮次 3 — B1 embedding 签名（需 G1：开启 embedding，有成本）
-
-- **前置决定（见 §4）**：是否在真实库上打开 embedding。
-- **一旦打开，被真实执行的是**：
-  1. 迁移 016 之后 4093 行 `embedding_sig IS NULL` 的回填 —— 每次 50 条，
-     **正好是 I3 修复的重排队逻辑的实战检验**（旧行为需 ~82 次 daemon 重启）。
-  2. `retrieval.mjs` / `dedup.mjs` / `feedback.mjs` 三处签名过滤在非空向量集上首次生效。
-  3. follow-up 里 `semantic.mjs` 与 `diagnose.mjs` 的 `enabled` 分歧才具备显形条件。
-- **观测**：`admin semantic status` 的 `pending` 是否单调下降至 0 且无需人工干预；
-  `diagnose --retrieval` 的 `stale vectors` 是否同步归零；期间检索是否退化为纯词法。
-- **成功判据**：不做任何手工 `admin cron run vec_backfill` 的前提下 `pending` 归零。
-  这是 I3 修复的全部意义。
-- **风险**：4093 条本地 embedding 是一笔真实计算量，且会改变检索行为。
-  这不是"观察型"改动，与 A1 性质不同。
+| bucket | items |
+|---|---|
+| implemented | schema 16（`016_*.sql`）、L2.5 观察型探针 + 决策流、`diagnose --feedback` 四队列分段、`quality_gate_reject` 按 reason 拆分、质量门两条新规则、embedding 签名版本化 + 三处过滤 + 回填重排队 |
+| deferred | Finding 5（`loadConfig` 的 `JSON.parse` 保护）、`semantic.mjs`/`diagnose.mjs` 的 enabled 口径分歧、`readDecisionProbeRows` 流式读取、`semantic.mjs:88-96` 重叠的模型变更检测器 |
+| needs real infra dogfood | A2 两条新规则的真实误杀率、B1 全链路（需 G1）、随机对照样本量 n≥60、v0.14 所需的 ~50 条人工标注 |
 
 ---
 
-## 4. 需要人类拍板的两个门禁
-
-| 门禁 | 内容 | 不做的后果 | 成本/风险 |
-|---|---|---|---|
-| **G0** | 重启 ccmem daemon | A2、B1 两条线完全无法开始；`--tuning` 的 0 计数永远是假象 | 低。会中断当前 `summarize_pending#40`，任务队列设计上可重入 |
-| **G1** | 在真实库上打开 embedding | B1（v0.13 三条主线之一）永远零执行，签名机制的正确性只有单测背书 | 中。4093 条本地 embedding 计算；检索行为改变，非观察型 |
-
-我不会在未获批准前执行这两项。
-
----
-
-## 5. 观测记录
-
-按轮次追加，最新在下。每条记录必须带日期、命令、原始数字，不要只写结论。
-
-### 2026-08-01 09:35 — 基线
-
-见 §2。要点三条：
-1. daemon 早于 v0.13 代码 13.4 小时 ⇒ A2/B1 零执行，需 G0。
-2. A1 正常采集中（389 行）；随机组 p50 相对 handoff 已翻转（0.125 → 0.075），
-   证明的是**方法不可靠**，不是"有信号"。
-3. B1 完全休眠（embedded=0），`stale vectors: 0` 是分母为 0 而非健康。
-
----
-
-## 6. 本文档的纪律
+## 六、纪律
 
 - **"跑了测试"不算 dogfood 证据。** 只接受生产路径上的真实计数与真实内容。
-- **0 计数必须先解释来源再当结论。** 本文档开头那条就是反例：
-  看到 `negative_assertion: 0` 的第一反应本该是"规则坏了"，实际是 daemon 太老。
-- **数据翻转要如实记录，不要追认旧结论。** §2 里 p50 的翻转就是这么处理的。
-- 与 v0.13 的八条人类裁决冲突时，裁决优先（见 `.superpowers/sdd/2026-07-31-ccmem-v0.13/progress.md`）。
-  最易误踩：探针读 `recent_injections` 不读 `memory_feedback`；
-  `control` 是权威队列字段（`random` 才是噪声底，`stale_injection` 不是）。
+- **0 计数必须先解释来源再当结论。** Finding 1 就是反例：看到 `negative_assertion: 0`
+  的第一反应本该是"规则坏了"，实际是 daemon 比代码早 13.4 小时。
+- **数据翻转要如实记录，不要追认旧结论。** Finding 2 即按此处理。
+- 与 v0.13 的八条人类裁决冲突时，裁决优先（见
+  `.superpowers/sdd/2026-07-31-ccmem-v0.13/progress.md`）。最易误踩两条：
+  探针读 `recent_injections` 不读 `memory_feedback`；
+  `control` 是权威队列字段（`random` 才是噪声底，`stale_injection` 不是，`turn_aligned` 仅作旧数据兼容）。

@@ -227,6 +227,37 @@ function scheduleRetry(db, task, error, currentAttempt) {
   return true;
 }
 
+/**
+ * A 'running' row whose process died is never reclaimed by anything, and two
+ * individually-correct guards then deadlock on it: enqueueContinuation counts only
+ * 'queued' (counting 'running' would make the condition permanently true for the
+ * run doing the counting), while daemon startup counts 'queued' OR 'running' and so
+ * reads the orphan as work already scheduled. Observed live: a daemon restart
+ * mid-batch froze the backfill chain at 1159 pending with no error and no log line.
+ *
+ * Safe to do unconditionally at startup: acquireDaemonLock throws unless the
+ * previous lock is stale, so once it returns there is no other daemon and every
+ * 'running' row is provably ownerless. Marking them 'failed' is the truth — the
+ * process did die — and it matches how runTask records a failure, so each task
+ * type's ordinary re-queue path takes it from there.
+ */
+export function reclaimOrphanedTasks(db) {
+  const finishedAt = Date.now();
+  const result = db.prepare(
+    `UPDATE tasks
+     SET status = 'failed',
+         finished_at = ?,
+         duration_ms = CASE
+           WHEN started_at IS NOT NULL AND ? >= started_at THEN ? - started_at
+           ELSE 0
+         END,
+         error_excerpt = 'daemon exited while this task was running'
+     WHERE status = 'running'`
+  ).run(finishedAt, finishedAt, finishedAt);
+
+  return Number(result?.changes ?? 0);
+}
+
 export async function runTask(db, task, dispatch, { afterTask } = {}) {
   db.prepare(
     `UPDATE tasks

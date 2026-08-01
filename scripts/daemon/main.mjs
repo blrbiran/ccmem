@@ -12,7 +12,7 @@ import {
   scheduleGracefulRestart,
   writeDaemonStartupState
 } from './self-restart.mjs';
-import { mainLoop } from './loop.mjs';
+import { mainLoop, reclaimOrphanedTasks } from './loop.mjs';
 
 function semanticRuntimeEnabled(db) {
   const cfg = loadConfig();
@@ -59,6 +59,12 @@ async function warmSemanticProvider(db) {
 
 const db = openDb();
 acquireDaemonLock(db);
+// Must run before warmSemanticProvider: its vec_backfill re-queue guard counts
+// 'running' rows, so a leftover orphan would suppress the queue for good.
+const reclaimed = reclaimOrphanedTasks(db);
+if (reclaimed > 0) {
+  process.stderr.write(`ccmem: reclaimed ${reclaimed} task(s) left running by a previous daemon\n`);
+}
 const startedAt = Date.now();
 const startupVersion = getStartupSchemaVersion(db);
 writeDaemonStartupState(db, startupVersion, process.pid);

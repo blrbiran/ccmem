@@ -58,3 +58,9 @@
 - `audit_log` 的列是 `details`（不是 `detail`）；`memory_feedback` 的列是 `evidence`（不是 `reason`）。
 - 验证签名过滤时，异签名要用**同维不同模型**（如 `openai:text-embedding-3-large:1536`），这才是注释里说的 plausible-but-wrong 危险情形；维度不同会被长度检查安全地挡掉，验不出东西。
 - `retrieveMemories` 的 `timing.candidatePool` / `retrieval_stale_vecs` 是只属于 cosine 通道的量化观测量，能绕开词法回退造成的假绿。
+
+### 2026-08-02 · 环境变量取证的可靠手段（`ps eww` 在这台机器上是坏的）
+- **`ps eww -p <pid>` 读不到进程环境** —— 对自己的 shell 执行都查不到 `env` 里明明存在的变量（macOS 限制）。任何基于它的"该进程没有 X"都是测量失效。**用它之前先对自己的 shell 自测一次。**
+- 可靠替身：`zsh -f -c 'echo $VAR'`（`-f` 不读任何 rc，仍有值 ⇒ 来自父进程继承）；进程自身写出的产物（daemon 写的签名）；`memory_feedback.session_id` + 时间戳（判定某次 hook 属于哪个会话）。
+- `~/.claude/plugins/ccmem` 是指向 `~/code/skills/ccmem` 的**符号链接** ⇒ hook 侧代码改动下次调用即生效；只有 daemon 需要 uninstall/install（plist 冻结安装时环境快照）。
+- 加了配置回落之后，`env -u CCMEM_CONFIG_PATH` **不再构成测试隔离** —— 必须同时钉 `CCMEM_DATA_ROOT`，否则测试读到真实用户配置（含 API key）。

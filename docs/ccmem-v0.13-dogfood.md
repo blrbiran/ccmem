@@ -358,7 +358,7 @@ Finding 6 的裁决本身是对的，但它切断了 daemon 的最后一条通�
 **教训**：本条原记述之所以错，是因为上一轮**用一个与生产不同的调用形态去测量生产行为**。
 「三个签名」这个说法本身就该引起警觉 —— 生产里只有两个进程，不可能有三个当事人。
 
-### Finding 12：hook 进程与 CLI 读到两份不同配置，语义贡献恒为 0（P0，**未修复**）
+### Finding 12：hook 进程与 CLI 读到两份不同配置，语义贡献恒为 0（P0 → **已修复**）
 
 **Finding 9 的同一种病，换了个当事人。** Finding 9 修的是 daemon 侧（白名单缺 `CCMEM_CONFIG_PATH`）；
 本条是 **hook 侧**，至今未修。发现于 2026-08-01 深夜做 V4 验证时。
@@ -397,11 +397,40 @@ if (!userPath || !existsSync(userPath)) {
 3. **V4 的三个消费点全部正确工作 —— 正是它们的正确工作，才让这次配置分歧表现为静默的 0
    而不是错误的检索结果。** 签名过滤按设计把不可比的向量全部排除了。
 
-**尚需人类裁决**：`loadConfig()` 的回落语义要不要改（未设变量时读 `~/.claude/ccmem/config.json`）。
-影响面覆盖全部 hook / CLI / daemon / 测试 —— `npm test` 正是靠 `env -u CCMEM_CONFIG_PATH` 做隔离的
-（Finding 8），改回落语义会直接动到那层隔离。**不要顺手改。**
+**谁有、谁没有（2026-08-02 取证）**：
 
-**验证状态**：❌ 未修复。已记为 `bug-058`。
+| 进程 | 有 `CCMEM_CONFIG_PATH` | 证据 |
+|---|---|---|
+| 三个 live Claude 会话中的 1 个 | 有 | `zsh -f -c`（完全不读 rc）仍继承到该值 ⇒ 来自 claude 进程 |
+| 另外 2 个会话 | **没有** | 它们的 hook 时间戳与 metrics 里全部 `pool=0` 行**逐条对齐** |
+| daemon | 有 | plist 重装带入（Finding 9 的修复） |
+
+**该变量没有任何持久来源** —— 不在 `.zshrc`/`.zprofile`、不在 `launchctl`、不在 Claude settings。
+它只存在于当初有人手动 export 过的那个 shell 及其后代里。**"没有它"才是常态。**
+
+> **测量陷阱，记一笔**：handoff 曾写「验证手段只有一个：`ps eww -p <pid>`」。
+> 这台机器上 **`ps eww` 根本读不到进程环境** —— 对自己的 shell 执行都查不到明明存在的变量。
+> 用它得出的任何"没有该变量"都是测量失效，不是事实。可靠替身：
+> `zsh -f -c 'echo $VAR'`（验继承）、进程自身写出的签名（验 daemon）、
+> `memory_feedback.session_id` + 时间戳（验 hook 属于哪个会话）。
+
+**修复（人类裁决：统一回落）**：`loadConfig()` 在变量缺失或指向不存在的文件时，
+改为读 `getDataRoot()/config.json`；变量本身降级为**覆盖**而非唯一来源。
+路径经 `getDataRoot()` 解析而不是再写死一份 —— 配置文件从此跟着库走，
+**日后把默认目录从 `~/.claude/ccmem/` 迁到别处时只需改 `paths.mjs` 一处**。
+`getDataRoot()` 因此移入新的 `scripts/lib/paths.mjs`（`config.mjs` 不能 import `db.mjs`，后者已 import 前者），
+`db.mjs` 保留再导出，六个既有导入方不受影响。
+
+**同时必须改测试隔离**：`env -u CCMEM_CONFIG_PATH` 原本够用，正是因为"没有变量 = `DEFAULT_CONFIG`"。
+回落一加，测试会读到真实的 `~/.claude/ccmem/config.json`，**连 API key 一起**。
+已实测确认该泄漏存在，再把 `CCMEM_DATA_ROOT` 钉到一次性目录 ——
+Finding 8 的隔离不但保住，而且更强（库也是临时的了）。
+
+**验证状态**：✅ 已修复并端到端验证。在**真正的 hook 入口**、不带该变量、数据根隔离的条件下：
+`retrieval_pool` 0 → **1360**，`stale` 4449 → **0**，`cosine_contribution` 0 → **0.967**。
+对照组是 metrics 里此前连续 27 行的 `pool=0`。套件 470 pass / 0 fail。
+`~/.claude/plugins/ccmem` 是指向本仓库的符号链接，**hook 下次调用即生效**，不像 daemon 那样需要 uninstall/install。
+已记为 `bug-058`。
 
 ---
 

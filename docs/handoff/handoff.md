@@ -25,16 +25,22 @@
 - 分支 `v0.13-spec`、`v0.13-dogfood-fixes` 均未删除（删分支必须先问）。
 - 当前套件：**466 pass / 0 fail**。跑测试用 `npm test`（脚本已内置 `env -u CCMEM_CONFIG_PATH`）。
 
-## ⚠️ G1 只达成了一半：库里有向量，检索大部分时间没在用
+## ✅ G1 达成（含消费端）：回填跑通，且检索确实在用这些向量
 
-**`pending = 0`，`semantic status` 从 `pending backfill` 转为 `active`。回填这一半是真的。**
+**`pending = 0`，`semantic status` 为 `active`。**
 
-**但 2026-08-01 深夜发现 Finding 12（P0，未修复）**：`loadConfig()` 在 `CCMEM_CONFIG_PATH`
-未设时直接返回 `DEFAULT_CONFIG`（`transformers-local`），**不回落到 `~/.claude/ccmem/config.json`**。
-于是没有该变量的 **hook 进程**用 MiniLM 嵌入查询，签名与库里 4454 条 openai 向量无一匹配，
-`retrieval_pool=0`、`cosine_contribution=0`，检索静默退化为纯词法 —— 而 `retrieval_path` 仍报 `'A'`。
-**这是 Finding 9 的同一种病换了当事人**（那次是 daemon，已修；这次是 hook，未修）。
-详见 dogfood 文档 Finding 12。**改回落语义会动到 `npm test` 赖以隔离的那层（Finding 8），需要人类裁决，不要顺手改。**
+**Finding 12 已修复（2026-08-02）**：`loadConfig()` 原先在 `CCMEM_CONFIG_PATH` 未设时直接返回
+`DEFAULT_CONFIG`（`transformers-local`），于是没有该变量的 hook 进程用 MiniLM 嵌入查询，
+签名与库里 4454 条 openai 向量无一匹配 —— 检索静默退化为纯词法，`retrieval_path` 却仍报 `'A'`。
+**这是 Finding 9 的同一种病换了当事人**（那次 daemon，这次 hook）。
+现改为回落到 `getDataRoot()/config.json`，该变量降级为覆盖。
+端到端实测：`retrieval_pool` 0 → 1360、`stale` 4449 → 0、`cosine_contribution` 0 → 0.967。
+
+**两条随之改变的事实，别踩**：
+- **`npm test` 现在必须钉 `CCMEM_DATA_ROOT`**（脚本已改）。只 `env -u CCMEM_CONFIG_PATH` 不再够 ——
+  回落会让测试读到真实配置文件，**含 API key**。
+- **默认目录以后要迁到 `~/.ccmem/` 之类，只需改 `scripts/lib/paths.mjs` 一处** ——
+  配置路径已经跟着 `getDataRoot()` 走，不再有第二份写死的路径。
 
 | 指标 | 值 |
 |---|---|
@@ -70,7 +76,12 @@
    - **Finding 10：launchd plist 冻结环境快照。** `admin daemon restart` **不重新生成 plist**，
      所以任何环境相关修复对已安装用户都不会自动生效，且无任何提示。必须 `admin daemon uninstall && install`。
      影响面比 Finding 9 更广 —— 它让「改了代码就该生效」这个心智模型整体失效。
-     验证手段只有一个：`ps eww -p <pid> | grep CCMEM_CONFIG_PATH`。
+     **⚠️ 更正：本文档原先写「验证手段只有一个：`ps eww -p <pid>`」——
+     这台机器上 `ps eww` 根本读不到进程环境**（对自己的 shell 执行都查不到明明存在的变量），
+     用它得出的"没有该变量"全是测量失效。可靠替身：`zsh -f -c 'echo $VAR'` 验继承、
+     进程自己写出的签名验 daemon、`memory_feedback.session_id` + 时间戳验 hook 归属哪个会话。
+     顺带：`~/.claude/plugins/ccmem` 是指向本仓库的符号链接，**hook 侧的代码改动下次调用即生效**；
+     需要 uninstall/install 的只有 daemon（plist 冻结环境快照）。
    - **Finding 11：孤儿 `running` 任务堵死链条（已修复）。** 两个各自正确的 guard 合成死锁：
      `enqueueContinuation` 只数 `queued`（刻意），`daemon/main.mjs` 数 `queued` 或 `running`。
      owner 已死的 `running` 行两边都不动 ⇒ 链条永久停摆且无信号。实测冻结 12 分钟、1159 条待办。

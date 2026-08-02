@@ -485,6 +485,68 @@ Finding 8 的隔离不但保住，而且更强（库也是临时的了）。
 
 ---
 
+### Finding 14：`Number(null) === 0` 让熔断阈值成为死代码（P1 → **已修复**）
+
+**发现路径**：做 V5 时顺手核对 `config_kv`，看见 `embedding.circuit_open_until` 有值 ——
+而 handoff 与 V8 都写着「熔断至今一次没开过」。**先解释这个矛盾，才撞见根因。**
+
+**两个对不上的事实**：
+
+| 事实 | 值 |
+|---|---|
+| `config_kv` 证明熔断当天开过（`set_at` 02:04:22Z，5 分钟窗口） | 开过 |
+| `audit_log` 中 `embedding_circuit_open` 累计行数（表回溯到 2026-05-30、3863 行、**未裁剪**） | **0** |
+| 同表 `embedding_circuit_close` | 2 |
+
+**恢复被记录了，导致恢复的失败没有。** 这个不对称是本条唯一的入口 —— 只看 close 会以为一切正常。
+
+**根因（`provider.mjs:30`）**：`readConfigKvInt()` 先转换、后判存在：
+
+```js
+const raw = readConfigKv(key);   // key 不存在时返回 null
+const n = Number(raw);           // Number(null) === 0
+return Number.isFinite(n) ? n : null;   // 0 有限 ⇒ 返回 0，不是 null
+```
+
+而两个调用方都用 `== null` / `!= null` 判存在性。**"从未失败过的库"于是读作"熔断已经开着的库"。**
+
+**一次强制转换，三个后果**（均在 live 库的 `VACUUM INTO` 副本上先复现、后修改）：
+
+1. **阈值是死代码，第一次失败就开闸。** `recordEmbedFailure:149` 永远走"已开着，延长窗口"分支并 `return`。
+   探针实测：failure #1 之后 `openUntil` 已写、`consecutive_failures` **为 null**，此后不变。
+   `embedding.circuit.failure_threshold` 从来没作用于任何东西。
+2. **open 的 audit 落在这条不可达分支里** —— 即上表那个 0。
+3. **`getProviderWithCircuit` 的 `'closed'` 快路径同样不可达**，健康检索每次都落到探测分支并写
+   `embedding.last_probe_at`。而 `retrieval.mjs:358` 在**查询向量缓存命中**时跳过 embed、
+   因而也跳过 `recordEmbedSuccess` ⇒ 该行不被清 ⇒ `probe_interval_ms`（默认 60s）内的下一次检索
+   被判成熔断打开，**在零失败的情况下**退化为纯词法。
+
+**生产计数**：2060 条带 `retrieval_path` 的行中 `B-off` 1965 / `A` 79 / **`B-circuit` 9** / `B-fail` 7。
+按 300s 冷却期逐条对齐：6 次紧跟真实失败（正确门控），**3 次冷却期内没有任何失败**。
+
+> **这 3 条不作为证据**：`B-fail` 行由 hook 自己写，被 harness 杀掉的那次留不下行 ——
+> **Finding 13 的幸存者偏差在这里同样成立**。本条修复站得住的是直接复现，不是这个计数。
+> 记在这里是为了说明该机制在生产中可达，不是为了证明它。
+
+**修复**：`raw == null` 时在转换前返回 `null`。
+
+**刻意的行为变更**：熔断现在容忍 2 次失败才开，即 `failure_threshold` 本来的语义。
+Finding 4 已把 hook 与回填的超时分开，单次瞬时超时不该赔上整条语义通道。
+
+**回归测试**（`tests/unit/v013-circuit-threshold.test.mjs`，4 条，每条先被看着变红且红因与预测一致）：
+1. 单次失败只计数不开闸 — RED（`consecutive_failures` 恒为 null）
+2. 第 3 次才开闸**且落 audit** — RED（第 2 次时已开；audit 计数 0）
+3. 从未失败的库报 `'closed'` 且**不写** `last_probe_at` — RED（`half-open` + 已写入）
+4. 真开着的熔断仍必须门控 —— **防过度修正的对照**，按设计修复前后皆绿，用来抓"总是返回 closed"的实现
+
+**验证状态**：✅ **已修复**（提交 `fc66890`）。套件 **477 pass / 0 fail**（原 473，+4）。
+副本上端到端复核：`1→2→3` 才开闸、audit 落 1 行、第 4 次只延长窗口不重复 audit。
+**无需重启 daemon** —— 熔断 API 的调用点只有 `retrieval.mjs`，其消费者
+（`prompt-submit.mjs` / `cmd/list.mjs` / `admin/retrieval-check.mjs`）全是每次新起的进程，
+`scripts/daemon/` 零引用。已记为 `bug-060`。
+
+---
+
 ## 三、Dogfood 验证清单
 
 > 单元/集成测试用 mock provider 与 `:memory:` DB。下列项必须在**真实环境**验证。
@@ -551,12 +613,17 @@ Finding 8 的隔离不但保住，而且更强（库也是临时的了）。
       按 §六 的纪律这两者不能混为一谈，实际生产计数见 §五 V4 的第二张表（且已被 Finding 12 压住）
 
 ### V5. 配置面一致性：`config_kv` override 与两条命令的口径（需 G1）
-- [ ] `admin semantic status` 与 `admin diagnose --retrieval` 对 enabled 状态口径一致
-- [ ] **关注 follow-up**：`semantic.mjs:103` 强制 `enabled:true` 构造签名配置，而 `diagnose.mjs:58` 用原始 cfg
-      —— 当「文件配置禁用 embedding 且 `config_kv` 未设」时二者可再次分歧（I4 的残留窄化版）。
-      本次经 `admin semantic on` 写入 `config_kv`，两者应一致；**要复现分歧需刻意构造该组合**
-- [ ] `admin semantic on` 的模型切换分支（`semantic.mjs:89-96`，"换模型即清空全部 embedding"）
-      本次**不应触发**（`active_model` 为 null）；**日后换模型时必须重新评估**
+
+**✅ 2026-08-02 已做 —— 分歧确认存在。实测记录见 §五 V5。**
+
+- [x] `admin semantic status` 与 `admin diagnose --retrieval` 对 enabled 状态口径一致 ——
+      **两条命令报告的 `enabled` 字段本身一致，但由它派生的计数不一致**，见下条
+- [x] **follow-up 已证实**：`semantic.mjs:48` 强制 `enabled:true` 构造签名配置，而 `diagnose.mjs:58` 用原始 cfg。
+      当「文件配置禁用 embedding 且 `config_kv` 未设」且**库中存在异签名行**时显形：
+      同一个库上 `pending=4448` 而 `stale vectors=0`。三条件缺一不可 —— 只构造前两条会得到"两边都是 0"的假绿
+- [x] `admin semantic on` 的模型切换分支 —— **该分支已不存在**，Finding 9 整体移除了它，原地只剩注释。
+      本条清单项作废（原表述"本次不应触发"已过期）
+- [ ] **未修**：按 Closure review，该分歧属 deferred 桶。本次只取证并记录，修复留待 v0.14
 
 ### V6. 决策流磁盘成本与 `retention_days: 0` 语义
 - [ ] `diagnose --feedback` 头部持续显示 `l25-probe.jsonl` 磁盘占用（刻意让运行时成本可见，不要"优化"掉）
@@ -575,8 +642,13 @@ Finding 8 的隔离不但保住，而且更强（库也是临时的了）。
       （4,500 条记忆的库，每 turn-aligned Stop 一次 `ORDER BY RANDOM()`，预算 200ms）
 - [x] G1 之后复测：启用 OpenAI embedding 后检索路径的真实 hook 延迟 —— **已测，见 §五 V8。
       结果是超时真的发生了**（用户报告 `UserPromptSubmit hook timed out after 2s`），已修复
-- [ ] **熔断器介入时的退化延迟仍未测** —— 熔断至今一次都没打开过（`Circuit: CLOSED`），无样本
-- [ ] **关注 Finding 4**：熔断打开时应快速失败并退化为词法，而非等满超时 —— **同上，未检验**
+- [ ] **熔断器介入时的退化延迟仍未测**。
+      ⚠️ **本条原写作「熔断至今一次都没打开过，无样本」，那是错的** —— 熔断开过多次
+      （生产 `retrieval_path=B-circuit` 共 9 次），而且**开的口径本身是坏的**：Finding 14 之前
+      第一次失败就开闸，还有 3 次在零失败下误开。
+      ⇒ **Finding 14 之前采集的任何熔断相关延迟样本都不可用于评估设计中的熔断行为**，
+      因为它们量的是一个阈值失效的熔断。修复后需重新采集
+- [ ] **关注 Finding 4**：熔断打开时应快速失败并退化为词法，而非等满超时 —— 同上，未检验
 
 ---
 
@@ -685,7 +757,7 @@ daemon（重启后）: pid=82700, startup_schema=16
 ### V1–V8 实测
 
 V1 自 daemon 重启（09:41）起计，待回填。V3 的 OpenAI 分支已跑通（`pending=0`，待逐条回填）。
-V5 现已具备条件，待做。**V4 已完成，记录如下。**
+**V4、V5、V8 已完成，记录如下。**
 
 #### V4. 签名过滤三个消费点（2026-08-01 深夜）
 
@@ -718,6 +790,49 @@ V5 现已具备条件，待做。**V4 已完成，记录如下。**
 | `feedback.mjs` | **0 次** | `memory_feedback` 中 `evidence LIKE 'l1_positive_cosine%'` 计数为 0。**先解释来源再下结论**：该路径要求"注入 → 用户回肯定语"且当时 embedding 必须真的可用，而 embedding 直到本日才真正接通（Finding 9），叠加 Finding 12 后 hook 侧至今仍拿不到可用向量。0 是合理的，但**它意味着这条写 trust 的路径在生产里一次都没跑过** |
 
 ---
+
+#### V5. 两条命令的 enabled 口径（2026-08-02）
+
+**方法**：同 V4 —— live 库的 `VACUUM INTO` 副本，真实 CLI 进程，**live 库零写入**
+（取副本前后 mtime/size 一致，其余访问一律 `mode=ro`）。不设 `CCMEM_CONFIG_PATH`，
+让 `loadConfig()` 走 Finding 12 的回落，即真实 hook 进程的条件。
+副本 population：4447 条 `openai:text-embedding-3-small:1536` + 1 条无向量。
+
+**四个组合，先写预测后观测，四项全中**：
+
+| 组合 | 文件配置 | `semantic status` `pending` | `diagnose --retrieval` `stale` | 一致？ |
+|---|---|---|---|---|
+| A | `enabled:true` + openai | 1 | 0 | ✅ |
+| B | `enabled:true` + transformers-local | **4448** | **4447** | ✅ |
+| **C** | `enabled:false` + transformers-local | **4448** | **0** | ❌ **分歧** |
+| D | `enabled:false` + openai | 1 | 0 | — |
+
+A/B 的差 1 是**合法差值**：`pendingEmbeddings` 的 population 含 `embedding IS NULL` 的行，
+diagnose 的 stale 只数 `embedding IS NOT NULL`。**先算清这个差值，否则会把它误读成分歧。**
+
+**B→C 只翻转 `enabled` 一个变量**：`pending` 纹丝不动，`stale` 从 4447 塌到 0。
+B 就是那个必需的正面对照 —— 它证明同一条 SQL 在这个副本上**能**产出非零，
+所以 C 的 0 不是探针坏了（同 V4 的"反面需要正面对照"）。
+
+**机制不是"关闭了所以不数"**：`diagnose.mjs:58` 用原始 cfg ⇒ `getProvider()` 返回 `null`
+⇒ `currentEmbeddingSig` 按契约返回 `null` ⇒ SQL 里 `embedding_sig <> NULL` **求值为 NULL**
+（单独验证：`('x' <> NULL) IS NULL` 为真）⇒ 谓词永不成立 ⇒ 计数静默塌成 0。
+**代码突变**：把 `semantic.mjs` 的强制 `enabled:true` 签名配置移植进 `diagnose.mjs`，
+C 立刻变 4447；还原后回 0，`git diff` 空。
+
+**三条顺带发现，均未修（属 deferred 桶）**：
+
+1. **那个 0 后面还跟着 `(signature mismatch — will be re-embedded by vec_backfill)`。**
+   **Finding 3 的"分母为 0"换了个来源** —— 这次不是库空，是签名为 null，而文案把它讲成健康。
+2. **`semantic status` 的 disabled 分支 `model`/`dim` 写死回落 transformers-local。**
+   组合 D 实测输出 `provider=openai model=Xenova/all-MiniLM-L6-v2 dim=384`，
+   而**同一行的 `pending=1` 是用 openai 1536 签名算出来的** —— 一行之内自相矛盾。
+3. **两处 enabled 解析是两份独立实现，且默认方向相反**：`semantic.mjs:23` 是 `Boolean(...)`（缺省 false），
+   `diagnose.mjs:26` 是 `!== false`（缺省 true）。
+   **但可达性受限**：`DEFAULT_CONFIG.embedding.enabled = false` 经深合并后该字段恒为布尔，
+   正常配置构造不出分歧。记为**潜伏**，不夸大成在跑的缺陷。
+
+**做 V5 时撞见 Finding 14** —— `config_kv` 里那个不该存在的 `circuit_open_until` 行。
 
 #### V8. hook 延迟预算（2026-08-02，由用户报告触发）
 
@@ -761,7 +876,7 @@ V5 现已具备条件，待做。**V4 已完成，记录如下。**
 | bucket | items |
 |---|---|
 | implemented | schema 16（`016_*.sql`）、L2.5 观察型探针 + 决策流、`diagnose --feedback` 四队列分段、`quality_gate_reject` 按 reason 拆分、质量门两条新规则、embedding 签名版本化 + 三处过滤 + 回填重排队 |
-| deferred | Finding 5（`loadConfig` 的 `JSON.parse` 保护）、`semantic.mjs`/`diagnose.mjs` 的 enabled 口径分歧、`readDecisionProbeRows` 流式读取、`semantic.mjs:88-96` 重叠的模型变更检测器 |
+| deferred | Finding 5（`loadConfig` 的 `JSON.parse` 保护）、`semantic.mjs`/`diagnose.mjs` 的 enabled 口径分歧（**V5 已取证，见 §五 V5**）、`diagnose` 把签名为 null 的 0 讲成"待 vec_backfill 重嵌"的文案、`semantic status` disabled 分支 `model`/`dim` 与同行 `pending` 不同源、`readDecisionProbeRows` 流式读取、`semantic.mjs:88-96` 重叠的模型变更检测器（**已在 Finding 9 移除，本项作废**） |
 | needs real infra dogfood | A2 两条新规则的真实误杀率、B1 全链路（需 G1）、随机对照样本量 n≥60、v0.14 所需的 ~50 条人工标注 |
 
 ---

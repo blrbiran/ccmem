@@ -83,16 +83,12 @@ git status --porcelain                    # 应为空
 
 ## 还欠什么（按建议顺序）
 
-**验证项与文档回填都已收口。剩下三件，彼此独立。**
+**验证项与文档回填都已收口。剩下两件，彼此独立。**
 
-1. **Finding 10 / 11 仍没有自己的条目**（目前只在 Finding 9 里交叉引用）。**落笔前先验证，不要照抄本文档的转述**：
-   - **Finding 10：launchd plist 冻结安装时的环境快照。** 见上「既定事实 4」。
-     先读 `scripts/lib/admin/daemon.mjs` 的 `renderPlist` 与 `restart` 路径，确认这是代码事实。
-   - **Finding 11：孤儿 `running` 任务堵死链条。** 两个各自正确的 guard 合成死锁 ——
-     `enqueueContinuation`（`vec-backfill.mjs:36`）只数 `queued`（**注释里写明是刻意的**），
-     `daemon/main.mjs:44` 数 `queued` 或 `running`，owner 已死的 `running` 行两边都不动。
-     修复看起来是 `main.mjs:64` 的 `reclaimOrphanedTasks`（在 `warmSemanticProvider` **之前**调用，注释说明了原因）。
-     **先在 git 历史里确认这个修复，找不到就如实写"未确认已修"，不要沿用"已修复"。**
+1. ~~Finding 10 / 11 成条~~ → **✅ 已完成（2026-08-02，提交 `docs(dogfood): give Findings 10 and 11 their own entries`）**。
+   两条均已按代码事实落笔，不是照抄转述：Finding 10 **未修**（已进 dogfood §四 的 v0.14 候选），
+   Finding 11 **已确认修复**（提交 `fix(daemon): reclaim tasks left running by a dead daemon`，
+   其两条回归测试本轮实测 2 pass / 0 fail）。同一提交顺带作废了 Finding 9 里那句过期的 `ps eww` 取证。
 
 2. **附录 A 不变量** 仍欠 Finding 6/7/8 + 12/13/14/15 的条目。
    **加之前必须先验证 grep 在破坏代码时真能变红**，否则重蹈 final review I9 的空不变量。

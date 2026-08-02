@@ -345,11 +345,13 @@ Finding 6 的裁决本身是对的，但它切断了 daemon 的最后一条通�
    （**如实声明：这一条没有生产可达的红测** —— `DEFAULT_CONFIG` 永远带 `provider`，该分支进不去。不为它编一个恒绿的测试。）
 4. 移除 `semantic on` 里那个换模型检测器 —— 见下方"顺带拆掉的定时炸弹"。
 
-**必须同时知道的第二层（应单独成条，见待办）**：daemon 由 **launchd 托管**，
+**必须同时知道的第二层（现已单独成条，见 Finding 10）**：daemon 由 **launchd 托管**，
 `~/Library/LaunchAgents/com.ccmem.daemon.plist` 的 `EnvironmentVariables` 是**安装时冻结的快照**，
 **`admin daemon restart` 不会重新生成它**。所以第 1 条修复对已安装的用户**不会自动生效**，
 必须 `admin daemon uninstall && install`，且没有任何提示告诉用户这件事。
-本轮就是靠 `ps eww -p <pid> | grep CCMEM_CONFIG_PATH` 才发现 restart 白做了 —— **这条验证不可省**。
+⚠️ **本段原写「靠 `ps eww -p <pid> | grep CCMEM_CONFIG_PATH` 才发现 restart 白做了，这条验证不可省」——
+该取证手段在这台机器上不成立**（`ps eww` 读不到进程环境，见下方 Finding 12 的「测量陷阱」框）。
+可用的判据是代码路径与磁盘上的 plist 本身，**见 Finding 10**。
 
 **顺带拆掉的定时炸弹**：`config_kv` 当时的状态是 `active_model=text-embedding-3-small` 但**无 `active_provider`**
 （Finding 6 的修复只删了后者）。两个键来自不同层，于是在一个没有 `CCMEM_CONFIG_PATH` 的 shell 里跑一次裸的
@@ -362,6 +364,86 @@ Finding 6 的裁决本身是对的，但它切断了 daemon 的最后一条通�
 
 **教训**：本条原记述之所以错，是因为上一轮**用一个与生产不同的调用形态去测量生产行为**。
 「三个签名」这个说法本身就该引起警觉 —— 生产里只有两个进程，不可能有三个当事人。
+
+### Finding 10：launchd plist 是安装时冻结的环境快照，`restart` 不重新生成（P1 → **未修，仅有人工绕过**）
+
+**由 Finding 9 分出。** Finding 9 的修复 ① 把 `CCMEM_CONFIG_PATH` 加进 daemon 环境白名单
+（现见 `admin/daemon.mjs:65-74` 的 `passthroughKeys`，注释写明了 API key 为什么刻意不进）。
+但那条修复**对已安装的用户不会自动生效** —— 原因不在白名单，在 plist 的生命周期。
+
+**代码事实（2026-08-02 逐处复核，非转述）**：
+
+| 环节 | 代码位置 | 是否重写 plist |
+|---|---|---|
+| `admin daemon install` | `admin/daemon.mjs:526` `writeFileSync(plistPath, renderDaemonPlist(...))` | ✅ **唯一一处** |
+| `admin daemon restart` | `admin/daemon.mjs:693` = `stopDaemon` + `startDaemon`，二者之外无别的动作 | ❌ |
+| `stopDaemon` | `admin/daemon.mjs:662` → `launchctl bootout` | ❌ |
+| `startDaemon` | `admin/daemon.mjs:615` → `launchctl kickstart`，失败回落 `bootstrap`（`:617`） | ❌ 两者都只读磁盘上现有的 plist |
+
+`admin/daemon.mjs` 全文只有四处 `writeFileSync`（`:157` 安装状态、`:202` fallback wrapper、
+`:237` wrapper pid、`:526` plist），写 plist 的那处在 `installDaemon()` 体内。
+⇒ `EnvironmentVariables` 字典的内容 = **执行 `install` 那一刻 `buildDaemonEnv()` 的求值结果**，
+此后仓库代码怎么改都不改变它。
+
+**没有任何东西会把这件事告诉用户 —— 三条都核过**：
+
+1. 全仓唯一出现 "reinstall" 字样的是 `admin/daemon.mjs:290`，讲的是 Claude 二进制不支持 `--json-schema`，与本条无关。
+2. `renderPlist()`（`admin/daemon.mjs:336`）确实会用**当前**环境重新求值，
+   但它**在生产代码里没有任何调用点** —— 全仓引用它的只有 `tests/integration/v013-daemon-config-path.test.mjs`。
+   ⇒ 也就不存在一条"看看现在的 plist 该长什么样"的命令能让用户撞见分歧。
+3. `install` 的返回里带 `plist: readPlist()`（`:543`/`:554`），读的是**磁盘上的**内容，且只在 install 时返回；
+   没有任何地方把磁盘 plist 与重新求值的结果做 drift 比较。
+
+**影响面比 Finding 9 大**：任何改动 `buildDaemonEnv()` 白名单、`PATH` 拼装或 node 路径解析的修复，
+对既有安装都是**静默无效**的。Finding 9 是第一次踩中，但机制是通用的。
+
+**验证状态**：**未修**（本条不含任何代码改动，属 v0.14）。本机已靠人工 `uninstall && install` 绕过 ——
+磁盘上的 `~/Library/LaunchAgents/com.ccmem.daemon.plist` 现含 `CCMEM_CONFIG_PATH` **1 处**，
+且 `OPENAI|API_KEY|api_key` **0 处**（同一条 grep 在前者返回 1、后者返回 0，
+⇒ 这个 0 是真 0，不是 grep 本身失效 —— 按 §六「0 计数先解释来源」的正面对照要求）。
+
+**取证方式本身值得记**：本条的依据**全部是代码路径与磁盘文件**，不是进程环境读数。
+Finding 9 原文说这件事是靠 `ps eww -p <pid>` 发现的，**那条手段在这台机器上根本读不到进程环境**
+（见 Finding 12 的「测量陷阱」框），该处已改。
+
+### Finding 11：owner 已死的 `running` 任务把回填链堵死（P1 → **已修复**）
+
+**现象**（记述取自修复提交，**本轮未复现，不作为本轮实测**）：
+`admin daemon restart` 在批次中途杀掉 daemon 之后，回填链停在 `pending=1159` 并保持 12 分钟不动 ——
+无报错、无日志行，`semantic status` 的数字就是不再动。同一天还积了四条 `summarize_pending` 孤儿
+⇒ 这是 `tasks` 表的性质，不是 `vec_backfill` 独有的。
+
+**根因：两个各自正确的 guard 合成死锁。**
+
+| 位置 | 数什么 | 为什么它单独看是对的 |
+|---|---|---|
+| `daemon/tasks/vec-backfill.mjs:36` `enqueueContinuation` | **只**数 `queued` | 调用它的那个 run 自己就是 `running`；把 `running` 算进去会让条件恒真，链子永远续不上（`:31` 注释写明是刻意的） |
+| `daemon/main.mjs:44` 启动重排队 | 数 `queued` **或** `running` | 启动时什么都没在跑，把 `running` 算进去才不会重复排队 |
+
+`running` 行的 owner 一旦死掉，**两边都不动它**：前者看不见它，后者把它读成"已经排上了"。
+在此之前没有任何东西回收这种行。
+
+**修复**（提交 `fix(daemon): reclaim tasks left running by a dead daemon`）：
+`reclaimOrphanedTasks`（`daemon/loop.mjs:244`）在启动时把所有 `running` 无条件置 `failed`，
+写 `error_excerpt='daemon exited while this task was running'` —— 与 `runTask` 记录失败的方式一致，
+于是各任务类型自己的重排队路径接手。调用点 `daemon/main.mjs:64`，
+**排在 `warmSemanticProvider`（`:71`）之前**，`:62` 的注释说明了原因：后者的重排队 guard 正是会被孤儿压住的那个。
+回收数 >0 时写 stderr（回填自己的进度行也走那里）。
+
+**"无条件回收"的安全性边界 —— 提交信息里被压缩成一个词，这里展开**：
+论证是"`acquireDaemonLock` 返回即证明没有第二个 daemon"。核 `daemon/lock.mjs`：
+它在 `heartbeat_at` 距今 **> 60000ms** 时**强取**锁（`:11-18`），只有心跳新鲜时才抛 `daemon already running`（`:22`）。
+⇒ 严格的前提是"**没有心跳在 60s 内的另一个 daemon**"，而非绝对唯一。
+**本条不主张这个窗口构成实际故障** —— 只是把前提写清楚，别让后来者把它当成无条件成立。
+
+**验证状态**：✅ **已修复**。回归测试 `tests/unit/v013-orphaned-tasks.test.mjs` 两条，
+提交信息记载两条均先被看着变红（`0 !== 2 reclaimed`；`1 !== 0` 幸存行堵住 guard）。
+**本轮实测重跑该文件：2 pass / 0 fail。**
+**本轮未查 live 库当前还有没有孤儿** —— 那里查出 0 在本条上不构成证据（0 的来源见 §六）。
+
+**顺带核到的陈述性瑕疵**：`daemon/tasks/vec-backfill.mjs:27` 的注释仍写
+`vec_backfill ... is on no recurring schedule`，但 `daemon/tasks/daily-maintenance.mjs:150`
+**每天直接 `await runVecBackfill(db, task)`**（不经 `tasks` 表）。注释陈旧，行为无误。
 
 ### Finding 12：hook 进程与 CLI 读到两份不同配置，语义贡献恒为 0（P0 → **已修复**）
 
@@ -799,6 +881,7 @@ $0.02/1M ⇒ **总计 < $0.02**，不构成决策因素。
    **Finding 4 证伪了 800ms**（第二批即超时打死整条链）。**口径见上方 G1 执行方案的 ②。**
 3. **dogfood 期间持续收集**：V1（误杀率）与 V2（样本量 + p50 漂移）—— 这两项是 v0.14 的决策依据。
 4. **后续（v0.14 候选）**：Finding 5（`JSON.parse` 无保护）；
+   **Finding 10（plist 冻结安装时环境快照，`restart` 不重生成、无任何提示）**；
    `final-review-findings.md` 末尾「NOT in this wave」清单；两个 daemon 测试抖动合并为一个 issue。
 
 ---

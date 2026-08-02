@@ -12,7 +12,7 @@ const LAUNCHD_LABEL = 'com.ccmem.daemon';
 const WAIT_INTERVAL_MS = 50;
 const WAIT_TIMEOUT_MS = 2000;
 const DEFAULT_PATH = '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin';
-const DAEMON_ENV_PASSTHROUGH = [
+export const DAEMON_ENV_PASSTHROUGH = [
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_DEFAULT_HAIKU_MODEL',

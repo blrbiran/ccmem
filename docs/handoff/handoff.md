@@ -159,7 +159,20 @@ tail ~/.claude/ccmem/daemon.err.log
 
 `final-review-findings.md` 末尾的「NOT in this wave」是权威版本。另需并入：
 
-- dogfood **Finding 5**（`loadConfig()` 的 `JSON.parse` 无 try/catch，**该路径现已被真实激活**）
+- **dogfood Finding 5 —— 已选定为下一轮，读这四条再动手**（`scripts/lib/config.mjs:309`，
+  该文件全文没有任何 try/catch）：
+  1. **影响面在 Finding 12 之后被抬高了，dogfood 里标的 P1 是旧口径。**
+     修复前：没有 `CCMEM_CONFIG_PATH` 的进程直接返回 `DEFAULT_CONFIG`，**根本不 parse 那个文件**。
+     修复后：**每个进程都 parse 它**。⇒ 一个写坏的 `config.json` 现在同时打死三个 hook 和 daemon。
+     **先重算影响面再定优先级，不要沿用 P1。**
+  2. **⚠️ 最容易踩的坑：`catch` 里回落到 `DEFAULT_CONFIG` 会原样重造 Finding 12。**
+     `DEFAULT_CONFIG.embedding.provider` 是 `transformers-local`，而库里的向量是
+     `openai:text-embedding-3-small:1536` ⇒ 签名不匹配 ⇒ 检索静默退化成词法，**一条报错都没有**。
+     "解析失败该响亮地死，还是该带着错误的 provider 静默活下去"**是设计问题，可能需要人类裁决**，
+     不要顺手 catch 了事。
+  3. **红测必须打在接线上，不是纯函数上。** 项目已栽过一次（回填超时第一版提交实际什么都没改变）。
+     要证明的是**真实 hook / daemon 进程**在坏配置下的行为，不是 `loadConfig()` 单测会抛。
+  4. 附录 A 若为它加条目，**先按 136–141 的做法验红**（镜像树 + 单独回退），未修之前不加。
 - **Finding 10**（plist 冻结环境快照，`restart` 不重生成且无任何提示）——
   **已成条、未修**，是 v0.13 这条线上唯一新增的 v0.14 候选。
   （**Finding 11 已确认修复，不属 v0.14**。）

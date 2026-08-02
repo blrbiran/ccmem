@@ -903,6 +903,22 @@ v0.12 全量测试必须 100% 通过。
 | 133 | `metrics.jsonl` 有轮转上限（R7）| `grep -c 'MAX_METRICS_BYTES' scripts/lib/metrics.mjs` | `≥ 1` |
 | 134 | `readMetricsLines` 同时读轮转文件（R7）| `grep -cF '${base}.1' scripts/lib/admin/diagnose.mjs` | `≥ 1`（原写法**误报失败**：行为在 `` for (const file of [`${base}.1`, base]) `` 处是正确的，但模板字面量里既没有 `metrics.jsonl.1` 也没有 `.1'`，grep 恒返回 0；改为对字面量本身做定长匹配）|
 | 135 | `env_failure` 带长度闸门（R2）| `grep -c 'ENV_FAILURE_MAX_LEN' scripts/lib/quality-gate.mjs` | `≥ 2`（定义 + 使用）|
+| **136** | **`semantic on` 不带 `--provider` 时清除 `config_kv` 覆盖，而不是重新钉住（Finding 6）** | `grep -c "DELETE FROM config_kv WHERE key = 'embedding.active_provider'" scripts/lib/admin/semantic.mjs` | `≥ 1` |
+| **137** | **`openai` 已声明为可安装依赖（Finding 7）** | `grep -A5 optionalDependencies package.json \| grep -c '"openai"'` | `1` —— 必须落在 `optionalDependencies` 块内（与 `@xenova/transformers` 同级，provider 本就可选）。**只 grep `'"openai"'` 不够**：那样把它挪到文件任何位置都仍是绿 |
+| **138** | **`npm test` 同时隔离配置路径与数据根（Finding 8 → Finding 12 之后必须两半齐全）** | `grep -c 'u CCMEM_CONFIG_PATH' package.json` 且 `grep -c 'CCMEM_DATA_ROOT=' package.json` | 均 `≥ 3`（`test` / `test:unit` / `test:integration` 各一）。**两半都要钉**：Finding 12 让配置路径回落到数据根之后，只 unset 变量不再构成隔离，测试会读到含 API key 的真实配置 |
+| **139** | **`loadConfig()` 在无 `CCMEM_CONFIG_PATH` 时回落到库自己的 `config.json`，而非 `DEFAULT_CONFIG`（Finding 12）** | `sed -n '/export function loadConfig/,/^}/p' scripts/lib/config.mjs \| grep -c 'getConfigPath()'` | `≥ 1` |
+| **140** | **每个 hook 都显式声明 harness 超时（Finding 13）** | `grep -c '"timeout":' hooks/hooks.json` 与 `grep -c '"type": "command"' hooks/hooks.json` | **两数必须相等**（当前均为 `3`）。**幅度不由本条守护** —— `externalMs > budget` 且余量 ≥ 1000ms 由 `tests/unit/v013-hook-timeout-budget.test.mjs` 断言；本条只钉"没有 hook 漏声明超时"，而那恰是该测试硬编码的 `HOOK_EVENTS` 覆盖不到的缺口 |
+| **141** | **缺失的熔断键读作 absent 而非 `0`（Finding 14）** | `sed -n '/function readConfigKvInt/,/^}/p' scripts/lib/embedding/provider.mjs \| grep -c 'raw == null'` | `≥ 1` —— `Number(null) === 0` 是有限数，没有这道 guard，从未开过的熔断读起来就像开过 |
+
+**Finding 15 刻意没有条目。** 它已取证但**未修**（`openai_timeout_ms: 800` 落在查询嵌入延迟分布中间），
+没有任何已落地的行为可钉。为未修的 finding 编一条不变量，产出的只会是一条恒绿的检查
+—— #129 / #133 / #134 三条被返工正是这个原因。同理 Finding 5 / 10 也无条目。
+
+**136–141 的验红方式（附录 A 是人工 checklist，没有 runner）**：把涉及的五个文件镜像到临时目录，
+每条**各自单独回退一处修复**后跑同一条命令，实测：
+136 `1→0`、137 `1→0`、138a `3→0`、138b `3→0`（**两半分别回退、各验一次**）、
+139 `1→0`、140 `3→2`（`"type": "command"` 仍为 3 ⇒ 不等即红）、141 `1→0`。
+绿态在真实文件上跑。⇒ 六条在对应修复被撤掉时都会变红，没有一条是恒绿的。
 
 ---
 

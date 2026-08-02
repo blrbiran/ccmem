@@ -6,7 +6,8 @@
 > 验证方法：真实 live DB（`~/.claude/ccmem/global.db`）+ 真实 daemon + 真实 hook，逐项附命令证据。
 >
 > **背景**：v0.13 已通过 449 测试 + 附录 A grep 不变量 120–135（16/16），
-> 并已 fast-forward 合并进 `main`（`3bd3092`，已推送）。最终 review 的 3 Critical + 10 Important
+> 并已 fast-forward 合并进 `main`（`3bd3092`，已推送）。
+> **这两个数字是合并当时的，不是现在的** —— 当前值见下方 §一 末尾。最终 review 的 3 Critical + 10 Important
 > 已在单轮 fix wave 中全部修复并经 scoped re-review 确认。
 > **本文档要回答的是另一个问题：这些代码路径在生产里到底有没有被执行过。**
 > 套件全绿不构成证据 —— 单测用 mock provider 与 `:memory:` DB，本文档只接受真实运行计数。
@@ -27,7 +28,9 @@
 | B3 recall-loop 不变量 | ✅ ship | ❌ 纯测试 | `tests/unit/v013-recall-loop.test.mjs` |
 | 配置版本 0.13 + 递归同步测试 | ✅ ship | ✅ 一行核对 | `lib/config.mjs:3`、`tests/unit/v013-config-sync.test.mjs` |
 
-当前回归：**449 pass / 0 fail**；附录 A 不变量 **16/16**；
+当前回归：**477 pass / 0 fail**（2026-08-02 实测 `npm test`，exit 0，本次无抖动）；
+附录 A 不变量 **22/22**（120–141；#127 为人判项，本轮已核：`NEGATIVE_ASSERTION` 正则不含
+`不支持` / `不要用` / `never use` / `avoid`。其余 21 行机械判定，逐条实跑 23 个子检查全过）；
 trust 守恒 `SUM(trust_score)` 真实使用前后不变（期间 hooks 实际运行并新增 63 条探针行）。
 
 **B2/B3 不列入 dogfood** —— 它们没有可观测的运行时行为变化（ledger T7 已确认 B2 的修复早于本分支）。

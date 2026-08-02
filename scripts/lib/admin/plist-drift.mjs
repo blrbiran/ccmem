@@ -39,3 +39,56 @@ export const ALL_CLASSIFIED_KEYS = [
   ...CREDENTIAL_KEYS,
   ...FREE_KEYS
 ];
+
+const ENV_OPEN = '<key>EnvironmentVariables</key><dict>';
+const PROGRAM_ARGS_RE = /<key>ProgramArguments<\/key>\s*<array>[\s\S]*?<\/array>/;
+
+export function splitPlist(text) {
+  let envText = null;
+  let rest = text;
+
+  const open = text.indexOf(ENV_OPEN);
+  if (open !== -1) {
+    const bodyStart = open + ENV_OPEN.length;
+    const close = text.indexOf('</dict>', bodyStart);
+    if (close !== -1) {
+      envText = text.slice(bodyStart, close);
+      rest = text.slice(0, open) + text.slice(close + '</dict>'.length);
+    }
+  }
+
+  const argsMatch = rest.match(PROGRAM_ARGS_RE);
+  const programArgs = argsMatch ? argsMatch[0] : null;
+  const template = argsMatch ? rest.replace(PROGRAM_ARGS_RE, '') : rest;
+
+  return { envText, programArgs, template };
+}
+
+const PAIR_RE = /<key>([\s\S]*?)<\/key><string>([\s\S]*?)<\/string>/g;
+
+// escapeXml 的逆。& 必须最后还原，否则 "&amp;lt;" 会被错还原成 "<"。
+function unescapeXml(value) {
+  return value
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'")
+    .replaceAll('&amp;', '&');
+}
+
+export function parseEnvDict(envText) {
+  if (typeof envText !== 'string') return { ok: false };
+
+  const env = {};
+  let residue = envText;
+
+  for (const match of envText.matchAll(PAIR_RE)) {
+    env[unescapeXml(match[1])] = unescapeXml(match[2]);
+    residue = residue.replace(match[0], '');
+  }
+
+  // 有吃不掉的非空白残留 ⇒ 这不是我们渲染的形状，判不可解析。
+  if (residue.trim() !== '') return { ok: false };
+
+  return { ok: true, env };
+}

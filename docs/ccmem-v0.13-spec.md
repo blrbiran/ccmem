@@ -181,8 +181,8 @@ Finding 16 半截 migration）的又一实例——**只是这次 inert 的是�
 
 **A1 — 反馈闭环量表**：
 1. 每个有注入的 turn，Stop hook 为每条被注入记忆写一行 `metrics.jsonl`，含 `prompt_idx` / `l25_cov` / `l25_lcp` / `l25_id_literal` / `l25_legacy_hit` / `mem_len` / `reply_len`
-2. **trust 零变化**：A1 代码路径不调用 `adjustTrust` / `markOutcomeForIds`（不变量 #121）
-3. **probe 数据源是 `recent_injections` 而非 `memory_feedback`**，且只取 `inject_source='user_prompt_submit'`（不变量 #129；理由见 §4.1 R1）
+2. **trust 零变化**：A1 代码路径不调用 `adjustTrust` / `markOutcomeForIds`（不变量 #122）
+3. **probe 数据源是 `recent_injections` 而非 `memory_feedback`**，且只取 `inject_source='user_prompt_submit'`（不变量 #130 / #131；理由见 §4.1 R1）
 4. **`l25_legacy_hit=true` 的样本确实会出现**——即 legacy 命中的 turn 不被 probe 漏掉（这是 #3 的可观测证据；构造性测试）
 5. probe 失败（transcript 缺失 / 解析失败）不阻断 Stop hook 其余逻辑
 6. Stop hook p95 仍 `< 200ms`（≤6 条记忆 × 1 次回复的 token set 运算）
@@ -393,7 +393,7 @@ try {
 - probe **只取 `inject_source = 'user_prompt_submit'` 的注入行** ⚠
   SessionStart 的 `prompt_idx = 0` 批量注入（20–50 条）**必须排除**：它不是 turn-aligned，
   且 design.md 本就规定 session_start 反馈跳过 L1。混进来会污染分布。
-- probe **绝不**调用 `adjustTrust` / `markOutcomeForIds` / `noteFeedback`（不变量 #121）
+- probe **绝不**调用 `adjustTrust` / `markOutcomeForIds` / `noteFeedback`（不变量 #122）
 - probe 失败被 try/catch 吞掉并 stderr 告警——与 v0.11 `recordWriteHistory` 的失败处理一致
 
 ### 4.2 SessionStart / UserPromptSubmit（零变化）
@@ -853,9 +853,9 @@ v0.12 全量测试必须 100% 通过。
 
 | 不变量 | 验证方式 |
 |---|---|
-| **A1 probe 不改任何 trust / outcome / decay_status** | 单元测试 + grep #121 + dogfood V1 |
-| **A1 probe 读 `recent_injections`，与反馈状态解耦（R1）** | 单元测试 + grep #129/#131 + dogfood V4 首项 |
-| `metrics.jsonl` 有大小上限且读取侧覆盖轮转文件（R7）| 单元测试 + grep #132/#133 |
+| **A1 probe 不改任何 trust / outcome / decay_status** | 单元测试 + grep #122 + dogfood V1 |
+| **A1 probe 读 `recent_injections`，与反馈状态解耦（R1）** | 单元测试 + grep #130/#131/#132 + dogfood V4 首项 |
+| `metrics.jsonl` 有大小上限且读取侧覆盖轮转文件（R7）| 单元测试 + grep #133/#134 |
 | Trust 系数 / 优先级公式 / 归档阈值零变化 | 回归测试 |
 | L1 / L2 / L2.5 / L4 判定逻辑零变化 | 回归测试 |
 | 三路检索融合算法零变化（仅新增签名过滤）| 回归测试 |
@@ -912,7 +912,9 @@ v0.12 全量测试必须 100% 通过。
 
 **Finding 15 刻意没有条目。** 它已取证但**未修**（`openai_timeout_ms: 800` 落在查询嵌入延迟分布中间），
 没有任何已落地的行为可钉。为未修的 finding 编一条不变量，产出的只会是一条恒绿的检查
-—— #129 / #133 / #134 三条被返工正是这个原因。同理 Finding 5 / 10 也无条目。
+—— **#129 就是这么来的**：它原本针对 `signature.mjs`，而该文件根本不写 audit、`logAudit(` 也不存在于全仓，
+**任何改动都无法让它失败**。（另两条返工是别的毛病，别混为一谈：#125 原写法需人判断，改成机械可检；
+#134 原写法**误报失败**，是假红不是恒绿。）同理 Finding 5 / 10 也无条目。
 
 **136–141 的验红方式（附录 A 是人工 checklist，没有 runner）**：把涉及的五个文件镜像到临时目录，
 每条**各自单独回退一处修复**后跑同一条命令，实测：

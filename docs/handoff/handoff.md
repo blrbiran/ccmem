@@ -13,7 +13,7 @@
 | `git log`（近 ~17 个提交） | **每条修复的完整根因、证据、取舍都在提交信息里**，本文档刻意不重复。 |
 | `.superpowers/sdd/2026-07-31-ccmem-v0.13/progress.md` | SDD ledger —— 每条人类裁决及理由、全部延期项。git 历史一条都不记。 |
 | `.superpowers/sdd/2026-07-31-ccmem-v0.13/final-review-findings.md` | 末尾「NOT in this wave」= v0.14 待办来源。 |
-| `docs/ccmem-v0.13-spec.md` | 附录 A 不变量 **仍未涵盖 dogfood 的任何修复**。这是剩余工作的主体。 |
+| `docs/ccmem-v0.13-spec.md` | 附录 A 不变量现为 **120–141（22 行）**，136–141 覆盖 Finding 6/7/8/12/13/14，每条均已验红。**未修的 Finding 5/10/15 刻意无条目。** |
 
 ## Git 状态
 
@@ -36,9 +36,9 @@ git status --porcelain                    # 应为空
 
 - 本地 `main` **领先 `origin/main`，尚未推送**。**人类自己处理所有 push —— 不要代为推送。**
 - 分支 `v0.13-spec`、`v0.13-dogfood-fixes` 均未删除（**删分支必须先问**）。
-- 套件上次实测 **477 pass / 0 fail**（Finding 14 那轮），跑法 `npm test`。
-  **本轮没有跑过套件** —— 本轮只改文档。
+- 套件 **2026-08-02 实测 477 pass / 0 fail**（`npm test`，exit 0，本次无抖动）。
   已知抖动：`stop-daemon-flow.test.mjs` 偶发红 2 条，重跑即绿；不阻塞，但**红了要先确认是它**。
+- 附录 A 不变量 **22/22**（21 行机械判定 + #127 人判）。附录 A **没有 runner**，是人工 checklist。
 
 ## ⚠️ 会咬人的既定事实
 
@@ -160,7 +160,9 @@ tail ~/.claude/ccmem/daemon.err.log
 `final-review-findings.md` 末尾的「NOT in this wave」是权威版本。另需并入：
 
 - dogfood **Finding 5**（`loadConfig()` 的 `JSON.parse` 无 try/catch，**该路径现已被真实激活**）
-- **Finding 10**（plist 冻结环境快照）、**Finding 11**（需成条并确认修复）
+- **Finding 10**（plist 冻结环境快照，`restart` 不重生成且无任何提示）——
+  **已成条、未修**，是 v0.13 这条线上唯一新增的 v0.14 候选。
+  （**Finding 11 已确认修复，不属 v0.14**。）
 - **Finding 13 的深层解**：让预算对同步工作真正生效需把 hook 工作切段 —— **设计改动，需人类裁决**。
 - **🆕 Finding 15**：重新推导 `openai_timeout_ms`。**判据是实测 p99，而现有数据截尾** ——
   取无截断样本会改变生产行为，需人类裁决取样方式。

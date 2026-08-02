@@ -910,6 +910,8 @@ v0.12 全量测试必须 100% 通过。
 | **140** | **每个 hook 都显式声明 harness 超时（Finding 13）** | `grep -c '"timeout":' hooks/hooks.json` 与 `grep -c '"type": "command"' hooks/hooks.json` | **两数必须相等**（当前均为 `3`）。**幅度不由本条守护** —— `externalMs > budget` 且余量 ≥ 1000ms 由 `tests/unit/v013-hook-timeout-budget.test.mjs` 断言；本条只钉"没有 hook 漏声明超时"，而那恰是该测试硬编码的 `HOOK_EVENTS` 覆盖不到的缺口 |
 | **141** | **缺失的熔断键读作 absent 而非 `0`（Finding 14）** | `sed -n '/function readConfigKvInt/,/^}/p' scripts/lib/embedding/provider.mjs \| grep -c 'raw == null'` | `≥ 1` —— `Number(null) === 0` 是有限数，没有这道 guard，从未开过的熔断读起来就像开过 |
 
+| **142** | **坏配置被拒绝，且 daemon 拒绝带病启动（Finding 5）** | `sed -n '/export function loadConfig/,/^}/p' scripts/lib/config.mjs \| grep -c 'ConfigError'` 且 `grep -c 'ConfigError' scripts/daemon/main.mjs` | 均 `≥ 2` —— 前者两处（解析失败 + 形状不是对象），后者两处（import + `instanceof` 判别）。**回落 `DEFAULT_CONFIG` 才是这里的坏结局**，不是抛错：那会让 daemon 用 `transformers-local` 去查一库 openai 向量，静默重造 Finding 12 |
+
 **Finding 15 刻意没有条目。** 它已取证但**未修**（`openai_timeout_ms: 800` 落在查询嵌入延迟分布中间），
 没有任何已落地的行为可钉。为未修的 finding 编一条不变量，产出的只会是一条恒绿的检查
 —— **#129 就是这么来的**：它原本针对 `signature.mjs`，而该文件根本不写 audit、`logAudit(` 也不存在于全仓，
@@ -919,8 +921,9 @@ v0.12 全量测试必须 100% 通过。
 **136–141 的验红方式（附录 A 是人工 checklist，没有 runner）**：把涉及的五个文件镜像到临时目录，
 每条**各自单独回退一处修复**后跑同一条命令，实测：
 136 `1→0`、137 `1→0`、138a `3→0`、138b `3→0`（**两半分别回退、各验一次**）、
-139 `1→0`、140 `3→2`（`"type": "command"` 仍为 3 ⇒ 不等即红）、141 `1→0`。
-绿态在真实文件上跑。⇒ 六条在对应修复被撤掉时都会变红，没有一条是恒绿的。
+139 `1→0`、140 `3→2`（`"type": "command"` 仍为 3 ⇒ 不等即红）、141 `1→0`、
+**142a `2→0`、142b `2→0`**（同法，两半各自回退）。
+绿态在真实文件上跑。⇒ 七条在对应修复被撤掉时都会变红，没有一条是恒绿的。
 
 ---
 

@@ -28,9 +28,9 @@
 | B3 recall-loop 不变量 | ✅ ship | ❌ 纯测试 | `tests/unit/v013-recall-loop.test.mjs` |
 | 配置版本 0.13 + 递归同步测试 | ✅ ship | ✅ 一行核对 | `lib/config.mjs:3`、`tests/unit/v013-config-sync.test.mjs` |
 
-当前回归：**477 pass / 0 fail**（2026-08-02 实测 `npm test`，exit 0，本次无抖动）；
-附录 A 不变量 **22/22**（120–141；#127 为人判项，本轮已核：`NEGATIVE_ASSERTION` 正则不含
-`不支持` / `不要用` / `never use` / `avoid`。其余 21 行机械判定，逐条实跑 23 个子检查全过）；
+当前回归：**480 pass / 0 fail**（2026-08-02 实测 `npm test`，exit 0，无抖动）；
+附录 A 不变量 **23/23**（120–142；#127 为人判项，本轮已核：`NEGATIVE_ASSERTION` 正则不含
+`不支持` / `不要用` / `never use` / `avoid`。其余 22 行机械判定，逐条实跑 25 个子检查全过）；
 trust 守恒 `SUM(trust_score)` 真实使用前后不变（期间 hooks 实际运行并新增 63 条探针行）。
 
 **B2/B3 不列入 dogfood** —— 它们没有可观测的运行时行为变化（ledger T7 已确认 B2 的修复早于本分支）。
@@ -210,9 +210,23 @@ failure-aware backoff 列入 v0.14。
 **那句写在 Finding 12 之前。照做就是重造 Finding 12**：
 `DEFAULT_CONFIG.embedding.provider` 是 `transformers-local`，而库里的向量是
 `openai:text-embedding-3-small:1536` ⇒ 签名不匹配 ⇒ 检索静默退化成词法，一条报错都没有。
-**"解析失败该响亮地死，还是带着错误的 provider 静默活下去"是设计问题，需人类裁决**（见 handoff）。
+**"解析失败该响亮地死，还是带着错误的 provider 静默活下去"是设计问题，已交人类裁决。**
 
-**验证状态**：**未修**。以上为行为取证，非修复。
+#### 裁决与修复（2026-08-02）
+
+**裁决：响亮地死 + daemon 不刷栈。** 明确**不**回落 `DEFAULT_CONFIG`。
+
+1. `loadConfig()` 抛具名 `ConfigError`，**消息里带文件路径** —— 解析失败与"不是对象"两种都抛。
+2. `daemon/main.mjs` 在 `openDb()` / `acquireDaemonLock()` **之前**先验一次配置，
+   失败则写一行可读 stderr 后 `exit 1`。**顺带修掉一个次生问题**：原先它死在
+   `warmSemanticProvider`，那时锁已经拿到了，launchd 每次重启都白churn 一次锁行。
+3. **hook 一行未改** —— 实测它们已经正确降级，改它们没有依据。
+
+**回归测试** `tests/integration/config-parse-failure.test.mjs` 三条，**全部打在进程边界上**
+（退出码 + stderr 内容），先红后绿；第三条自带"无配置文件仍应成功"的正面对照，
+以免它是因为命令本身坏了才失败。**套件 480 pass / 0 fail**（原 477，+3）。
+
+**验证状态**：✅ **已修复**。附录 A 新增不变量 **#142**（两半各自验红 `2→0`）。已记 `bug-061`。
 
 ---
 

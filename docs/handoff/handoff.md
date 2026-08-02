@@ -159,8 +159,9 @@ tail ~/.claude/ccmem/daemon.err.log
 
 `final-review-findings.md` 末尾的「NOT in this wave」是权威版本。另需并入：
 
-- **dogfood Finding 5 —— 已选定为下一轮，读这四条再动手**（`scripts/lib/config.mjs:309`，
-  该文件全文没有任何 try/catch）：
+- ~~dogfood Finding 5~~ → **✅ 已修复（2026-08-02）**，裁决是**响亮地死 + daemon 不刷栈**，
+  明确**不**回落 `DEFAULT_CONFIG`。附录 A 新增 **#142**，已记 `bug-061`，套件 **480 pass / 0 fail**。
+  **hook 一行未改** —— 实测它们已经正确降级。下面这段是当时的分析，保留作为"读码推断被实测推翻"的记录：
   1. **影响面在 Finding 12 之后被抬高了，dogfood 里标的 P1 是旧口径。**
      修复前：没有 `CCMEM_CONFIG_PATH` 的进程直接返回 `DEFAULT_CONFIG`，**根本不 parse 那个文件**。
      修复后：**每个进程都 parse 它**。

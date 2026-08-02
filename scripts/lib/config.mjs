@@ -289,6 +289,9 @@ function applyV08Compatibility(config) {
   return next;
 }
 
+/** Thrown only for a config file the operator has to go fix by hand. */
+export class ConfigError extends Error {}
+
 export function loadConfig() {
   // CCMEM_CONFIG_PATH has no persistent source — it is in no shell rc, no
   // launchctl environment and no Claude setting — so it is present only in
@@ -306,5 +309,25 @@ export function loadConfig() {
     return applyV08Compatibility(DEFAULT_CONFIG);
   }
 
-  return applyV08Compatibility(mergeConfig(DEFAULT_CONFIG, JSON.parse(readFileSync(path, 'utf8'))));
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    // Naming the file is the whole point. The bare SyntaxError says
+    // "<anonymous_script>:1" and a byte offset, which tells an operator
+    // nothing about which of their files is broken.
+    throw new ConfigError(`${path} is not valid JSON: ${error.message}`);
+  }
+
+  // Valid JSON of the wrong shape used to merge to nothing and leave the
+  // process on DEFAULT_CONFIG — indistinguishable from having no config at
+  // all, silently, which is how a store of openai vectors ends up being
+  // queried by a transformers-local process (Finding 12).
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new ConfigError(
+      `${path} must contain a JSON object, found ${Array.isArray(parsed) ? 'an array' : `a ${parsed === null ? 'null' : typeof parsed}`}`
+    );
+  }
+
+  return applyV08Compatibility(mergeConfig(DEFAULT_CONFIG, parsed));
 }

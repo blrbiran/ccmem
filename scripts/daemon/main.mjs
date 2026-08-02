@@ -1,4 +1,4 @@
-import { loadConfig } from '../lib/config.mjs';
+import { ConfigError, loadConfig } from '../lib/config.mjs';
 import { openDb } from '../lib/db.mjs';
 import { getProvider } from '../lib/embedding/provider.mjs';
 import { currentEmbeddingSig } from '../lib/embedding/signature.mjs';
@@ -55,6 +55,23 @@ async function warmSemanticProvider(db) {
        VALUES ('vec_backfill', '{}', ?, ?, 'queued')`
     ).run(now, now);
   }
+}
+
+// Read the config before anything else claims a resource. launchd restarts a
+// daemon that exits, so a broken config file is written to daemon.err.log over
+// and over — a raw stack there is unreadable, and dying after acquireDaemonLock
+// churns the lock row on every retry for no reason. Starting on DEFAULT_CONFIG
+// instead is not an option: it would run transformers-local against a store of
+// openai vectors and rebuild Finding 12 silently.
+try {
+  loadConfig();
+} catch (error) {
+  if (!(error instanceof ConfigError)) {
+    throw error;
+  }
+
+  process.stderr.write(`ccmem: daemon not starting — ${error.message}\n`);
+  process.exit(1);
 }
 
 const db = openDb();

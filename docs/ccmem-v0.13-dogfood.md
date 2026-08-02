@@ -107,7 +107,12 @@ follow-up 清单里那条（`semantic.mjs:103` 强制 `enabled:true` 而 `diagno
 
 **修复**：门禁 G1，见 §四。
 
-**验证状态**：⏳ 待 G1，见 V3–V5。
+**验证状态**：✅ **已解除（2026-08-01，G1 执行）**。B1 整条机制已在本机真实执行过：
+签名派生（`openai:text-embedding-3-small:1536`）、三处过滤（V4）、`vec_backfill` 恢复路径（V3）。
+
+**但本条记录的观测陷阱没有过期，反而又中了一次**：V5 找到了"分母为 0"的**第二种来源** ——
+不是库里没有向量，而是**签名为 `null` 让 SQL 谓词恒不成立**，计数静默塌成 0 而文案讲成健康。
+见 §五 V5。
 
 ---
 
@@ -602,9 +607,11 @@ Finding 4 里"这个选择是对的"的前提已经被 V8/Finding 13 换掉了�
 > 单元/集成测试用 mock provider 与 `:memory:` DB。下列项必须在**真实环境**验证。
 
 ### V1. A2 质量门两条新规则在真实入库流上的行为
-- [ ] 前置：daemon 已重启（Finding 1）✅
+- [x] 前置：daemon 已重启（Finding 1）✅
 - [ ] 正常使用 3–7 天，让 `summarize_pending` 自然处理真实待入库内容
-- [ ] `admin diagnose --tuning` 中 `negative_assertion` / `env_failure` 出现非零计数
+- [~] `admin diagnose --tuning` 中 `negative_assertion` / `env_failure` 出现非零计数
+      —— **只达成一半**：`negative_assertion` **3**（全部在 daemon 重启之后），`env_failure` 仍 **0**
+      且**规则遮蔽未被排除**。见 §五 V1
 - [ ] **重点是误杀，不是漏杀**：用 `/ccmem:audit` 读每条 `quality_gate_reject` 的 80 字符摘录，人工判断是噪声还是合法约束
   - 预期误杀形态（review I5）：`"这个 API 不支持批量请求，需要逐条调用"`（合法 API 约束）、
     `"prettier is not installed globally; use npx prettier"`（51 字符，低于 Latin 120 门限，却正是提取提示词要求的 remedy 形式）
@@ -612,17 +619,20 @@ Finding 4 里"这个选择是对的"的前提已经被 V8/Finding 13 换掉了�
       是 9 条规则中的第 8、9 条，命中即返回。同时像 `path_list` 又像 `negative_assertion` 的内容会被记成前者。
       要区分需离线把候选内容逐规则喂给 `checkQuality`，而非看线上计数。
 - [ ] **成功判据**：≥ 20 条经这两条规则的拒绝被人工判读，误杀率有一个数（数值高低不由 dogfood 裁决）
-- [ ] **关注 Finding 1**：确认观测窗口起点晚于 daemon 重启时刻，否则计数仍是旧代码的
+- [x] **关注 Finding 1**：确认观测窗口起点晚于 daemon 重启时刻，否则计数仍是旧代码的
+      —— §五 V1 的计数即按 08-01 09:41 切分，并附全期对照
 
 ### V2. A1 探针数据积累与判据可行性
 - [ ] 不改动任何东西，让探针继续采集；每日快照一次 `admin diagnose --feedback` 并追加到 §五
-- [ ] **成功判据**：随机对照非 CJK 样本 **n ≥ 60**（当前 21）
-- [ ] 记录 p50 随 n 的漂移轨迹；若 n 翻倍后仍在 ±0.03 内摆动，即证明分位数不可作判据
-- [ ] **已知限制**：`l25_legacy_hit` 恒为 0/389，**无任何正例标签**，采集再多也算不出 precision/recall
+- [x] **成功判据**：随机对照非 CJK 样本 **n ≥ 60** —— ✅ **达成，n=399**（基线 21）。见 §五 V2
+- [x] 记录 p50 随 n 的漂移轨迹；若 n 翻倍后仍在 ±0.03 内摆动，即证明分位数不可作判据
+      —— 实测漂移 **0.125 → 0.075 → 0.029**，跨度 0.096 **远超** ±0.03 ⇒ 判据不可用，结论成立
+- [ ] **已知限制**：`l25_legacy_hit` 恒为 **0/1666**（基线 0/389），**无任何正例标签**，采集再多也算不出 precision/recall
       —— 该限制由 v0.14 的人工标注解决，不属 dogfood 范围
 - [ ] **已知偏差，记入分析笔记不修**：随机组排除范围只有 `recent_injections` 那么宽，
       而 tier15 裁到每会话 20 条，超长会话约 1.8% 污染率（k=3），方向保守（抬高噪声底）
-- [ ] **关注 Finding 2**：不要把 p50 的任何一次翻转当作结论
+- [x] **关注 Finding 2**：不要把 p50 的任何一次翻转当作结论
+      —— 本次快照信号(0.081) 已高于噪声(0.029)，**这不是"有信号了"**，理由见 §五 V2
 
 ### V3. B1 首次启用与回填恢复路径
 
@@ -637,17 +647,27 @@ Finding 4 里"这个选择是对的"的前提已经被 V8/Finding 13 换掉了�
       4161 条需 `ceil(4161/50) = 84` 次 daemon 重启才能恢复语义检索 —— 用户既想不到也做不到
 - [x] 签名分布干净：`transformers-local:Xenova/all-MiniLM-L6-v2:384 -> 4161`（单一签名，无混杂）
 
-**OpenAI provider：⏳ 待 Finding 6 修复后执行**
+**OpenAI provider：✅ 2026-08-01 已通过**（逐条回填于 2026-08-02，证据见各条）
 
-- [ ] 签名为 `openai:text-embedding-3-small:1536`
-- [ ] 4161 条既有向量因签名不匹配被 `vec-backfill.mjs:74-76`
+- [x] 签名为 `openai:text-embedding-3-small:1536` —— daemon 侧逐批打印该签名（Finding 9），
+      副本实测 **4696 行**携带它
+- [x] 4161 条既有向量因签名不匹配被 `vec-backfill.mjs:74-76`
       （`WHERE embedding IS NULL OR embedding_sig IS NULL OR embedding_sig <> ?`）捡走并重嵌
-- [ ] **验证 B1 的设计意图**：签名机制自身即可优雅处理换模型，
-      **无需** `semantic.mjs:89-96` 那个批量 `UPDATE ... SET embedding = NULL`
-      —— 后者是重叠的旧机制，已在 review follow-up 中列为 v0.14 移除项
-- [ ] `diagnose --retrieval` 的 `stale vectors` 先升后归零
-- [ ] **关注 Finding 4**：这是 `openai_timeout_ms: 800` 的第一次真实检验（本地 provider 不走该超时）
-- [ ] **关注 Finding 3**：回填前的 `stale vectors: 0` 是分母为 0，不是健康
+      —— 副本上 `transformers-local:...:384` 只剩 **2 行**，且均 `decay_status='quarantine'`（落在回填 population 之外）
+- [x] **验证 B1 的设计意图**：签名机制自身即可优雅处理换模型，
+      **无需** `semantic.mjs:89-96` 那个批量 `UPDATE ... SET embedding = NULL`。
+      **这条是被反过来证明的**：Finding 9 已把该检测器**整体移除**，
+      而换模型重嵌在没有它的情况下照样完成 —— 移除后仍能重嵌，正是"重叠的旧机制"这个判断的实证
+- [ ] ~~`diagnose --retrieval` 的 `stale vectors` 先升后归零~~
+      **只观测到「归零」，没有「先升」的样本 —— 不勾。**
+      回填期间无人对 `stale vectors` 做时间序列采样，事后无法从 `audit_log` 重建该曲线
+      （`vec_backfill_run` 只记 `embedded`/`remaining`，不记 stale）。
+      可替代的等价证据是 `remaining` 的下降轨迹（见上方本地 provider 那条）
+- [x] **关注 Finding 4**：这是 `openai_timeout_ms: 800` 的第一次真实检验（本地 provider 不走该超时）
+      —— **检验结果是证伪**：回填侧 800ms 直接把链条打死（Finding 4），
+      hook 侧则被证明该值落在延迟分布中间（**Finding 15**）。这一项的价值全在于它没通过
+- [x] **关注 Finding 3**：回填前的 `stale vectors: 0` 是分母为 0，不是健康
+      —— 已应验第二次，换了个来源（签名为 null），见 §五 V5
 
 ### V4. B1 签名过滤三个消费点在非空向量集上生效（需 G1）
 
@@ -659,8 +679,10 @@ Finding 4 里"这个选择是对的"的前提已经被 V8/Finding 13 换掉了�
 - [x] 验证手段：**每个消费点都做正反两面** —— 只做正面等于 Finding 3 的分母为 0，
       因为库里 4454 条全是同一签名，过滤条件在这样的库上是恒真的 no-op，绿了什么也没证明
 - [x] **注意**：I2 是 review 中唯一"签名盲且写 trust"的消费点，优先级高于检索侧漏检 —— 已按此顺序先做
-- [ ] **仍欠：生产计数**。上述证据是"真实数据 + 真实代码路径"，不是"生产里跑过多少次"。
-      按 §六 的纪律这两者不能混为一谈，实际生产计数见 §五 V4 的第二张表（且已被 Finding 12 压住）
+- [x] **生产计数已补（2026-08-02）**。上述证据是"真实数据 + 真实代码路径"，不是"生产里跑过多少次"，
+      按 §六 的纪律两者不能混为一谈。Finding 12 修复后的实测计数见 §五 V4 的第二张表。
+      **结论不是"三个点都在生产里跑过"** —— `retrieval.mjs` 是，`dedup.mjs` 算出了 cosine 但未命中 lane 阈值，
+      `feedback.mjs` **仍是 0 次且只能部分解释**。三条各自的分母写在表里
 
 ### V5. 配置面一致性：`config_kv` override 与两条命令的口径（需 G1）
 
@@ -677,7 +699,8 @@ Finding 4 里"这个选择是对的"的前提已经被 V8/Finding 13 换掉了�
 
 ### V6. 决策流磁盘成本与 `retention_days: 0` 语义
 - [ ] `diagnose --feedback` 头部持续显示 `l25-probe.jsonl` 磁盘占用（刻意让运行时成本可见，不要"优化"掉）
-- [ ] 实测每行体积与增速，对照设计估算（~1.3 KB/行，每 turn-aligned 轮次 ≤11 行，~200 KB/天）
+- [x] 实测每行体积与增速，对照设计估算（~1.3 KB/行，每 turn-aligned 轮次 ≤11 行，~200 KB/天）
+      —— 行体积 **1146 B 吻合**；增速 **~2.1 MB/天 是估算的 10 倍**，但该倍数反映使用强度。见 §五 V6
 - [ ] 确认 `retention_days: 0` 表示**永不自动删除**（刻意与运行时清理语义相反 —— 人类裁决 #4）
 - [ ] 确认 `metrics.decision_data.enabled` 控制的是**持久性而非存在性**：为 false 时探针行回落 `metrics.jsonl`，绝不丢弃（裁决 #3）
 
@@ -685,7 +708,8 @@ Finding 4 里"这个选择是对的"的前提已经被 V8/Finding 13 换掉了�
 - [x] 迁移 016 按文件名自动发现、事务内执行，已干净应用于 live store（schema 15→16）
 - [x] `EXPLAIN QUERY PLAN` 在真实 14MB store 的副本上确认部分索引 `idx_memories_embedding_sig`
       对 allVecs seek 与 stale-count scan 均被选中 —— 非 hook 预算问题
-- [ ] 迁移后既有行 `embedding_sig IS NULL`，由 V3 的回填路径恢复（这正是 I3 存在的原因）
+- [x] 迁移后既有行 `embedding_sig IS NULL`，由 V3 的回填路径恢复（这正是 I3 存在的原因）
+      —— 副本上仅剩 468 行 NULL 签名，其中 **467 行在回填 population 之外**，真正待回填 1 行。见 §五 V7
 
 ### V8. hook 延迟预算
 - [x] 探针 C1+C3（reply 摘录 + 随机对照队列）实测：p50 1.36→2.88ms，p95 2.82→3.66ms
@@ -707,14 +731,29 @@ Finding 4 里"这个选择是对的"的前提已经被 V8/Finding 13 换掉了�
 | 门禁 | 内容 | 不做的后果 | 成本/风险 | 状态 |
 |---|---|---|---|---|
 | **G0** | 重启 ccmem daemon | V1 完全无法开始；`--tuning` 的 0 计数永远是假象 | 低 | ✅ **2026-08-01 09:41 人类手动执行**（`pid=82700`） |
-| **G1** | 在真实库上打开 embedding | V3/V4/V5 永远零执行，B1 正确性只有单测背书 | < $0.02；检索行为改变，非观察型 | ⏳ 方案已定，待执行 |
+| **G1** | 在真实库上打开 embedding | V3/V4/V5 永远零执行，B1 正确性只有单测背书 | < $0.02；检索行为改变，非观察型 | ✅ **2026-08-01 达成，口径已收窄** —— 见下 |
 
 ### G1 执行方案 —— OpenAI `text-embedding-3-small`
 
-**不需要写 ccmem 配置文件。** `config_kv` 优先级高于文件配置（`provider.mjs:59-79`），
+> **⚠️ 以下是执行前写的方案，两处已被实际执行推翻。先读这两条，再读原文。**
+>
+> **① 「不需要写 ccmem 配置文件」是错的，实际走的是方案 A。**
+> 原理由是"`config_kv` 优先级高于文件配置"。**Finding 6 恰恰把这个优先级当作缺陷修掉了** ——
+> 裸 `semantic on` 现在会**删除**那些 kv 行，把权威交还给配置文件。
+> 于是配置文件不但需要，还成了唯一的 provider 声明来源；
+> Finding 9（daemon 读不到它）与 Finding 12（hook 读不到它）都是这个转移的后果。
+> 密钥最终按方案 A 落在 `~/.claude/ccmem/config.json`（仓库外，含 key），
+> Finding 5 那条未经检验的路径**因此被真实激活**，风险由 dogfood 承担。
+>
+> **② G1 的达成口径必须收窄。** 回填确实跑通（4696 条向量、真正 pending 为 1），
+> 但**「库里有向量」≠「检索在用向量」**：Finding 12 之前 hook 侧大部分时间没在用，
+> 修复后 `pool=0` 归零；而 **Finding 15** 表明当前仍有约 1/3 的 prompt_submit
+> 因 embed 超时拿不到查询向量。**G1 达成的是"链路可用"，不是"链路始终在用"。**
+
+**~~不需要写 ccmem 配置文件。~~**（见上方 ①）`config_kv` 优先级高于文件配置（`provider.mjs:59-79`），
 且 `embedding.openai_model` 默认值本就是 `text-embedding-3-small`（`config.mjs:20`）。
 
-**密钥落位（方案 B，规避 Finding 5）** —— `.zshrc` 只增加一行**非机密**代码：
+**密钥落位（方案 B，规避 Finding 5）—— ~~本方案未被采用~~，实际执行的是下方备选方案 A**：
 ```bash
 # ~/.zshrc（可提交，无机密）
 [ -f ~/.zshrc.local ] && source ~/.zshrc.local
@@ -755,7 +794,9 @@ $0.02/1M ⇒ **总计 < $0.02**，不构成决策因素。
 ### 优先级
 
 1. **✅ 已解除**：Finding 1（daemon 陈旧，P0）—— 解除 V1 阻塞。
-2. **⏳ 待执行**：G1 —— 解除 V3/V4/V5 阻塞。V3 的 `pending` 下降曲线同时验证 I3 修复与 Finding 4。
+2. **✅ 已完成（2026-08-01）**：G1 —— V3/V4/V5 阻塞全部解除，三项均已实测完成。
+   V3 的 `pending` 下降曲线确实同时验证了 I3 修复与 Finding 4：**I3 通过**（链式排队自动跑完），
+   **Finding 4 证伪了 800ms**（第二批即超时打死整条链）。**口径见上方 G1 执行方案的 ②。**
 3. **dogfood 期间持续收集**：V1（误杀率）与 V2（样本量 + p50 漂移）—— 这两项是 v0.14 的决策依据。
 4. **后续（v0.14 候选）**：Finding 5（`JSON.parse` 无保护）；
    `final-review-findings.md` 末尾「NOT in this wave」清单；两个 daemon 测试抖动合并为一个 issue。
@@ -835,9 +876,9 @@ V1 自 daemon 重启（09:41）起计，待回填。V3 的 OpenAI 分支已跑�
 
 | 消费点 | 生产计数 | 说明 |
 |---|---|---|
-| `dedup.mjs` | `lane=cosine` **3 次** / `lane=trigram` 355 次 | 3 次 cosine 命中分别在 08-01 11:31、12:04、23:10，均在回填期之后 —— **这是三个消费点里唯一有真实生产执行的** |
-| `retrieval.mjs` | 有执行；`cosine_contribution` 曾连续 27 次为 0，**Finding 12 修复后恢复**（实测 0.967） | 那 27 次是 hook 进程读到 `transformers-local` 配置所致（`pool=0`），不是过滤器有问题 —— 见 **Finding 12** |
-| `feedback.mjs` | **0 次** | `memory_feedback` 中 `evidence LIKE 'l1_positive_cosine%'` 计数为 0。**先解释来源再下结论**：该路径要求"注入 → 用户回肯定语"且当时 embedding 必须真的可用，而 embedding 直到本日才真正接通（Finding 9），叠加 Finding 12 后 hook 侧至今仍拿不到可用向量。0 是合理的，但**它意味着这条写 trust 的路径在生产里一次都没跑过** |
+| `dedup.mjs` | `lane=cosine` **3 次** / `lane=trigram` **356 次** | 3 次 cosine 命中仍是 08-01 11:31、12:04、23:10。**"修复后无新增"的分母是 1** —— 23:10 之后总共只发生过 **1 次** dedup 事件，该次 `cosine=0.8007` 低于 `cosine_threshold 0.85`（`dedup.mjs:130`）故判给 trigram。**关键在于 cosine 被算出来了、不是 null** ⇒ 该消费点在 Finding 12 修复后确实拿得到可用向量 |
+| `retrieval.mjs` | Finding 12 修复后 43 次 `prompt_submit`：**A 22 / B-fail 14 / B-circuit 7**；`cosine_contribution>0` **22 次** | `pool=0` 的行数 **31 → 0**（修复前 2567 行中 31 次，修复后 43 行中 0 次）⇒ 配置分歧确已消除。**但 21/43 仍没走成语义通道**，原因不是签名过滤而是 embed 超时与熔断 —— 见 **Finding 15** |
+| `feedback.mjs` | **仍 0 次** | `memory_feedback` 中 `evidence LIKE 'l1_positive_cosine%'` 计数为 0。**先解释来源**：全表 evidence 分布为 空 2070 / `neg_keyword` 79 / `assistant_self_correction` 28 / `assistant_reference` 2 —— **feedback 写入本身是活跃的**，缺的只是这一种。该路径要求"注入 → 用户回肯定语"且当时 embedding 真的可用。**这个 0 只能部分解释**：现有数据分辨不了"触发条件从未出现"与"条件出现了但路径没跑"，因为没有任何独立计数在记录"注入后收到肯定语"这件事。**因此不下结论** —— 这条写 trust 的路径在生产中**是否**跑过，目前不可判定；要判定需先加一个该条件的观测点 |
 
 ---
 
@@ -913,13 +954,85 @@ C 立刻变 4447；还原后回 0，`git diff` 空。
 
 **追查 `stop` hook 那条线索，查出了比它本身更重要的东西 —— 见 Finding 13。**
 
+#### V1. 质量门两条新规则（2026-08-02 快照）
+
+`audit_log.quality_gate_reject`，按 daemon 重启时刻（08-01 09:41）切分：
+
+| 窗口 | reason 分布 |
+|---|---|
+| 重启之后 | `path_list` 13 / **`negative_assertion` 3** / `env_failure` **0** |
+| 全期对照 | `path_list` 159 / `too_specific` 3 / `negative_assertion` 3 / `too_short` 2 / `test_count` 2 |
+
+**3 条 `negative_assertion` 全部落在重启之后** ⇒ Finding 1 的 0 计数确已解除，
+新规则在**真实入库流**上执行过，不再只有单测背书。
+
+**`env_failure` 仍为 0，不得据此下结论** —— V1 清单已写明规则遮蔽：
+`env_failure`(`:88`) 与 `negative_assertion`(`:95`) 是 9 条规则中的第 8、9 条，命中即返回，
+既像 `path_list` 又像它的内容会被记成前者（`path_list` 占 159/169）。
+要区分必须离线把候选内容逐规则喂给 `checkQuality`，不能看线上计数。
+
+**成功判据（≥20 条人工判读、误杀率有一个数）未达成**：可判读样本只有 3 条。**V1 仍在采集。**
+
+#### V2. 探针积累与判据可行性（2026-08-02 快照）
+
+| 队列 | 基线 n（08-01 09:35） | 现 n | 基线 `l25_cov` p50 | 现 p50 |
+|---|---|---|---|---|
+| random non-CJK（噪声底） | 21 | **399** | 0.075 | **0.029** |
+| random CJK | 3 | 45 | 0.053 | 0 |
+| turn-aligned non-CJK（信号） | 266 | 642 | 0.103 | 0.081 |
+| turn-aligned CJK | 99 | 544 | 0.042 | 0.032 |
+| stale_injection | 0 | 36 | — | non-CJK 0.046 / CJK 0 |
+
+- **成功判据 `n ≥ 60`（random non-CJK）达成**：399。
+- **p50 漂移轨迹**：`n≈9 → 0.125`；`n=21 → 0.075`；**`n=399 → 0.029`**。
+  跨度 **0.096**，远超 V2 设的 ±0.03 门限 ⇒ **"分位数对比不能作判据"这个结论成立**（Finding 2）。
+- **不要反向误读**：现在信号 0.081 高于噪声 0.029，看起来"终于有信号了"。
+  **这正是 Finding 2 警告过的那种读法。** 噪声底随 n 单调下降本身就说明小 n 的 p50 不稳；
+  且**总体是否随时间改变并未被排除**（采样窗口内库规模与会话构成一直在变）。
+  判据仍必须是分布级的（AUC / Mann-Whitney U）。
+- `l25_legacy_hit` **0/1666**、`l25_id_literal` **0/1666** ⇒ 仍无任何正例标签，已知限制不变。
+- 新事实：`stale_injection` 队列从 0 增至 36 行（基线时该队列为空）。
+- **字段名陷阱记一笔**：本次统计一度用 `is_cjk` 取值，全表恒 falsy，
+  得出"random 组 444 条全是 non-CJK"的假结果。真字段名是 **`has_cjk`**。
+  这是 §六「0 计数先解释来源」第六种变体（查错字段名）的**又一次实例**，与 `metrics.jsonl` 的 `hook`/`event` 同型。
+
+#### V6. 决策流磁盘成本（2026-08-02）
+
+| 时点 | `l25-probe.jsonl` |
+|---|---|
+| 基线 08-01 09:35 | 228,090 bytes / 389 行 |
+| 现 08-02 ~13:00 | **2,623,712 bytes / 1666 行** |
+
+- 平均行体积 **1146 字节**，与设计估算 **~1.3 KB/行 吻合**。
+- 增速约 **2.4 MB / 27.5h ≈ 2.1 MB/天**，是设计估算 ~200 KB/天 的 **10 倍**。
+  **先解释再当结论**：估算前提是"每 turn-aligned 轮次 ≤11 行"，
+  而本窗口是**重度 dogfood 期**（多会话并行、轮次密集）。
+  **这个倍数反映的是使用强度，不能直接当稳态速率**。
+- 方向仍然明确：`retention_days: 0` 意味着永不自动删除，**成本随使用单调累积**。
+  让它在 `diagnose --feedback` 头部可见是裁决 #4，**不要"优化"掉**。
+- **未验证**：`metrics.decision_data.enabled=false` 时探针行回落 `metrics.jsonl`（裁决 #3）——
+  需构造该配置，本轮未做。
+
+#### V7. 迁移 016（补第三项）
+
+前两项原已勾（迁移干净应用、部分索引被查询计划选中）。第三项现有证据：
+副本上 `embedding_sig IS NULL` 仅剩 **468 行**，其中 **467 行在回填 population 之外**
+（`superseded` / `candidate_expire` / `archived` / `quarantine`），
+真正待回填的是 **1 行**。⇒ 迁移后的 NULL 签名行确实由 V3 的回填路径恢复完毕。
+
+---
+
 ## Closure checklist
 
 - [x] 实现状态表区分「ship」与「可 dogfood」——纯测试项不列入验证清单
 - [x] 每条 finding 标注验证状态，已解除项注明解除时间与证据
-- [ ] 每个 V 项在 §五 有对应实测记录或 🔶 blocked 说明
-- [ ] real-infra 受阻项显式标记，不以"测试通过"顶替
-- [ ] Admin 命令面与 `scripts/cli.mjs` + `commands/admin.md` 一致
+- [x] 每个 V 项在 §五 有对应实测记录或 🔶 blocked 说明 —— **V1–V8 全部有条目**（2026-08-02 补齐 V1/V2/V6/V7）
+- [x] real-infra 受阻项显式标记，不以"测试通过"顶替 —— 未达成的判据均写明**还差什么**：
+      V1 差 ≥20 条人工判读、V2 差 ~50 条人工标注（无正例标签）、V6 差裁决 #3 的配置构造、
+      V8 差熔断退化延迟的重新采集（旧样本因 Finding 14 作废）
+- [x] Admin 命令面与 `scripts/cli.mjs` + `commands/admin.md` 一致 —— 核对发现 `cron run` 少列
+      `cross_project_patterns`（`MANUAL_RUN_TYPES` 8 个 vs 文档 7 个），**已补**；
+      daemon 6 verb、semantic 3 verb × 3 provider、diagnose 11 flag、`retrieval-check`、`alias` 均一致
 
 ## Closure review
 

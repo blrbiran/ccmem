@@ -174,25 +174,45 @@ failure-aware backoff 列入 v0.14。
 
 ### Finding 5：`loadConfig()` 的 `JSON.parse` 无 try/catch，配置文件是全 hook 单点故障（P1）
 
-**现象**：`config.mjs:290-296`
-```javascript
-export function loadConfig() {
-  const userPath = process.env.CCMEM_CONFIG_PATH;
-  if (!userPath || !existsSync(userPath)) return applyV08Compatibility(DEFAULT_CONFIG);
-  return applyV08Compatibility(mergeConfig(DEFAULT_CONFIG, JSON.parse(readFileSync(userPath, 'utf8'))));
-}
-```
-`JSON.parse` 无保护 —— 配置文件写坏一个逗号，**每个 hook 进程都会抛异常**。
+**现象**：`config.mjs:309` 的 `JSON.parse` 至今无保护（全文件无任何 try/catch）。
+上面这句在 Finding 12 之前只影响导出了 `CCMEM_CONFIG_PATH` 的进程；
+**Finding 12 让路径回落到数据根之后，每个进程都会去 parse 它。**
 
-**为什么现在才相关**：本环境从未设置过 `CCMEM_CONFIG_PATH`（`~/.claude/ccmem/` 下无 `config.json`），
-所以 `mergeConfig` 这条路径**从未被执行过**（ledger 亦记录：`v013-config-sync.test.mjs` 从不设置该变量）。
-一旦为了配置 API key 或 timeout 而引入配置文件，就同时激活了这条未经真实检验的路径。
+**为什么当初写成 P1**：本环境曾从未设置过 `CCMEM_CONFIG_PATH`，`mergeConfig` 这条路从未被执行过
+（ledger 亦记录：`v013-config-sync.test.mjs` 从不设置该变量）。人类选了方案 A 之后，这条路径已被激活。
 
-**修复（PROPOSED，未应用）**：`JSON.parse` 包 try/catch，解析失败时 warn 到 stderr 并回落 `DEFAULT_CONFIG`。
-属 v0.14 候选，非 v0.13 缺陷。
+#### 实测（2026-08-02，隔离 `CCMEM_DATA_ROOT` 的临时库，`-u CCMEM_CONFIG_PATH`）
 
-**实际选择**：人类选了**方案 A**（配置文件 + `CCMEM_CONFIG_PATH`），即这条路径**已被激活**。
-实测该文件被正确读取、JSON 可解析、key 长度 164。此路径现已进入真实运行，风险由 dogfood 承担。
+| 入口 | 坏配置（截断的 JSON）下的实际行为 |
+|---|---|
+| `hook session-start` / `prompt-submit` / `stop` | **exit 0，输出合法**。`withHookSafety` 兜住，stderr 一行 `ccmem: <hook> failed (<解析错误>)`，降级为空上下文 |
+| `cli.mjs admin semantic status` | **exit 1**，未捕获 `SyntaxError` 栈 |
+| `daemon/main.mjs` | **exit 1，启动即死**（同一条未捕获栈；正常配置下 12s alarm 未触发退出 ⇒ 存活对照成立） |
+
+⇒ **"配置文件是全 hook 单点故障"这个标题口径过重，按实测收窄**：hook 不崩，
+**真正会死的是 daemon 与 CLI**。daemon 由 launchd 托管 ⇒ 坏配置期间它会反复启动失败，
+回填与 daily maintenance 全停，而用户侧只有 `daemon.err.log` 里的栈。
+
+**三条错误信息都不含文件名** —— 栈里只有 `<anonymous_script>:1` 和 JSON 位置偏移，
+不告诉你是 ccmem 的 `config.json` 出了问题。
+
+#### 🆕 同一轮撞见的第二条：合法 JSON、错误形状 ⇒ **静默等同于没有配置**
+
+`config.json` 内容为 `"just a string"`（合法 JSON，但不是对象）时：
+**没有任何报错**，三个 hook 与 CLI 全部正常返回，`semantic status` 显示
+`provider=transformers-local`、`enabled=false` —— 与**完全没有配置文件**时逐字节相同。
+⇒ 用户的整份配置被静默丢弃。**这正是 Finding 12 的形状（无声地跑在错误的 provider 上），
+而且它今天就已经成立，不需要任何"修复"来触发。**
+
+#### ⚠️ 本条原先提的修复方案现在是危险的
+
+原文写：「`JSON.parse` 包 try/catch，解析失败时 warn 到 stderr 并**回落 `DEFAULT_CONFIG`**」。
+**那句写在 Finding 12 之前。照做就是重造 Finding 12**：
+`DEFAULT_CONFIG.embedding.provider` 是 `transformers-local`，而库里的向量是
+`openai:text-embedding-3-small:1536` ⇒ 签名不匹配 ⇒ 检索静默退化成词法，一条报错都没有。
+**"解析失败该响亮地死，还是带着错误的 provider 静默活下去"是设计问题，需人类裁决**（见 handoff）。
+
+**验证状态**：**未修**。以上为行为取证，非修复。
 
 ---
 

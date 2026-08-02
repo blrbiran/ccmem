@@ -163,8 +163,12 @@ tail ~/.claude/ccmem/daemon.err.log
   该文件全文没有任何 try/catch）：
   1. **影响面在 Finding 12 之后被抬高了，dogfood 里标的 P1 是旧口径。**
      修复前：没有 `CCMEM_CONFIG_PATH` 的进程直接返回 `DEFAULT_CONFIG`，**根本不 parse 那个文件**。
-     修复后：**每个进程都 parse 它**。⇒ 一个写坏的 `config.json` 现在同时打死三个 hook 和 daemon。
-     **先重算影响面再定优先级，不要沿用 P1。**
+     修复后：**每个进程都 parse 它**。
+     **⚠️ 我先前在这里写过"同时打死三个 hook 和 daemon" —— 已实测证伪，那是读码推的，不是量的。**
+     实测（见 dogfood Finding 5 的实测表）：**三个 hook 都 exit 0**，`withHookSafety` 兜住并降级为空上下文；
+     **真正会死的是 daemon（启动即死，launchd 下反复失败 ⇒ 回填与 daily maintenance 全停）与 CLI**。
+     另有一条新的：**合法 JSON 但形状不对（如顶层是字符串）会静默等同于没有配置** —— 无任何报错，
+     今天就已成立。**先按实测重算影响面，不要沿用 P1，也不要沿用我那句错话。**
   2. **⚠️ 最容易踩的坑：`catch` 里回落到 `DEFAULT_CONFIG` 会原样重造 Finding 12。**
      `DEFAULT_CONFIG.embedding.provider` 是 `transformers-local`，而库里的向量是
      `openai:text-embedding-3-small:1536` ⇒ 签名不匹配 ⇒ 检索静默退化成词法，**一条报错都没有**。

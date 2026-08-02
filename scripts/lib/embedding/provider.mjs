@@ -29,6 +29,13 @@ function clearConfigKv(db, key) {
 
 function readConfigKvInt(key) {
   const raw = readConfigKv(key);
+  // An absent key is absent, not zero. Both callers below test existence with
+  // `== null`, and Number(null) is 0 — a finite number — so without this guard a
+  // circuit that had never opened read as one that had.
+  if (raw == null) {
+    return null;
+  }
+
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
 }

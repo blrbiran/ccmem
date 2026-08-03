@@ -525,7 +525,7 @@ function installDaemon() {
   const nodePath = resolveInstallNodePath(process.env);
 
   mkdirSync(getLaunchAgentDir(), { recursive: true });
-  writeFileSync(plistPath, renderDaemonPlist(dataRoot, daemonEnv, nodePath));
+  writeFileSync(plistPath, renderPlist());
 
   const bootstrapError = bootstrapDaemon();
   if (bootstrapError) {

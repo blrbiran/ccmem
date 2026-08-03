@@ -466,3 +466,16 @@ test('CLI reporting: a successful rewrite adds no extra stderr noise', () => wit
 
   assert.doesNotMatch(result.stderr, /plist not rewritten/, 'a clean write must not report a block that did not happen');
 }));
+
+// drift 检测的基准必须与 install 实际写入的内容同源——否则两处求值点分道扬镳
+// 时不会有任何症状。见 task-5-brief：declaration 本身也匹配 renderDaemonPlist(
+// 这个 pattern，所以要用负向前瞻排除声明行，断言的是"恰好一个调用方"。
+test('install writes exactly what renderPlist produces', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../../scripts/lib/admin/daemon.mjs', import.meta.url), 'utf8');
+
+  // installDaemon 体内不得再出现第二个 renderDaemonPlist 调用点。
+  const callSites = source.match(/(?<!function )renderDaemonPlist\(/g) ?? [];
+  assert.equal(callSites.length, 1, 'renderDaemonPlist must have exactly one caller: renderPlist');
+  assert.match(source, /writeFileSync\(plistPath, renderPlist\(\)\)/);
+});

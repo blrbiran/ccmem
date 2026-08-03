@@ -38,12 +38,16 @@ launchd plist 的 `EnvironmentVariables` 字典是**执行 `install` 那一刻 `
 
 **两条决定本设计走向、且与初稿假设相反的事实：**
 
-1. **plist 里有凭据，今天就有。** `DAEMON_ENV_PASSTHROUGH`（`:15-25`）含
-   `ANTHROPIC_API_KEY`、`ANTHROPIC_FOUNDRY_API_KEY`，经 `:83-88` 进 `daemonEnv`，
-   由 `renderDaemonPlist` **明文写进 plist**。
+1. **plist 里可能有凭据，取决于安装时的 shell。** `DAEMON_ENV_PASSTHROUGH`（`:15-25`）含
+   `ANTHROPIC_API_KEY`、`ANTHROPIC_FOUNDRY_API_KEY`，经 `:83-88` 进 `daemonEnv`——但 passthrough
+   只在安装那一刻的 shell 里该变量确实是非空字符串时才会被复制（`typeof value === 'string' && value`），
+   随后由 `renderDaemonPlist` 写进 plist。这些凭据平时活在 `config.json`，不是环境变量，
+   普通 shell 里通常没有设置。
    人类裁决 #5 讲的是 **provider（embedding）API key** 不进白名单
    （`tests/integration/v013-daemon-config-path.test.mjs:83` 钉的是 `OPENAI_API_KEY`），
-   **不是"plist 不含凭据"**。初稿把它写成后者，是错的。
+   **不是"plist 不含凭据"**——但也不是"plist 今天就必然含凭据"。两种绝对化的说法都错，
+   真实情况是条件命题：取决于安装时的 shell 是否导出了这些变量。
+   **安全规则不因此放松**：仍然禁止打印/落盘/写入任何 plist 或配置内容，只可 grep key 名。
 
 2. **daemon 会把记忆正文经由继承自 plist 的环境发出去。**
    `scripts/daemon/claude-p.mjs:118` 把 `process.env` 整个展开进子进程环境，
@@ -273,8 +277,9 @@ plist_rewrite: {
 **值一律不打印，只打印 key 名**，唯一例外是 `CCMEM_CONFIG_PATH` 与 `CCMEM_DATA_ROOT` 的新旧值
 ——G2 拦下来时，人必须看见它想把你改指到哪才能裁决。
 
-**这条不是防御深度，是硬性必需**：按 §二 事实 1，plist 环境字典**今天就含 Anthropic 凭据**。
-一个照直觉实现 diff 的人会打印新旧值，那就是把凭据打进终端和日志。
+**这条不是防御深度，是硬性必需**：按 §二 事实 1，plist 环境字典**可能含 Anthropic 凭据**
+（取决于安装时的 shell 是否导出了对应变量）。一个照直觉实现 diff 的人会打印新旧值，
+那就是把凭据打进终端和日志——而"这台机器这次恰好没有"不构成安全边界。
 
 ## 八、测试与不变量
 

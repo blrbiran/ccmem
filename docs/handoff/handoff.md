@@ -104,13 +104,24 @@ git log --oneline -8                                                      # 自�
 - **不要重派 Task 1**，也不要重做 Task 2 的代码。SDD 点名"controller 丢失位置后重复派发已完成任务"
   是代价最高的失败模式，ledger 就是为防它而写的——**信 ledger 和 `git log`，不要信记忆**。
 - 不要 push（人类自己做）。不要删 worktree 或分支（**删分支必须先问**）。
-- 不要把 plist 内容或配置文件内容打印/落盘/写进文档 —— 本机 plist 含 `ANTHROPIC_API_KEY` 明文。
+- 不要把 plist 内容或配置文件内容打印/落盘/写进文档 —— `DAEMON_ENV_PASSTHROUGH` 含 `ANTHROPIC_API_KEY` /
+  `ANTHROPIC_FOUNDRY_API_KEY`，**只在安装那一刻的 shell 里该变量确实非空时才会被复制进 plist**
+  （`scripts/lib/admin/daemon.mjs:84-87`）。这些凭据平时活在 `config.json`，不是环境变量，
+  普通 shell 里通常没设置。本机当前那份 plist 经核实**不含任何凭据类 key**（只有
+  `CCMEM_CLAUDE_P_COMMAND`/`CCMEM_CONFIG_PATH`/`CCMEM_DATA_ROOT`/`PATH` 四项）——
+  但规则不因此放松，plist **可能**含凭据，永远不打印/落盘/写进文档。
 
 ## 一条已被证伪的旧说法（本文档下方历史章节里还有它的残迹）
 
 下面「人类裁决」第 5 条说「provider API key 不进 daemon 环境白名单」——**那只讲 embedding provider 的 key**。
-`DAEMON_ENV_PASSTHROUGH` 里有 `ANTHROPIC_API_KEY` 和 `ANTHROPIC_FOUNDRY_API_KEY`，
-它们**今天就明文写在 plist 里**。任何"plist 不含凭据"的推论都是错的，设计文档 §二 已就此更正。
+`DAEMON_ENV_PASSTHROUGH` 里有 `ANTHROPIC_API_KEY` 和 `ANTHROPIC_FOUNDRY_API_KEY`，任何
+"plist 不含凭据"的推论都是错的。**但反过来"它们今天就明文写在 plist 里"同样是错的**——
+`daemon.mjs:84-87` 的 passthrough 只在安装那一刻的 shell 里该变量确实非空时才会被复制，
+而这些凭据平时活在 `config.json`，不是环境变量，普通 shell 里通常没设置。真实情况是
+**取决于安装时的 shell**：本机当前那份 plist 经核实只含 `CCMEM_CLAUDE_P_COMMAND`/
+`CCMEM_CONFIG_PATH`/`CCMEM_DATA_ROOT`/`PATH` 四个 key，**零个凭据类 key**。
+两种绝对化的说法（"不含" / "今天就有"）都错，设计文档 §二 已就此更正为条件命题。
+安全规则不因此放松：plist **可能**含凭据，永远不打印/落盘/写进文档。
 
 ---
 
@@ -122,7 +133,7 @@ git log --oneline -8                                                      # 自�
 | `git log`（近 ~25 个提交） | **每条修复的完整根因、证据、取舍都在提交信息里**，本文档刻意不重复。 |
 | `.superpowers/sdd/2026-07-31-ccmem-v0.13/progress.md` | SDD ledger —— 每条人类裁决及理由、全部延期项。git 历史一条都不记。 |
 | `.superpowers/sdd/2026-07-31-ccmem-v0.13/final-review-findings.md` | 末尾「NOT in this wave」= v0.14 待办来源。 |
-| `docs/ccmem-v0.13-spec.md` 附录 A | 不变量现为 **120–142（23 行）**。136–142 覆盖 Finding 6/7/8/12/13/14/5，**每条都验过红**。 |
+| `docs/ccmem-v0.13-spec.md` 附录 A | 不变量现为 **120–143（24 行）**。136–142 覆盖 Finding 6/7/8/12/13/14/5，**#143 覆盖 Finding 10**，**每条都验过红**。 |
 
 ## Git 状态
 
@@ -260,8 +271,6 @@ tail ~/.claude/ccmem/daemon.err.log
 
 `final-review-findings.md` 末尾的「NOT in this wave」是权威版本。另需并入：
 
-- ~~**Finding 10**~~ —— **已移出待办，正在 `finding10-plist-drift` 分支上修，见本文档顶部「进行中」一节。**
-  （原文：launchd plist 是安装时冻结的环境快照，`restart` 不重生成、无任何提示。详见 dogfood Finding 10。）
 - **Finding 13 的深层解**：让预算对同步工作真正生效需把 hook 工作切段 —— **设计改动，需人类裁决**。
 - **Finding 15**：重新推导 `openai_timeout_ms`。**判据是实测 p99，而现有数据截尾**
   （失败样本被 800ms 截断）—— 取无截断样本会改变生产行为，**需人类裁决取样方式**。
@@ -304,7 +313,7 @@ tail ~/.claude/ccmem/daemon.err.log
 - OpenWolf 记账文件（`.wolf/buglog.json`、`.wolf/memory.md`）已 gitignore；`.wolf/cerebrum.md` 入库。
   已记 `bug-058`（hook 配置分歧）、`bug-059`（hook 超时三层根因）、`bug-060`（熔断阈值失效）、
   **`bug-061`（坏配置打死 daemon + 错形状配置静默丢弃）**。
-  **未修的 finding（10、15）不记 bug，只活在 dogfood 文档里。**
+  **未修的 finding（15）不记 bug，只活在 dogfood 文档里。**
 - SDD workspace **刻意保留**：承载全部人类裁决及理由、final review findings、8 份任务报告。
 - 所有产物中不含任何凭据或个人数据；API key 存放于仓库外的用户配置文件。
 - **成本提示**：Finding 12/13 那轮 >$110，Finding 14 那轮 ~$60，文档回填那轮 ~$45，

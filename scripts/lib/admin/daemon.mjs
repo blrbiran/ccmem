@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
 import { getDataRoot } from '../db.mjs';
-import { comparePlist } from './plist-drift.mjs';
+import { comparePlist, evaluateGates, parseEnvDict, splitPlist } from './plist-drift.mjs';
 
 const DAEMON_MAIN = fileURLToPath(new URL('../../daemon/main.mjs', import.meta.url));
 const LAUNCHD_LABEL = 'com.ccmem.daemon';
@@ -261,9 +261,10 @@ function fallbackNodePath() {
   return readInstallState()?.node_path ?? resolveInstallNodePath(process.env);
 }
 
-function probeClaudeJsonSchemaSupport(command, daemonEnv) {
+function probeClaudeJsonSchemaSupport(command, daemonEnv, timeoutMs) {
   const result = spawnSync(command, ['-p', '--help'], {
     encoding: 'utf8',
+    ...(timeoutMs ? { timeout: timeoutMs } : {}),
     env: {
       ...process.env,
       ...daemonEnv
@@ -691,6 +692,41 @@ async function stopDaemon(db) {
   return stopped ? { status: 'stopped', ...current } : { status: 'stop_timeout', ...current };
 }
 
+// 本地进程启动，量级远低于此；restart 是人为动作，宁可等也不要误判。
+// 这个值是设计决定，不是实测导出的。不进配置 —— 新增配置项就是新增一个
+// 可与代码分歧的面（Finding 12 的形状）。
+const PLIST_PROBE_TIMEOUT_MS = 5000;
+
+function rewritePlistIfAllowed() {
+  const plistPath = getLaunchAgentPath();
+  if (!existsSync(plistPath)) {
+    return { written: false, blocked_by: null, reason: 'daemon is not installed under launchd' };
+  }
+
+  const onDisk = readFileSync(plistPath, 'utf8');
+  const expected = renderPlist();
+  if (onDisk === expected) {
+    return { written: false, blocked_by: null, reason: 'plist already matches the current environment' };
+  }
+
+  const oldEnv = parseEnvDict(splitPlist(onDisk).envText);
+  const newEnv = parseEnvDict(splitPlist(expected).envText);
+  if (!oldEnv.ok || !newEnv.ok) {
+    return { written: false, blocked_by: 'unparsable', reason: 'the installed plist is not in a shape this build can read; leaving it alone' };
+  }
+
+  const verdict = evaluateGates(oldEnv.env, newEnv.env, {
+    defaultDataRoot: getDataRoot(),
+    probe: (command, env) => probeClaudeJsonSchemaSupport(command, env, PLIST_PROBE_TIMEOUT_MS)
+  });
+  if (!verdict.ok) {
+    return { written: false, blocked_by: verdict.blocked_by, reason: verdict.reason };
+  }
+
+  writeFileSync(plistPath, expected);
+  return { written: true, blocked_by: null, reason: 'plist regenerated from the current environment' };
+}
+
 async function restartDaemon(db) {
   const current = loadDaemonStatus(db);
   const stopped = await stopDaemon(db);
@@ -699,12 +735,14 @@ async function restartDaemon(db) {
     return { status: 'restart_failed', phase: 'stop', previous_pid: current.pid ?? null, ...stopped };
   }
 
+  const rewrite = rewritePlistIfAllowed();
+
   const started = await startDaemon(db);
   if (!['started', 'already_running'].includes(started.status)) {
-    return { status: 'restart_failed', phase: 'start', previous_pid: current.pid ?? null, ...started };
+    return { status: 'restart_failed', phase: 'start', previous_pid: current.pid ?? null, plist_rewrite: rewrite, ...started };
   }
 
-  return { ...started, status: 'restarted', previous_pid: current.pid ?? null };
+  return { ...started, status: 'restarted', previous_pid: current.pid ?? null, plist_rewrite: rewrite };
 }
 
 // 检测不启子进程 —— 探针只属于门禁。这就是 status 能顺带报 drift 的原因。

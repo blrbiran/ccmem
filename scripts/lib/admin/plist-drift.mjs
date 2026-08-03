@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+
 // key 分类。原则（设计文档 §四）：凡决定"daemon 用谁的身份、把数据发到哪、
 // 读哪个文件"的 key，值不得静默变；凡只决定"怎么做"的 key，自由变。
 //
@@ -96,6 +99,65 @@ export function parseEnvDict(envText) {
 const EMPTY_LISTS = {
   added: [], removed: [], changed: [], benign_changed: [], template_changed: []
 };
+
+const REMEDY = 'run `ccmem admin daemon uninstall && ccmem admin daemon install` from the shell you want the daemon to inherit';
+
+// 直接复用 loadConfig 的解析规则（config.mjs），不另发明一套：
+// 比的是 daemon 实际会读哪个文件，不是字典里有没有那个 key。
+export function effectiveConfigPath(env, defaultDataRoot) {
+  const root = env.CCMEM_DATA_ROOT ?? defaultDataRoot;
+  const userPath = env.CCMEM_CONFIG_PATH;
+  return userPath && existsSync(userPath) ? userPath : path.join(root, 'config.json');
+}
+
+const POINTING_LITERAL_KEYS = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_FOUNDRY_BASE_URL', 'CLAUDE_CODE_USE_FOUNDRY'];
+
+export function evaluateGates(oldEnv, newEnv, { defaultDataRoot, probe }) {
+  // G1 —— key 非缩减。
+  const removed = Object.keys(oldEnv).filter((key) => !(key in newEnv));
+  if (removed.length) {
+    return { ok: false, blocked_by: 'G1', reason: `refusing to drop ${removed.join(', ')} from the daemon environment; ${REMEDY}` };
+  }
+
+  // G2 —— 指向类有效值。CCMEM_CONFIG_PATH 指向一个不存在的文件时，
+  // 有效值虽然回落成默认，但写进 plist 就是一颗延时地雷：那个文件一旦被创建，
+  // daemon 下次启动就跟着走了，而它已经过了这道门。所以拦。
+  if (newEnv.CCMEM_CONFIG_PATH && !existsSync(newEnv.CCMEM_CONFIG_PATH)) {
+    return { ok: false, blocked_by: 'G2', reason: `CCMEM_CONFIG_PATH names ${newEnv.CCMEM_CONFIG_PATH}, which does not exist; ${REMEDY}` };
+  }
+
+  const oldConfig = effectiveConfigPath(oldEnv, defaultDataRoot);
+  const newConfig = effectiveConfigPath(newEnv, defaultDataRoot);
+  if (oldConfig !== newConfig) {
+    return { ok: false, blocked_by: 'G2', reason: `refusing to repoint the daemon config from ${oldConfig} to ${newConfig}; ${REMEDY}` };
+  }
+
+  for (const key of POINTING_LITERAL_KEYS) {
+    if ((oldEnv[key] ?? null) !== (newEnv[key] ?? null)) {
+      return { ok: false, blocked_by: 'G2', reason: `refusing to change ${key}, which decides where the daemon sends data; ${REMEDY}` };
+    }
+  }
+
+  // G3 —— 凭据类。只报 key 名，永不报值。
+  for (const key of Object.keys(newEnv)) {
+    if (classifyKey(key) !== 'credential') continue;
+    if ((oldEnv[key] ?? null) !== newEnv[key]) {
+      return { ok: false, blocked_by: 'G3', reason: `refusing to change ${key}; ${REMEDY}` };
+    }
+  }
+
+  // G4 —— 探针。新 env 没有 claude 可探时空过（正常路径已被 G1 拦下），
+  // 但空过不得记成"探针通过"。
+  const command = newEnv.CCMEM_CLAUDE_P_COMMAND;
+  if (command) {
+    const probed = probe(command, newEnv);
+    if (!probed.ok) {
+      return { ok: false, blocked_by: 'G4', reason: probed.reason ?? 'claude capability probe failed' };
+    }
+  }
+
+  return { ok: true, blocked_by: null, reason: 'all gates passed' };
+}
 
 export function comparePlist(oldText, newText) {
   const oldParts = splitPlist(oldText);

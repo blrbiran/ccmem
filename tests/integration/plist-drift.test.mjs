@@ -78,7 +78,7 @@ test('parseEnvDict refuses garbage sitting between two valid pairs', () => {
   assert.equal(parsed.ok, false);
 });
 
-const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+const { mkdtempSync, writeFileSync, rmSync, readFileSync } = await import('node:fs');
 const { tmpdir } = await import('node:os');
 const { join } = await import('node:path');
 
@@ -173,6 +173,73 @@ const { cmdAdminDaemon } = await import('../../scripts/lib/admin/daemon.mjs');
 
 test.after(() => rmSync(wiringDataRoot, { recursive: true, force: true }));
 
+// restart/stop/start reach launchd through a FIXED label (com.ccmem.daemon),
+// so pointing CCMEM_LAUNCHAGENT_DIR at a temp dir isolates the plist *file*
+// but not the launchd *registration* — a real ccmem daemon installed on the
+// machine running this suite shares that exact label, and driving cmdAdminDaemon
+// with verb:'restart' against a real `launchctl` was observed to bootout and
+// re-bootstrap the developer's actual installed service (confirmed via
+// `launchctl print gui/<uid>/com.ccmem.daemon` before/after this test ran).
+// daemon.mjs already supports swapping the launchctl binary for this reason
+// (CCMEM_LAUNCHCTL_BIN / CCMEM_LAUNCHCTL_LOG — see admin-daemon-command.test.mjs's
+// launchdLifecycleScript()); reuse the identical mechanism here so any test
+// that reaches restartDaemon()'s launchd branch never touches the real system.
+const { chmodSync } = await import('node:fs');
+const fakeLaunchctlDir = mkdtempSync(join(tmpdir(), 'ccmem-fake-launchctl-'));
+const fakeLaunchctlPath = join(fakeLaunchctlDir, 'fake-launchctl.sh');
+const fakeLaunchctlLog = join(fakeLaunchctlDir, 'fake-launchctl.log');
+const fakeLaunchctlStatePath = join(fakeLaunchctlDir, 'fake-launchctl.loaded');
+
+writeFileSync(fakeLaunchctlPath, [
+  '#!/bin/sh',
+  'printf \'%s\\n\' "$@" >> "$CCMEM_LAUNCHCTL_LOG"',
+  'DB="$CCMEM_DATA_ROOT/global.db"',
+  `STATE=${JSON.stringify(fakeLaunchctlStatePath)}`,
+  'NOW=$(($(date +%s) * 1000))',
+  'set_lock() {',
+  '  sqlite3 "$DB" "INSERT OR REPLACE INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive) VALUES (1, 9876, \'fake-launchd-host\', $NOW, $NOW, 1);" >/dev/null 2>&1',
+  '}',
+  'case "$1" in',
+  '  bootout)',
+  '    rm -f "$STATE"',
+  '    sqlite3 "$DB" "DELETE FROM daemon_lock;" >/dev/null 2>&1',
+  '    ;;',
+  '  bootstrap)',
+  '    : > "$STATE"',
+  '    set_lock',
+  '    ;;',
+  '  kickstart)',
+  '    if [ ! -f "$STATE" ]; then',
+  '      printf %s\\n "service not loaded" >&2',
+  '      exit 1',
+  '    fi',
+  '    set_lock',
+  '    ;;',
+  'esac',
+  'exit 0',
+  ''
+].join('\n'));
+chmodSync(fakeLaunchctlPath, 0o755);
+
+async function withFakeLaunchctl(run) {
+  const previousBin = process.env.CCMEM_LAUNCHCTL_BIN;
+  const previousLog = process.env.CCMEM_LAUNCHCTL_LOG;
+  process.env.CCMEM_LAUNCHCTL_BIN = fakeLaunchctlPath;
+  process.env.CCMEM_LAUNCHCTL_LOG = fakeLaunchctlLog;
+  rmSync(fakeLaunchctlStatePath, { force: true });
+
+  try {
+    return await run();
+  } finally {
+    if (previousBin === undefined) delete process.env.CCMEM_LAUNCHCTL_BIN;
+    else process.env.CCMEM_LAUNCHCTL_BIN = previousBin;
+    if (previousLog === undefined) delete process.env.CCMEM_LAUNCHCTL_LOG;
+    else process.env.CCMEM_LAUNCHCTL_LOG = previousLog;
+  }
+}
+
+test.after(() => rmSync(fakeLaunchctlDir, { recursive: true, force: true }));
+
 // 接线测试。纯函数有测试 ≠ 接线有测试 —— 这里要证明 verb 分发真的调到了检测。
 test('T1 wiring: daemon status reports plist_drift', async () => {
   const agentDir = mkdtempSync(join(tmpdir(), 'ccmem-la-'));
@@ -189,3 +256,138 @@ test('T1 wiring: daemon status reports plist_drift', async () => {
     delete process.env.CCMEM_LAUNCHAGENT_DIR;
   }
 });
+
+const { evaluateGates, effectiveConfigPath } = await import('../../scripts/lib/admin/plist-drift.mjs');
+
+const okProbe = () => ({ ok: true });
+const ROOT = '/tmp/root';
+const gates = (oldEnv, newEnv, probe = okProbe) =>
+  evaluateGates(oldEnv, newEnv, { defaultDataRoot: ROOT, probe });
+
+// T3 —— G1。claude 掉出 PATH 时 CCMEM_CLAUDE_P_COMMAND 会从新 env 里消失，
+// 无条件重写会把一个本来好的安装改坏。这是反向的静默失败。
+test('T3: G1 refuses a shrinking key set', () => {
+  const verdict = gates(
+    { PATH: '/usr/bin', CCMEM_CLAUDE_P_COMMAND: '/usr/bin/claude' },
+    { PATH: '/usr/bin' }
+  );
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.blocked_by, 'G1');
+});
+
+// T4 —— G2。旧 plist 多半没有 CCMEM_CONFIG_PATH（该变量无持久来源），
+// 所以按"旧有才比"的写法，stray 值会被当成无害新增放行 —— 那正是重造 Finding 12。
+test('T4: G2 refuses a stray CCMEM_CONFIG_PATH that names a real file', () => {
+  const real = join(mkdtempSync(join(tmpdir(), 'ccmem-cfg-')), 'other.json');
+  writeFileSync(real, '{}');
+  const verdict = gates({ PATH: '/usr/bin' }, { PATH: '/usr/bin', CCMEM_CONFIG_PATH: real });
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.blocked_by, 'G2');
+});
+
+// time-of-check ≠ time-of-use：放行会把这个 key 持久化进 plist，
+// 哪天那个文件被创建出来，daemon 就跟着走了 —— 绕过 G2 自己。
+test('T4b: G2 refuses a CCMEM_CONFIG_PATH naming a file that does not exist', () => {
+  const verdict = gates({ PATH: '/usr/bin' }, { PATH: '/usr/bin', CCMEM_CONFIG_PATH: '/tmp/definitely-absent-8f3a.json' });
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.blocked_by, 'G2');
+});
+
+// T5 —— G2。旧无 / 新有，缺省记为 null，所以判为不同。
+test('T5: G2 refuses a newly appearing ANTHROPIC_BASE_URL', () => {
+  const verdict = gates({ PATH: '/usr/bin' }, { PATH: '/usr/bin', ANTHROPIC_BASE_URL: 'https://elsewhere.example' });
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.blocked_by, 'G2');
+});
+
+// T6 —— G3。静默改写凭据是延迟发生、难归因的失败。
+test('T6: G3 refuses a changed credential and never echoes its value', () => {
+  const secret = 'sk-ant-do-not-echo-me';
+  const verdict = gates({ ANTHROPIC_API_KEY: 'old-value' }, { ANTHROPIC_API_KEY: secret });
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.blocked_by, 'G3');
+  const serialised = JSON.stringify(verdict);
+  assert.equal(serialised.includes(secret), false, 'the credential value must not appear anywhere');
+  // 正面对照：这个 0 不是因为 serialised 是空的 —— key 名必须在里面。
+  assert.equal(serialised.includes('ANTHROPIC_API_KEY'), true);
+  // 被拦下的人需要知道下一步，否则停在半路。
+  // brief 里 REMEDY 的实际文本是 "uninstall && ccmem admin daemon install"（两条完整命令），
+  // 与 REMEDY 保持一致而不是原样的 /uninstall && install/（那样永远匹配不上）。
+  assert.match(verdict.reason, /uninstall && ccmem admin daemon install/);
+});
+
+// T7 —— G4。
+test('T7: G4 refuses when the probe fails', () => {
+  const verdict = gates(
+    { CCMEM_CLAUDE_P_COMMAND: '/usr/bin/claude' },
+    { CCMEM_CLAUDE_P_COMMAND: '/usr/bin/claude' },
+    () => ({ ok: false, reason: 'no --json-schema' })
+  );
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.blocked_by, 'G4');
+});
+
+// T8 —— 正面对照。没有这条，上面所有"被拦下"都可能只是因为压根不会放行。
+test('T8: a free-key addition passes every gate', () => {
+  const verdict = gates(
+    { PATH: '/usr/bin', CCMEM_CLAUDE_P_COMMAND: '/usr/bin/claude' },
+    { PATH: '/usr/bin', CCMEM_CLAUDE_P_COMMAND: '/usr/bin/claude', CCMEM_CLAUDE_P_TIMEOUT_MS: '60000' }
+  );
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.blocked_by, null);
+});
+
+// 缺省的 CCMEM_CONFIG_PATH 与显式写成默认路径，有效值相同 —— 应放行。
+test('effectiveConfigPath treats an absent key as the store default', () => {
+  assert.equal(effectiveConfigPath({}, ROOT), join(ROOT, 'config.json'));
+});
+
+// T9。restart 的本职是把 daemon 起回来；用一个可疑的配置问题去阻断重启，
+// 是拿一个可疑问题换一个确定的停机。
+test('T9: a blocked gate still lets the restart finish', () => withFakeLaunchctl(async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'ccmem-la-'));
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+  writeFileSync(plistPath, plistWith({ ...BASE_ENV, ANTHROPIC_API_KEY: 'old' }));
+  const before = readFileSync(plistPath, 'utf8');
+
+  const db = openDb();
+  const result = await cmdAdminDaemon(db, { verb: 'restart' });
+
+  assert.equal(result.status, 'restarted');
+  assert.equal(result.plist_rewrite.written, false);
+  assert.equal(readFileSync(plistPath, 'utf8'), before, 'a blocked gate must leave the plist byte-identical');
+}));
+
+// T11。解析不出旧 env 就判不了 G1–G3，此时重写等于在看不见的前提下改配置。
+test('T11: an unparsable plist blocks the rewrite', () => withFakeLaunchctl(async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'ccmem-la-'));
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+  writeFileSync(plistPath, plistWith(BASE_ENV).replace('<string>/usr/bin</string>', '<data>zz</data>'));
+  const before = readFileSync(plistPath, 'utf8');
+
+  const db = openDb();
+  const result = await cmdAdminDaemon(db, { verb: 'restart' });
+
+  assert.equal(result.plist_rewrite.blocked_by, 'unparsable');
+  assert.equal(result.plist_rewrite.written, false);
+  assert.equal(readFileSync(plistPath, 'utf8'), before);
+}));
+
+test('T2 rewrite side: a benign-only difference is still written', () => withFakeLaunchctl(async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'ccmem-la-'));
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+  // 磁盘上是一份除 PATH 外与当前求值一致的 plist：构造法是先取当前期望值，
+  // 再把 PATH 那一行改掉，确保唯一差异落在自由变桶。
+  const expected = (await import('../../scripts/lib/admin/daemon.mjs')).renderPlist();
+  writeFileSync(plistPath, expected.replace(/<key>PATH<\/key><string>[^<]*<\/string>/, '<key>PATH</key><string>/stale/bin</string>'));
+
+  const db = openDb();
+  const result = await cmdAdminDaemon(db, { verb: 'restart' });
+
+  assert.equal(result.plist_drift?.status ?? 'in_sync', 'in_sync');
+  assert.equal(result.plist_rewrite.written, true, 'a PATH refresh must reach the installed plist');
+  assert.doesNotMatch(readFileSync(plistPath, 'utf8'), /\/stale\/bin/);
+}));

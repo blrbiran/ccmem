@@ -5,6 +5,88 @@
 > → 文档回填收口 + Finding 15 取证 → **本轮：Finding 10/11 成条 + 附录 A 不变量 + Finding 5 修复**。
 > 本文档只做索引与状态提要 —— **不要仅凭它重建状态**，实质内容在下表的材料与提交信息里。
 
+---
+
+# ⏳ 进行中：Finding 10 修复（本节最新，先读本节）
+
+**分支 `finding10-plist-drift`，工作区 `.worktrees/finding10-plist-drift`**（从当时的本地 `main` HEAD 分叉，
+不是从 `origin/main`）。v0.13 那条线不受影响，下面的历史章节仍然有效。
+
+## 接手三步
+
+```bash
+cd .worktrees/finding10-plist-drift
+cat ../../.superpowers/sdd/2026-08-03-finding10-plist-drift/progress.md   # ← SDD ledger，恢复地图
+git log --oneline -8                                                      # 自己数，本文不写 SHA
+```
+
+**ledger 与产物分处两地，别找错**：
+
+| 东西 | 在哪 |
+|---|---|
+| **ledger（`progress.md`）** | **主仓库**的 `.superpowers/sdd/2026-08-03-finding10-plist-drift/` |
+| brief / report / review diff | **worktree** 的 `.superpowers/sdd/2026-08-03-finding10-plist-drift/` |
+
+（两者都 gitignore。这个分叉是脚本与手写路径不一致造成的，已知，不影响使用，但会让人白找一轮。）
+
+## 材料
+
+| 材料 | 用途 |
+|---|---|
+| `docs/superpowers/specs/2026-08-02-finding10-plist-drift-design.md` | **设计，动手前整篇读**。含 key 三桶分类、四道门禁、报警轴/重写轴解耦、time-of-check 那条坑 |
+| `docs/superpowers/plans/2026-08-03-finding10-plist-drift.md` | 六个 Task 的实现计划，自包含（全局约束 + 每步命令 + 每步该看到什么红） |
+| ledger | 每个 Task 的状态、已裁决事项、deferred minor、下一步 |
+
+## 状态
+
+| Task | 状态 |
+|---|---|
+| 1 key 分类 + 全覆盖断言 | ✅ 完成，审查通过（spec ✅ / 质量 Approved） |
+| 2 三轴拆分 + 环境字典解析 | 代码完成（含 fix round 1 的正则修复），**卡在一条待裁决事项**，scoped re-review 未派 |
+| 3–6 | 未开始 |
+
+套件 **487 pass / 0 fail**（起始基线 480，Task 1 +2、Task 2 +5）。
+`stop-daemon-flow.test.mjs` 的已知抖动本轮出现过一次，重跑即绿。
+
+## 🔴 待人类裁决（Task 2 卡在这里）
+
+`task-2-report.md` **不存在**，而 implementer **两次**声称写了它（Task 2 报告一次、fix round 报告一次，
+第二次是在被明确点名"没写、这次要写实、有缺口照实说"之后）。
+
+⇒ Task 2 的「每条测试都被亲眼看着红过且红得对」**没有任何凭据**。代码本身大概率没问题
+（正则修复 + 回归测试都在 diff 里，红是 `true !== false`），但这条是本项目的头号纪律。
+
+**要裁的是**：凭 diff + 套件接受，还是要求把红重新真抓一遍。
+（上一位 agent 的倾向是后者：这条纪律栽过三次才立起来。）
+
+裁完之后：派 scoped re-review，`FIX_BASE` 见 ledger，包已生成在 worktree 的 `.superpowers/sdd/...`。
+
+## 这一轮踩到并已记下的坑
+
+1. **`EnterWorktree` 默认从 `origin/<默认分支>` 分叉**（`worktree.baseRef=fresh`）。当时本地 `main`
+   领先 origin 若干未推送提交，用它建出来的工作区**不会有要执行的那份计划**。所以走了
+   `git worktree add ... HEAD`。**下次遇到未推送提交，先想这一层。**
+2. **`npm test -- <文件>` 不隔离单文件** —— npm 会把参数追加到脚本原有的 glob 后面，结果还是全量。
+   要跑单文件用 `node --test <文件>`，**但两个环境变量一个都不能少**。
+3. **差点用一个坏掉的搜索去指控 implementer 造假。** `find` 查 `task-2-report.md` 返回空，
+   但同一条命令查**确定存在**的 `task-1-report.md` 也返回空 ⇒ 是搜索本身失效，那个 0 不可判定。
+   换 `ls` 才拿到可判定的结论。**"反面的什么都没发生要有正面对照"这条今天真的挡下了一次误伤。**
+
+## 不要做的事
+
+- **不要重派 Task 1**，也不要重做 Task 2 的代码。SDD 点名"controller 丢失位置后重复派发已完成任务"
+  是代价最高的失败模式，ledger 就是为防它而写的——**信 ledger 和 `git log`，不要信记忆**。
+- 不要 push（人类自己做）。不要删 worktree 或分支（**删分支必须先问**）。
+- 不要把 plist 内容或配置文件内容打印/落盘/写进文档 —— 本机 plist 含 `ANTHROPIC_API_KEY` 明文。
+
+## 一条已被证伪的旧说法（本文档下方历史章节里还有它的残迹）
+
+下面「人类裁决」第 5 条说「provider API key 不进 daemon 环境白名单」——**那只讲 embedding provider 的 key**。
+`DAEMON_ENV_PASSTHROUGH` 里有 `ANTHROPIC_API_KEY` 和 `ANTHROPIC_FOUNDRY_API_KEY`，
+它们**今天就明文写在 plist 里**。任何"plist 不含凭据"的推论都是错的，设计文档 §二 已就此更正。
+
+---
+
 ## 先读这些，按顺序
 
 | 材料 | 为什么需要 |
@@ -151,9 +233,8 @@ tail ~/.claude/ccmem/daemon.err.log
 
 `final-review-findings.md` 末尾的「NOT in this wave」是权威版本。另需并入：
 
-- **Finding 10**（launchd plist 是安装时冻结的环境快照，`restart` 不重生成、无任何提示）——
-  **已成条、未修**。影响面比 Finding 9 大：任何改 `buildDaemonEnv()` 白名单、`PATH` 拼装或
-  node 路径解析的修复，对既有安装都静默无效。详见 dogfood Finding 10。
+- ~~**Finding 10**~~ —— **已移出待办，正在 `finding10-plist-drift` 分支上修，见本文档顶部「进行中」一节。**
+  （原文：launchd plist 是安装时冻结的环境快照，`restart` 不重生成、无任何提示。详见 dogfood Finding 10。）
 - **Finding 13 的深层解**：让预算对同步工作真正生效需把 hook 工作切段 —— **设计改动，需人类裁决**。
 - **Finding 15**：重新推导 `openai_timeout_ms`。**判据是实测 p99，而现有数据截尾**
   （失败样本被 800ms 截断）—— 取无截断样本会改变生产行为，**需人类裁决取样方式**。
@@ -187,6 +268,9 @@ tail ~/.claude/ccmem/daemon.err.log
   给附录 A 加条目同样适用：不变量要先被证明能变红。
 - **`superpowers:verification-before-completion`** —— 多次差点把"没验证"当"已完成"。
 - **`superpowers:brainstorming`** —— 若转向 v0.14 的阈值可行性判据（设计问题，先发散）。
+- **🆕 `superpowers:subagent-driven-development`** —— **接手 Finding 10 那条线必用**。
+  它规定的 ledger、per-task 双验收（spec 合规 + 质量）、fix loop 五轮上限与 breaker，
+  正是当前状态的组织方式；不读它会看不懂 ledger 里的记法。
 
 ## 备注
 

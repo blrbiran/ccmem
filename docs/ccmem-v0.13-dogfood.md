@@ -402,7 +402,7 @@ Finding 6 的裁决本身是对的，但它切断了 daemon 的最后一条通�
 **教训**：本条原记述之所以错，是因为上一轮**用一个与生产不同的调用形态去测量生产行为**。
 「三个签名」这个说法本身就该引起警觉 —— 生产里只有两个进程，不可能有三个当事人。
 
-### Finding 10：launchd plist 是安装时冻结的环境快照，`restart` 不重新生成（P1 → **未修，仅有人工绕过**）
+### Finding 10：launchd plist 是安装时冻结的环境快照，`restart` 不重新生成（P1 → **已修复**）
 
 **由 Finding 9 分出。** Finding 9 的修复 ① 把 `CCMEM_CONFIG_PATH` 加进 daemon 环境白名单
 （现见 `admin/daemon.mjs:65-74` 的 `passthroughKeys`，注释写明了 API key 为什么刻意不进）。
@@ -431,13 +431,23 @@ Finding 6 的裁决本身是对的，但它切断了 daemon 的最后一条通�
 3. `install` 的返回里带 `plist: readPlist()`（`:543`/`:554`），读的是**磁盘上的**内容，且只在 install 时返回；
    没有任何地方把磁盘 plist 与重新求值的结果做 drift 比较。
 
-**影响面比 Finding 9 大**：任何改动 `buildDaemonEnv()` 白名单、`PATH` 拼装或 node 路径解析的修复，
-对既有安装都是**静默无效**的。Finding 9 是第一次踩中，但机制是通用的。
+**影响面比 Finding 9 大**（记述取自修复前的代码事实，**本条已修复，不代表当前行为**——见下方「验证状态」）：
+任何改动 `buildDaemonEnv()` 白名单、`PATH` 拼装或 node 路径解析的修复，在修复前对既有安装都是
+**静默无效**的。Finding 9 是第一次踩中，但机制在修复前是通用的。
 
-**验证状态**：**未修**（本条不含任何代码改动，属 v0.14）。本机已靠人工 `uninstall && install` 绕过 ——
-磁盘上的 `~/Library/LaunchAgents/com.ccmem.daemon.plist` 现含 `CCMEM_CONFIG_PATH` **1 处**，
-且 `OPENAI|API_KEY|api_key` **0 处**（同一条 grep 在前者返回 1、后者返回 0，
-⇒ 这个 0 是真 0，不是 grep 本身失效 —— 按 §六「0 计数先解释来源」的正面对照要求）。
+**验证状态**：✅ **已修复并在真实环境实测**（2026-08-03）。`restart` 现在会在**字节不等、环境字典可解析、
+G1–G4 全过**时重写 plist（附录 A **#143**）；其余情形字节不变，`restart` 仍成功。
+
+实测过程：先 `ccmem admin daemon install`，此时真实 plist 里 `grep -c ANTHROPIC_SMALL_FAST_MODEL` 返回 **0**；
+同一条 grep 对 `CCMEM_DATA_ROOT`（一个确定存在的 key）返回 **1**，作正面对照，
+证明这个 `0` 是真 0，不是 grep 本身失效。再带着 `ANTHROPIC_SMALL_FAST_MODEL` 跑一次
+`./bin/ccmem admin daemon restart`，同一条 grep 变为 **1**，对照仍是 **1**。
+⇒ `restart` 确实重新生成了真实 plist，不只是测试里绿。收尾后机器已还原为字节级原状，daemon 验证在运行。
+
+**自动重写不覆盖指向类**：Finding 9 自己那类（`CCMEM_CONFIG_PATH`/`CCMEM_DATA_ROOT` 等指向类 key
+的改动）被 G2 拦下，不会自动重写，仍需人工 `uninstall && install` ——这是刻意的（见设计文档
+§三「自动重写覆盖什么、不覆盖什么」）。`PATH` 拼装、node 路径解析等非指向、非凭据类的修复
+则会自动重写进 plist。
 
 **取证方式本身值得记**：本条的依据**全部是代码路径与磁盘文件**，不是进程环境读数。
 Finding 9 原文说这件事是靠 `ps eww -p <pid>` 发现的，**那条手段在这台机器上根本读不到进程环境**
@@ -918,7 +928,6 @@ $0.02/1M ⇒ **总计 < $0.02**，不构成决策因素。
    **Finding 4 证伪了 800ms**（第二批即超时打死整条链）。**口径见上方 G1 执行方案的 ②。**
 3. **dogfood 期间持续收集**：V1（误杀率）与 V2（样本量 + p50 漂移）—— 这两项是 v0.14 的决策依据。
 4. **后续（v0.14 候选）**：Finding 5（`JSON.parse` 无保护）；
-   **Finding 10（plist 冻结安装时环境快照，`restart` 不重生成、无任何提示）**；
    `final-review-findings.md` 末尾「NOT in this wave」清单；两个 daemon 测试抖动合并为一个 issue。
 
 ---

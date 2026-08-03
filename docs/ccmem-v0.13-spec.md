@@ -911,12 +911,22 @@ v0.12 全量测试必须 100% 通过。
 | **141** | **缺失的熔断键读作 absent 而非 `0`（Finding 14）** | `sed -n '/function readConfigKvInt/,/^}/p' scripts/lib/embedding/provider.mjs \| grep -c 'raw == null'` | `≥ 1` —— `Number(null) === 0` 是有限数，没有这道 guard，从未开过的熔断读起来就像开过 |
 
 | **142** | **坏配置被拒绝，且 daemon 拒绝带病启动（Finding 5）** | `sed -n '/export function loadConfig/,/^}/p' scripts/lib/config.mjs \| grep -c 'ConfigError'` 且 `grep -c 'ConfigError' scripts/daemon/main.mjs` | 均 `≥ 2` —— 前者两处（解析失败 + 形状不是对象），后者两处（import + `instanceof` 判别）。**回落 `DEFAULT_CONFIG` 才是这里的坏结局**，不是抛错：那会让 daemon 用 `transformers-local` 去查一库 openai 向量，静默重造 Finding 12 |
+| **143** | **`restart` 只在字节不等、环境字典可解析、G1–G4 全过时重写 plist（Finding 10）** | 无 grep 单条命令可钉——机制横跨 `parseEnvDict` / `evaluateGates` / `rewritePlistIfAllowed` 三处；见 `tests/integration/plist-drift.test.mjs` T3–T9、T11、T2 rewrite side | 其余一切情形（字节相等 / 不可解析 / 任一门不过）plist 字节不变，且 `restart` 仍成功。**条件是字节不等，不是 `status === 'drifted'`**：`in_sync` 时照样可能要写 |
+
+**#143 的验红是部分的，如实记录**：本条由三个合取项组成（字节不等 / 可解析 / G1–G4 全过），
+镜像验证只动了 **G1–G4 这一项**——把 `rewritePlistIfAllowed` 里 `if (!verdict.ok) {...}` 那段
+注释掉，让门禁判定失效，跑 `tests/integration/plist-drift.test.mjs`：**T9**
+（`a blocked gate still lets the restart finish`）与 **`CLI reporting: a blocked gate writes
+the remedy to stderr`** 从绿翻红（30/30 → 28/30），其余 28 条不受影响。**字节相等短路**与
+**解析失败判定**这两个合取项**未被本次验红触及**——它们是另一段代码，注释掉门禁判定不会碰到它们。
+恢复镜像后跑回 30/30。（T3–T8 断言的是 `evaluateGates` 这个纯函数本身，不经过
+`rewritePlistIfAllowed`，镜像改动碰不到它们；T11 断言的是解析失败分支，同理不受影响。）
 
 **Finding 15 刻意没有条目。** 它已取证但**未修**（`openai_timeout_ms: 800` 落在查询嵌入延迟分布中间），
 没有任何已落地的行为可钉。为未修的 finding 编一条不变量，产出的只会是一条恒绿的检查
 —— **#129 就是这么来的**：它原本针对 `signature.mjs`，而该文件根本不写 audit、`logAudit(` 也不存在于全仓，
 **任何改动都无法让它失败**。（另两条返工是别的毛病，别混为一谈：#125 原写法需人判断，改成机械可检；
-#134 原写法**误报失败**，是假红不是恒绿。）同理 Finding 5 / 10 也无条目。
+#134 原写法**误报失败**，是假红不是恒绿。）同理 Finding 15 也无条目。（Finding 5 见 #142，Finding 10 见 #143。）
 
 **136–141 的验红方式（附录 A 是人工 checklist，没有 runner）**：把涉及的五个文件镜像到临时目录，
 每条**各自单独回退一处修复**后跑同一条命令，实测：

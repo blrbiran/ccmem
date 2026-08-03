@@ -562,15 +562,38 @@ try {
     const daemonVerb = args[1];
     const result = await cmdAdminDaemon(getDb(), { verb: daemonVerb });
 
+    if (daemonVerb === 'restart' && result.plist_rewrite?.blocked_by) {
+      // Only the code and the reason string — the reason never carries a
+      // credential value (see evaluateGates' G3 branch) — never anything
+      // from the environment dict itself.
+      process.stderr.write(`ccmem: plist not rewritten (${result.plist_rewrite.blocked_by}): ${result.plist_rewrite.reason}\n`);
+    }
+
     if (daemonVerb === 'status') {
       if (!result.alive) {
         process.stdout.write('ccmem: daemon not running\n');
       } else {
         const running = result.running_task ? `${result.running_task.type}#${result.running_task.id}` : 'none';
         const source = result.install_variant === 'container-fallback' ? ' source=container-fallback' : '';
+        // plist_drift.status is a four-value enum here (comparePlist's three plus
+        // describePlistDrift's own 'not_installed'), not comparePlist's three —
+        // print whatever it is rather than assuming one of three values.
+        const plistStatus = result.plist_drift?.status ?? 'unknown';
         process.stdout.write(
-          `ccmem: daemon alive pid=${result.pid} host=${result.hostname} heartbeat_ms=${result.heartbeat_age_ms} startup_schema=${result.startup_schema_version ?? 'unknown'} uptime_sec=${result.uptime_sec ?? 'unknown'} running=${running}${source}\n`
+          `ccmem: daemon alive pid=${result.pid} host=${result.hostname} heartbeat_ms=${result.heartbeat_age_ms} startup_schema=${result.startup_schema_version ?? 'unknown'} uptime_sec=${result.uptime_sec ?? 'unknown'} running=${running}${source} plist=${plistStatus}\n`
         );
+        if (plistStatus === 'drifted') {
+          // Key names only — never the values (same standing rule as the G2/G3
+          // rewrite-block messages elsewhere in this file).
+          const changedKeys = [
+            ...new Set([
+              ...(result.plist_drift.added ?? []),
+              ...(result.plist_drift.removed ?? []),
+              ...(result.plist_drift.changed ?? [])
+            ])
+          ];
+          process.stderr.write(`ccmem: plist drift detected; changed keys: ${changedKeys.join(', ')}\n`);
+        }
       }
     } else if (result.status === 'already_running') {
       process.stdout.write(`ccmem: daemon already running pid=${result.pid}\n`);

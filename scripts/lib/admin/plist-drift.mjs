@@ -64,7 +64,7 @@ export function splitPlist(text) {
   return { envText, programArgs, template };
 }
 
-const PAIR_RE = /<key>([\s\S]*?)<\/key><string>([\s\S]*?)<\/string>/g;
+const PAIR_RE = /<key>([^<]*)<\/key><string>([^<]*)<\/string>/g;
 
 // escapeXml 的逆。& 必须最后还原，否则 "&amp;lt;" 会被错还原成 "<"。
 function unescapeXml(value) {

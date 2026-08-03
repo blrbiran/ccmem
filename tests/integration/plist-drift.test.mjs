@@ -72,3 +72,8 @@ test('parseEnvDict control: clean input still parses', () => {
   const parsed = parseEnvDict('<key>A</key><string>1</string>');
   assert.equal(parsed.ok, true);
 });
+
+test('parseEnvDict refuses garbage sitting between two valid pairs', () => {
+  const parsed = parseEnvDict('<key>A</key><garbage/><key>B</key><string>1</string>');
+  assert.equal(parsed.ok, false);
+});

@@ -92,3 +92,49 @@ export function parseEnvDict(envText) {
 
   return { ok: true, env };
 }
+
+const EMPTY_LISTS = {
+  added: [], removed: [], changed: [], benign_changed: [], template_changed: []
+};
+
+export function comparePlist(oldText, newText) {
+  const oldParts = splitPlist(oldText);
+  const newParts = splitPlist(newText);
+
+  const oldEnv = parseEnvDict(oldParts.envText);
+  const newEnv = parseEnvDict(newParts.envText);
+
+  // 判不了就是判不了。不得从解析失败推出 in_sync。
+  if (!oldEnv.ok || !newEnv.ok) {
+    return { status: 'unknown', ...EMPTY_LISTS };
+  }
+
+  const added = [];
+  const removed = [];
+  const changed = [];
+  const benign_changed = [];
+
+  for (const key of Object.keys(newEnv.env)) {
+    if (!(key in oldEnv.env)) added.push(key);
+  }
+  for (const key of Object.keys(oldEnv.env)) {
+    if (!(key in newEnv.env)) removed.push(key);
+  }
+  for (const key of Object.keys(newEnv.env)) {
+    if (!(key in oldEnv.env)) continue;
+    if (oldEnv.env[key] === newEnv.env[key]) continue;
+    // 自由变 key 的值变化不进报警轴 —— 但它仍会让字节不等，从而进重写轴。
+    if (classifyKey(key) === 'free') benign_changed.push(key);
+    else changed.push(key);
+  }
+
+  const template_changed = [];
+  if (oldParts.programArgs !== newParts.programArgs) template_changed.push('ProgramArguments');
+  if (oldParts.template !== newParts.template) template_changed.push('template');
+
+  const raisesVerdict = added.length || removed.length || changed.length;
+  return {
+    status: raisesVerdict ? 'drifted' : 'in_sync',
+    added, removed, changed, benign_changed, template_changed
+  };
+}

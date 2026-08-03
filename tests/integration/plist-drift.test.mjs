@@ -77,3 +77,97 @@ test('parseEnvDict refuses garbage sitting between two valid pairs', () => {
   const parsed = parseEnvDict('<key>A</key><garbage/><key>B</key><string>1</string>');
   assert.equal(parsed.ok, false);
 });
+
+const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+const { tmpdir } = await import('node:os');
+const { join } = await import('node:path');
+
+const { comparePlist } = await import('../../scripts/lib/admin/plist-drift.mjs');
+
+function plistWith(envPairs, { programArg = '/usr/bin/node', extra = '' } = {}) {
+  const dict = Object.entries(envPairs)
+    .map(([k, v]) => `    <key>${k}</key><string>${v}</string>`)
+    .join('\n');
+  return `<plist version="1.0"><dict>
+  <key>Label</key><string>com.ccmem.daemon</string>${extra}
+  <key>ProgramArguments</key>
+  <array>
+    <string>${programArg}</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+${dict}
+  </dict>
+</dict></plist>
+`;
+}
+
+const BASE_ENV = { PATH: '/usr/bin', CCMEM_DATA_ROOT: '/tmp/root', CCMEM_CONFIG_PATH: '/tmp/root/config.json' };
+
+// T1
+test('T1: a missing pointing key is drift', () => {
+  const { CCMEM_CONFIG_PATH, ...without } = BASE_ENV;
+  const result = comparePlist(plistWith(without), plistWith(BASE_ENV));
+  assert.equal(result.status, 'drifted');
+  assert.ok(result.added.includes('CCMEM_CONFIG_PATH'));
+});
+
+// T2 报警侧。PATH 取自调用方 shell，换个终端就不同；若它计入三态，
+// status 会常态报 drifted，把新报警训练成噪声（Finding 2 的读法）。
+test('T2: a PATH-only difference does not raise the verdict', () => {
+  const result = comparePlist(plistWith(BASE_ENV), plistWith({ ...BASE_ENV, PATH: '/opt/bin:/usr/bin' }));
+  assert.equal(result.status, 'in_sync');
+  assert.deepEqual(result.benign_changed, ['PATH']);
+  assert.deepEqual(result.changed, []);
+});
+
+// T2b 报警侧。模板变了而环境字典相同 —— 纯代码版本差异。
+test('T2b: a template-only difference does not raise the verdict either', () => {
+  const result = comparePlist(plistWith(BASE_ENV), plistWith(BASE_ENV, { extra: '\n  <key>ProcessType</key><string>Background</string>' }));
+  assert.equal(result.status, 'in_sync');
+  assert.deepEqual(result.template_changed, ['template']);
+});
+
+test('T2b-2: a ProgramArguments-only difference is reported on its own axis', () => {
+  const result = comparePlist(plistWith(BASE_ENV), plistWith(BASE_ENV, { programArg: '/opt/homebrew/bin/node' }));
+  assert.equal(result.status, 'in_sync');
+  assert.deepEqual(result.template_changed, ['ProgramArguments']);
+});
+
+// T10
+test('T10: an unparsable env dict is unknown, never in_sync', () => {
+  const broken = plistWith(BASE_ENV).replace('<key>PATH</key><string>/usr/bin</string>', '<key>PATH</key><data>zz</data>');
+  const result = comparePlist(broken, plistWith(BASE_ENV));
+  assert.equal(result.status, 'unknown');
+  // 解析不出来就是没有可报的条目，不是"没有条目"—— 五个列表一律空数组，不缺省。
+  assert.deepEqual(result.added, []);
+  assert.deepEqual(result.changed, []);
+  assert.deepEqual(result.benign_changed, []);
+  assert.deepEqual(result.template_changed, []);
+});
+
+// 接线用的独立 data root —— 跟前面纯函数测试共用的 shell 级 CCMEM_DATA_ROOT
+// 分开，避免 openDb() 落进一个被其他测试写过的目录。
+const wiringDataRoot = mkdtempSync(join(tmpdir(), 'ccmem-t3-wiring-'));
+process.env.CCMEM_DATA_ROOT = wiringDataRoot;
+
+const { openDb } = await import('../../scripts/lib/db.mjs');
+const { cmdAdminDaemon } = await import('../../scripts/lib/admin/daemon.mjs');
+
+test.after(() => rmSync(wiringDataRoot, { recursive: true, force: true }));
+
+// 接线测试。纯函数有测试 ≠ 接线有测试 —— 这里要证明 verb 分发真的调到了检测。
+test('T1 wiring: daemon status reports plist_drift', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'ccmem-la-'));
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
+
+  const db = openDb();
+  try {
+    const result = await cmdAdminDaemon(db, { verb: 'status' });
+    assert.ok(result.plist_drift, 'status must carry plist_drift');
+    assert.ok(['in_sync', 'drifted', 'unknown'].includes(result.plist_drift.status));
+  } finally {
+    db.close();
+    delete process.env.CCMEM_LAUNCHAGENT_DIR;
+  }
+});

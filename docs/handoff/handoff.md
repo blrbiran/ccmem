@@ -9,8 +9,23 @@
 
 # ⏳ 进行中：Finding 10 修复（本节最新，先读本节）
 
-**分支 `finding10-plist-drift`，工作区 `.worktrees/finding10-plist-drift`**（从当时的本地 `main` HEAD 分叉，
-不是从 `origin/main`）。v0.13 那条线不受影响，下面的历史章节仍然有效。
+**Tasks 1–2 已经 `--no-ff` 合进 `main`**（合并提交标题：`Merge branch 'finding10-plist-drift': plist drift groundwork`）。
+分支 `finding10-plist-drift` 与工作区 `.worktrees/finding10-plist-drift` **都还在，Tasks 3–6 继续在那里做**。
+v0.13 那条线不受影响，下面的历史章节仍然有效。
+
+> ⚠️ **合并进来的是半成品，而且是刻意的。** `main` 上现在有
+> `scripts/lib/admin/plist-drift.mjs`（`classifyKey` / `splitPlist` / `parseEnvDict`）
+> 和它的测试，**但生产代码没有任何一处调用它** —— `status` 接线、四道门禁、restart 重写
+> 都是 Tasks 3–6，尚未编写。
+>
+> ⇒ **Finding 10 仍未修复**，`restart` 现在依旧不重新生成 plist。
+> `docs/ccmem-v0.13-dogfood.md` 里 Finding 10 仍写「未修」，**那才是权威状态**；
+> 附录 A 也还没有 #143。**在 Tasks 3–6 完成前，不要把"已修"往任何地方传播。**
+>
+> 那个合并提交用了 `--no-ff`，所以整段回退是一条命令的事。
+
+**在 worktree 里接着做之前先 `git merge main`** —— 这份 handoff 的后续更新提交在 `main` 上，
+分支里的副本会比它旧。
 
 ## 接手三步
 
@@ -46,6 +61,7 @@ git log --oneline -8                                                      # 自�
 | 3–6 | 未开始 |
 
 套件 **487 pass / 0 fail**（起始基线 480，Task 1 +2、Task 2 +5）。
+**合并后在 `main` 上实测过，仍是 487 / 0**，不是只在分支上量的。
 `stop-daemon-flow.test.mjs` 的已知抖动本轮出现过一次，重跑即绿。
 
 ## 🔴 待人类裁决（Task 2 卡在这里）

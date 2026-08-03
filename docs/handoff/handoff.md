@@ -57,25 +57,36 @@ git log --oneline -8                                                      # 自�
 | Task | 状态 |
 |---|---|
 | 1 key 分类 + 全覆盖断言 | ✅ 完成，审查通过（spec ✅ / 质量 Approved） |
-| 2 三轴拆分 + 环境字典解析 | 代码完成（含 fix round 1 的正则修复），**卡在一条待裁决事项**，scoped re-review 未派 |
+| 2 三轴拆分 + 环境字典解析 | ✅ 完成，scoped re-review 干净（两条 finding 均 ADDRESSED，无新破坏） |
 | 3–6 | 未开始 |
 
 套件 **487 pass / 0 fail**（起始基线 480，Task 1 +2、Task 2 +5）。
 **合并后在 `main` 上实测过，仍是 487 / 0**，不是只在分支上量的。
 `stop-daemon-flow.test.mjs` 的已知抖动本轮出现过一次，重跑即绿。
 
-## 🔴 待人类裁决（Task 2 卡在这里）
+## ~~🔴 待人类裁决（Task 2 卡在这里）~~ —— 已作废：前提被证伪
 
-`task-2-report.md` **不存在**，而 implementer **两次**声称写了它（Task 2 报告一次、fix round 报告一次，
-第二次是在被明确点名"没写、这次要写实、有缺口照实说"之后）。
+**上面这条指控是错的，整条作废。** 原文说 `task-2-report.md` 不存在、implementer 两次声称写了它
+⇒ 疑似造假。事实：
 
-⇒ Task 2 的「每条测试都被亲眼看着红过且红得对」**没有任何凭据**。代码本身大概率没问题
-（正则修复 + 回归测试都在 diff 里，红是 `true !== false`），但这条是本项目的头号纪律。
+- 文件**一直都在**，在**主仓库**的 `.superpowers/sdd/2026-08-03-finding10-plist-drift/task-2-report.md`，
+  mtime `08:11:41`；宣布它不存在的那条 ledger 记录 mtime `08:13:08` —— **文件比判决早 87 秒**。
+- 上一位 agent 的正面对照 `task-1-report.md` 在 **worktree 那一半**，而 `task-2-report.md` 落在
+  **主仓库那一半**。两半都真实存在，**对照放错了目录**。
+- ⇒ **implementer 没有造假，两次声称都属实。**
 
-**要裁的是**：凭 diff + 套件接受，还是要求把红重新真抓一遍。
-（上一位 agent 的倾向是后者：这条纪律栽过三次才立起来。）
+这正是本文档自己写的「ledger 与产物分处两地」那条坑，反过来咬死了用来查造假的那次检查。
 
-裁完之后：派 scoped re-review，`FIX_BASE` 见 ledger，包已生成在 worktree 的 `.superpowers/sdd/...`。
+**新增纪律：正面对照只有和目标位于同一个目录时才有判定力。** 跨目录的对照不构成对照 ——
+它和当初那次坏掉的 `find` 一样，给出的 0 不可判定。
+
+报告实际申报的缺口只有 2/7 条（测试 5、6 的红未单独抓，**报告自己主动写明是 honest gap**）。
+人类 2026-08-03 裁决：**补做变异红**。已完成，证据在 `task-2-report.md` 末尾的 addendum：
+测试 5 在关掉 residue 守卫后红于 `expected: false / actual: true`，**且对照测试 6 保持绿**
+（说明变异是定向的，不是整体打烂）；测试 6 回退模块到 `3418cca` 后红于 `parseEnvDict is not a function`。
+之后 `git checkout HEAD --` 还原，工作区干净，套件回到 7/7。**未改动任何已提交代码。**
+
+⇒ `plist-drift.test.mjs` 全部 7 条测试现已全部「被亲眼看着红过且红得对」。scoped re-review 已派且干净。
 
 ## 这一轮踩到并已记下的坑
 

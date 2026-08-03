@@ -1,111 +1,105 @@
 # ccmem v0.13 — Handoff
 
-> v0.13 已发布并合并。此后完成 **第一轮 dogfood**，2026-08-01 → 08-02 共六波修复/取证：
+> v0.13 已发布并合并。此后完成 **第一轮 dogfood**，2026-08-01 → 08-03 共七波修复/取证：
 > Finding 9/4 → Finding 12（配置回落）→ Finding 13（hook 超时）→ Finding 14（熔断阈值失效）
-> → 文档回填收口 + Finding 15 取证 → **本轮：Finding 10/11 成条 + 附录 A 不变量 + Finding 5 修复**。
-> 本文档只做索引与状态提要 —— **不要仅凭它重建状态**，实质内容在下表的材料与提交信息里。
+> → 文档回填收口 + Finding 15 取证 → Finding 10/11 成条 + 附录 A 不变量 + Finding 5 修复
+> → **最新一轮：Finding 10 修复完成并合并（六个 Task + 全分支审查）**。
+> 本文档只做索引与状态提要 —— **不要仅凭它重建状态**，实质内容在下表的材料、ledger 与提交信息里。
 
 ---
 
-# ✅ Finding 10 修复已完成（Tasks 1–6，本节最新，先读本节）
+# 🚀 Executive summary —— 下一位 agent 从这里开始
 
-**Tasks 1–2 已经 `--no-ff` 合进 `main`**（合并提交标题：`Merge branch 'finding10-plist-drift': plist drift groundwork`）。
-**Tasks 3–6 已在分支 `finding10-plist-drift` / 工作区 `.worktrees/finding10-plist-drift` 上全部完成**：
+1. **Finding 10 已修复，并已 `--no-ff` 合进 `main`**（合并提交标题：`Merge branch 'finding10-plist-drift': restart regenerates the plist behind four gates`）。分支与 worktree **均已删除**。
+2. **套件 514 pass / 0 fail，是在合并结果上跑的**，不是只在分支上。附录 A 现为 **120–143（24 行）**。
+3. **v0.13 这条线没有已知欠项**；未修的 finding 只剩 **Finding 15**。下一步属于 v0.14，见「v0.14 待办来源」与「v0.14 的核心问题」两节。
+4. 本轮全部人类裁决、实测取证、事故经过都在 **`.superpowers/sdd/2026-08-03-finding10-plist-drift/`**（26 份，gitignore，**已合并为一处**）。git 历史一条都不记这些。
+5. 硬性禁止：**不要 push**（人类自己做）、**删分支必须先问**、**不要把 plist 或配置内容打印/落盘/写进文档**。
+6. 本文档**不写任何 commit SHA、不写"领先几个提交"** —— 提交本文档就会改变这些数字。自己 `git log --oneline -25`。
+7. 动手前先读 `docs/ccmem-v0.13-dogfood.md`（15 条 finding + §六纪律），再读 ledger。
+
+---
+
+# ✅ Finding 10 修复已完成并合并（Tasks 1–6）
+
 `status` 接线、四道门禁（G1–G4）、`restart` 的带门禁重写、`installDaemon` 的单一求值点、
-附录 A 不变量 #143、以及本节以下文档回填全部落地。v0.13 那条线不受影响，下面的历史章节仍然有效。
+附录 A 不变量 #143、文档回填 —— 全部落地并合并。v0.13 那条线不受影响，下面的历史章节仍然有效。
 
-> ✅ **`main` 上目前仍只有 Task 1–2 那部分半成品**（`scripts/lib/admin/plist-drift.mjs` 的纯函数
-> 与测试，生产代码尚无调用点）——Task 3–6 的提交都在 `finding10-plist-drift` 分支上，**分支尚未
-> 合并进 `main`，也未 push**（人类自己处理所有 push/merge，不要代为执行）。
->
-> ⇒ **就分支 `finding10-plist-drift` 而言，Finding 10 已修复**：`restart` 现在会在字节不等、
-> 环境字典可解析、G1–G4 全过时重写 plist，并在真实机器上实测验证过（见下方 Finding 10 条目）。
-> `docs/ccmem-v0.13-dogfood.md` 里 Finding 10 已改写为「已修复」；附录 A 已有 #143。
-> **`main` 尚未合并这些提交前，`main` 上的状态仍是本节上一段所说的半成品——两者不要混淆。**
+**核心行为**（细节在设计文档与提交信息里，本文不重复）：
 
-**在 worktree 里接着做之前先 `git merge main`** —— 这份 handoff 的后续更新提交在 `main` 上，
-分支里的副本会比它旧。
+> `restart` 在**字节不等 且 环境字典可解析 且 G1–G4 全过**时重写 plist。
+> **不是 `status === 'drifted'`** —— `status` 属报警轴，`in_sync` 且只有良性差异时**照写**，
+> 这正是陈旧 `PATH`、node 路径、模板变更得以到达既有安装的路径。把这条关系写反，
+> 整个特性退化成空操作。它被测试和附录 A #143 钉住，**不要"优化"掉**。
 
-## 接手三步
+**⚠️ 这是活机器上的行为变更。** `ccmem` 走符号链接指向本仓库，所以修复现在是生效的。
+已安装的 plist 仍是旧那份、运行中的 daemon 仍在用它；**下一次 `ccmem admin daemon restart`
+会在门禁通过时重新生成它**。这是预期行为，但别让它变成意外。
+
+## 接手两步
 
 ```bash
-cd .worktrees/finding10-plist-drift
-cat ../../.superpowers/sdd/2026-08-03-finding10-plist-drift/progress.md   # ← SDD ledger，恢复地图
-git log --oneline -8                                                      # 自己数，本文不写 SHA
+cat .superpowers/sdd/2026-08-03-finding10-plist-drift/progress.md   # ← SDD ledger，恢复地图
+git log --oneline -25                                              # 自己数，本文不写 SHA
 ```
 
-**ledger 与产物分处两地，别找错**：
-
-| 东西 | 在哪 |
-|---|---|
-| **ledger（`progress.md`）** | **主仓库**的 `.superpowers/sdd/2026-08-03-finding10-plist-drift/` |
-| brief / report / review diff | **worktree** 的 `.superpowers/sdd/2026-08-03-finding10-plist-drift/` |
-
-（两者都 gitignore。这个分叉是脚本与手写路径不一致造成的，已知，不影响使用，但会让人白找一轮。）
+SDD workspace **已合并为一处**（主仓库那一份）。上一版本文档写的「ledger 与产物分处两地」
+**已不再成立** —— 移除 worktree 前把它那一半的 24 份产物搬了过来，否则会随 worktree 一起消失。
+那个双目录分裂本身害过一次人，见下方「这一轮踩到的坑」第 1 条。
 
 ## 材料
 
 | 材料 | 用途 |
 |---|---|
 | `docs/superpowers/specs/2026-08-02-finding10-plist-drift-design.md` | **设计，动手前整篇读**。含 key 三桶分类、四道门禁、报警轴/重写轴解耦、time-of-check 那条坑 |
-| `docs/superpowers/plans/2026-08-03-finding10-plist-drift.md` | 六个 Task 的实现计划，自包含（全局约束 + 每步命令 + 每步该看到什么红） |
-| ledger | 每个 Task 的状态、已裁决事项、deferred minor、下一步 |
+| `docs/superpowers/plans/2026-08-03-finding10-plist-drift.md` | 六个 Task 的实现计划。**已执行完毕，且已知有缺陷** —— 三处 bug 是它逐字规定的（正则回溯、自由变 key 三态、G2 漏 `CCMEM_DATA_ROOT`），多处数字过期。**当历史读，不要再当规范照做。** |
+| ledger（`.superpowers/sdd/2026-08-03-finding10-plist-drift/progress.md`） | 每个 Task 的状态、全部人类裁决、deferred minor、实测取证、事故经过 |
 
-## 状态
+## 状态：六个 Task 全部完成
 
-| Task | 状态 |
+| Task | 内容 |
 |---|---|
-| 1 key 分类 + 全覆盖断言 | ✅ 完成，审查通过（spec ✅ / 质量 Approved） |
-| 2 三轴拆分 + 环境字典解析 | ✅ 完成，scoped re-review 干净（两条 finding 均 ADDRESSED，无新破坏） |
-| 3 `status` 接线 + 四道门禁 | ✅ 完成 |
-| 4 `restart` 带门禁重写 | ✅ 完成 |
-| 5 `installDaemon` 单一求值点 | ✅ 完成 |
-| 6 附录 A #143 + 文档回填 + 实测复核 | ✅ 完成（本文档即本轮产物） |
+| 1 | key 三桶分类 + 全覆盖断言 |
+| 2 | plist 三轴拆分 + 环境字典解析 |
+| 3 | 三轴比对 + `status` 接线（报警轴） |
+| 4 | 四道门禁 G1–G4 + `restart` 的带门禁重写（重写轴） |
+| 5 | `installDaemon` 复用 `renderPlist()`，单一求值点 |
+| 6 | 附录 A #143 + 文档回填 + **真机实测复核** |
 
-套件在分支 `finding10-plist-drift` 上现为 **510 pass / 0 fail**（Task 1–2 落地时是 487，
-Task 3–5 新增门禁/接线测试后涨到 510，本任务实测确认，见 `task-6-report.md`）。
+六个 Task 之后又做了**全分支审查（opus）+ 一轮 fix wave**，八条 finding 全部 ADDRESSED
+（见 ledger 与 `final-fix-report.md`）。套件 **514 pass / 0 fail**，**在合并结果上实测**。
 `stop-daemon-flow.test.mjs` 的已知抖动偶发，重跑即绿，不阻塞。
 
-## ~~🔴 待人类裁决（Task 2 卡在这里）~~ —— 已作废：前提被证伪
+## 这一轮踩到的坑 —— 每条都真栽过
 
-**上面这条指控是错的，整条作废。** 原文说 `task-2-report.md` 不存在、implementer 两次声称写了它
-⇒ 疑似造假。事实：
-
-- 文件**一直都在**，在**主仓库**的 `.superpowers/sdd/2026-08-03-finding10-plist-drift/task-2-report.md`，
-  mtime `08:11:41`；宣布它不存在的那条 ledger 记录 mtime `08:13:08` —— **文件比判决早 87 秒**。
-- 上一位 agent 的正面对照 `task-1-report.md` 在 **worktree 那一半**，而 `task-2-report.md` 落在
-  **主仓库那一半**。两半都真实存在，**对照放错了目录**。
-- ⇒ **implementer 没有造假，两次声称都属实。**
-
-这正是本文档自己写的「ledger 与产物分处两地」那条坑，反过来咬死了用来查造假的那次检查。
-
-**新增纪律：正面对照只有和目标位于同一个目录时才有判定力。** 跨目录的对照不构成对照 ——
-它和当初那次坏掉的 `find` 一样，给出的 0 不可判定。
-
-报告实际申报的缺口只有 2/7 条（测试 5、6 的红未单独抓，**报告自己主动写明是 honest gap**）。
-人类 2026-08-03 裁决：**补做变异红**。已完成，证据在 `task-2-report.md` 末尾的 addendum：
-测试 5 在关掉 residue 守卫后红于 `expected: false / actual: true`，**且对照测试 6 保持绿**
-（说明变异是定向的，不是整体打烂）；测试 6 回退模块到 `3418cca` 后红于 `parseEnvDict is not a function`。
-之后 `git checkout HEAD --` 还原，工作区干净，套件回到 7/7。**未改动任何已提交代码。**
-
-⇒ `plist-drift.test.mjs` 全部 7 条测试现已全部「被亲眼看着红过且红得对」。scoped re-review 已派且干净。
-
-## 这一轮踩到并已记下的坑
-
-1. **`EnterWorktree` 默认从 `origin/<默认分支>` 分叉**（`worktree.baseRef=fresh`）。当时本地 `main`
-   领先 origin 若干未推送提交，用它建出来的工作区**不会有要执行的那份计划**。所以走了
-   `git worktree add ... HEAD`。**下次遇到未推送提交，先想这一层。**
-2. **`npm test -- <文件>` 不隔离单文件** —— npm 会把参数追加到脚本原有的 glob 后面，结果还是全量。
-   要跑单文件用 `node --test <文件>`，**但两个环境变量一个都不能少**。
-3. **差点用一个坏掉的搜索去指控 implementer 造假。** `find` 查 `task-2-report.md` 返回空，
-   但同一条命令查**确定存在**的 `task-1-report.md` 也返回空 ⇒ 是搜索本身失效，那个 0 不可判定。
-   换 `ls` 才拿到可判定的结论。**"反面的什么都没发生要有正面对照"这条今天真的挡下了一次误伤。**
+1. **一次险些成立的造假指控，起因是对照放错了目录。** 有人断定某份任务报告不存在、implementer
+   两次撒谎；实际文件一直都在，且**比那条判决早 87 秒**。用来做正面对照的另一份报告在
+   workspace 的**另一半目录**里。⇒ **正面对照只有和目标位于同一个目录时才有判定力**；
+   跨目录的对照不构成对照，它给出的 0 和坏掉的 `find` 给出的 0 一样不可判定。
+   （workspace 现已合并为一处，这个具体陷阱消失了，但纪律照旧。）
+2. **测试跑真 `launchctl`，劫走了本机真实 daemon 注册。** 计划里的 `restart` 测试没有隔离
+   launchctl，跑下去直接动了活系统。已修（改用仓库既有的 `CCMEM_LAUNCHCTL_BIN` 假 launchctl）、
+   已恢复、已记入 `.wolf/buglog.json` 与 `cerebrum.md`。**最终审查又揪出同类的姊妹漏洞**：
+   `CCMEM_LAUNCHAGENT_DIR` 当时还是 per-test opt-in，而且被一个 `finally` 主动删掉 ——
+   忘了设它就会写到真的 `~/Library/LaunchAgents`。⇒ **测试隔离必须是模块级默认，不能靠人记得**。
+3. **被测二进制解析到了错的 checkout —— 第七种不可判定的 0。** 实测复核时若直接用 PATH 上的
+   `ccmem`，它走符号链接指向**主仓库**，而当时修复只在分支上，`grep` 必然返回 0 并"证明"修复无效。
+   必须显式跑目标 checkout 的 `./bin/ccmem`。
+4. **`cp` 在本机是交互式别名，会静默拒绝覆盖**（打印 `not overwritten`）而外层脚本照报成功。
+   ⇒ **恢复要用校验和验证，不能信复制命令的退出码。**
+5. **计划文本里的数字会过期，且会把 implementer 送进幻影 fix loop。** 本轮撞了四次：三次是测试
+   计数陈旧，一次更阴 —— 一条断言数 `renderDaemonPlist(` 出现次数并要求等于 1，**但函数声明自己
+   也匹配**，正确实现反而红。⇒ **派活前先拿计划里的数字对一遍真实文件。**
+6. **`npm test -- <文件>` 不隔离单文件** —— npm 把参数追加到脚本原有 glob 后面，结果还是全量。
+   跑单文件用 `node --test <文件>`，**但两个环境变量一个都不能少**。
+7. **`EnterWorktree` 默认从 `origin/<默认分支>` 分叉**（`worktree.baseRef=fresh`）。本地领先
+   origin 时，建出来的工作区**不会有要执行的那份计划**。**遇到未推送提交先想这一层。**
 
 ## 不要做的事
 
-- **不要重派 Task 1**，也不要重做 Task 2 的代码。SDD 点名"controller 丢失位置后重复派发已完成任务"
-  是代价最高的失败模式，ledger 就是为防它而写的——**信 ledger 和 `git log`，不要信记忆**。
-- 不要 push（人类自己做）。不要删 worktree 或分支（**删分支必须先问**）。
+- 不要 push（人类自己做）。**删分支必须先问。**
+- **不要重做已完成的 Task。** SDD 点名"controller 丢失位置后重复派发已完成任务"是代价最高的
+  失败模式，ledger 就是为防它而写的——**信 ledger 和 `git log`，不要信记忆**。
 - 不要把 plist 内容或配置文件内容打印/落盘/写进文档 —— `DAEMON_ENV_PASSTHROUGH` 含 `ANTHROPIC_API_KEY` /
   `ANTHROPIC_FOUNDRY_API_KEY`，**只在安装那一刻的 shell 里该变量确实非空时才会被复制进 plist**
   （`scripts/lib/admin/daemon.mjs:84-87`）。这些凭据平时活在 `config.json`，不是环境变量，
@@ -147,27 +141,30 @@ git rev-list --count origin/main..main    # 本地领先多少
 git status --porcelain                    # 应为空
 ```
 
-**本轮落在 `main` 上的提交，按标题找、不要按 SHA 找**（时间顺序）：
+**Finding 10 那轮落在 `main` 上的提交，按标题找、不要按 SHA 找**（时间顺序，末尾是合并提交）：
 
-- `docs(dogfood): give Findings 10 and 11 their own entries`
-- `chore(cerebrum): a retraction must void the original wording too`
-- `docs(handoff): mark the Finding 10/11 write-up done`
-- `docs(spec): add Appendix A invariants for the dogfood fixes`
-- `docs(handoff): close out the last three items`
-- `docs(spec): fix the off-by-one invariant citations`
-- `docs(handoff): brief the Finding 5 round before it starts`
-- `docs(dogfood): measure what a broken config actually does, and retract my own claim`
-- `fix(config): reject a broken config file by name instead of by stack trace`
+- `feat(daemon): report plist drift from status without spawning anything`
+- `fix(plist-drift): exclude free-key add/remove from the alarm verdict`
+- `feat(daemon): rewrite the plist on restart only when four gates allow it`
+- `fix(daemon): close G2's CCMEM_DATA_ROOT gap, report blocked rewrites, harden test isolation`
+- `refactor(daemon): give the plist a single point of evaluation`
+- `docs: close out Finding 10 and add its invariant`
+- `docs: void the credential claim in the binding plan file, disclose partial invariant coverage`
+- `fix(plist-drift): close final review's eight-item fix wave`
+- `Merge branch 'finding10-plist-drift': restart regenerates the plist behind four gates`
+
+（此前几轮的提交标题不再逐条列出，`git log` 里按 `docs(dogfood)` / `fix(config)` 等前缀找即可。）
 
 需要知道的事实：
 
-- 本地 `main` **领先 `origin/main`**（人类在本轮中途推过一次，之后又有新提交）。
-  **人类自己处理所有 push —— 不要代为推送。**
-- 分支 `v0.13-spec`、`v0.13-dogfood-fixes` 均未删除（**删分支必须先问**）。
-- 套件 **2026-08-02 实测 480 pass / 0 fail**（`npm test`，exit 0，本轮两次全跑均无抖动）。
+- 本地 `main` **领先 `origin/main`**。**人类自己处理所有 push —— 不要代为推送。**
+- 分支 `finding10-plist-drift` **已删除**（其工作已合并）；`v0.13-spec`、`v0.13-dogfood-fixes`
+  **均未删除**（**删分支必须先问**）。worktree 只剩 `ccmem-v012-finalization` 一个，与本线无关。
+- 套件 **514 pass / 0 fail**，**在合并结果上实测**（`npm test`，exit 0）。
   已知抖动：`stop-daemon-flow.test.mjs` 偶发红 2 条，重跑即绿；不阻塞，但**红了要先确认是它**。
-- 附录 A **23/23**（22 行机械判定共 25 个子检查 + #127 人判）。**附录 A 没有 runner，是人工 checklist** ——
-  这正是"恒绿的不变量看起来和通过的一模一样"的由来。
+- 附录 A **24 行（120–143）**。**没有 runner，是人工 checklist** —— 这正是"恒绿的不变量
+  看起来和通过的一模一样"的由来。**#143 是部分验红**：镜像只关掉了门禁判断，所以只验到
+  G1–G4 那一支，字节相等短路与解析失败两支未单独验红 —— 这点已如实写进附录 A #143 下方。
 
 ## ⚠️ 会咬人的既定事实
 
@@ -179,8 +176,11 @@ git status --porcelain                    # 应为空
    进程自己写出的签名验 daemon / `memory_feedback.session_id` + 时间戳验 hook 归属会话。
 4. **hook 侧代码改动下次调用即生效**（`~/.claude/plugins/ccmem` 是指向本仓库的符号链接）；
    daemon 现在 `restart` 时会在字节不等、环境字典可解析、G1–G4 全过时自动重写 plist（Finding 10
-   已修复，附录 A #143）——**但指向类 key 的改动（`CCMEM_CONFIG_PATH`/`CCMEM_DATA_ROOT`）被 G2
-   拦下，不会自动重写，仍需人工 `uninstall && install`**，这是刻意的。
+   已修复，附录 A #143）——**但指向类 key 的改动（`CCMEM_CONFIG_PATH`/`CCMEM_DATA_ROOT`）会被拦下，
+   不会自动重写，仍需人工 `uninstall && install`**，这是刻意的。
+   ⚠️ **拦它的通常是 G1 而不是 G2**：最常见的真实情形是「装的时候 shell 导出了
+   `CCMEM_CONFIG_PATH`，重启时那个 shell 没导出」，此时该 key 是**从新环境里消失**，
+   G1（拒绝缩减 key 集合）先于 G2 触发。结果与补救办法相同，但排查时别盯着 G2 找。
 5. **「取副本前后比对 mtime/size 证明零写入」这条判据是坏的，已作废。**
    正确判据是连接开在 `mode=ro`（VFS 层阻断写）**加一个正面对照**。已记入 `.wolf/cerebrum.md`。
 6. **🆕 坏配置现在会让 daemon 拒绝启动**（`ConfigError`，`fix(config): ...` 那个提交）。
@@ -193,9 +193,9 @@ git status --porcelain                    # 应为空
 |---|---|
 | **G1**：OpenAI 回填 + 消费端 | ✅ 达成，口径收窄为"链路可用"，不是"链路始终在用" |
 | **V1–V8** | ✅ 全部做完，§五 全部有实测条目 |
-| **Finding 5 / 11 / 12 / 13 / 14** | ✅ 均已修复并有回归测试 |
-| **Finding 1–15 条目完整性** | ✅ 15 条全部有独立条目（本轮补齐 10 与 11） |
-| **附录 A 不变量** | ✅ 136–142 七条，覆盖 Finding 6/7/8/12/13/14/5，**每条验红** |
+| **Finding 5 / 10 / 11 / 12 / 13 / 14** | ✅ 均已修复并有回归测试（**10 于 2026-08-03 合并**） |
+| **Finding 1–15 条目完整性** | ✅ 15 条全部有独立条目 |
+| **附录 A 不变量** | ✅ 136–143 八条，覆盖 Finding 6/7/8/12/13/14/5/10，**每条验红**（#143 部分验红，范围见附录 A） |
 | **spec 内不变量引用** | ✅ 六处 off-by-one 已修（`#121`→`#122` 等，详见对应提交） |
 | **Closure checklist** | ✅ 5 项全勾 |
 
@@ -245,12 +245,20 @@ tail ~/.claude/ccmem/daemon.err.log
   我的 brief 一次），两次都是"每个 hook 都会死"，两次都是错的。
 - **🆕 撤回一个说法时，要去原话所在的位置作废它**，不能只在发现问题的那一条里记。
   `ps eww` 的更正记在 Finding 12，而 Finding 9 里"这条验证不可省"整整一波没被收掉。
-- **0 计数 / 不动的数字，先解释来源再当结论。已出现七种来源**：分母为 0、进程比代码旧、
+- **0 计数 / 不动的数字，先解释来源再当结论。已出现八种来源**：分母为 0、进程比代码旧、
   链条死掉、幸存者偏差、**查错字段名**（`hook`≠`event`；`has_cjk`≠`is_cjk`）、
-  签名为 null 让 SQL 谓词恒不成立、**分母只有 1**。
-- **反面的"什么都没发生"需要正面对照才可信。** 本轮两次用到：
-  grep 返回 0 时先证明同一条命令对另一个 pattern 返回 1；"非对象配置应失败"的测试自带
-  "无配置文件仍应成功"的对照。
+  签名为 null 让 SQL 谓词恒不成立、**分母只有 1**、
+  **🆕 被测二进制解析到了错的 checkout**（PATH 上的 `ccmem` 走符号链接指向主仓库，
+  而修复当时只在分支上 —— grep 必然返回 0 并"证明"修复无效）。
+- **反面的"什么都没发生"需要正面对照才可信 —— 而且对照必须和目标同处一地。**
+  本轮既靠它挡下了误伤（grep 返回 0 时先证明同一条命令对另一个 pattern 返回 1），
+  也**被它反咬过一次**：对照文件放在另一个目录，于是那个 0 依旧不可判定，却看起来已经验过。
+- **🆕 恢复/写入类操作要用校验和验证，不要信命令的退出码。** 本机 `cp` 是交互式别名，
+  静默拒绝了一次覆盖并打印 `not overwritten`，而外层脚本照报成功。
+- **🆕 测试隔离必须是模块级默认，不能靠下一个人记得调用某个 helper。** 本轮一条测试跑了真
+  `launchctl` 并劫走本机 daemon 注册；修完之后**同类的姊妹漏洞还剩着**（另一个环境变量仍是
+  per-test opt-in，且被 `finally` 主动删掉），直到最终审查才揪出来。**失败是静默的**：
+  测试照样绿，同时动着真系统。
 - **在 live 库的副本上验证**（`sqlite3 "file:...?mode=ro" "VACUUM INTO '<副本>'"`），
   **但不要用 mtime/size 比对"证明"零写入**。
 - **不要从缺失下结论**；**不能解释的 0 就写"不可判定"**。
@@ -263,13 +271,32 @@ tail ~/.claude/ccmem/daemon.err.log
 2. **换模型检测器整体移除** —— 签名机制已正确覆盖换模型。
 3. **签名契约返回 `null`**，不是抛错。正是这个 `null` 让 V5 的分歧表现为静默的 0。
 4. **`CCMEM_CONFIG_PATH` 统一回落到数据根下的 `config.json`**，该变量降级为覆盖。
-5. **provider API key 不进 daemon 环境白名单** —— plist 的环境字典会明文落到 `~/Library/LaunchAgents`。
-   （注意措辞：真正写盘的是 `installDaemon()`；`renderPlist()` 在生产代码里没有调用点。）
+5. **provider API key 不进 daemon 环境白名单**。
+   ⚠️ **这条括号注解已过期，别再照抄**：原文写「真正写盘的是 `installDaemon()`；`renderPlist()`
+   在生产代码里没有调用点」。**Task 5 之后 `renderPlist()` 正是唯一求值点** —— `installDaemon()`
+   改为调它，`status` 的漂移检测与 `restart` 的重写也都调它。这是刻意的：两处独立求值意味着
+   谁改了一边没改另一边，检测就会与一个错的基准比对，而且不会有任何症状。
 6. 探针决策流 `l25-probe.jsonl` 无上限，`diagnose --feedback` 打印其磁盘占用 ——
    **刻意让运行时成本可见，不要"优化"掉**。
 7. **Finding 14 的行为变更是刻意的**：熔断现在容忍 2 次失败才开。
-8. **🆕 坏配置 = 响亮地死，daemon 不刷栈**（2026-08-02 裁决）。**明确不回落 `DEFAULT_CONFIG`** ——
+8. **坏配置 = 响亮地死，daemon 不刷栈**（2026-08-02 裁决）。**明确不回落 `DEFAULT_CONFIG`** ——
    那正是 Finding 5 自己原先提的方案，它写在 Finding 12 之前，照做就是重造 Finding 12。
+
+**🆕 Finding 10 那轮的五条裁决（2026-08-03，理由全在 ledger）：**
+
+9. **自由变 key 的差异一律不抬三态 —— 包括整个新增或整个消失，不只是值变化。**
+   计划文本只豁免了值变化，设计文档 §五/§三 则是无条件豁免；**设计压计划**。
+   实现上是把自由变 key 排出 `raisesVerdict`，而**不是**把它们塞进 `benign_changed` ——
+   `added`/`removed` 仍完整列出，人能看到 `PATH` 没了。它消失另有 G1 在重写轴上守着。
+10. **G2 必须包含 `CCMEM_DATA_ROOT`。** 计划只枚举了四个值；一旦 `CCMEM_CONFIG_PATH` 显式指向
+    一个存在的文件，data root 就整个掉出比较，daemon 会被静默重指向另一个 `global.db`。
+    模块自己的 `POINTING_KEYS` 早把它归为指向类 —— 计划自相矛盾。
+11. **`plist_rewrite` 被拦时必须打到 stderr。** 否则被 G1/G2 拦住的人每次 restart 都被拦、
+    却永远看不到原因 —— 那是 Finding 10 同一家族的静默无效。只打 key 名、门禁编号与 reason。
+12. **红证据缺口用变异红补，不用"函数不存在"那种廉价红。** 关掉被测断言所守的那一段，
+    看它红在自己命名的那个行为上，**且对照测试保持绿**（证明变异是定向的）。
+13. **SDD workspace 保留，不按 SDD 流程删。** 它承载全部裁决理由、实测取证与事故经过，
+    git 历史一条都不记。移除 worktree 前**必须先把它那一半搬出来**。
 
 ## v0.14 待办来源
 
@@ -308,18 +335,28 @@ tail ~/.claude/ccmem/daemon.err.log
   给附录 A 加条目同样适用：不变量要先被证明能变红。
 - **`superpowers:verification-before-completion`** —— 多次差点把"没验证"当"已完成"。
 - **`superpowers:brainstorming`** —— 若转向 v0.14 的阈值可行性判据（设计问题，先发散）。
-- **🆕 `superpowers:subagent-driven-development`** —— **接手 Finding 10 那条线必用**。
-  它规定的 ledger、per-task 双验收（spec 合规 + 质量）、fix loop 五轮上限与 breaker，
-  正是当前状态的组织方式；不读它会看不懂 ledger 里的记法。
+- **`superpowers:subagent-driven-development`** —— 若下一轮同样是"有计划、任务基本独立"的执行，
+  照旧用它。它规定的 ledger、per-task 双验收（spec 合规 + 质量）、fix loop 五轮上限与 breaker，
+  正是 `.superpowers/sdd/` 里那些记法的来源；不读它会看不懂 ledger。
+  **本轮的经验：把能力预算花在审查而不是实现上** —— 实现用中档模型足够（计划里已有完整代码），
+  而**两轮 Opus 审查抓出了全部真正重要的缺陷**，包括计划自己规定的那几个。
+- **`superpowers:writing-plans`** —— 若要为 v0.14 写计划，先读它，并记住本轮的教训：
+  **计划里的数字（测试计数、出现次数、行号）会过期，并且会把 implementer 送进幻影 fix loop**；
+  计划正文里给出的代码也可能自带缺陷（本轮有三处是计划**逐字规定**的 bug，均需人类裁决）。
 
 ## 备注
 
 - OpenWolf 记账文件（`.wolf/buglog.json`、`.wolf/memory.md`）已 gitignore；`.wolf/cerebrum.md` 入库。
   已记 `bug-058`（hook 配置分歧）、`bug-059`（hook 超时三层根因）、`bug-060`（熔断阈值失效）、
-  **`bug-061`（坏配置打死 daemon + 错形状配置静默丢弃）**。
+  `bug-061`（坏配置打死 daemon + 错形状配置静默丢弃）、
+  **🆕 Finding 10 那轮的 launchd 标签冲突（测试劫走真实注册）**。
   **未修的 finding（15）不记 bug，只活在 dogfood 文档里。**
-- SDD workspace **刻意保留**：承载全部人类裁决及理由、final review findings、8 份任务报告。
+- **两个 SDD workspace 都刻意保留**（均 gitignore）：
+  `2026-07-31-ccmem-v0.13/`（v0.13 那轮）与 **`2026-08-03-finding10-plist-drift/`（Finding 10 那轮，
+  26 份：ledger + 6 份 brief + 6 份 report + final-fix-report + 11 份 review diff）**。
+  承载全部人类裁决及理由、实测取证、事故经过 —— **git 历史一条都不记**。
 - 所有产物中不含任何凭据或个人数据；API key 存放于仓库外的用户配置文件。
 - **成本提示**：Finding 12/13 那轮 >$110，Finding 14 那轮 ~$60，文档回填那轮 ~$45，
-  **本轮（10/11 + 附录 A + Finding 5）~$80**。跨进程 / 跨数据源取证代价很高。
-  **开新一轮前先 `/compact`**，本轮末尾是在接近上下文上限的情况下做完的。
+  10/11 + 附录 A + Finding 5 那轮 ~$80，**Finding 10 修复那轮（6 个 Task + 全分支审查 + fix wave，
+  13 次 subagent 派发，其中 3 次 Opus）~$140**。跨进程 / 跨数据源取证代价很高。
+  **开新一轮前先 `/compact`** —— 上述两轮末尾都是在接近上下文上限的情况下做完的。

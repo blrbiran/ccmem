@@ -16,7 +16,7 @@
 - **每条测试必须先被亲眼看着变红，且确认红的原因是预期的那个**（不是表名写错、不是桩没回调、不是 import 路径错）。红因不符就重写测试，不要往下走。
 - **测试一律打在 `cmdAdminDaemon(db, { verb })` 这一层**，不打在被测纯函数上。理由：本项目栽过"纯函数有测试但接线没接上"。
 - **测试用 `CCMEM_LAUNCHAGENT_DIR` 指向临时目录**，任何测试都不得读写真实的 `~/Library/LaunchAgents`。
-- **输出中值一律不打印，只打印 key 名**，唯一例外是 `CCMEM_CONFIG_PATH` 与 `CCMEM_DATA_ROOT` 的新旧值。plist 环境字典**今天就含 `ANTHROPIC_API_KEY`**，打印值等于把凭据写进终端和日志。
+- **输出中值一律不打印，只打印 key 名**，唯一例外是 `CCMEM_CONFIG_PATH` 与 `CCMEM_DATA_ROOT` 的新旧值。`ANTHROPIC_API_KEY`/`ANTHROPIC_FOUNDRY_API_KEY` 在 `DAEMON_ENV_PASSTHROUGH` 里，**只在安装那一刻的 shell 里该变量确实非空时才会被复制进 plist**（`daemon.mjs:84-87`）——plist **可能**含这些凭据，不是必然（本机当前那份就不含）。规则不因此放松：打印值仍然等于把凭据写进终端和日志。
 - **探针 timeout = 5000，写成模块常量，不进配置文件。**
 - **重写的条件是：字节不等 且 环境字典可解析 且 G1–G4 全过。**不是 `status === 'drifted'`。`status` 属报警轴，`in_sync` 时照样可能要写。
 - **提交信息里不写 commit SHA；文档里也不写。**

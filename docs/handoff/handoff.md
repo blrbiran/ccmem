@@ -7,22 +7,21 @@
 
 ---
 
-# ⏳ 进行中：Finding 10 修复（本节最新，先读本节）
+# ✅ Finding 10 修复已完成（Tasks 1–6，本节最新，先读本节）
 
 **Tasks 1–2 已经 `--no-ff` 合进 `main`**（合并提交标题：`Merge branch 'finding10-plist-drift': plist drift groundwork`）。
-分支 `finding10-plist-drift` 与工作区 `.worktrees/finding10-plist-drift` **都还在，Tasks 3–6 继续在那里做**。
-v0.13 那条线不受影响，下面的历史章节仍然有效。
+**Tasks 3–6 已在分支 `finding10-plist-drift` / 工作区 `.worktrees/finding10-plist-drift` 上全部完成**：
+`status` 接线、四道门禁（G1–G4）、`restart` 的带门禁重写、`installDaemon` 的单一求值点、
+附录 A 不变量 #143、以及本节以下文档回填全部落地。v0.13 那条线不受影响，下面的历史章节仍然有效。
 
-> ⚠️ **合并进来的是半成品，而且是刻意的。** `main` 上现在有
-> `scripts/lib/admin/plist-drift.mjs`（`classifyKey` / `splitPlist` / `parseEnvDict`）
-> 和它的测试，**但生产代码没有任何一处调用它** —— `status` 接线、四道门禁、restart 重写
-> 都是 Tasks 3–6，尚未编写。
+> ✅ **`main` 上目前仍只有 Task 1–2 那部分半成品**（`scripts/lib/admin/plist-drift.mjs` 的纯函数
+> 与测试，生产代码尚无调用点）——Task 3–6 的提交都在 `finding10-plist-drift` 分支上，**分支尚未
+> 合并进 `main`，也未 push**（人类自己处理所有 push/merge，不要代为执行）。
 >
-> ⇒ **Finding 10 仍未修复**，`restart` 现在依旧不重新生成 plist。
-> `docs/ccmem-v0.13-dogfood.md` 里 Finding 10 仍写「未修」，**那才是权威状态**；
-> 附录 A 也还没有 #143。**在 Tasks 3–6 完成前，不要把"已修"往任何地方传播。**
->
-> 那个合并提交用了 `--no-ff`，所以整段回退是一条命令的事。
+> ⇒ **就分支 `finding10-plist-drift` 而言，Finding 10 已修复**：`restart` 现在会在字节不等、
+> 环境字典可解析、G1–G4 全过时重写 plist，并在真实机器上实测验证过（见下方 Finding 10 条目）。
+> `docs/ccmem-v0.13-dogfood.md` 里 Finding 10 已改写为「已修复」；附录 A 已有 #143。
+> **`main` 尚未合并这些提交前，`main` 上的状态仍是本节上一段所说的半成品——两者不要混淆。**
 
 **在 worktree 里接着做之前先 `git merge main`** —— 这份 handoff 的后续更新提交在 `main` 上，
 分支里的副本会比它旧。
@@ -58,11 +57,14 @@ git log --oneline -8                                                      # 自�
 |---|---|
 | 1 key 分类 + 全覆盖断言 | ✅ 完成，审查通过（spec ✅ / 质量 Approved） |
 | 2 三轴拆分 + 环境字典解析 | ✅ 完成，scoped re-review 干净（两条 finding 均 ADDRESSED，无新破坏） |
-| 3–6 | 未开始 |
+| 3 `status` 接线 + 四道门禁 | ✅ 完成 |
+| 4 `restart` 带门禁重写 | ✅ 完成 |
+| 5 `installDaemon` 单一求值点 | ✅ 完成 |
+| 6 附录 A #143 + 文档回填 + 实测复核 | ✅ 完成（本文档即本轮产物） |
 
-套件 **487 pass / 0 fail**（起始基线 480，Task 1 +2、Task 2 +5）。
-**合并后在 `main` 上实测过，仍是 487 / 0**，不是只在分支上量的。
-`stop-daemon-flow.test.mjs` 的已知抖动本轮出现过一次，重跑即绿。
+套件在分支 `finding10-plist-drift` 上现为 **510 pass / 0 fail**（Task 1–2 落地时是 487，
+Task 3–5 新增门禁/接线测试后涨到 510，本任务实测确认，见 `task-6-report.md`）。
+`stop-daemon-flow.test.mjs` 的已知抖动偶发，重跑即绿，不阻塞。
 
 ## ~~🔴 待人类裁决（Task 2 卡在这里）~~ —— 已作废：前提被证伪
 
@@ -176,7 +178,9 @@ git status --porcelain                    # 应为空
 3. **`ps eww` 在这台机器上读不到进程环境。** 可靠替身：`zsh -f -c 'echo $VAR'` 验继承 /
    进程自己写出的签名验 daemon / `memory_feedback.session_id` + 时间戳验 hook 归属会话。
 4. **hook 侧代码改动下次调用即生效**（`~/.claude/plugins/ccmem` 是指向本仓库的符号链接）；
-   **只有 daemon 需要 `uninstall && install`** —— 见 Finding 10，`restart` 不重新生成 plist。
+   daemon 现在 `restart` 时会在字节不等、环境字典可解析、G1–G4 全过时自动重写 plist（Finding 10
+   已修复，附录 A #143）——**但指向类 key 的改动（`CCMEM_CONFIG_PATH`/`CCMEM_DATA_ROOT`）被 G2
+   拦下，不会自动重写，仍需人工 `uninstall && install`**，这是刻意的。
 5. **「取副本前后比对 mtime/size 证明零写入」这条判据是坏的，已作废。**
    正确判据是连接开在 `mode=ro`（VFS 层阻断写）**加一个正面对照**。已记入 `.wolf/cerebrum.md`。
 6. **🆕 坏配置现在会让 daemon 拒绝启动**（`ConfigError`，`fix(config): ...` 那个提交）。

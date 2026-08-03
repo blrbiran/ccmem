@@ -562,6 +562,13 @@ try {
     const daemonVerb = args[1];
     const result = await cmdAdminDaemon(getDb(), { verb: daemonVerb });
 
+    if (daemonVerb === 'restart' && result.plist_rewrite?.blocked_by) {
+      // Only the code and the reason string — the reason never carries a
+      // credential value (see evaluateGates' G3 branch) — never anything
+      // from the environment dict itself.
+      process.stderr.write(`ccmem: plist not rewritten (${result.plist_rewrite.blocked_by}): ${result.plist_rewrite.reason}\n`);
+    }
+
     if (daemonVerb === 'status') {
       if (!result.alive) {
         process.stdout.write('ccmem: daemon not running\n');

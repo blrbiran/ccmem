@@ -110,7 +110,7 @@ export function effectiveConfigPath(env, defaultDataRoot) {
   return userPath && existsSync(userPath) ? userPath : path.join(root, 'config.json');
 }
 
-const POINTING_LITERAL_KEYS = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_FOUNDRY_BASE_URL', 'CLAUDE_CODE_USE_FOUNDRY'];
+const POINTING_LITERAL_KEYS = ['CCMEM_DATA_ROOT', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_FOUNDRY_BASE_URL', 'CLAUDE_CODE_USE_FOUNDRY'];
 
 export function evaluateGates(oldEnv, newEnv, { defaultDataRoot, probe }) {
   // G1 —— key 非缩减。

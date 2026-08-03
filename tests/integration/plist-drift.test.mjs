@@ -221,28 +221,43 @@ writeFileSync(fakeLaunchctlPath, [
 ].join('\n'));
 chmodSync(fakeLaunchctlPath, 0o755);
 
-async function withFakeLaunchctl(run) {
-  const previousBin = process.env.CCMEM_LAUNCHCTL_BIN;
-  const previousLog = process.env.CCMEM_LAUNCHCTL_LOG;
-  process.env.CCMEM_LAUNCHCTL_BIN = fakeLaunchctlPath;
-  process.env.CCMEM_LAUNCHCTL_LOG = fakeLaunchctlLog;
-  rmSync(fakeLaunchctlStatePath, { force: true });
+// Set at module scope, not per-test: a per-test opt-in has to be remembered by
+// whoever adds the next test, and forgetting it reproduces the incident above
+// silently (the test still passes while hijacking the real system — T9 only
+// surfaced it because of an unrelated start_timeout). Fixing it here means this
+// file structurally cannot reach real `launchctl`, regardless of what any test
+// — present or future — does or doesn't opt into.
+process.env.CCMEM_LAUNCHCTL_BIN = fakeLaunchctlPath;
+process.env.CCMEM_LAUNCHCTL_LOG = fakeLaunchctlLog;
 
-  try {
-    return await run();
-  } finally {
-    if (previousBin === undefined) delete process.env.CCMEM_LAUNCHCTL_BIN;
-    else process.env.CCMEM_LAUNCHCTL_BIN = previousBin;
-    if (previousLog === undefined) delete process.env.CCMEM_LAUNCHCTL_LOG;
-    else process.env.CCMEM_LAUNCHCTL_LOG = previousLog;
-  }
+// Per-test state still needs resetting (the fake script's "loaded" marker
+// persists on disk across tests), so keep a helper for that alone.
+async function withFakeLaunchctl(run) {
+  rmSync(fakeLaunchctlStatePath, { force: true });
+  return run();
 }
 
 test.after(() => rmSync(fakeLaunchctlDir, { recursive: true, force: true }));
 
+// Some of these dirs hold a REAL `renderPlist()` output (T2-rewrite-side, the
+// two CLI tests), which on a real machine contains the plaintext
+// ANTHROPIC_API_KEY from DAEMON_ENV_PASSTHROUGH — left in /tmp indefinitely
+// if nothing cleans it up. mkdtempSync's 0700 mode limits this to one user,
+// but "never leave plist contents on disk after the test" is a standing
+// constraint on this task regardless.
+const tempDirsToClean = [];
+function trackedMkdtemp(prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirsToClean.push(dir);
+  return dir;
+}
+test.after(() => {
+  for (const dir of tempDirsToClean) rmSync(dir, { recursive: true, force: true });
+});
+
 // 接线测试。纯函数有测试 ≠ 接线有测试 —— 这里要证明 verb 分发真的调到了检测。
 test('T1 wiring: daemon status reports plist_drift', async () => {
-  const agentDir = mkdtempSync(join(tmpdir(), 'ccmem-la-'));
+  const agentDir = trackedMkdtemp('ccmem-la-');
   process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
   writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
 
@@ -278,7 +293,7 @@ test('T3: G1 refuses a shrinking key set', () => {
 // T4 —— G2。旧 plist 多半没有 CCMEM_CONFIG_PATH（该变量无持久来源），
 // 所以按"旧有才比"的写法，stray 值会被当成无害新增放行 —— 那正是重造 Finding 12。
 test('T4: G2 refuses a stray CCMEM_CONFIG_PATH that names a real file', () => {
-  const real = join(mkdtempSync(join(tmpdir(), 'ccmem-cfg-')), 'other.json');
+  const real = join(trackedMkdtemp('ccmem-cfg-'), 'other.json');
   writeFileSync(real, '{}');
   const verdict = gates({ PATH: '/usr/bin' }, { PATH: '/usr/bin', CCMEM_CONFIG_PATH: real });
   assert.equal(verdict.ok, false);
@@ -296,6 +311,21 @@ test('T4b: G2 refuses a CCMEM_CONFIG_PATH naming a file that does not exist', ()
 // T5 —— G2。旧无 / 新有，缺省记为 null，所以判为不同。
 test('T5: G2 refuses a newly appearing ANTHROPIC_BASE_URL', () => {
   const verdict = gates({ PATH: '/usr/bin' }, { PATH: '/usr/bin', ANTHROPIC_BASE_URL: 'https://elsewhere.example' });
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.blocked_by, 'G2');
+});
+
+// T5b —— G2 回归。CCMEM_DATA_ROOT 被 classifyKey 分类为 pointing，但没进
+// POINTING_LITERAL_KEYS：两侧钉同一个已存在的 CCMEM_CONFIG_PATH 时，
+// effectiveConfigPath 直接照抄该显式路径，CCMEM_DATA_ROOT 整个跌出比较——
+// 静默换库通过了所有四道门。Reviewer 发现，补回归测试。
+test('T5b: G2 refuses a changed CCMEM_DATA_ROOT even when CCMEM_CONFIG_PATH is pinned the same', () => {
+  const real = join(trackedMkdtemp('ccmem-cfg-'), 'shared.json');
+  writeFileSync(real, '{}');
+  const verdict = gates(
+    { PATH: '/usr/bin', CCMEM_DATA_ROOT: '/tmp/root-a', CCMEM_CONFIG_PATH: real },
+    { PATH: '/usr/bin', CCMEM_DATA_ROOT: '/tmp/root-b', CCMEM_CONFIG_PATH: real }
+  );
   assert.equal(verdict.ok, false);
   assert.equal(verdict.blocked_by, 'G2');
 });
@@ -345,7 +375,7 @@ test('effectiveConfigPath treats an absent key as the store default', () => {
 // T9。restart 的本职是把 daemon 起回来；用一个可疑的配置问题去阻断重启，
 // 是拿一个可疑问题换一个确定的停机。
 test('T9: a blocked gate still lets the restart finish', () => withFakeLaunchctl(async () => {
-  const agentDir = mkdtempSync(join(tmpdir(), 'ccmem-la-'));
+  const agentDir = trackedMkdtemp('ccmem-la-');
   process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
   const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
   writeFileSync(plistPath, plistWith({ ...BASE_ENV, ANTHROPIC_API_KEY: 'old' }));
@@ -361,7 +391,7 @@ test('T9: a blocked gate still lets the restart finish', () => withFakeLaunchctl
 
 // T11。解析不出旧 env 就判不了 G1–G3，此时重写等于在看不见的前提下改配置。
 test('T11: an unparsable plist blocks the rewrite', () => withFakeLaunchctl(async () => {
-  const agentDir = mkdtempSync(join(tmpdir(), 'ccmem-la-'));
+  const agentDir = trackedMkdtemp('ccmem-la-');
   process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
   const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
   writeFileSync(plistPath, plistWith(BASE_ENV).replace('<string>/usr/bin</string>', '<data>zz</data>'));
@@ -376,18 +406,63 @@ test('T11: an unparsable plist blocks the rewrite', () => withFakeLaunchctl(asyn
 }));
 
 test('T2 rewrite side: a benign-only difference is still written', () => withFakeLaunchctl(async () => {
-  const agentDir = mkdtempSync(join(tmpdir(), 'ccmem-la-'));
+  const agentDir = trackedMkdtemp('ccmem-la-');
   process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
   const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
   // 磁盘上是一份除 PATH 外与当前求值一致的 plist：构造法是先取当前期望值，
   // 再把 PATH 那一行改掉，确保唯一差异落在自由变桶。
   const expected = (await import('../../scripts/lib/admin/daemon.mjs')).renderPlist();
-  writeFileSync(plistPath, expected.replace(/<key>PATH<\/key><string>[^<]*<\/string>/, '<key>PATH</key><string>/stale/bin</string>'));
+  const before = expected.replace(/<key>PATH<\/key><string>[^<]*<\/string>/, '<key>PATH</key><string>/stale/bin</string>');
+  writeFileSync(plistPath, before);
 
   const db = openDb();
   const result = await cmdAdminDaemon(db, { verb: 'restart' });
 
-  assert.equal(result.plist_drift?.status ?? 'in_sync', 'in_sync');
+  // cmdAdminDaemon只在 verb:'status' 时才挂 plist_drift —— restart 分支没有这个字段，
+  // 所以要验证"这个构造出来的差异确实只落在自由变桶"，必须直接对纯函数断言，
+  // 而不是读一个 restart 永远不会返回的字段。
+  assert.equal(comparePlist(before, expected).status, 'in_sync', 'the constructed diff must be benign-only');
   assert.equal(result.plist_rewrite.written, true, 'a PATH refresh must reach the installed plist');
   assert.doesNotMatch(readFileSync(plistPath, 'utf8'), /\/stale\/bin/);
+}));
+
+// 报警轴到此为止都只对 JS 调用方可见——一个真人跑 `ccmem admin daemon restart`
+// 只看得到 stdout 的 "restarted pid=..."，blocked_by / reason / REMEDY 全部
+// 到不了终端。CCMEM_CONFIG_PATH 目标文件被删掉之后，G2 会在此后每一次 restart
+// 都拦下重写，永久且无声——跟 Finding 10 本身同一类静默无效。
+test('CLI reporting: a blocked gate writes the remedy to stderr', () => withFakeLaunchctl(async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const cliPath = fileURLToPath(new URL('../../scripts/cli.mjs', import.meta.url));
+
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+  writeFileSync(plistPath, plistWith({ ...BASE_ENV, ANTHROPIC_API_KEY: 'old' }));
+
+  const result = spawnSync(process.execPath, [cliPath, 'admin', '--', 'daemon', 'restart'], {
+    env: process.env,
+    encoding: 'utf8'
+  });
+
+  assert.match(result.stderr, /uninstall && ccmem admin daemon install/, 'a blocked gate must surface the remedy on stderr');
+}));
+
+test('CLI reporting: a successful rewrite adds no extra stderr noise', () => withFakeLaunchctl(async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const cliPath = fileURLToPath(new URL('../../scripts/cli.mjs', import.meta.url));
+
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+  const expected = (await import('../../scripts/lib/admin/daemon.mjs')).renderPlist();
+  writeFileSync(plistPath, expected.replace(/<key>PATH<\/key><string>[^<]*<\/string>/, '<key>PATH</key><string>/stale/bin</string>'));
+
+  const result = spawnSync(process.execPath, [cliPath, 'admin', '--', 'daemon', 'restart'], {
+    env: process.env,
+    encoding: 'utf8'
+  });
+
+  assert.doesNotMatch(result.stderr, /plist not rewritten/, 'a clean write must not report a block that did not happen');
 }));

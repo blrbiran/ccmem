@@ -135,7 +135,7 @@ Task 3–5 新增门禁/接线测试后涨到 510，本任务实测确认，见 
 | `git log`（近 ~25 个提交） | **每条修复的完整根因、证据、取舍都在提交信息里**，本文档刻意不重复。 |
 | `.superpowers/sdd/2026-07-31-ccmem-v0.13/progress.md` | SDD ledger —— 每条人类裁决及理由、全部延期项。git 历史一条都不记。 |
 | `.superpowers/sdd/2026-07-31-ccmem-v0.13/final-review-findings.md` | 末尾「NOT in this wave」= v0.14 待办来源。 |
-| `docs/ccmem-v0.13-spec.md` 附录 A | 不变量现为 **120–143（24 行）**。136–142 覆盖 Finding 6/7/8/12/13/14/5，**#143 覆盖 Finding 10**，**每条都验过红**。 |
+| `docs/ccmem-v0.13-spec.md` 附录 A | 不变量现为 **120–143（24 行）**。136–142 覆盖 Finding 6/7/8/12/13/14/5，**#143 覆盖 Finding 10**，**每条都验过红**（#143 为部分验红，范围见附录 A #143 下方说明）。 |
 
 ## Git 状态
 

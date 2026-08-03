@@ -78,7 +78,7 @@ test('parseEnvDict refuses garbage sitting between two valid pairs', () => {
   assert.equal(parsed.ok, false);
 });
 
-const { mkdtempSync, writeFileSync, rmSync, readFileSync } = await import('node:fs');
+const { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } = await import('node:fs');
 const { tmpdir } = await import('node:os');
 const { join } = await import('node:path');
 
@@ -206,6 +206,13 @@ writeFileSync(fakeLaunchctlPath, [
   '    ;;',
   '  bootstrap)',
   '    : > "$STATE"',
+  // Opt-in snapshot of the plist bootstrap was actually handed ($3 is the
+  // plist path argument to `launchctl bootstrap <domain> <plist>`). Only
+  // ordering test T13 sets CCMEM_FAKE_BOOTSTRAP_SNAPSHOT; everyone else is
+  // unaffected. This is what makes the ordering between rewritePlistIfAllowed()
+  // and startDaemon() (which falls through to bootstrap after a failed
+  // kickstart) observable from the test side at all.
+  '    if [ -n "$CCMEM_FAKE_BOOTSTRAP_SNAPSHOT" ]; then cp "$3" "$CCMEM_FAKE_BOOTSTRAP_SNAPSHOT"; fi',
   '    set_lock',
   '    ;;',
   '  kickstart)',
@@ -227,6 +234,13 @@ chmodSync(fakeLaunchctlPath, 0o755);
 // surfaced it because of an unrelated start_timeout). Fixing it here means this
 // file structurally cannot reach real `launchctl`, regardless of what any test
 // — present or future — does or doesn't opt into.
+//
+// CCMEM_LAUNCHAGENT_DIR needs the identical treatment for the identical reason
+// (see the module-scope assignment below, after `trackedMkdtemp` is defined):
+// the launchctl fake only protects the launchd *registration* — nothing protects
+// the plist *file* itself, and `rewritePlistIfAllowed()`'s `writeFileSync` will
+// happily target the developer's real ~/Library/LaunchAgents/com.ccmem.daemon.plist
+// if this variable is ever unset (which it used to be, at the end of T1 wiring).
 process.env.CCMEM_LAUNCHCTL_BIN = fakeLaunchctlPath;
 process.env.CCMEM_LAUNCHCTL_LOG = fakeLaunchctlLog;
 
@@ -255,6 +269,13 @@ test.after(() => {
   for (const dir of tempDirsToClean) rmSync(dir, { recursive: true, force: true });
 });
 
+// Same structural fix as CCMEM_LAUNCHCTL_BIN/LOG above, same reason: set at module
+// scope so this file cannot fall back to the real ~/Library/LaunchAgents, regardless
+// of what any individual test does. Individual tests may still repoint this at their
+// own temp dir (most below do, to control what plist is on "disk"); this is only the
+// safe floor for any test that doesn't.
+process.env.CCMEM_LAUNCHAGENT_DIR = trackedMkdtemp('ccmem-launchagent-default-');
+
 // 接线测试。纯函数有测试 ≠ 接线有测试 —— 这里要证明 verb 分发真的调到了检测。
 test('T1 wiring: daemon status reports plist_drift', async () => {
   const agentDir = trackedMkdtemp('ccmem-la-');
@@ -268,7 +289,6 @@ test('T1 wiring: daemon status reports plist_drift', async () => {
     assert.ok(['in_sync', 'drifted', 'unknown'].includes(result.plist_drift.status));
   } finally {
     db.close();
-    delete process.env.CCMEM_LAUNCHAGENT_DIR;
   }
 });
 
@@ -328,6 +348,38 @@ test('T5b: G2 refuses a changed CCMEM_DATA_ROOT even when CCMEM_CONFIG_PATH is p
   );
   assert.equal(verdict.ok, false);
   assert.equal(verdict.blocked_by, 'G2');
+});
+
+// T5c —— 设计文档 §四/§七：CCMEM_DATA_ROOT 与 CCMEM_CONFIG_PATH 是"值一律不打印"的
+// 唯二例外，人必须看见它想把你改指到哪。effectiveConfigPath 分支已经这样报
+// CCMEM_CONFIG_PATH（见 reason 里的 oldConfig/newConfig）；这条钉 POINTING_LITERAL_KEYS
+// 分支里的 CCMEM_DATA_ROOT 也做到同一件事。CCMEM_CONFIG_PATH 必须两侧钉同一个真实文件
+// （T5b 的写法），否则 effectiveConfigPath 那道更早的 G2 检查会先触发——它自己也会在
+// reason 里带出 /tmp/root-a 与 /tmp/root-b（因为它俩落在 oldConfig/newConfig 里），
+// 让这条测试看起来通过，其实根本没走到 POINTING_LITERAL_KEYS 分支。
+test('T5c: G2 prints old and new values for a changed CCMEM_DATA_ROOT', () => {
+  const real = join(trackedMkdtemp('ccmem-cfg-'), 'shared.json');
+  writeFileSync(real, '{}');
+  const verdict = gates(
+    { PATH: '/usr/bin', CCMEM_DATA_ROOT: '/tmp/root-a', CCMEM_CONFIG_PATH: real },
+    { PATH: '/usr/bin', CCMEM_DATA_ROOT: '/tmp/root-b', CCMEM_CONFIG_PATH: real }
+  );
+  assert.equal(verdict.blocked_by, 'G2');
+  assert.match(verdict.reason, /CCMEM_DATA_ROOT/);
+  assert.match(verdict.reason, /\/tmp\/root-a/);
+  assert.match(verdict.reason, /\/tmp\/root-b/);
+});
+
+// T5d —— 正面对照：其余指向类 key（未落在唯二例外里）仍只报 key 名，不报值。
+test('T5d: G2 does not print the value for a changed ANTHROPIC_BASE_URL', () => {
+  const verdict = gates(
+    { PATH: '/usr/bin', ANTHROPIC_BASE_URL: 'https://old.example' },
+    { PATH: '/usr/bin', ANTHROPIC_BASE_URL: 'https://new.example' }
+  );
+  assert.equal(verdict.blocked_by, 'G2');
+  assert.doesNotMatch(verdict.reason, /old\.example/);
+  assert.doesNotMatch(verdict.reason, /new\.example/);
+  assert.match(verdict.reason, /ANTHROPIC_BASE_URL/);
 });
 
 // T6 —— G3。静默改写凭据是延迟发生、难归因的失败。
@@ -426,6 +478,41 @@ test('T2 rewrite side: a benign-only difference is still written', () => withFak
   assert.doesNotMatch(readFileSync(plistPath, 'utf8'), /\/stale\/bin/);
 }));
 
+// T13 —— 排序不变量。rewritePlistIfAllowed() 必须夹在 stopDaemon 和 startDaemon 之间：
+// stopDaemon 先把 job boot 出去，kickstart 因此在这之后必然失败（STATE 标记已被清），
+// startDaemon 才会 fallthrough 到 bootstrap —— 而只有 bootstrap 会从磁盘重新读 plist,
+// kickstart 用的是 launchd 缓存的 job 定义，压根不理会重写。挪动这一行不会让 T2/T9/T11
+// 变红：它们只看 restart 返回值和"重写结束之后"磁盘上的最终字节，两者在 rewrite 挪到
+// startDaemon 之后仍然一样。唯一能拆穿的证据是 bootstrap **那一刻**实际读到了什么——
+// 假 launchctl 的 bootstrap 分支把它收到的 plist 路径参数原样复制走，这里读回那份快照。
+test('T13: rewrite must land before bootstrap reads the plist off disk', () => withFakeLaunchctl(async () => {
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+  const expected = (await import('../../scripts/lib/admin/daemon.mjs')).renderPlist();
+  const before = expected.replace(/<key>PATH<\/key><string>[^<]*<\/string>/, '<key>PATH</key><string>/stale/bin</string>');
+  writeFileSync(plistPath, before);
+
+  const snapshotDir = trackedMkdtemp('ccmem-bootstrap-snapshot-');
+  const snapshotPath = join(snapshotDir, 'bootstrap-saw.plist');
+  process.env.CCMEM_FAKE_BOOTSTRAP_SNAPSHOT = snapshotPath;
+
+  const db = openDb();
+  let result;
+  try {
+    result = await cmdAdminDaemon(db, { verb: 'restart' });
+  } finally {
+    delete process.env.CCMEM_FAKE_BOOTSTRAP_SNAPSHOT;
+  }
+
+  assert.equal(result.status, 'restarted');
+  assert.equal(result.plist_rewrite.written, true, 'a PATH refresh must reach the installed plist');
+  assert.ok(existsSync(snapshotPath), 'bootstrap must have run and been snapshotted — otherwise this test proves nothing');
+  const bootstrapSaw = readFileSync(snapshotPath, 'utf8');
+  assert.doesNotMatch(bootstrapSaw, /\/stale\/bin/, 'bootstrap must not have been handed the stale, pre-rewrite plist');
+  assert.equal(bootstrapSaw, expected, 'bootstrap must have been handed the freshly rewritten plist');
+}));
+
 // 报警轴到此为止都只对 JS 调用方可见——一个真人跑 `ccmem admin daemon restart`
 // 只看得到 stdout 的 "restarted pid=..."，blocked_by / reason / REMEDY 全部
 // 到不了终端。CCMEM_CONFIG_PATH 目标文件被删掉之后，G2 会在此后每一次 restart
@@ -464,7 +551,54 @@ test('CLI reporting: a successful rewrite adds no extra stderr noise', () => wit
     encoding: 'utf8'
   });
 
+  // 这三条缺一不可：只断言"没提到 not rewritten"，CLI 崩了或者压根没写都照样绿——
+  // 那样这条测试对得起的名字是"没崩到打印那句话"，不是"成功重写"。
+  assert.equal(result.status, 0, 'the CLI must exit cleanly, not merely avoid one particular stderr line');
   assert.doesNotMatch(result.stderr, /plist not rewritten/, 'a clean write must not report a block that did not happen');
+  assert.doesNotMatch(readFileSync(plistPath, 'utf8'), /\/stale\/bin/, 'the rewrite must actually have landed on disk');
+}));
+
+// 报警轴（status: 'drifted'）此前只算出来、从不落地：daemon.mjs 每次 status 都挂
+// plist_drift，cli.mjs 的 status 分支从不提它——一个生产者，零个消费者，操作员永远看不到。
+test('CLI reporting: daemon status surfaces plist drift by key name only', () => withFakeLaunchctl(async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const cliPath = fileURLToPath(new URL('../../scripts/cli.mjs', import.meta.url));
+
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+  const expected = (await import('../../scripts/lib/admin/daemon.mjs')).renderPlist();
+  // 去掉 CCMEM_DATA_ROOT 这一个指向类 key——非自由变 key 缺失必判 drifted。
+  const stale = expected.replace(/<key>CCMEM_DATA_ROOT<\/key><string>[^<]*<\/string>/, '');
+  writeFileSync(plistPath, stale);
+
+  const db = openDb();
+  const now = Date.now();
+  db.prepare(`DELETE FROM daemon_lock`).run();
+  db.prepare(
+    `INSERT INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive)
+     VALUES (1, 4321, 'drift-host', ?, ?, 1)`
+  ).run(now - 5000, now - 800);
+  db.close();
+
+  const result = spawnSync(process.execPath, [cliPath, 'admin', '--', 'daemon', 'status'], {
+    env: process.env,
+    encoding: 'utf8'
+  });
+
+  assert.match(result.stdout, /ccmem: daemon alive pid=4321/);
+  assert.match(result.stdout, /plist=drifted/, 'the alive line must carry the drift status');
+  assert.match(result.stderr, /CCMEM_DATA_ROOT/, 'the changed key name must be named');
+  // key 名只是名字，不是值：这个 data root 目录的实际路径永不该出现在输出里。
+  const escapedRoot = wiringDataRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  assert.doesNotMatch(result.stdout, new RegExp(escapedRoot), 'no value may leak to stdout');
+  assert.doesNotMatch(result.stderr, new RegExp(escapedRoot), 'no value may leak to stderr');
+
+  // 这条测试直接写 daemon_lock（不经过 cmdAdminDaemon），清干净给后面的测试留一个干净状态。
+  const cleanupDb = openDb();
+  cleanupDb.prepare(`DELETE FROM daemon_lock`).run();
+  cleanupDb.close();
 }));
 
 // drift 检测的基准必须与 install 实际写入的内容同源——否则两处求值点分道扬镳

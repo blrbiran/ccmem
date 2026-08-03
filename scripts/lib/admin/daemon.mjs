@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
 import { getDataRoot } from '../db.mjs';
-import { comparePlist, evaluateGates, parseEnvDict, splitPlist } from './plist-drift.mjs';
+import { comparePlist, EMPTY_LISTS, evaluateGates, parseEnvDict, splitPlist } from './plist-drift.mjs';
 
 const DAEMON_MAIN = fileURLToPath(new URL('../../daemon/main.mjs', import.meta.url));
 const LAUNCHD_LABEL = 'com.ccmem.daemon';
@@ -749,13 +749,13 @@ async function restartDaemon(db) {
 function describePlistDrift() {
   const plistPath = getLaunchAgentPath();
   if (!existsSync(plistPath)) {
-    return { status: 'not_installed', added: [], removed: [], changed: [], benign_changed: [], template_changed: [] };
+    return { status: 'not_installed', ...EMPTY_LISTS };
   }
 
   const onDisk = readFileSync(plistPath, 'utf8');
   const expected = renderPlist();
   if (onDisk === expected) {
-    return { status: 'in_sync', added: [], removed: [], changed: [], benign_changed: [], template_changed: [] };
+    return { status: 'in_sync', ...EMPTY_LISTS };
   }
 
   return comparePlist(onDisk, expected);

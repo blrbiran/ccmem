@@ -96,7 +96,7 @@ export function parseEnvDict(envText) {
   return { ok: true, env };
 }
 
-const EMPTY_LISTS = {
+export const EMPTY_LISTS = {
   added: [], removed: [], changed: [], benign_changed: [], template_changed: []
 };
 
@@ -111,6 +111,12 @@ export function effectiveConfigPath(env, defaultDataRoot) {
 }
 
 const POINTING_LITERAL_KEYS = ['CCMEM_DATA_ROOT', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_FOUNDRY_BASE_URL', 'CLAUDE_CODE_USE_FOUNDRY'];
+
+// 设计文档 §四/§七：值一律不打印，只打印 key 名；唯一例外是 CCMEM_CONFIG_PATH 与
+// CCMEM_DATA_ROOT 的新旧值——被拦下的人必须看见它想把你改指到哪才能裁决。
+// effectiveConfigPath 分支（上面）已经这样报 CCMEM_CONFIG_PATH 了；这里补
+// CCMEM_DATA_ROOT 的同等待遇。其余指向类 key 仍只报 key 名。
+const POINTING_KEYS_WITH_VALUES = new Set(['CCMEM_DATA_ROOT', 'CCMEM_CONFIG_PATH']);
 
 export function evaluateGates(oldEnv, newEnv, { defaultDataRoot, probe }) {
   // G1 —— key 非缩减。
@@ -134,7 +140,10 @@ export function evaluateGates(oldEnv, newEnv, { defaultDataRoot, probe }) {
 
   for (const key of POINTING_LITERAL_KEYS) {
     if ((oldEnv[key] ?? null) !== (newEnv[key] ?? null)) {
-      return { ok: false, blocked_by: 'G2', reason: `refusing to change ${key}, which decides where the daemon sends data; ${REMEDY}` };
+      const detail = POINTING_KEYS_WITH_VALUES.has(key)
+        ? ` from ${oldEnv[key] ?? '(unset)'} to ${newEnv[key] ?? '(unset)'}`
+        : '';
+      return { ok: false, blocked_by: 'G2', reason: `refusing to change ${key}${detail}, which decides where the daemon sends data; ${REMEDY}` };
     }
   }
 

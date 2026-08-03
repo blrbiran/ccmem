@@ -132,7 +132,12 @@ export function comparePlist(oldText, newText) {
   if (oldParts.programArgs !== newParts.programArgs) template_changed.push('ProgramArguments');
   if (oldParts.template !== newParts.template) template_changed.push('template');
 
-  const raisesVerdict = added.length || removed.length || changed.length;
+  // 自由变 key 的整体消失/出现，跟它的值变化一样不进报警轴 —— 但 added/removed
+  // 仍要完整列出该 key，"消失了"这件事不能被吞掉（G1 在 Task 4 另外挡）。
+  const raisesVerdict =
+    added.some((key) => classifyKey(key) !== 'free') ||
+    removed.some((key) => classifyKey(key) !== 'free') ||
+    changed.length;
   return {
     status: raisesVerdict ? 'drifted' : 'in_sync',
     added, removed, changed, benign_changed, template_changed

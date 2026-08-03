@@ -111,6 +111,24 @@ test('T1: a missing pointing key is drift', () => {
   assert.ok(result.added.includes('CCMEM_CONFIG_PATH'));
 });
 
+// T1b 回归测试。design §五："其余（含只有自由变 key、轴②、轴③ 有差异）"应判 in_sync；
+// §三：自由变 key 不拦不报警。CCMEM_CLAUDE_P_COMMAND 是 FREE_KEYS 里的一员 —— 它整个消失
+// （不只是值变了）也不该翻 status，但仍要留在 removed 里给人看，"消失了"这件事不能被吞掉。
+// G1（Task 4）另外挡它彻底消失的情形；这里只是不让它污染报警轴。
+test('T1b: a missing free key does not raise the verdict, but still appears in removed', () => {
+  const withFree = { ...BASE_ENV, CCMEM_CLAUDE_P_COMMAND: 'claude' };
+  const result = comparePlist(plistWith(withFree), plistWith(BASE_ENV));
+  assert.equal(result.status, 'in_sync');
+  assert.ok(result.removed.includes('CCMEM_CLAUDE_P_COMMAND'));
+});
+
+test('T1c: an added free key does not raise the verdict, but still appears in added', () => {
+  const withFree = { ...BASE_ENV, CCMEM_CLAUDE_P_COMMAND: 'claude' };
+  const result = comparePlist(plistWith(BASE_ENV), plistWith(withFree));
+  assert.equal(result.status, 'in_sync');
+  assert.ok(result.added.includes('CCMEM_CLAUDE_P_COMMAND'));
+});
+
 // T2 报警侧。PATH 取自调用方 shell，换个终端就不同；若它计入三态，
 // status 会常态报 drifted，把新报警训练成噪声（Finding 2 的读法）。
 test('T2: a PATH-only difference does not raise the verdict', () => {

@@ -31,6 +31,16 @@ const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submi
 const { cleanupStaleContextFiles } = await import('../../scripts/lib/context-file.mjs');
 const { recordMetric } = await import('../../scripts/lib/metrics.mjs');
 const { writeMetricsDailyRollup } = await import('../../scripts/lib/metrics-rollup.mjs');
+const { probeFile } = await import('../../scripts/daemon/tasks/embed-latency-probe.mjs');
+
+function runDiagnoseFeedbackWithProbeFile(content) {
+  writeFileSync(probeFile({}), content, 'utf8');
+  return execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--feedback'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+}
 
 function resetDiagnoseTables(db) {
   db.prepare(`DELETE FROM daemon_lock`).run();
@@ -1226,6 +1236,13 @@ test('cli admin alias prints success after confirmation', async () => {
   assert.match(output, /Type ALIAS to confirm:/);
   assert.match(output, /ccmem: aliased 1 memories from "/);
   assert.equal(row.n, 1);
+});
+
+test('diagnose --feedback reports the latency probe file size', async () => {
+  // 造一个非空的探针文件，然后断言 --feedback 打印出它的字节数。
+  const out = await runDiagnoseFeedbackWithProbeFile('{"ts":1,"ms":500,"ok":true}\n');
+  assert.match(out, /embed-latency-probe\.jsonl/, 'runtime cost must stay visible — same reason l25-probe.jsonl size is printed');
+  assert.match(out, /\b28\b/, 'the byte count itself must be printed, not just the name');
 });
 
 test.after(() => {

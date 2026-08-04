@@ -33,8 +33,9 @@ const { recordMetric } = await import('../../scripts/lib/metrics.mjs');
 const { writeMetricsDailyRollup } = await import('../../scripts/lib/metrics-rollup.mjs');
 const { probeFile } = await import('../../scripts/daemon/tasks/embed-latency-probe.mjs');
 
-function runDiagnoseFeedbackWithProbeFile(content) {
+function runDiagnoseFeedbackWithProbeFile(content, decisionContent) {
   writeFileSync(probeFile({}), content, 'utf8');
+  writeFileSync(path.join(dataRoot, 'l25-probe.jsonl'), decisionContent, 'utf8');
   return execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--feedback'], {
     cwd: diagnoseCwd,
     env,
@@ -1272,9 +1273,12 @@ test('cli admin alias prints success after confirmation', async () => {
 
 test('diagnose --feedback reports the latency probe file size', async () => {
   // 造一个非空的探针文件，然后断言 --feedback 打印出它的字节数。
-  const out = await runDiagnoseFeedbackWithProbeFile('{"ts":1,"ms":500,"ok":true}\n');
-  assert.match(out, /embed-latency-probe\.jsonl/, 'runtime cost must stay visible — same reason l25-probe.jsonl size is printed');
-  assert.match(out, /\b28\b/, 'the byte count itself must be printed, not just the name');
+  // 同一段输出里 l25-probe.jsonl 的字节数就在隔壁。两份夹具刻意取不同长度
+  // （探针 34、l25 28），且断言把数字绑在文件名上 —— 松散的 /embed-latency-probe\.jsonl \(28 bytes/ 会匹配到
+  // 邻居那一行，于是探针字节数就算根本没打印，测试也照样绿。
+  const out = await runDiagnoseFeedbackWithProbeFile('{"ts":1,"ms":500,"ok":true,"n":1}\n', '{"ts":1,"note":"filler-ok"}\n');
+  assert.match(out, /embed-latency-probe\.jsonl \(34 bytes/, 'runtime cost must stay visible — and the number must be tied to the file it measures');
+  assert.match(out, /l25-probe\.jsonl, 28 bytes/, 'the l25 fixture is exactly 28 bytes on purpose: it is what the old loose /\\b28\\b/ latched onto');
 });
 
 test.after(() => {

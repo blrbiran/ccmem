@@ -122,12 +122,23 @@ scripts/daemon/loop.mjs                        ← 调度
 
 **这是对仓库惯例的一次有意偏离，按 Rule 11 明说而不是闷着改。**
 
-现有八个任务都用 `tryClaimLease(db, type, dateKey, ranBy)` 去重。但 lease **就是 `task_runs` 表里的一行**
-（`task-runs.mjs:7-17`），而**全仓库没有任何地方清理 `task_runs`**。今天每天新增约 2 行；
-5 分钟一次的探针会变成 **288 行/天、无上限**，堆在一张没人打扫的表里。
-
+现有八个任务都用 `tryClaimLease(db, type, dateKey, ranBy)` 去重。
 lease 的价值是**跨进程幂等**（daemon / opportunistic / manual 可能抢同一周期）。
-探针只由 daemon 发起，用不上这个价值，却要全额付这个代价。
+探针只由 daemon 发起，而 daemon 锁只允许一个进程 —— **这个价值对它恒为零**，
+所以不走 lease。**理由只有这一条。**
+
+> ⚠️ **本节初稿的理由是错的，改正记录在此。** 初稿写「全仓库没有任何地方清理 `task_runs`，
+> 5 分钟一次的探针会变成 288 行/天、无上限」。**`task_runs` 是被清理的**：
+> `tier15.mjs:62` 与 `:130` 两处都执行 `DELETE FROM task_runs WHERE date_key < dayKeyDaysAgo(30)`。
+> lease 的代价因此**有界**（30 天约 8.6k 行），是「白付」而不是「无限累积」。
+
+**真正无界的增长在另一张表，必须写明：** 每次探针都会往 `tasks` 插一行，
+而 `scripts/` 下**不存在任何 `DELETE FROM tasks`**。`interval_ms = 300000` 时约 **288 行/天、10.5 万行/年**，
+且 `tasks` 只有 `uniq_tasks_summarize_session_seq` 一个索引 —— 没有 `(status, scheduled_for)` 索引，
+所以 `mainLoop` 的到期查询（`loop.mjs:342`）是在一张只增不减的表上全表扫描。
+
+> **本轮只披露，不修。** 给 `tasks` 加保留策略是全仓库级的决定，
+> 不该由一个探针顺手做掉；但把它藏起来同样不可接受 —— 开启探针的人有权知道这笔账。
 
 因此：`loop.mjs` 里持一个模块级 `lastProbeAtMs`，`nowMs - lastProbeAtMs >= interval_ms` 时入队。
 daemon 重启会重置它 —— 后果只是重启后立刻探一次，可接受。

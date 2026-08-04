@@ -105,10 +105,23 @@ function timeReached(date, hour, minute) {
 
 /**
  * Deliberately NOT a task_runs lease. Leases exist for cross-process
- * idempotency (daemon / opportunistic / manual can race for one period), which
- * a daemon-only probe never needs — and nothing in this repo prunes task_runs,
- * so a 5-minute probe would add 288 rows a day forever. A restart resets this
- * and the probe fires once immediately; that is acceptable.
+ * idempotency (daemon / opportunistic / manual can race for one period) — a
+ * guarantee a probe that is only ever initiated by the daemon, under a lock
+ * that admits one daemon process, can never use. That, and only that, is the
+ * reason: task_runs growth is NOT an argument here, because task_runs IS
+ * pruned (tier15.mjs runs `DELETE FROM task_runs WHERE date_key < 30 days ago`
+ * at two sites), so a 5-minute probe's leases would be bounded at ~8.6k rows.
+ * Paying that for an unused guarantee is pointless, not dangerous.
+ *
+ * The growth this does NOT avoid, disclosed here because it is real: each
+ * probe inserts a row into `tasks`, and no `DELETE FROM tasks` exists anywhere
+ * in scripts/. At interval_ms=300000 that is ~288 rows/day, ~105k/year, in a
+ * table whose only index is uniq_tasks_summarize_session_seq — so mainLoop's
+ * due-query below scans it. Not fixed here on purpose: adding a `tasks` pruner
+ * is a repo-wide retention decision, out of scope for this probe.
+ *
+ * A restart resets this and the probe fires once immediately; that is
+ * acceptable.
  */
 let lastProbeAtMs = 0;
 

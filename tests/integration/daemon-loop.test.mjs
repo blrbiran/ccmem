@@ -5808,7 +5808,7 @@ test('the probe leaves no rows in task_runs', () => {
   try {
     scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
     const n = db.prepare("SELECT count(*) AS n FROM task_runs WHERE type = 'embed_latency_probe'").get().n;
-    assert.equal(n, 0, 'leases are never pruned; a 5-minute probe would add 288 rows a day for an idempotency guarantee a single-writer daemon does not need');
+    assert.equal(n, 0, 'a lease buys cross-process idempotency, which a daemon-only probe under a single-process lock never uses — task_runs is pruned at 30 days, so the cost is bounded, just pointless. The unbounded growth is in `tasks`, which nothing in scripts/ prunes; see the comment on lastProbeAtMs.');
   } finally {
     restoreConfig();
     db.close();

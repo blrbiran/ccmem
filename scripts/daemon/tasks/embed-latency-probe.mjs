@@ -27,6 +27,10 @@ export async function runEmbedLatencyProbe(db, _task, deps = {}) {
   const embedding = cfg?.embedding ?? {};
   const probeCfg = embedding.latency_probe ?? {};
 
+  if (probeCfg.enabled !== true) {
+    return { skipped: 'disabled' };
+  }
+
   if (embedding.provider !== 'openai') {
     return { skipped: 'provider' };
   }

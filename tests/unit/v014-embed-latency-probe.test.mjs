@@ -80,3 +80,25 @@ test('a non-openai provider is skipped without writing a row', async () => {
   const result = await runEmbedLatencyProbe(db, {}, { config: cfg, provider: { async embed() { throw new Error('must not be called'); } } });
   assert.equal(result.skipped, 'provider');
 });
+
+test('a disabled probe returns skipped and never invokes the provider — no real spend on someone else\'s behalf', async () => {
+  const db = freshDb();
+  let calls = 0;
+  const counting = { async embed() { calls += 1; return [new Float32Array(1536)]; } };
+
+  const result = await runEmbedLatencyProbe(db, {}, { config: openaiCfg({ enabled: false }), provider: counting });
+
+  assert.equal(calls, 0, 'the provider must never be invoked when latency_probe.enabled is false — that would fire a real, billable API request');
+  assert.equal(result.skipped, 'disabled');
+});
+
+test('a truthy-but-not-true enabled value is treated as disabled — strict === true is the spec', async () => {
+  const db = freshDb();
+  let calls = 0;
+  const counting = { async embed() { calls += 1; return [new Float32Array(1536)]; } };
+
+  const result = await runEmbedLatencyProbe(db, {}, { config: openaiCfg({ enabled: 'yes' }), provider: counting });
+
+  assert.equal(calls, 0, 'a truthy string must not be enough to enable real spend');
+  assert.equal(result.skipped, 'disabled');
+});

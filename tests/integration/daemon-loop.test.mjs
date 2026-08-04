@@ -5815,4 +5815,67 @@ test('the probe leaves no rows in task_runs', () => {
   }
 });
 
+function captureStderr(fn) {
+  const original = process.stderr.write;
+  const captured = [];
+  process.stderr.write = (chunk) => { captured.push(String(chunk)); return true; };
+  try {
+    fn();
+  } finally {
+    process.stderr.write = original;
+  }
+  return captured.join('');
+}
+
+test('a non-numeric interval_ms falls back to the default and says so', () => {
+  // Number('every 5 min') === NaN, and `nowMs - lastProbeAtMs >= NaN` is false
+  // forever: the probe would never run while enabled:true claims it does, with
+  // no signal anywhere. That is exactly the silent failure this repo's Rule 12
+  // forbids.
+  const restoreConfig = setRuntimeConfig('probe-interval-nan', {
+    embedding: { latency_probe: { enabled: true, interval_ms: 'every 5 min' } }
+  });
+  const db = openDb();
+  resetRuntimeTables(db);
+  _resetProbeSchedule();
+
+  try {
+    const err = captureStderr(() => {
+      scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
+      scheduleCronTasks(db, new Date('2026-08-04T12:01:00'));
+      scheduleCronTasks(db, new Date('2026-08-04T12:06:00'));
+    });
+    const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
+    assert.equal(n, 2, 'a typo must degrade to the 300000ms default, not disable the probe behind an enabled:true flag');
+    assert.match(err, /interval_ms/, 'the operator gets one line naming the field — a silent fallback makes the typo disappear');
+  } finally {
+    restoreConfig();
+    db.close();
+  }
+});
+
+test('a zero or negative interval_ms does not enqueue on every tick', () => {
+  // interval_ms: 0 would enqueue as often as the loop wakes (every 30s when
+  // active) — real, billable OpenAI requests from a typo.
+  const restoreConfig = setRuntimeConfig('probe-interval-zero', {
+    embedding: { latency_probe: { enabled: true, interval_ms: 0 } }
+  });
+  const db = openDb();
+  resetRuntimeTables(db);
+  _resetProbeSchedule();
+
+  try {
+    captureStderr(() => {
+      scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
+      scheduleCronTasks(db, new Date('2026-08-04T12:00:30'));
+      scheduleCronTasks(db, new Date('2026-08-04T12:01:00'));
+    });
+    const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
+    assert.equal(n, 1, 'a non-positive interval must fall back to the default, not fire on every loop iteration');
+  } finally {
+    restoreConfig();
+    db.close();
+  }
+});
+
 test.after(() => rmSync(process.env.CCMEM_DATA_ROOT, { recursive: true, force: true }));

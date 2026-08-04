@@ -124,10 +124,37 @@ function timeReached(date, hour, minute) {
  * acceptable.
  */
 let lastProbeAtMs = 0;
+let warnedBadProbeInterval = false;
+
+const DEFAULT_PROBE_INTERVAL_MS = 300000;
+
+/**
+ * Both bad values fail invisibly, which is why this one warns where the repo's
+ * other numeric config reads (claude-p.mjs, vec-backfill.mjs, openai.mjs) fall
+ * back silently: a non-numeric interval makes `nowMs - lastProbeAtMs >= NaN`
+ * false forever, so the probe never runs while `enabled: true` says it does;
+ * a zero or negative one enqueues on every loop iteration — real billable
+ * OpenAI requests from a typo. One line per process, not per iteration.
+ */
+function resolveProbeIntervalMs(raw) {
+  const value = Number(raw ?? DEFAULT_PROBE_INTERVAL_MS);
+  if (Number.isFinite(value) && value > 0) {
+    return value;
+  }
+
+  if (!warnedBadProbeInterval) {
+    warnedBadProbeInterval = true;
+    process.stderr.write(
+      `ccmem: embedding.latency_probe.interval_ms=${JSON.stringify(raw)} is not a positive number — using ${DEFAULT_PROBE_INTERVAL_MS}ms\n`
+    );
+  }
+  return DEFAULT_PROBE_INTERVAL_MS;
+}
 
 /** Test seam only. */
 export function _resetProbeSchedule() {
   lastProbeAtMs = 0;
+  warnedBadProbeInterval = false;
 }
 
 export function scheduleCronTasks(db, now = new Date()) {
@@ -146,7 +173,7 @@ export function scheduleCronTasks(db, now = new Date()) {
 
   const probeCfg = cfg.embedding?.latency_probe ?? {};
   if (probeCfg.enabled === true) {
-    const probeIntervalMs = Number(probeCfg.interval_ms ?? 300000);
+    const probeIntervalMs = resolveProbeIntervalMs(probeCfg.interval_ms);
     if (nowMs - lastProbeAtMs >= probeIntervalMs) {
       lastProbeAtMs = nowMs;
       db.prepare(

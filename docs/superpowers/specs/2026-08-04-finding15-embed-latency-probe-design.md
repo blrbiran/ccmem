@@ -181,6 +181,12 @@ loop 空闲时睡 **300s**、活跃时睡 30s（`loop.mjs:322`）。
 
 `interval_ms` 是下限而非精确周期，见 §3.2。
 
+**`interval_ms` 校验（`Number.isFinite(x) && x > 0`，否则回落 300000 并往 stderr 写一行）**：
+非数值会让 `nowMs - lastProbeAtMs >= NaN` 恒为 false —— 探针在 `enabled: true` 下永不运行且毫无信号；
+0 或负值则每个 loop 迭代（最快 30s）入队一次，等于一个笔误换来真金白银的 API 支出。
+仓库里其它数值配置（`claude-p.mjs` / `vec-backfill.mjs` / `openai.mjs`）都是**静默回落**；
+这里额外写一行 stderr，是因为两种坏值的后果都不可见，且其中一种要花钱。每进程只警告一次，不刷日志。
+
 ---
 
 ## 五、探针本体与隔离

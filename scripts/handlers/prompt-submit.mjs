@@ -135,6 +135,7 @@ export async function handlePromptSubmit(hookData) {
         retrieval_cosine_ms: retrieval.timing?.cosineMs ?? null,
         retrieval_pool: retrieval.timing?.candidatePool ?? null,
         retrieval_stale_vecs: retrieval.timing?.retrieval_stale_vecs ?? null,
+        prompt_chars: String(hookData.prompt ?? '').slice(0, 2000).length,
         retrieval_path: path,
         retrieval_embed_error: embedError,
         retrieval_fallback: fallback,

@@ -15,7 +15,7 @@ const { runEmbedLatencyProbe, probeFile } = await import('../../scripts/daemon/t
 function freshDb() {
   const db = new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE memories (id INTEGER PRIMARY KEY, content TEXT);
-           CREATE TABLE config_kv (key TEXT PRIMARY KEY, value TEXT);
+           CREATE TABLE config_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, set_at INTEGER NOT NULL);
            CREATE TABLE query_embedding_cache (prompt_hash TEXT PRIMARY KEY, vec BLOB);`);
   db.prepare('INSERT INTO memories (content) VALUES (?)').run('hello probe');
   return db;

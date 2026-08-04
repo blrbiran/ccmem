@@ -19,7 +19,18 @@ export const DEFAULT_CONFIG = {
     backfill_timeout_ms: 30000,
     openai_base_url: null,
     openai_model: 'text-embedding-3-small',
-    openai_dim: null
+    openai_dim: null,
+    latency_probe: {
+      // Strictly `enabled === true` to run. Note this is the OPPOSITE of the
+      // adjacent decision-data flag (metrics.mjs recordDecisionMetric treats
+      // anything but an explicit `false` as on): recording must default to on,
+      // sending real API requests must default to off. Read the design doc
+      // before changing either.
+      enabled: false,
+      interval_ms: 300000,
+      timeout_ms: 10000,
+      file: 'embed-latency-probe.jsonl'
+    }
   },
   dedup: {
     enabled: true,

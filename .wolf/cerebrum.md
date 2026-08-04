@@ -84,3 +84,9 @@
 - `Promise.race([fn(), setTimeout(reject, ms)])` **只能切断异步工作**。定时器回调要等事件循环空闲，而 `node:sqlite` 是同步 API —— 同步工作会跑满全程。实测：异步 800ms 在 201ms 被切断，同步 800ms 跑满。
 - 因此 **harness 超时（hooks.json）对同步工作是唯一的限制**，必须按工作本身的实测 p99 定尺寸，不能按内部预算定。
 - 证据形态记住：内部预算「触发 0 次」+ 实测「50.2% 超预算」同时成立 ⇒ 计时器坏了，不是工作快。
+
+### 2026-08-05 · Finding 15 整支复审留下的三条事实
+- **`task_runs` 是被清理的，`tasks` 不是。** `tier15.mjs:62` 与 `:130` 各有一次 `DELETE FROM task_runs WHERE date_key < dayKeyDaysAgo(30)`；而 `scripts/` 下**不存在任何 `DELETE FROM tasks`**。`tasks` 也没有 `(status, scheduled_for)` 索引（唯一索引只有 `uniq_tasks_summarize_session_seq`）。任何"高频入队"的设计要算的是 `tasks` 这笔账，不是 lease。
+- **hook 的 `retrieval_embed_ms` 不含动态 import 与 client 构造。** `retrieval.mjs` 先 `await provider.load(config)` 再起计时器。任何想与它对比的测量（如探针）必须同序 —— 否则量的是严格更大的量。反过来，`B-fail` 簇贴着上限那几毫秒**不能**用来推断 import 的耗时。
+- **同一张表里换了计数就必须换区间。** dogfood Finding 15 表的 `A` 行曾保留旧快照的 `384–796ms` 而计数已换新快照，并撑起下面一句加粗结论。凡是"计数 + 区间/分位"同格并存的表，**改任一处都要连坐检查另一处的出处**。
+- 数值型配置的仓库惯例是**静默回落**（`claude-p.mjs` / `vec-backfill.mjs` / `openai.mjs` / `jina.mjs` / `db.mjs`）；只有 `transcript-cleaner.mjs:95` 那种"拒绝用户给的值"才写 stderr。给探针 `interval_ms` 加 stderr 提示属于后者：坏值的两种后果（永不运行 / 每 30s 花钱）都不可见。**每进程只警告一次**，因为 `scheduleCronTasks` 每 30–300s 就跑一遍。

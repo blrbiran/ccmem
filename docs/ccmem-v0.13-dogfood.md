@@ -1019,7 +1019,7 @@ V1 自 daemon 重启（09:41）起计，待回填。V3 的 OpenAI 分支已跑�
 | 消费点 | 生产计数 | 说明 |
 |---|---|---|
 | `dedup.mjs` | `lane=cosine` **3 次** / `lane=trigram` **356 次** | 3 次 cosine 命中仍是 08-01 11:31、12:04、23:10。**"修复后无新增"的分母是 1** —— 23:10 之后总共只发生过 **1 次** dedup 事件，该次 `cosine=0.8007` 低于 `cosine_threshold 0.85`（`dedup.mjs:130`）故判给 trigram。**关键在于 cosine 被算出来了、不是 null** ⇒ 该消费点在 Finding 12 修复后确实拿得到可用向量 |
-| `retrieval.mjs` | Finding 12 修复后 43 次 `prompt_submit`：**A 22 / B-fail 14 / B-circuit 7**；`cosine_contribution>0` **22 次** | `pool=0` 的行数 **31 → 0**（修复前 2567 行中 31 次，修复后 43 行中 0 次）⇒ 配置分歧确已消除。**但 21/43 仍没走成语义通道**，原因不是签名过滤而是 embed 超时与熔断 —— 见 **Finding 15** |
+| `retrieval.mjs` | Finding 12 修复后 43 次 `prompt_submit`：**A 22 / B-fail 14 / B-circuit 7**；`cosine_contribution>0` **22 次** | `pool=0` 的行数 **31 → 0**（修复前 2567 行中 31 次，修复后 43 行中 0 次）⇒ 配置分歧确已消除。**但 21/43 仍没走成语义通道**，原因不是签名过滤而是 embed 超时与熔断 —— 见 **Finding 15**。**这一行的 43/22/14/7 是本节（2026-08-01 深夜）的快照，已被 Finding 15 一节 2026-08-04 21:32 的更晚快照取代（193/130/54/8+1）**——两次测量的时点不同，总量与占比对不上是预期之中，不要拿两处数字互相核对当同一次数据用 |
 | `feedback.mjs` | **仍 0 次** | `memory_feedback` 中 `evidence LIKE 'l1_positive_cosine%'` 计数为 0。**先解释来源**：全表 evidence 分布为 空 2070 / `neg_keyword` 79 / `assistant_self_correction` 28 / `assistant_reference` 2 —— **feedback 写入本身是活跃的**，缺的只是这一种。该路径要求"注入 → 用户回肯定语"且当时 embedding 真的可用。**这个 0 只能部分解释**：现有数据分辨不了"触发条件从未出现"与"条件出现了但路径没跑"，因为没有任何独立计数在记录"注入后收到肯定语"这件事。**因此不下结论** —— 这条写 trust 的路径在生产中**是否**跑过，目前不可判定；要判定需先加一个该条件的观测点 |
 
 ---

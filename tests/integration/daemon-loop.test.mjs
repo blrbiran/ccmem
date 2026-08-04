@@ -18,7 +18,7 @@ const { getDbPath, listMigrationBackups, openDb } = await import('../../scripts/
 const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { callClaudeP } = await import('../../scripts/daemon/claude-p.mjs');
 const { dispatchTask } = await import('../../scripts/daemon/dispatch.mjs');
-const { dayKey, mainLoop, runTask, scheduleCronTasks, securityAuditLeaseKey, weekKey, weeklyLeaseKey } = await import('../../scripts/daemon/loop.mjs');
+const { _resetProbeSchedule, dayKey, mainLoop, runTask, scheduleCronTasks, securityAuditLeaseKey, weekKey, weeklyLeaseKey } = await import('../../scripts/daemon/loop.mjs');
 const { RAN_BY, tryClaimLease } = await import('../../scripts/lib/task-runs.mjs');
 
 function resetRuntimeTables(db) {
@@ -5739,6 +5739,80 @@ test('dispatchTask applies parsed llm output into memories', async () => {
   assert.equal(details.inserted_count, 1);
   assert.equal(details.skipped_count, 0);
   db.close();
+});
+
+test('the latency probe is not scheduled while disabled', () => {
+  const restoreConfig = setRuntimeConfig('probe-disabled', {
+    embedding: { latency_probe: { enabled: false, interval_ms: 1000 } }
+  });
+  const db = openDb();
+  resetRuntimeTables(db);
+  _resetProbeSchedule();
+
+  try {
+    scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
+    const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
+    assert.equal(n, 0, 'default-off must mean no API requests are ever enqueued');
+  } finally {
+    restoreConfig();
+    db.close();
+  }
+});
+
+test('a truthy-but-not-true enabled value does not turn the probe on', () => {
+  const restoreConfig = setRuntimeConfig('probe-truthy-not-true', {
+    embedding: { latency_probe: { enabled: 'yes', interval_ms: 1000 } }
+  });
+  const db = openDb();
+  resetRuntimeTables(db);
+  _resetProbeSchedule();
+
+  try {
+    scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
+    const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
+    assert.equal(n, 0);
+  } finally {
+    restoreConfig();
+    db.close();
+  }
+});
+
+test('the probe enqueues once per interval, not once per tick', () => {
+  const restoreConfig = setRuntimeConfig('probe-interval-gating', {
+    embedding: { latency_probe: { enabled: true, interval_ms: 300000 } }
+  });
+  const db = openDb();
+  resetRuntimeTables(db);
+  _resetProbeSchedule();
+
+  try {
+    scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));   // first: enqueue
+    scheduleCronTasks(db, new Date('2026-08-04T12:01:00'));   // 1 min later: within interval, no enqueue
+    scheduleCronTasks(db, new Date('2026-08-04T12:06:00'));   // 6 min later: enqueue
+    const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
+    assert.equal(n, 2, 'interval gating, not per-tick enqueueing');
+  } finally {
+    restoreConfig();
+    db.close();
+  }
+});
+
+test('the probe leaves no rows in task_runs', () => {
+  const restoreConfig = setRuntimeConfig('probe-no-lease', {
+    embedding: { latency_probe: { enabled: true, interval_ms: 1000 } }
+  });
+  const db = openDb();
+  resetRuntimeTables(db);
+  _resetProbeSchedule();
+
+  try {
+    scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
+    const n = db.prepare("SELECT count(*) AS n FROM task_runs WHERE type = 'embed_latency_probe'").get().n;
+    assert.equal(n, 0, 'leases are never pruned; a 5-minute probe would add 288 rows a day for an idempotency guarantee a single-writer daemon does not need');
+  } finally {
+    restoreConfig();
+    db.close();
+  }
 });
 
 test.after(() => rmSync(process.env.CCMEM_DATA_ROOT, { recursive: true, force: true }));

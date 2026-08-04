@@ -103,6 +103,20 @@ function timeReached(date, hour, minute) {
   return date.getHours() > hour || (date.getHours() === hour && date.getMinutes() >= minute);
 }
 
+/**
+ * Deliberately NOT a task_runs lease. Leases exist for cross-process
+ * idempotency (daemon / opportunistic / manual can race for one period), which
+ * a daemon-only probe never needs — and nothing in this repo prunes task_runs,
+ * so a 5-minute probe would add 288 rows a day forever. A restart resets this
+ * and the probe fires once immediately; that is acceptable.
+ */
+let lastProbeAtMs = 0;
+
+/** Test seam only. */
+export function _resetProbeSchedule() {
+  lastProbeAtMs = 0;
+}
+
 export function scheduleCronTasks(db, now = new Date()) {
   const nowMs = now.getTime();
   const cfg = loadConfig();
@@ -116,6 +130,18 @@ export function scheduleCronTasks(db, now = new Date()) {
   const contradictionHour = Number(contradictionCfg.schedule_hour ?? 4);
   const contradictionMinute = Number(contradictionCfg.schedule_minute ?? 17);
   const crossProjectCfg = cfg.cross_project?.audit ?? {};
+
+  const probeCfg = cfg.embedding?.latency_probe ?? {};
+  if (probeCfg.enabled === true) {
+    const probeIntervalMs = Number(probeCfg.interval_ms ?? 300000);
+    if (nowMs - lastProbeAtMs >= probeIntervalMs) {
+      lastProbeAtMs = nowMs;
+      db.prepare(
+        `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+         VALUES ('embed_latency_probe', '{}', ?, ?, 'queued')`
+      ).run(nowMs, nowMs);
+    }
+  }
 
   if (timeReached(now, dailyCfg.hour, dailyCfg.minute)) {
     const leaseKey = dayKey(now);

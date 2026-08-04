@@ -566,6 +566,38 @@ test('metrics rollup persists v0.12 retrieval path counts', () => {
   db.close();
 });
 
+test('the latency probe does not contaminate the daily LLM rollup', () => {
+  // 探针每 5 分钟一次 ≈ 288 行/天。若被计进 llm_calls / llm_total_duration_ms，
+  // 这三个字段会从个位数变成三位数、并混入探针自己的延迟，而 rollup 行里看不出来 ——
+  // 一个新仪器扰动了旧的测量面（#144 守的正是同一类失效）。
+  const db = openDb();
+  resetDiagnoseTables(db);
+  rmSync(path.join(dataRoot, 'metrics.jsonl'), { force: true });
+
+  const now = new Date();
+  const dayEnd = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const dayStart = dayEnd - 86400000;
+  const insert = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status, started_at, finished_at)
+     VALUES (?, '{}', ?, ?, ?, ?, ?)`
+  );
+  insert.run('daily_maintenance', dayStart, dayStart, 'done', dayStart + 1000, dayStart + 3000);
+  insert.run('embed_latency_probe', dayStart, dayStart, 'done', dayStart + 4000, dayStart + 4700);
+  insert.run('embed_latency_probe', dayStart, dayStart, 'failed', dayStart + 5000, dayStart + 15000);
+  writeMetricsDailyRollup(db);
+
+  const row = db.prepare(
+    `SELECT llm_calls, llm_total_duration_ms, llm_failures
+     FROM metrics_daily_rollup
+     ORDER BY written_at DESC
+     LIMIT 1`
+  ).get();
+  assert.equal(row.llm_calls, 1, 'probe rows are not LLM calls; counting them makes this field meaningless once the probe is on');
+  assert.equal(row.llm_total_duration_ms, 2000, 'the probe\'s own latency must not be summed into the LLM duration trend');
+  assert.equal(row.llm_failures, 0, 'a probe timeout is the sample being collected, not an LLM task failure');
+  db.close();
+});
+
 test('cli admin diagnose --retrieval shows kv-aware embedding state and open circuit', async () => {
   const db = openDb();
   resetDiagnoseTables(db);

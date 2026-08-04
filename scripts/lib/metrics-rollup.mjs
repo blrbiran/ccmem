@@ -149,20 +149,24 @@ export function writeMetricsDailyRollup(db) {
   const { dayKey, dayStartMs, dayEndMs } = yesterdayWindow();
   const hookStats = aggregateHookLatencies(dayStartMs, dayEndMs);
   const retrievalStats = aggregateRetrievalPaths(dayStartMs, dayEndMs);
+  // embed_latency_probe is excluded from all three: it makes no LLM call, and
+  // at ~288 rows/day it would swamp a metric that otherwise sits in single
+  // digits — and fold its own measured latency into the duration trend, where
+  // the contamination would be invisible in the persisted rollup row.
   const llmCalls = Number(db.prepare(
     `SELECT COUNT(*) AS n
      FROM tasks
-     WHERE finished_at >= ? AND finished_at < ?`
+     WHERE finished_at >= ? AND finished_at < ? AND type != 'embed_latency_probe'`
   ).get(dayStartMs, dayEndMs)?.n ?? 0);
   const llmDuration = Number(db.prepare(
     `SELECT COALESCE(SUM(finished_at - started_at), 0) AS d
      FROM tasks
-     WHERE finished_at >= ? AND finished_at < ? AND started_at IS NOT NULL`
+     WHERE finished_at >= ? AND finished_at < ? AND started_at IS NOT NULL AND type != 'embed_latency_probe'`
   ).get(dayStartMs, dayEndMs)?.d ?? 0);
   const llmFailures = Number(db.prepare(
     `SELECT COUNT(*) AS n
      FROM tasks
-     WHERE status = 'failed' AND finished_at >= ? AND finished_at < ?`
+     WHERE status = 'failed' AND finished_at >= ? AND finished_at < ? AND type != 'embed_latency_probe'`
   ).get(dayStartMs, dayEndMs)?.n ?? 0);
   const llmDeadLetters = detectLLMDeadLetters(db, dayStartMs, dayEndMs);
 

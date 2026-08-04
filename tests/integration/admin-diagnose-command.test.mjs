@@ -31,6 +31,17 @@ const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submi
 const { cleanupStaleContextFiles } = await import('../../scripts/lib/context-file.mjs');
 const { recordMetric } = await import('../../scripts/lib/metrics.mjs');
 const { writeMetricsDailyRollup } = await import('../../scripts/lib/metrics-rollup.mjs');
+const { probeFile } = await import('../../scripts/daemon/tasks/embed-latency-probe.mjs');
+
+function runDiagnoseFeedbackWithProbeFile(content, decisionContent) {
+  writeFileSync(probeFile({}), content, 'utf8');
+  writeFileSync(path.join(dataRoot, 'l25-probe.jsonl'), decisionContent, 'utf8');
+  return execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--feedback'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+}
 
 function resetDiagnoseTables(db) {
   db.prepare(`DELETE FROM daemon_lock`).run();
@@ -553,6 +564,38 @@ test('metrics rollup persists v0.12 retrieval path counts', () => {
   assert.equal(row.path_b_off_count, 0);
   assert.equal(row.path_b_circuit_count, 0);
   assert.equal(row.embed_error_rate, 0.5);
+  db.close();
+});
+
+test('the latency probe does not contaminate the daily LLM rollup', () => {
+  // 探针每 5 分钟一次 ≈ 288 行/天。若被计进 llm_calls / llm_total_duration_ms，
+  // 这三个字段会从个位数变成三位数、并混入探针自己的延迟，而 rollup 行里看不出来 ——
+  // 一个新仪器扰动了旧的测量面（#144 守的正是同一类失效）。
+  const db = openDb();
+  resetDiagnoseTables(db);
+  rmSync(path.join(dataRoot, 'metrics.jsonl'), { force: true });
+
+  const now = new Date();
+  const dayEnd = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const dayStart = dayEnd - 86400000;
+  const insert = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status, started_at, finished_at)
+     VALUES (?, '{}', ?, ?, ?, ?, ?)`
+  );
+  insert.run('daily_maintenance', dayStart, dayStart, 'done', dayStart + 1000, dayStart + 3000);
+  insert.run('embed_latency_probe', dayStart, dayStart, 'done', dayStart + 4000, dayStart + 4700);
+  insert.run('embed_latency_probe', dayStart, dayStart, 'failed', dayStart + 5000, dayStart + 15000);
+  writeMetricsDailyRollup(db);
+
+  const row = db.prepare(
+    `SELECT llm_calls, llm_total_duration_ms, llm_failures
+     FROM metrics_daily_rollup
+     ORDER BY written_at DESC
+     LIMIT 1`
+  ).get();
+  assert.equal(row.llm_calls, 1, 'probe rows are not LLM calls; counting them makes this field meaningless once the probe is on');
+  assert.equal(row.llm_total_duration_ms, 2000, 'the probe\'s own latency must not be summed into the LLM duration trend');
+  assert.equal(row.llm_failures, 0, 'a probe timeout is the sample being collected, not an LLM task failure');
   db.close();
 });
 
@@ -1226,6 +1269,16 @@ test('cli admin alias prints success after confirmation', async () => {
   assert.match(output, /Type ALIAS to confirm:/);
   assert.match(output, /ccmem: aliased 1 memories from "/);
   assert.equal(row.n, 1);
+});
+
+test('diagnose --feedback reports the latency probe file size', async () => {
+  // 造一个非空的探针文件，然后断言 --feedback 打印出它的字节数。
+  // 同一段输出里 l25-probe.jsonl 的字节数就在隔壁。两份夹具刻意取不同长度
+  // （探针 34、l25 28），且断言把数字绑在文件名上 —— 松散的 /embed-latency-probe\.jsonl \(28 bytes/ 会匹配到
+  // 邻居那一行，于是探针字节数就算根本没打印，测试也照样绿。
+  const out = await runDiagnoseFeedbackWithProbeFile('{"ts":1,"ms":500,"ok":true,"n":1}\n', '{"ts":1,"note":"filler-ok"}\n');
+  assert.match(out, /embed-latency-probe\.jsonl \(34 bytes/, 'runtime cost must stay visible — and the number must be tied to the file it measures');
+  assert.match(out, /l25-probe\.jsonl, 28 bytes/, 'the l25 fixture is exactly 28 bytes on purpose: it is what the old loose /\\b28\\b/ latched onto');
 });
 
 test.after(() => {

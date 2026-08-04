@@ -23,7 +23,13 @@
     "backfill_timeout_ms": 30000,
     "openai_base_url": null,
     "openai_model": "text-embedding-3-small",
-    "openai_dim": null
+    "openai_dim": null,
+    "latency_probe": {
+      "enabled": false,
+      "interval_ms": 300000,
+      "timeout_ms": 10000,
+      "file": "embed-latency-probe.jsonl"
+    }
   },
   "dedup": {
     "enabled": true,

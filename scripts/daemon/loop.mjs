@@ -103,6 +103,60 @@ function timeReached(date, hour, minute) {
   return date.getHours() > hour || (date.getHours() === hour && date.getMinutes() >= minute);
 }
 
+/**
+ * Deliberately NOT a task_runs lease. Leases exist for cross-process
+ * idempotency (daemon / opportunistic / manual can race for one period) — a
+ * guarantee a probe that is only ever initiated by the daemon, under a lock
+ * that admits one daemon process, can never use. That, and only that, is the
+ * reason: task_runs growth is NOT an argument here, because task_runs IS
+ * pruned (tier15.mjs runs `DELETE FROM task_runs WHERE date_key < 30 days ago`
+ * at two sites), so a 5-minute probe's leases would be bounded at ~8.6k rows.
+ * Paying that for an unused guarantee is pointless, not dangerous.
+ *
+ * The growth this does NOT avoid, disclosed here because it is real: each
+ * probe inserts a row into `tasks`, and no `DELETE FROM tasks` exists anywhere
+ * in scripts/. At interval_ms=300000 that is ~288 rows/day, ~105k/year, in a
+ * table whose only index is uniq_tasks_summarize_session_seq — so mainLoop's
+ * due-query below scans it. Not fixed here on purpose: adding a `tasks` pruner
+ * is a repo-wide retention decision, out of scope for this probe.
+ *
+ * A restart resets this and the probe fires once immediately; that is
+ * acceptable.
+ */
+let lastProbeAtMs = 0;
+let warnedBadProbeInterval = false;
+
+const DEFAULT_PROBE_INTERVAL_MS = 300000;
+
+/**
+ * Both bad values fail invisibly, which is why this one warns where the repo's
+ * other numeric config reads (claude-p.mjs, vec-backfill.mjs, openai.mjs) fall
+ * back silently: a non-numeric interval makes `nowMs - lastProbeAtMs >= NaN`
+ * false forever, so the probe never runs while `enabled: true` says it does;
+ * a zero or negative one enqueues on every loop iteration — real billable
+ * OpenAI requests from a typo. One line per process, not per iteration.
+ */
+function resolveProbeIntervalMs(raw) {
+  const value = Number(raw ?? DEFAULT_PROBE_INTERVAL_MS);
+  if (Number.isFinite(value) && value > 0) {
+    return value;
+  }
+
+  if (!warnedBadProbeInterval) {
+    warnedBadProbeInterval = true;
+    process.stderr.write(
+      `ccmem: embedding.latency_probe.interval_ms=${JSON.stringify(raw)} is not a positive number — using ${DEFAULT_PROBE_INTERVAL_MS}ms\n`
+    );
+  }
+  return DEFAULT_PROBE_INTERVAL_MS;
+}
+
+/** Test seam only. */
+export function _resetProbeSchedule() {
+  lastProbeAtMs = 0;
+  warnedBadProbeInterval = false;
+}
+
 export function scheduleCronTasks(db, now = new Date()) {
   const nowMs = now.getTime();
   const cfg = loadConfig();
@@ -116,6 +170,18 @@ export function scheduleCronTasks(db, now = new Date()) {
   const contradictionHour = Number(contradictionCfg.schedule_hour ?? 4);
   const contradictionMinute = Number(contradictionCfg.schedule_minute ?? 17);
   const crossProjectCfg = cfg.cross_project?.audit ?? {};
+
+  const probeCfg = cfg.embedding?.latency_probe ?? {};
+  if (probeCfg.enabled === true) {
+    const probeIntervalMs = resolveProbeIntervalMs(probeCfg.interval_ms);
+    if (nowMs - lastProbeAtMs >= probeIntervalMs) {
+      lastProbeAtMs = nowMs;
+      db.prepare(
+        `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+         VALUES ('embed_latency_probe', '{}', ?, ?, 'queued')`
+      ).run(nowMs, nowMs);
+    }
+  }
 
   if (timeReached(now, dailyCfg.hour, dailyCfg.minute)) {
     const leaseKey = dayKey(now);

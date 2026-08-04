@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { isDaemonAlive } from '../../daemon/lock.mjs';
+import { probeFile } from '../../daemon/tasks/embed-latency-probe.mjs';
 import { writeAudit } from '../audit.mjs';
 import { loadConfig } from '../config.mjs';
 import { getDbPath, getSchemaVersion } from '../db.mjs';
@@ -1443,6 +1444,12 @@ export function cmdDiagnoseFeedback(db, { days = 7 } = {}) {
   const decisionCfg = cfg.metrics?.decision_data;
   const decisionEnabled = decisionCfg?.enabled !== false;
   const sizeBytes = decisionDataSizeBytes(decisionCfg);
+  let probeSizeBytes = 0;
+  try {
+    probeSizeBytes = statSync(probeFile(cfg?.embedding?.latency_probe)).size;
+  } catch {
+    probeSizeBytes = 0;
+  }
 
   const rows = decisionEnabled
     ? readDecisionProbeRows(decisionCfg)
@@ -1454,6 +1461,7 @@ export function cmdDiagnoseFeedback(db, { days = 7 } = {}) {
         ? `no L2.5 probe samples in the decision stream (l25-probe.jsonl, ${sizeBytes} bytes)\n`
         : `no L2.5 probe samples in the last ${days} days (metrics.jsonl fallback — decision_data disabled)\n`
     );
+    process.stdout.write(`embed latency probe — embed-latency-probe.jsonl (${probeSizeBytes} bytes on disk)\n`);
     return;
   }
 
@@ -1470,6 +1478,7 @@ export function cmdDiagnoseFeedback(db, { days = 7 } = {}) {
       ? `L2.5 probe — decision stream l25-probe.jsonl (${sizeBytes} bytes on disk, unbounded — all recorded samples, no day window)`
       : `L2.5 probe — metrics.jsonl fallback, last ${days} days (decision_data.enabled=false; decision file on disk: ${sizeBytes} bytes, not used for this report)`
   );
+  lines.push(`embed latency probe — embed-latency-probe.jsonl (${probeSizeBytes} bytes on disk)`);
   lines.push(
     `  samples: ${rows.length} total (${aligned.length} turn-aligned, ` +
     `${random.length} random-control, ${stale.length} stale-injection, ${unclassified.length} unclassified)`

@@ -661,4 +661,22 @@ test('prompt-submit falls back to inline additionalContext when file-based injec
   }
 });
 
+test('prompt_submit records the embedded prompt length as prompt_chars', async () => {
+  const long = 'x'.repeat(2500);
+  const result = await runPromptSubmit({
+    cwd: process.cwd(),
+    session_id: 's-prompt-chars-long',
+    prompt: long
+  });
+  assert.equal(result._metricFields.prompt_chars, 2000, 'must record the post-truncation length — that is what drives latency');
+
+  const short = '你好世界';
+  const result2 = await runPromptSubmit({
+    cwd: process.cwd(),
+    session_id: 's-prompt-chars-short',
+    prompt: short
+  });
+  assert.equal(result2._metricFields.prompt_chars, 4);
+});
+
 test.after(() => rmSync(process.env.CCMEM_DATA_ROOT, { recursive: true, force: true }));

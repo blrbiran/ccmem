@@ -122,12 +122,23 @@ scripts/daemon/loop.mjs                        ← 调度
 
 **这是对仓库惯例的一次有意偏离，按 Rule 11 明说而不是闷着改。**
 
-现有八个任务都用 `tryClaimLease(db, type, dateKey, ranBy)` 去重。但 lease **就是 `task_runs` 表里的一行**
-（`task-runs.mjs:7-17`），而**全仓库没有任何地方清理 `task_runs`**。今天每天新增约 2 行；
-5 分钟一次的探针会变成 **288 行/天、无上限**，堆在一张没人打扫的表里。
-
+现有八个任务都用 `tryClaimLease(db, type, dateKey, ranBy)` 去重。
 lease 的价值是**跨进程幂等**（daemon / opportunistic / manual 可能抢同一周期）。
-探针只由 daemon 发起，用不上这个价值，却要全额付这个代价。
+探针只由 daemon 发起，而 daemon 锁只允许一个进程 —— **这个价值对它恒为零**，
+所以不走 lease。**理由只有这一条。**
+
+> ⚠️ **本节初稿的理由是错的，改正记录在此。** 初稿写「全仓库没有任何地方清理 `task_runs`，
+> 5 分钟一次的探针会变成 288 行/天、无上限」。**`task_runs` 是被清理的**：
+> `tier15.mjs:62` 与 `:130` 两处都执行 `DELETE FROM task_runs WHERE date_key < dayKeyDaysAgo(30)`。
+> lease 的代价因此**有界**（30 天约 8.6k 行），是「白付」而不是「无限累积」。
+
+**真正无界的增长在另一张表，必须写明：** 每次探针都会往 `tasks` 插一行，
+而 `scripts/` 下**不存在任何 `DELETE FROM tasks`**。`interval_ms = 300000` 时约 **288 行/天、10.5 万行/年**，
+且 `tasks` 只有 `uniq_tasks_summarize_session_seq` 一个索引 —— 没有 `(status, scheduled_for)` 索引，
+所以 `mainLoop` 的到期查询（`loop.mjs:342`）是在一张只增不减的表上全表扫描。
+
+> **本轮只披露，不修。** 给 `tasks` 加保留策略是全仓库级的决定，
+> 不该由一个探针顺手做掉；但把它藏起来同样不可接受 —— 开启探针的人有权知道这笔账。
 
 因此：`loop.mjs` 里持一个模块级 `lastProbeAtMs`，`nowMs - lastProbeAtMs >= interval_ms` 时入队。
 daemon 重启会重置它 —— 后果只是重启后立刻探一次，可接受。
@@ -170,6 +181,12 @@ loop 空闲时睡 **300s**、活跃时睡 30s（`loop.mjs:322`）。
 
 `interval_ms` 是下限而非精确周期，见 §3.2。
 
+**`interval_ms` 校验（`Number.isFinite(x) && x > 0`，否则回落 300000 并往 stderr 写一行）**：
+非数值会让 `nowMs - lastProbeAtMs >= NaN` 恒为 false —— 探针在 `enabled: true` 下永不运行且毫无信号；
+0 或负值则每个 loop 迭代（最快 30s）入队一次，等于一个笔误换来真金白银的 API 支出。
+仓库里其它数值配置（`claude-p.mjs` / `vec-backfill.mjs` / `openai.mjs`）都是**静默回落**；
+这里额外写一行 stderr，是因为两种坏值的后果都不可见，且其中一种要花钱。每进程只警告一次，不刷日志。
+
 ---
 
 ## 五、探针本体与隔离
@@ -177,9 +194,10 @@ loop 空闲时睡 **300s**、活跃时睡 30s（`loop.mjs:322`）。
 ```
 1. 取文本： SELECT content FROM memories ORDER BY RANDOM() LIMIT 1，按 hook 同规则截 2000 字符
 2. 构造隔离配置： { ...cfg.embedding, openai_timeout_ms: timeout_ms, api_timeout_ms: timeout_ms }
-3. t0 = Date.now(); try { await provider.embed([text], 隔离配置) } catch (e) { err = e.message }
-4. ms = Date.now() - t0
-5. 丢弃向量，落一行
+3. await provider.load(隔离配置)  ← **在 t0 之前**，与 retrieval.mjs 同序；抛错则不落行，返回 skipped:'load_failed'
+4. t0 = Date.now(); try { await provider.embed([text], 隔离配置) } catch (e) { err = e.message }
+5. ms = Date.now() - t0
+6. 丢弃向量，落一行
 ```
 
 ### 5.1 四条隔离，一条都不能少
@@ -197,12 +215,20 @@ loop 空闲时睡 **300s**、活跃时睡 30s（`loop.mjs:322`）。
 
 ```json
 { "ts": 0, "ms": 0, "ok": true, "error": null,
-  "timed_out_at_probe_limit": false, "text_chars": 0, "signature": "provider:model:dim" }
+  "timed_out_at_probe_limit": false, "timeout_ms": 10000,
+  "text_chars": 0, "signature": "provider:model:dim" }
 ```
 
 - **`timed_out_at_probe_limit`** —— 探针自己那 10s 也被撞到时为 `true`。
   **二次截尾必须可见**，不能塌缩成一个普通的"失败"，否则本探针会重演它要解决的那个问题。
-- **`signature`** —— 换模型后两段分布不得被静默混算。项目已有这个签名概念（人类裁决 2：换模型检测器整体移除，因为签名机制已正确覆盖）。
+- **`timeout_ms`** —— 产生这一行的那个上界。**截尾观测必须自带截尾点**：
+  本探针存在的全部理由，就是 hook 那条 800ms 上界是隐式的、事后无法从数据里读出来。
+  `timeout_ms` 可配、文件又永不轮转，若不逐行记下，任何人中途把 10s 抬到 20s，
+  之前所有行在聚合时都变得不可解释 —— 而且看不出来。
+- **`signature`** —— 换模型后两段分布不得被静默混算。
+  注意 `dim` 段取自配置（`openai_dim`，缺省 null → 写成 1536），**不是实测维度**；
+  真正区分两段分布的是 model 名。为保持探针的 import 面最小（这本身是一条隔离性质），
+  不为了这个标签去引 `signature.mjs` 的 `currentEmbeddingSig`。项目已有这个签名概念（人类裁决 2：换模型检测器整体移除，因为签名机制已正确覆盖）。
 
 ### 5.3 落盘政策：永不轮转、永不限容
 
@@ -245,11 +271,26 @@ loop 空闲时睡 **300s**、活跃时睡 30s（`loop.mjs:322`）。
 
 ## 八、已知局限（不得省略）
 
-1. **daemon 常驻、hook 每次冷启。** `embedMs` 含 `load()` 的动态 import 与 client 构造：
-   hook 每次都冷，daemon 只有第一次冷。差值已被实测夹住 —— `B-fail` 簇 802–808ms 对 800ms 上限，
-   说明冷 import + 构造**通常只有 2–8ms**。相对 800→1300 的量级可忽略，**但两者不等价**。
+1. **两侧都把 `load()` 排除在计时之外 —— 本条的初稿把这件事说反了，改正如下。**
+   初稿写「hook 的 `embedMs` 含 `load()` 的动态 import 与 client 构造」，并据 `B-fail` 簇
+   贴着 800ms 上限只高出几毫秒，推出「冷 import + 构造通常只有 2–8ms」。**这个推断不成立**：
+   `retrieval.mjs` 是先 `await provider.load(config)`、**之后**才起 `tEmbed` 计时的，
+   import 与构造整段落在 hook 计时窗口之外 —— 那几毫秒是超时判定与测量本身的开销，
+   不是 import 的耗时。**冷 import 的真实代价，本窗口的数据里根本没有观测。**
+
+   探针原先在 `t0` 之内调 `embed()`，而 `embed()` 内部会 `await this.load()`，
+   于是探针量的是「import + 构造 + 往返」，**比它要对比的那个量严格更大**，
+   且 daemon 每次重启后的第一次探针会被动态 import 独占地拉高。
+   现已把 `load()` 提到 `t0` 之前（§五 步骤 3），两侧口径对齐。
+   `load()` 失败不再落成 `ok:false` + `ms≈0` 的行 —— 那不是延迟观测，
+   却会把分布左端拽下来且事后不可分辨。
+
+   > 剩下的不对称只有一条：**hook 每次进程都冷、daemon 只有第一次冷**，
+   > 但由于两侧都不计时这一段，它不再进入被比较的数字。
 2. **一条 948ms 的成功样本仍未解释。** 它高于 800ms 超时却成功了。
-   假说是"冷 import 约 150ms + 请求 798ms 压线"，**未验证**。单点，不用于任何结论。
+   原假说是"冷 import 约 150ms + 请求 798ms 压线"，**现已被上一条推翻**：
+   `retrieval.mjs` 在 `load()` 之后才起计时，`retrieval_embed_ms` 里装不进 import。
+   **目前没有假说。** 单点，不用于任何结论。
 3. **探针文本 ≤500 字符，而 hook 把 prompt 截到 2000。** 实测记忆内容
    （n=5841）平均 290、最长 500，所以 2000 那条截断规则对记忆文本完全不生效。
    **更要紧的是：真实 prompt 的长度分布至今无记录**，因此三个取样方案

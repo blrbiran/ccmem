@@ -1,6 +1,7 @@
 import { runContradictionAudit } from './tasks/contradiction-audit.mjs';
 import { runCrossProjectPatterns } from './tasks/cross-project-patterns.mjs';
 import { runDailyMaintenance } from './tasks/daily-maintenance.mjs';
+import { runEmbedLatencyProbe } from './tasks/embed-latency-probe.mjs';
 import { runMonthlyMetaSynthesis } from './tasks/monthly-meta-synthesis.mjs';
 import { runRevalidationAudit } from './tasks/revalidation-audit.mjs';
 import { runSecurityAudit } from './tasks/security-audit.mjs';
@@ -43,6 +44,10 @@ export async function dispatchTask(db, task) {
 
   if (task.type === 'vec_backfill') {
     return runVecBackfill(db, task);
+  }
+
+  if (task.type === 'embed_latency_probe') {
+    return runEmbedLatencyProbe(db, task);
   }
 
   throw new Error(`unknown task type: ${task.type}`);

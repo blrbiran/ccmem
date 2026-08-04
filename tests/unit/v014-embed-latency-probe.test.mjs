@@ -28,9 +28,49 @@ const openaiCfg = (probe) => ({
   }
 });
 
+test('the SDK import and client construction are outside the timed span', async () => {
+  // hook 侧 retrieval.mjs 先 await provider.load(config) 再开始计时，
+  // 所以 retrieval_embed_ms 是纯 HTTP 往返。探针若把 load() 圈进 t0，
+  // 量的就是"import + 构造 + 往返"，比它要对比的那个量严格更大 ——
+  // 而且 daemon 重启后的第一次探针会被动态 import 独占地拉高。
+  const db = freshDb();
+  const slowLoad = {
+    loaded: false,
+    async load() { await new Promise((r) => setTimeout(r, 60)); this.loaded = true; },
+    async embed() {
+      if (!this.loaded) throw new Error('embed() had to load the client itself — the import is inside the timed span');
+      return [new Float32Array(1536)];
+    }
+  };
+
+  await runEmbedLatencyProbe(db, {}, { config: openaiCfg(), provider: slowLoad });
+
+  const last = readFileSync(probeFile({}), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).at(-1);
+  assert.equal(last.ok, true, 'load() must be awaited before the round trip, exactly as the hook path does it');
+  assert.ok(last.ms < 50, `ms must exclude the 60ms load(), got ${last.ms}`);
+});
+
+test('a load failure is not recorded as a near-zero-latency sample', async () => {
+  // load() 失败（SDK 缺失、key 在构造期就被拒）不是一次延迟观测。
+  // 让它落成 ok:false + ms≈0 的行，等于往延迟文件里塞一个非延迟事件，
+  // 它会把分布左端往下拽，而事后无法区分。
+  const db = freshDb();
+  const before = (() => { try { return readFileSync(probeFile({}), 'utf8'); } catch { return ''; } })();
+  const failingLoad = {
+    async load() { throw new Error('Cannot find module \'openai\''); },
+    async embed() { throw new Error('must not be called'); }
+  };
+
+  const result = await runEmbedLatencyProbe(db, {}, { config: openaiCfg(), provider: failingLoad });
+
+  assert.equal(result.skipped, 'load_failed', 'a load failure must return a skipped shape, not a latency sample');
+  const after = (() => { try { return readFileSync(probeFile({}), 'utf8'); } catch { return ''; } })();
+  assert.equal(after, before, 'no row may be appended for a load failure');
+});
+
 test('a probe failure never touches the circuit breaker or the query cache', async () => {
   const db = freshDb();
-  const throwing = { async embed() { throw new Error('Request timed out.'); } };
+  const throwing = { async load() {}, async embed() { throw new Error('Request timed out.'); } };
 
   await runEmbedLatencyProbe(db, {}, { config: openaiCfg(), provider: throwing });
 
@@ -42,7 +82,7 @@ test('a probe failure never touches the circuit breaker or the query cache', asy
 
 test('a probe success also leaves the breaker and cache untouched', async () => {
   const db = freshDb();
-  const ok = { async embed() { return [new Float32Array(1536)]; } };
+  const ok = { async load() {}, async embed() { return [new Float32Array(1536)]; } };
 
   await runEmbedLatencyProbe(db, {}, { config: openaiCfg(), provider: ok });
 
@@ -52,7 +92,7 @@ test('a probe success also leaves the breaker and cache untouched', async () => 
 
 test('hitting the probe ceiling is recorded as its own field, not collapsed into a failure', async () => {
   const db = freshDb();
-  const slow = { async embed() { await new Promise((r) => setTimeout(r, 60)); throw new Error('Request timed out.'); } };
+  const slow = { async load() {}, async embed() { await new Promise((r) => setTimeout(r, 60)); throw new Error('Request timed out.'); } };
 
   await runEmbedLatencyProbe(db, {}, { config: openaiCfg({ timeout_ms: 50 }), provider: slow });
 
@@ -60,13 +100,14 @@ test('hitting the probe ceiling is recorded as its own field, not collapsed into
   const last = rows.at(-1);
   assert.equal(last.ok, false);
   assert.equal(last.timed_out_at_probe_limit, true, 'second censoring must stay visible — this probe exists because censoring was invisible');
+  assert.equal(last.timeout_ms, 50, 'the ceiling that produced the row must travel with the row — timeout_ms is user-configurable and this file never rotates');
   assert.equal(last.signature, 'openai:text-embedding-3-small:1536');
   assert.equal(last.text_chars, 'hello probe'.length);
 });
 
 test('a fast failure is not mislabelled as hitting the ceiling', async () => {
   const db = freshDb();
-  const fast = { async embed() { throw new Error('401 Unauthorized'); } };
+  const fast = { async load() {}, async embed() { throw new Error('401 Unauthorized'); } };
 
   await runEmbedLatencyProbe(db, {}, { config: openaiCfg({ timeout_ms: 10000 }), provider: fast });
 
@@ -77,14 +118,14 @@ test('a fast failure is not mislabelled as hitting the ceiling', async () => {
 test('a non-openai provider is skipped without writing a row', async () => {
   const db = freshDb();
   const cfg = { embedding: { provider: 'transformers-local', latency_probe: { enabled: true } } };
-  const result = await runEmbedLatencyProbe(db, {}, { config: cfg, provider: { async embed() { throw new Error('must not be called'); } } });
+  const result = await runEmbedLatencyProbe(db, {}, { config: cfg, provider: { async load() {}, async embed() { throw new Error('must not be called'); } } });
   assert.equal(result.skipped, 'provider');
 });
 
 test('a disabled probe returns skipped and never invokes the provider — no real spend on someone else\'s behalf', async () => {
   const db = freshDb();
   let calls = 0;
-  const counting = { async embed() { calls += 1; return [new Float32Array(1536)]; } };
+  const counting = { async load() {}, async embed() { calls += 1; return [new Float32Array(1536)]; } };
 
   const result = await runEmbedLatencyProbe(db, {}, { config: openaiCfg({ enabled: false }), provider: counting });
 
@@ -95,7 +136,7 @@ test('a disabled probe returns skipped and never invokes the provider — no rea
 test('a truthy-but-not-true enabled value is treated as disabled — strict === true is the spec', async () => {
   const db = freshDb();
   let calls = 0;
-  const counting = { async embed() { calls += 1; return [new Float32Array(1536)]; } };
+  const counting = { async load() {}, async embed() { calls += 1; return [new Float32Array(1536)]; } };
 
   const result = await runEmbedLatencyProbe(db, {}, { config: openaiCfg({ enabled: 'yes' }), provider: counting });
 

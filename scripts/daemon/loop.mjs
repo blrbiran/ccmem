@@ -115,15 +115,23 @@ function timeReached(date, hour, minute) {
  *
  * The growth this does NOT avoid, disclosed here because it is real: each
  * probe inserts a row into `tasks`, and no `DELETE FROM tasks` exists anywhere
- * in scripts/. At interval_ms=300000 that is ~288 rows/day, ~105k/year, in a
+ * in scripts/. With the activity gate below, that is ≈44 rows/day (≈16k/year)
+ * — derived from a frozen `metrics.jsonl` snapshot taken 2026-08-05, so treat
+ * it as a dated measurement of an ongoing process, not a constant — in a
  * table whose only index is uniq_tasks_summarize_session_seq — so mainLoop's
  * due-query below scans it. Not fixed here on purpose: adding a `tasks` pruner
  * is a repo-wide retention decision, out of scope for this probe.
  *
- * A restart resets this and the probe fires once immediately; that is
- * acceptable.
+ * Seeded from daemon start, NOT from 0. With the activity gate below, a 0 seed
+ * would make `MAX(session_context.updated_at) > lastProbeAtMs` true on the
+ * strength of any session that has ever existed, so every restart would emit
+ * exactly the nobody-was-using-it sample the gate exists to remove.
+ *
+ * The cost of the seed, stated because it is invisible otherwise: no probe
+ * fires in the first interval_ms after any restart, including a restart in the
+ * middle of dense work. Five minutes, and restarts are rare.
  */
-let lastProbeAtMs = 0;
+let lastProbeAtMs = Date.now();
 let warnedBadProbeInterval = false;
 
 const DEFAULT_PROBE_INTERVAL_MS = 300000;
@@ -151,9 +159,15 @@ function resolveProbeIntervalMs(raw) {
   return DEFAULT_PROBE_INTERVAL_MS;
 }
 
-/** Test seam only. */
-export function _resetProbeSchedule() {
-  lastProbeAtMs = 0;
+/**
+ * Test seam only. Takes the instant to treat as daemon start, because tests
+ * drive scheduleCronTasks from a fixed fake clock: seeding from the real
+ * Date.now() would put lastProbeAtMs in their future and make the rate-cap
+ * check unsatisfiable. The default mirrors the module initialiser so the two
+ * sites cannot drift into describing different starting states.
+ */
+export function _resetProbeSchedule(startMs = Date.now()) {
+  lastProbeAtMs = startMs;
   warnedBadProbeInterval = false;
 }
 
@@ -174,7 +188,15 @@ export function scheduleCronTasks(db, now = new Date()) {
   const probeCfg = cfg.embedding?.latency_probe ?? {};
   if (probeCfg.enabled === true) {
     const probeIntervalMs = resolveProbeIntervalMs(probeCfg.interval_ms);
-    if (nowMs - lastProbeAtMs >= probeIntervalMs) {
+    // All three hooks bump session_context.updated_at (prompt-submit on every
+    // prompt, session-start, stop), so this is the hook path telling the daemon
+    // it is worth sampling — without the daemon touching the hook path. One row
+    // per session, a few hundred rows, so MAX is a negligible scan and no index
+    // is warranted.
+    const lastActivityMs = db.prepare(
+      `SELECT MAX(updated_at) AS t FROM session_context`
+    ).get()?.t ?? 0;
+    if (lastActivityMs > lastProbeAtMs && nowMs - lastProbeAtMs >= probeIntervalMs) {
       lastProbeAtMs = nowMs;
       db.prepare(
         `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)

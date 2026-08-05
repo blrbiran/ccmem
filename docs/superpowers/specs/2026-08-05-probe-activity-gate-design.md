@@ -42,6 +42,11 @@ if (lastActivityMs > lastProbeAtMs && nowMs - lastProbeAtMs >= probeIntervalMs) 
 
 Read as: **there has been real usage since the last probe, and the rate cap has elapsed.**
 
+**Placement is load-bearing:** the `SELECT` must sit *inside* the existing
+`if (probeCfg.enabled === true)` block at `loop.mjs:175`, not above it. Hoisted out, every
+install runs one query per loop tick for a feature that is off by default — a cost paid by
+people who never turn the probe on.
+
 `interval_ms` therefore changes meaning from "sampling period" to "minimum spacing between two
 probes". Its default stays 300000 (5 minutes), chosen by the human on 2026-08-05.
 
@@ -116,6 +121,13 @@ nobody-was-using-it sample this change exists to eliminate.**
 Change: initialise `lastProbeAtMs` to the daemon's start time, so after a restart the probe waits
 for genuinely new activity.
 
+**Second consequence, disclosed rather than discovered later:** this also suppresses every probe
+for the first `interval_ms` after any daemon restart, including a restart in the middle of dense
+work — because the rate-cap conjunct `nowMs - lastProbeAtMs >= probeIntervalMs` is now measured
+from daemon start rather than from epoch 0. Judged acceptable (5 minutes, and restarts are rare),
+but it must be written down: without it, a later reader cannot explain the gap that follows every
+restart in the sample file.
+
 **The comment at `loop.mjs:123-124` must be updated in the same commit.** Leaving it is the
 failure recorded as Ⅲ.3 in the handoff — editing the sentence that is wrong while leaving its
 restatement two lines down.
@@ -140,6 +152,13 @@ Red-green, and the red must be a targeted mutation red — a crash red does not 
 **Mutation check:** replace `lastActivityMs > lastProbeAtMs` with `true`. Cases 2 and 4 must go
 red on their own named assertions; cases 1 and 3 must stay green.
 
+**Case 4 is conditional on the §6 implementation note.** Its ability to fail depends on what
+`_resetProbeSchedule()` resets `lastProbeAtMs` to. If the seam still resets to `0` while
+production starts at daemon-start time, a test written through the seam exercises a starting
+state production never has, and the assertion can pass without the guard existing — the
+vacuous-assertion failure mode of Ⅲ.1. Resolve the seam value first, then write case 4 against it, and
+say in the implementation report which value was chosen and why.
+
 **Fixture requirement:** any `session_context` table created by a test fixture must match
 `scripts/migrations/002_v02.sql:54-62` exactly, including `updated_at INTEGER NOT NULL`. A fixture
 that diverges from the migration produces an assertion that can never fail — the defect recorded
@@ -150,9 +169,12 @@ as Ⅲ.1 in the handoff, which cost a fix round on the previous wave.
 - **a.** Not one sample per prompt. During dense work the 5-minute cap drops prompts, so what is
   estimated is *the latency distribution during active periods*, not *the distribution over
   retrievals*. Any conclusion written from this data must say so.
-- **b.** `stop.mjs` also bumps `updated_at`, so one probe may fire just after a session ends. Judged
-  acceptable (it is still the tail of real usage), but it must be recorded, or a later reader
-  cannot explain those samples.
+- **b.** **One trailing probe follows every period of use.** Once you stop, the last activity
+  timestamp still exceeds `lastProbeAtMs`, so the gate fires once more as soon as the rate cap
+  elapses — up to `interval_ms` after you walked away. This is a general property of the rule, not
+  an artefact of any one hook; `stop.mjs:25` bumping `updated_at` at session end merely makes it
+  most visible there. Judged acceptable (it is still the tail of real usage), but it must be
+  recorded, or a later reader cannot explain the sample that always sits just past each session.
 - **c.** The probe still embeds random memory text, not the real prompt. Comparability of length
   rests on calibrating `text_chars` against `prompt_chars` after the fact. As of the 2026-08-05
   snapshot only **10** records carry `prompt_chars` (Task 1 of the previous wave landed recently),
@@ -165,17 +187,38 @@ as Ⅲ.1 in the handoff, which cost a fix round on the previous wave.
 ## 9. Expected volume
 
 Derived from a frozen copy of `metrics.jsonl` taken 2026-08-05 (5943 records), counting
-`hook == "prompt_submit"` per local day over 2026-07-25 … 2026-08-04:
+`hook == "prompt_submit"` per local day over 2026-07-25 … 2026-08-04.
 
-- 33, 79, 67, 81, 52, 27, 95, 122, 137, 34, 63 → **mean ≈ 71 prompts/day**
-- distinct hours containing at least one prompt: 9, 14, 6, 7, 7, 4, 13, 15, 14, 8, 7 → **mean ≈ 9.5 active hours/day**
+**The right estimator is the number of distinct `interval_ms`-wide windows containing at least
+one prompt**, not the prompt count and not the active-hour count. Under this gate a window with
+thirty prompts yields the same single sample as a window with one, so any estimate built from
+raw prompt volume overstates the yield.
 
-With a 5-minute cap the probe fires at most 12×/hour and in practice tracks the prompt rate
-(~7.5/active hour), giving **≈ 65–70 samples/day ⇒ ~300 samples in about 4.5 days**, and
-**≈ 70 `tasks` rows/day** against 288 under unconditional sampling.
+| | 07-25 | 26 | 27 | 28 | 29 | 30 | 31 | 08-01 | 02 | 03 | 04 | mean |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| prompts | 33 | 79 | 67 | 81 | 52 | 27 | 95 | 122 | 137 | 34 | 63 | 71.8 |
+| active hours | 9 | 14 | 6 | 7 | 7 | 4 | 13 | 15 | 14 | 8 | 7 | 9.5 |
+| **distinct 5-min windows** | 24 | 59 | 42 | 43 | 25 | 18 | 62 | 73 | 74 | 26 | 39 | **44.1** |
+| distinct 15-min windows | 19 | 39 | 20 | 19 | 18 | 9 | 33 | 40 | 39 | 17 | 22 | 25.0 |
+
+At the chosen 5-minute cap: **≈ 44 samples/day ⇒ ~300 samples in about 6.8 days**, at
+**≈ 44 `tasks` rows/day** against 288 under unconditional sampling. (A 15-minute cap would give
+≈ 25/day, ~12 days.)
+
+Two caveats on the estimator itself:
+
+- The windows here are wall-clock-aligned buckets, whereas the real cap is measured rolling from
+  the previous probe. The two agree closely but not exactly; treat 44 as a central estimate, not
+  a bound.
+- It ignores the trailing probe of §8b and the up-to-5-minute first-sample lag of §8d, which push
+  in opposite directions.
 
 This is a measurement of an ongoing process and expires: re-derive it from current data before
 building any later conclusion on it.
+
+**Superseded:** an earlier revision of this section estimated ≈ 65–70 samples/day and ~4.5 days
+by scaling the prompt rate against active hours. That method double-counts prompts that share a
+window; the corrected figures above replace it.
 
 ## 10. Out of scope
 

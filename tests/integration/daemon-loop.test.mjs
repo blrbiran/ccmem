@@ -5791,9 +5791,16 @@ test('the probe enqueues once per interval, not once per tick', () => {
   _resetProbeSchedule(PROBE_TEST_START_MS);
 
   try {
+    recordUsage(db, 'session-interval', new Date('2026-08-04T11:59:00').getTime());
     scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));   // first: enqueue
-    scheduleCronTasks(db, new Date('2026-08-04T12:01:00'));   // 1 min later: within interval, no enqueue
-    scheduleCronTasks(db, new Date('2026-08-04T12:06:00'));   // 6 min later: enqueue
+
+    // Fresh usage AFTER that probe, so the activity conjunct is true here and
+    // only the rate cap can block. Without this the 12:01 tick has both
+    // conjuncts false and cannot tell you which one did the work.
+    recordUsage(db, 'session-interval', new Date('2026-08-04T12:00:30').getTime());
+    scheduleCronTasks(db, new Date('2026-08-04T12:01:00'));   // within interval: no enqueue
+
+    scheduleCronTasks(db, new Date('2026-08-04T12:06:00'));   // cap elapsed, usage at 12:00:30 still unsampled: enqueue
     const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
     assert.equal(n, 2, 'interval gating, not per-tick enqueueing');
   } finally {
@@ -5811,9 +5818,90 @@ test('the probe leaves no rows in task_runs', () => {
   _resetProbeSchedule(PROBE_TEST_START_MS);
 
   try {
+    recordUsage(db, 'session-no-lease', new Date('2026-08-04T11:59:00').getTime());
     scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
+    const enqueued = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
+    assert.equal(enqueued, 1, 'the no-lease claim is only meaningful about a probe that actually ran');
     const n = db.prepare("SELECT count(*) AS n FROM task_runs WHERE type = 'embed_latency_probe'").get().n;
     assert.equal(n, 0, 'a lease buys cross-process idempotency, which a daemon-only probe under a single-process lock never uses — task_runs is pruned at 30 days, so the cost is bounded, just pointless. The unbounded growth is in `tasks`, which nothing in scripts/ prunes; see the comment on lastProbeAtMs.');
+  } finally {
+    restoreConfig();
+    db.close();
+  }
+});
+
+function recordUsage(db, sessionId, atMs) {
+  db.prepare(
+    `INSERT INTO session_context (session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at)
+     VALUES (?, 'demo/repo', 0, 0, 0, 0, ?)
+     ON CONFLICT(session_id) DO UPDATE SET updated_at = excluded.updated_at`
+  ).run(sessionId, atMs);
+}
+
+test('the probe does not fire when nobody has used Claude Code since the last probe', () => {
+  const restoreConfig = setRuntimeConfig('probe-idle', {
+    embedding: { latency_probe: { enabled: true, interval_ms: 300000 } }
+  });
+  const db = openDb();
+  resetRuntimeTables(db);
+  _resetProbeSchedule(PROBE_TEST_START_MS);
+
+  try {
+    // Rate cap elapsed (11:00 -> 12:00) but session_context is empty: no usage.
+    scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
+    const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
+    assert.equal(n, 0, 'an idle machine must not send billable requests: the probe measures what retrieval experiences, and retrieval is not happening');
+  } finally {
+    restoreConfig();
+    db.close();
+  }
+});
+
+test('the probe fires once for a burst of usage, not once per prompt', () => {
+  const restoreConfig = setRuntimeConfig('probe-burst', {
+    embedding: { latency_probe: { enabled: true, interval_ms: 300000 } }
+  });
+  const db = openDb();
+  resetRuntimeTables(db);
+  _resetProbeSchedule(PROBE_TEST_START_MS);
+
+  try {
+    recordUsage(db, 'session-a', new Date('2026-08-04T11:59:00').getTime());
+    recordUsage(db, 'session-a', new Date('2026-08-04T11:59:30').getTime());
+    scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));   // usage since last probe + cap elapsed -> enqueue
+
+    scheduleCronTasks(db, new Date('2026-08-04T12:06:00'));   // cap elapsed again, but no usage since 11:59:30 -> no enqueue
+
+    recordUsage(db, 'session-a', new Date('2026-08-04T12:10:00').getTime());
+    scheduleCronTasks(db, new Date('2026-08-04T12:11:00'));   // fresh usage + cap elapsed -> enqueue
+
+    const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
+    assert.equal(n, 2, 'two periods of use produce two samples; the four prompts inside them do not produce four');
+  } finally {
+    restoreConfig();
+    db.close();
+  }
+});
+
+test('a daemon restart does not by itself produce a sample', () => {
+  const restoreConfig = setRuntimeConfig('probe-restart', {
+    embedding: { latency_probe: { enabled: true, interval_ms: 300000 } }
+  });
+  const db = openDb();
+  resetRuntimeTables(db);
+
+  try {
+    // Usage from before the restart. A 0-seeded clock would treat this as
+    // "activity since the last probe" forever.
+    recordUsage(db, 'session-yesterday', new Date('2026-08-03T09:00:00').getTime());
+
+    // The restart: lastProbeAtMs is seeded from this instant, exactly as the
+    // module initialiser does at daemon start.
+    _resetProbeSchedule(PROBE_TEST_START_MS);
+
+    scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
+    const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
+    assert.equal(n, 0, 'restarting the daemon is not usage; a sample taken then measures nothing retrieval experienced');
   } finally {
     restoreConfig();
     db.close();
@@ -5846,8 +5934,10 @@ test('a non-numeric interval_ms falls back to the default and says so', () => {
 
   try {
     const err = captureStderr(() => {
+      recordUsage(db, 'session-nan', new Date('2026-08-04T11:59:00').getTime());
       scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
       scheduleCronTasks(db, new Date('2026-08-04T12:01:00'));
+      recordUsage(db, 'session-nan', new Date('2026-08-04T12:05:00').getTime());
       scheduleCronTasks(db, new Date('2026-08-04T12:06:00'));
     });
     const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
@@ -5871,6 +5961,7 @@ test('a zero or negative interval_ms does not enqueue on every tick', () => {
 
   try {
     captureStderr(() => {
+      recordUsage(db, 'session-zero', new Date('2026-08-04T11:59:00').getTime());
       scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
       scheduleCronTasks(db, new Date('2026-08-04T12:00:30'));
       scheduleCronTasks(db, new Date('2026-08-04T12:01:00'));

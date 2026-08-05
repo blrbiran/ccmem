@@ -186,7 +186,15 @@ export function scheduleCronTasks(db, now = new Date()) {
   const probeCfg = cfg.embedding?.latency_probe ?? {};
   if (probeCfg.enabled === true) {
     const probeIntervalMs = resolveProbeIntervalMs(probeCfg.interval_ms);
-    if (nowMs - lastProbeAtMs >= probeIntervalMs) {
+    // All three hooks bump session_context.updated_at (prompt-submit on every
+    // prompt, session-start, stop), so this is the hook path telling the daemon
+    // it is worth sampling — without the daemon touching the hook path. One row
+    // per session, a few hundred rows, so MAX is a negligible scan and no index
+    // is warranted.
+    const lastActivityMs = db.prepare(
+      `SELECT MAX(updated_at) AS t FROM session_context`
+    ).get()?.t ?? 0;
+    if (lastActivityMs > lastProbeAtMs && nowMs - lastProbeAtMs >= probeIntervalMs) {
       lastProbeAtMs = nowMs;
       db.prepare(
         `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)

@@ -115,7 +115,9 @@ function timeReached(date, hour, minute) {
  *
  * The growth this does NOT avoid, disclosed here because it is real: each
  * probe inserts a row into `tasks`, and no `DELETE FROM tasks` exists anywhere
- * in scripts/. At interval_ms=300000 that is ~288 rows/day, ~105k/year, in a
+ * in scripts/. With the activity gate below, that is ≈44 rows/day (≈16k/year)
+ * — derived from a frozen `metrics.jsonl` snapshot taken 2026-08-05, so treat
+ * it as a dated measurement of an ongoing process, not a constant — in a
  * table whose only index is uniq_tasks_summarize_session_seq — so mainLoop's
  * due-query below scans it. Not fixed here on purpose: adding a `tasks` pruner
  * is a repo-wide retention decision, out of scope for this probe.

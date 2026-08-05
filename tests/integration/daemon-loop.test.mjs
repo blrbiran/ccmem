@@ -5755,6 +5755,7 @@ test('the latency probe is not scheduled while disabled', () => {
   _resetProbeSchedule(PROBE_TEST_START_MS);
 
   try {
+    recordUsage(db, 'session-disabled', new Date('2026-08-04T11:59:00').getTime());
     scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
     const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
     assert.equal(n, 0, 'default-off must mean no API requests are ever enqueued');
@@ -5773,6 +5774,7 @@ test('a truthy-but-not-true enabled value does not turn the probe on', () => {
   _resetProbeSchedule(PROBE_TEST_START_MS);
 
   try {
+    recordUsage(db, 'session-truthy', new Date('2026-08-04T11:59:00').getTime());
     scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
     const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
     assert.equal(n, 0);
@@ -5799,6 +5801,9 @@ test('the probe enqueues once per interval, not once per tick', () => {
     // conjuncts false and cannot tell you which one did the work.
     recordUsage(db, 'session-interval', new Date('2026-08-04T12:00:30').getTime());
     scheduleCronTasks(db, new Date('2026-08-04T12:01:00'));   // within interval: no enqueue
+
+    const nAfterFirstInterval = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
+    assert.equal(nAfterFirstInterval, 1, 'the 12:01 tick has usage since the last probe, so only the rate cap — not the activity conjunct — can be blocking it');
 
     scheduleCronTasks(db, new Date('2026-08-04T12:06:00'));   // cap elapsed, usage at 12:00:30 still unsampled: enqueue
     const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;
@@ -5963,7 +5968,9 @@ test('a zero or negative interval_ms does not enqueue on every tick', () => {
     captureStderr(() => {
       recordUsage(db, 'session-zero', new Date('2026-08-04T11:59:00').getTime());
       scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
+      recordUsage(db, 'session-zero', new Date('2026-08-04T12:00:10').getTime());
       scheduleCronTasks(db, new Date('2026-08-04T12:00:30'));
+      recordUsage(db, 'session-zero', new Date('2026-08-04T12:00:40').getTime());
       scheduleCronTasks(db, new Date('2026-08-04T12:01:00'));
     });
     const n = db.prepare("SELECT count(*) AS n FROM tasks WHERE type = 'embed_latency_probe'").get().n;

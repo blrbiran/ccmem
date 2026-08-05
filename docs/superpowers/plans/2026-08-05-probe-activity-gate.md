@@ -141,11 +141,22 @@ with:
   _resetProbeSchedule(PROBE_TEST_START_MS);
 ```
 
-The four call sites are in these tests:
+There are **six** call sites, all bare `_resetProbeSchedule()`. Verify with
+`grep -n "_resetProbeSchedule()" tests/integration/daemon-loop.test.mjs` before editing and
+confirm you find six; if the count differs, stop and report rather than guessing.
+
 - `the latency probe is not scheduled while disabled`
 - `a truthy-but-not-true enabled value does not turn the probe on`
 - `the probe enqueues once per interval, not once per tick`
 - `the probe leaves no rows in task_runs`
+- `a non-numeric interval_ms falls back to the default and says so`
+- `a zero or negative interval_ms does not enqueue on every tick`
+
+The last two live below the `captureStderr` helper and are easy to miss by reading only the
+first block of probe tests. They set `enabled: true` and assert enqueue counts, so they break
+for the same reason as the third — which is why Step 4 predicts one red but you may see three.
+**Three reds at Step 4 is correct**; all must name an enqueue-count assertion (`0 !== 2`,
+`0 !== 1`). Any red with a stack trace is a different problem — stop and report it.
 
 - [ ] **Step 6: Run the full file and confirm the baseline is restored**
 
@@ -324,6 +335,36 @@ This keeps the test's existing `assert.equal(n, 2, 'interval gating, not per-tic
 ```
 
 Leave that test's existing `assert.equal(n, 0, ...)` and its long message untouched.
+
+`a non-numeric interval_ms falls back to the default and says so` expects `n === 2` from ticks at
+12:00 / 12:01 / 12:06. Record usage before the first tick and again before the third, inside the
+`captureStderr` callback — `recordUsage` writes nothing to stderr, so the existing
+`assert.match(err, /interval_ms/)` still holds:
+
+```js
+    const err = captureStderr(() => {
+      recordUsage(db, 'session-nan', new Date('2026-08-04T11:59:00').getTime());
+      scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
+      scheduleCronTasks(db, new Date('2026-08-04T12:01:00'));
+      recordUsage(db, 'session-nan', new Date('2026-08-04T12:05:00').getTime());
+      scheduleCronTasks(db, new Date('2026-08-04T12:06:00'));
+    });
+```
+
+`a zero or negative interval_ms does not enqueue on every tick` expects `n === 1` from ticks at
+12:00 / 12:00:30 / 12:01. Only the first can enqueue (the fallback cap blocks the rest), so it
+needs one usage record before the first tick:
+
+```js
+    captureStderr(() => {
+      recordUsage(db, 'session-zero', new Date('2026-08-04T11:59:00').getTime());
+      scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
+      scheduleCronTasks(db, new Date('2026-08-04T12:00:30'));
+      scheduleCronTasks(db, new Date('2026-08-04T12:01:00'));
+    });
+```
+
+Leave both tests' assertions and messages untouched — they still assert what they always did.
 
 - [ ] **Step 6: Add the restart-boundary test (spec §6)**
 

@@ -5741,13 +5741,18 @@ test('dispatchTask applies parsed llm output into memories', async () => {
   db.close();
 });
 
+// The probe tests drive scheduleCronTasks from a fixed clock at 12:00 on
+// 2026-08-04. lastProbeAtMs must sit before that, or the rate-cap check
+// compares against an instant in their future and can never be satisfied.
+const PROBE_TEST_START_MS = new Date('2026-08-04T11:00:00').getTime();
+
 test('the latency probe is not scheduled while disabled', () => {
   const restoreConfig = setRuntimeConfig('probe-disabled', {
     embedding: { latency_probe: { enabled: false, interval_ms: 1000 } }
   });
   const db = openDb();
   resetRuntimeTables(db);
-  _resetProbeSchedule();
+  _resetProbeSchedule(PROBE_TEST_START_MS);
 
   try {
     scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
@@ -5765,7 +5770,7 @@ test('a truthy-but-not-true enabled value does not turn the probe on', () => {
   });
   const db = openDb();
   resetRuntimeTables(db);
-  _resetProbeSchedule();
+  _resetProbeSchedule(PROBE_TEST_START_MS);
 
   try {
     scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
@@ -5783,7 +5788,7 @@ test('the probe enqueues once per interval, not once per tick', () => {
   });
   const db = openDb();
   resetRuntimeTables(db);
-  _resetProbeSchedule();
+  _resetProbeSchedule(PROBE_TEST_START_MS);
 
   try {
     scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));   // first: enqueue
@@ -5803,7 +5808,7 @@ test('the probe leaves no rows in task_runs', () => {
   });
   const db = openDb();
   resetRuntimeTables(db);
-  _resetProbeSchedule();
+  _resetProbeSchedule(PROBE_TEST_START_MS);
 
   try {
     scheduleCronTasks(db, new Date('2026-08-04T12:00:00'));
@@ -5837,7 +5842,7 @@ test('a non-numeric interval_ms falls back to the default and says so', () => {
   });
   const db = openDb();
   resetRuntimeTables(db);
-  _resetProbeSchedule();
+  _resetProbeSchedule(PROBE_TEST_START_MS);
 
   try {
     const err = captureStderr(() => {
@@ -5862,7 +5867,7 @@ test('a zero or negative interval_ms does not enqueue on every tick', () => {
   });
   const db = openDb();
   resetRuntimeTables(db);
-  _resetProbeSchedule();
+  _resetProbeSchedule(PROBE_TEST_START_MS);
 
   try {
     captureStderr(() => {

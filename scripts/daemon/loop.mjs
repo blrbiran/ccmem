@@ -120,10 +120,16 @@ function timeReached(date, hour, minute) {
  * due-query below scans it. Not fixed here on purpose: adding a `tasks` pruner
  * is a repo-wide retention decision, out of scope for this probe.
  *
- * A restart resets this and the probe fires once immediately; that is
- * acceptable.
+ * Seeded from daemon start, NOT from 0. With the activity gate below, a 0 seed
+ * would make `MAX(session_context.updated_at) > lastProbeAtMs` true on the
+ * strength of any session that has ever existed, so every restart would emit
+ * exactly the nobody-was-using-it sample the gate exists to remove.
+ *
+ * The cost of the seed, stated because it is invisible otherwise: no probe
+ * fires in the first interval_ms after any restart, including a restart in the
+ * middle of dense work. Five minutes, and restarts are rare.
  */
-let lastProbeAtMs = 0;
+let lastProbeAtMs = Date.now();
 let warnedBadProbeInterval = false;
 
 const DEFAULT_PROBE_INTERVAL_MS = 300000;
@@ -151,9 +157,15 @@ function resolveProbeIntervalMs(raw) {
   return DEFAULT_PROBE_INTERVAL_MS;
 }
 
-/** Test seam only. */
-export function _resetProbeSchedule() {
-  lastProbeAtMs = 0;
+/**
+ * Test seam only. Takes the instant to treat as daemon start, because tests
+ * drive scheduleCronTasks from a fixed fake clock: seeding from the real
+ * Date.now() would put lastProbeAtMs in their future and make the rate-cap
+ * check unsatisfiable. The default mirrors the module initialiser so the two
+ * sites cannot drift into describing different starting states.
+ */
+export function _resetProbeSchedule(startMs = Date.now()) {
+  lastProbeAtMs = startMs;
   warnedBadProbeInterval = false;
 }
 

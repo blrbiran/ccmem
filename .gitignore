@@ -8,6 +8,8 @@
 .wolf/daemon.log
 .wolf/cerebrum.md
 
+.wolf_backup/
+
 # omc
 .omc/
 .omo/

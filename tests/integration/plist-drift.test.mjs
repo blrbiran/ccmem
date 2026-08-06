@@ -583,6 +583,35 @@ test('CLI reporting: a successful rewrite adds no extra stderr noise', () => wit
   assert.doesNotMatch(readFileSync(plistPath, 'utf8'), /\/stale\/bin/, 'the rewrite must actually have landed on disk');
 }));
 
+// bug-063 缺陷 3。缺陷 2 修好之后 restart_failed 第一次真的能走到 CLI，而 CLI 的
+// 十二个分支里没有它 —— 落到 :632 的兜底，phase / reason / previous_pid 全部丢掉，
+// 打出来的正是 2026-08-05 那两次看到的 "daemon restart failed"。
+// 断言打在进程边界（退出码 + stderr）：纯函数有测试不等于接线有测试。
+test('CLI reporting: a failed restart names the phase and the reason on stderr', () => withFakeLaunchctl(async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const cliPath = fileURLToPath(new URL('../../scripts/cli.mjs', import.meta.url));
+
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
+
+  process.env.CCMEM_FAKE_BOOTOUT_FAIL = '1';
+  try {
+    const result = spawnSync(process.execPath, [cliPath, 'admin', '--', 'daemon', 'restart'], {
+      env: process.env,
+      encoding: 'utf8'
+    });
+
+    assert.equal(result.status, 1, 'a genuine failure must still exit non-zero');
+    assert.match(result.stderr, /phase=stop/, 'the operator must be told which half failed');
+    assert.match(result.stderr, /bootout refused/, 'the underlying launchctl reason must reach the terminal');
+    assert.match(result.stderr, /admin daemon status/, 'the message must point at the check that distinguishes a real failure from a slow start');
+  } finally {
+    delete process.env.CCMEM_FAKE_BOOTOUT_FAIL;
+  }
+}));
+
 // 报警轴（status: 'drifted'）此前只算出来、从不落地：daemon.mjs 每次 status 都挂
 // plist_drift，cli.mjs 的 status 分支从不提它——一个生产者，零个消费者，操作员永远看不到。
 test('CLI reporting: daemon status surfaces plist drift by key name only', () => withFakeLaunchctl(async () => {

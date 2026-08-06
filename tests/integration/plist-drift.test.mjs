@@ -216,6 +216,8 @@ writeFileSync(fakeLaunchctlPath, [
   // and startDaemon() (which falls through to bootstrap after a failed
   // kickstart) observable from the test side at all.
   '    if [ -n "$CCMEM_FAKE_BOOTSTRAP_SNAPSHOT" ]; then cp "$3" "$CCMEM_FAKE_BOOTSTRAP_SNAPSHOT"; fi',
+  // job 被接受了，但锁永远不由 fake 写出来 —— 谁来写、什么时候写，交给测试自己决定。
+  '    if [ -n "$CCMEM_FAKE_START_NEVER" ]; then exit 0; fi',
   '    set_lock',
   '    ;;',
   '  kickstart)',
@@ -463,6 +465,71 @@ test('T14: a restart that fails in the stop phase still reports restart_failed',
     assert.match(result.reason, /bootout refused/, 'the underlying launchctl error must not be dropped');
   } finally {
     delete process.env.CCMEM_FAKE_BOOTOUT_FAIL;
+  }
+}));
+
+// bug-063 缺陷 1。一次冷启动（页缓存冷、上一个 daemon 已跑了 1.5 天）实测超过了
+// 2000ms 的启动预算，于是一次成功的重启被报成失败。这条测试钉的不是那个常数，
+// 是它存在的理由：3 秒之后才活过来的 daemon 必须被报成 started。
+// 判据方向很重要 —— 等待期算错会把健康的系统判成故障，代价和相反的错误一样大。
+test('T15: a daemon that takes three seconds to come up is reported as started', () => withFakeLaunchctl(async () => {
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
+
+  const db = openDb();
+  // 慢启动由这条测试自己拥有的定时器模拟，不用后台子 shell：子 shell 会活过本测试，
+  // 把锁写进下一条测试的等待窗口里（实测发生过，下一条测试看到 pid=9876 "启动成功"）。
+  // 定时器归本测试所有，finally 里 clearTimeout，结构上不可能泄漏。
+  // fake bootstrap 用 CCMEM_FAKE_START_NEVER 保证锁只可能由下面这一处写出来。
+  process.env.CCMEM_FAKE_START_NEVER = '1';
+  const lockAppears = setTimeout(() => {
+    const at = Date.now();
+    db.prepare(
+      `INSERT OR REPLACE INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive)
+       VALUES (1, 9876, 'fake-slow-start', ?, ?, 1)`
+    ).run(at, at);
+  }, 3000);
+
+  try {
+    const result = await cmdAdminDaemon(db, { verb: 'restart' });
+
+    assert.equal(result.status, 'restarted', 'a slow-but-successful start must not be reported as a failure');
+  } finally {
+    clearTimeout(lockAppears);
+    delete process.env.CCMEM_FAKE_START_NEVER;
+    db.prepare(`DELETE FROM daemon_lock WHERE id = 1`).run();
+  }
+}));
+
+// bug-063。Task 2 给 cli.mjs 加了 start_timeout / stop_timeout 分支却没有任何测试
+// 覆盖它 —— 人类 2026-08-06 裁定在这里补上。注意 restart 到不了这个分支：
+// restartDaemon 会把两个 timeout 状态都改写成 restart_failed，只有裸 start verb
+// 才会把 start_timeout 原样交给 CLI。
+// launchd 那条 start_timeout 返回值不带 pid，所以这里同时钉住"不许打印 pid"。
+test('CLI reporting: a start that never comes up says it timed out, without inventing a pid', () => withFakeLaunchctl(async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const cliPath = fileURLToPath(new URL('../../scripts/cli.mjs', import.meta.url));
+
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
+
+  process.env.CCMEM_FAKE_START_NEVER = '1';
+  try {
+    const result = spawnSync(process.execPath, [cliPath, 'admin', '--', 'daemon', 'start'], {
+      env: process.env,
+      encoding: 'utf8'
+    });
+
+    assert.equal(result.status, 1, 'a start that never came up must exit non-zero');
+    assert.match(result.stderr, /timed out/, 'the operator must be told this was a timeout, not a diagnosed failure');
+    assert.match(result.stderr, /via=launchctl/, 'the path that timed out must be named');
+    assert.match(result.stderr, /admin daemon status/, 'a timeout must point at the check that tells it apart from a real failure');
+    assert.doesNotMatch(result.stderr, /pid=/, 'the launchd start_timeout carries no pid — the CLI must not print one');
+  } finally {
+    delete process.env.CCMEM_FAKE_START_NEVER;
   }
 }));
 

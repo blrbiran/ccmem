@@ -12,6 +12,13 @@ const DAEMON_MAIN = fileURLToPath(new URL('../../daemon/main.mjs', import.meta.u
 const LAUNCHD_LABEL = 'com.ccmem.daemon';
 const WAIT_INTERVAL_MS = 50;
 const WAIT_TIMEOUT_MS = 2000;
+// 启动等待与停止等待不同源。restart 是人为动作，没有任何外部截止时间约束它,
+// 所以抬高的唯一代价是"真失败时多等 3 秒"；而 2000ms 不够一次冷启动，代价是把
+// 一次成功的重启报成失败，并诱使操作者再重启一次。取值与本文件 PLIST_PROBE_TIMEOUT_MS
+// 一致，理由也一致（见该常量附近那条注释）。bug-063 缺陷 1。
+// 冷启动无法按需复现（当前 uptime 是热的），所以这个数是判断，不是测量出来的 ——
+// 真正的安全网是 restart_failed 的可读消息，不是这个数字。
+const START_WAIT_TIMEOUT_MS = 5000;
 const DEFAULT_PATH = '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin';
 export const DAEMON_ENV_PASSTHROUGH = [
   'ANTHROPIC_API_KEY',
@@ -606,7 +613,7 @@ async function startDaemon(db) {
     const started = await waitFor(() => {
       const next = loadDaemonStatus(db);
       return next.alive && next.wrapper_pid === child.pid ? next : null;
-    });
+    }, START_WAIT_TIMEOUT_MS);
 
     return started
       ? { status: 'started', via: 'wrapper', ...started }
@@ -625,7 +632,7 @@ async function startDaemon(db) {
     const started = await waitFor(() => {
       const next = loadDaemonStatus(db);
       return next.alive ? next : null;
-    });
+    }, START_WAIT_TIMEOUT_MS);
 
     return started ? { status: 'started', via: 'launchctl', ...started } : { status: 'start_timeout', via: 'launchctl' };
   }
@@ -635,7 +642,7 @@ async function startDaemon(db) {
   const started = await waitFor(() => {
     const next = loadDaemonStatus(db);
     return next.alive && next.pid === child.pid ? next : null;
-  });
+  }, START_WAIT_TIMEOUT_MS);
 
   return started
     ? { status: 'started', via: 'spawn', ...started }

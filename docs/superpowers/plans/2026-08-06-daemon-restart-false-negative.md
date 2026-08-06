@@ -255,7 +255,13 @@ Modify the `bootstrap)` case. `: > "$STATE"` must stay first — launchd accepts
   '    if [ -n "$CCMEM_FAKE_BOOTSTRAP_SNAPSHOT" ]; then cp "$3" "$CCMEM_FAKE_BOOTSTRAP_SNAPSHOT"; fi',
   // bug-063 缺陷 1。同步 sleep 会在 waitFor 开始轮询之前就结束，证明不了任何事;
   // 必须让锁在后台异步出现。3 秒落在旧预算 2000 之外、新预算 5000 之内。
-  '    if [ -n "$CCMEM_FAKE_START_DELAY" ]; then ( sleep 3; NOW=$(($(date +%s) * 1000)); set_lock ) & exit 0; fi',
+  //
+  // `</dev/null >/dev/null 2>&1` 不是噪音抑制，删掉它这条测试就会静默失效：
+  // runLaunchctl 用 spawnSync 且 stdio 是 pipe，而 spawnSync 要等到所有管道描述符
+  // 关闭才返回 —— 后台子 shell 继承了那些描述符，于是整整 3 秒被算进同步的
+  // bootstrapDaemon() 里，waitFor 开始轮询时锁早就写好了，T15 会假绿通过。
+  // 重定向让子 shell 立刻放掉描述符，spawnSync 才能马上返回。
+  '    if [ -n "$CCMEM_FAKE_START_DELAY" ]; then ( sleep 3; NOW=$(($(date +%s) * 1000)); set_lock ) </dev/null >/dev/null 2>&1 & exit 0; fi',
   // Step 2b 的 start_timeout：job 被接受了，但锁永远不出现。
   '    if [ -n "$CCMEM_FAKE_START_NEVER" ]; then exit 0; fi',
   '    set_lock',

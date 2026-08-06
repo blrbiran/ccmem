@@ -629,18 +629,22 @@ try {
       process.stderr.write(`ccmem: daemon uninstall failed (${result.reason})\n`);
       process.exitCode = 1;
     } else if (result.status === 'restart_failed') {
+      const timedOut = result.failed_status === 'start_timeout' || result.failed_status === 'stop_timeout';
       const detail = result.reason ? ` — ${result.reason}` : '';
       process.stderr.write(
-        `ccmem: daemon restart failed phase=${result.phase} previous_pid=${result.previous_pid ?? 'unknown'}${detail}\n` +
-          'ccmem: this does not prove the daemon is down — run `ccmem admin daemon status` before restarting again\n'
+        `ccmem: daemon restart failed phase=${result.phase} (${result.failed_status}) previous_pid=${result.previous_pid ?? 'unknown'}${detail}\n` +
+          (timedOut
+            ? 'ccmem: this timed out, not a diagnosed failure — the daemon may still be coming up; run `ccmem admin daemon status`\n'
+            : 'ccmem: this does not prove the daemon is down — run `ccmem admin daemon status` before restarting again\n')
       );
       process.exitCode = 1;
     } else if (result.status === 'start_timeout' || result.status === 'stop_timeout') {
       const phase = result.status === 'start_timeout' ? 'start' : 'stop';
       const via = result.via ? ` via=${result.via}` : '';
+      const confirmHint = result.via === 'launchctl' ? '; a small uptime_sec with plist=in_sync means it worked' : '';
       process.stderr.write(
         `ccmem: daemon ${phase} timed out waiting for the daemon to respond${via}\n` +
-          'ccmem: a timeout is not a failure — run `ccmem admin daemon status`; a small uptime_sec with plist=in_sync means it worked\n'
+          `ccmem: a timeout is not a failure — run \`ccmem admin daemon status\`${confirmHint}\n`
       );
       process.exitCode = 1;
     } else {

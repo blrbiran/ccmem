@@ -679,6 +679,36 @@ test('CLI reporting: a failed restart names the phase and the reason on stderr',
   }
 }));
 
+// bug-063 收尾。restart 的 start 阶段超时会被 restartDaemon 改写成 restart_failed,
+// 于是 cli.mjs 那条"超时不等于失败"的分支对 restart 永远不可达 —— 而 restart 正是
+// 这个 bug 被报出来的动作。failed_status 把子状态带出来，操作者才分得清
+// "我们等到放弃了" 和 "launchd 拒绝了"。这条测试同时是 phase:'start' 那条返回
+// 路径的第一个专属回归测试。
+test('CLI reporting: a restart whose start times out says it timed out, not just failed', () => withFakeLaunchctl(async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const cliPath = fileURLToPath(new URL('../../scripts/cli.mjs', import.meta.url));
+
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
+
+  process.env.CCMEM_FAKE_START_NEVER = '1';
+  try {
+    const result = spawnSync(process.execPath, [cliPath, 'admin', '--', 'daemon', 'restart'], {
+      env: process.env,
+      encoding: 'utf8'
+    });
+
+    assert.equal(result.status, 1, 'a restart that never came up must exit non-zero');
+    assert.match(result.stderr, /phase=start/, 'the start half must be named as the one that failed');
+    assert.match(result.stderr, /start_timeout/, 'the sub-status must survive restartDaemon rewriting it');
+    assert.match(result.stderr, /timed out, not a diagnosed failure/, 'a timeout must not read like a diagnosed failure');
+  } finally {
+    delete process.env.CCMEM_FAKE_START_NEVER;
+  }
+}));
+
 // 报警轴（status: 'drifted'）此前只算出来、从不落地：daemon.mjs 每次 status 都挂
 // plist_drift，cli.mjs 的 status 分支从不提它——一个生产者，零个消费者，操作员永远看不到。
 test('CLI reporting: daemon status surfaces plist drift by key name only', () => withFakeLaunchctl(async () => {

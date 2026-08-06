@@ -241,18 +241,24 @@ tells a real failure apart from a slow start."
   '      printf %s\\n "service not loaded" >&2',
   '      exit 1',
   '    fi',
-  // bug-063 缺陷 1。同步 sleep 会在 waitFor 开始轮询之前就结束，证明不了任何事;
-  // 必须让锁在后台异步出现。3 秒落在旧预算 2000 之外、新预算 5000 之内。
-  '    if [ -n "$CCMEM_FAKE_START_DELAY" ]; then ( sleep 3; NOW=$(($(date +%s) * 1000)); set_lock ) & exit 0; fi',
-  '    if [ -n "$CCMEM_FAKE_START_NEVER" ]; then exit 0; fi',
   '    set_lock',
   '    ;;',
 ```
 
-And the same suppression in the `bootstrap)` case, as its **last** statement before `;;` — a `start` verb whose `kickstart` fails falls through to `bootstrap`, and the lock must not appear there either:
+**Leave `kickstart)` unchanged** — both seams go in `bootstrap)` instead, and this is not a style preference. `withFakeLaunchctl` deletes the STATE marker before every test in this file, so `kickstart` always exits 1 with "service not loaded" and `startDaemon` always falls through to `bootstrapDaemon`. A seam placed in `kickstart)` is unreachable from every test here: T15 passes vacuously in ~37ms without ever exercising the wait. (Corrected 2026-08-06 after the first implementation attempt hit exactly this and reported BLOCKED.)
+
+Modify the `bootstrap)` case. `: > "$STATE"` must stay first — launchd accepts the job immediately in reality; it is the daemon *process* that is slow to write its lock, which is exactly what the delay models:
 
 ```javascript
+  '  bootstrap)',
+  '    : > "$STATE"',
+  '    if [ -n "$CCMEM_FAKE_BOOTSTRAP_SNAPSHOT" ]; then cp "$3" "$CCMEM_FAKE_BOOTSTRAP_SNAPSHOT"; fi',
+  // bug-063 缺陷 1。同步 sleep 会在 waitFor 开始轮询之前就结束，证明不了任何事;
+  // 必须让锁在后台异步出现。3 秒落在旧预算 2000 之外、新预算 5000 之内。
+  '    if [ -n "$CCMEM_FAKE_START_DELAY" ]; then ( sleep 3; NOW=$(($(date +%s) * 1000)); set_lock ) & exit 0; fi',
+  // Step 2b 的 start_timeout：job 被接受了，但锁永远不出现。
   '    if [ -n "$CCMEM_FAKE_START_NEVER" ]; then exit 0; fi',
+  '    set_lock',
   '    ;;',
 ```
 

@@ -201,6 +201,9 @@ writeFileSync(fakeLaunchctlPath, [
   '}',
   'case "$1" in',
   '  bootout)',
+  // bug-063 缺陷 2 需要一次"stop 阶段失败"的重启。默认不触发，只有显式设了这个
+  // 变量的测试才会走到 —— 与 CCMEM_FAKE_BOOTSTRAP_SNAPSHOT 同一种 opt-in。
+  '    if [ -n "$CCMEM_FAKE_BOOTOUT_FAIL" ]; then printf %s\\n "bootout refused by the fake" >&2; exit 1; fi',
   '    rm -f "$STATE"',
   '    sqlite3 "$DB" "DELETE FROM daemon_lock;" >/dev/null 2>&1',
   '    ;;',
@@ -439,6 +442,28 @@ test('T9: a blocked gate still lets the restart finish', () => withFakeLaunchctl
   assert.equal(result.status, 'restarted');
   assert.equal(result.plist_rewrite.written, false);
   assert.equal(readFileSync(plistPath, 'utf8'), before, 'a blocked gate must leave the plist byte-identical');
+}));
+
+// bug-063 缺陷 2。restartDaemon 在 stop 阶段失败时把 `...stopped` 展开在最后，
+// 于是它刚设好的 status:'restart_failed' 被 stopDaemon 的 'stop_failed' 覆盖掉。
+// phase 字段还在，但没人会去读一个 status 已经说了别的事情的对象 —— 对调用方而言
+// "restart 失败了" 这个事实就此丢失。
+test('T14: a restart that fails in the stop phase still reports restart_failed', () => withFakeLaunchctl(async () => {
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
+
+  const db = openDb();
+  process.env.CCMEM_FAKE_BOOTOUT_FAIL = '1';
+  try {
+    const result = await cmdAdminDaemon(db, { verb: 'restart' });
+
+    assert.equal(result.status, 'restart_failed', 'the restart verb must report its own failure, not the stop phase sub-status');
+    assert.equal(result.phase, 'stop', 'the phase must survive to tell the operator which half failed');
+    assert.match(result.reason, /bootout refused/, 'the underlying launchctl error must not be dropped');
+  } finally {
+    delete process.env.CCMEM_FAKE_BOOTOUT_FAIL;
+  }
 }));
 
 // T11。解析不出旧 env 就判不了 G1–G3，此时重写等于在看不见的前提下改配置。

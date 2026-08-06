@@ -732,14 +732,14 @@ async function restartDaemon(db) {
   const stopped = await stopDaemon(db);
 
   if (!['stopped', 'not_running'].includes(stopped.status)) {
-    return { status: 'restart_failed', phase: 'stop', previous_pid: current.pid ?? null, ...stopped };
+    return { ...stopped, status: 'restart_failed', phase: 'stop', previous_pid: current.pid ?? null };
   }
 
   const rewrite = rewritePlistIfAllowed();
 
   const started = await startDaemon(db);
   if (!['started', 'already_running'].includes(started.status)) {
-    return { status: 'restart_failed', phase: 'start', previous_pid: current.pid ?? null, plist_rewrite: rewrite, ...started };
+    return { ...started, status: 'restart_failed', phase: 'start', previous_pid: current.pid ?? null, plist_rewrite: rewrite };
   }
 
   return { ...started, status: 'restarted', previous_pid: current.pid ?? null, plist_rewrite: rewrite };

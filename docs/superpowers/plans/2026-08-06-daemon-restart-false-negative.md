@@ -253,20 +253,13 @@ Modify the `bootstrap)` case. `: > "$STATE"` must stay first — launchd accepts
   '  bootstrap)',
   '    : > "$STATE"',
   '    if [ -n "$CCMEM_FAKE_BOOTSTRAP_SNAPSHOT" ]; then cp "$3" "$CCMEM_FAKE_BOOTSTRAP_SNAPSHOT"; fi',
-  // bug-063 缺陷 1。同步 sleep 会在 waitFor 开始轮询之前就结束，证明不了任何事;
-  // 必须让锁在后台异步出现。3 秒落在旧预算 2000 之外、新预算 5000 之内。
-  //
-  // `</dev/null >/dev/null 2>&1` 不是噪音抑制，删掉它这条测试就会静默失效：
-  // runLaunchctl 用 spawnSync 且 stdio 是 pipe，而 spawnSync 要等到所有管道描述符
-  // 关闭才返回 —— 后台子 shell 继承了那些描述符，于是整整 3 秒被算进同步的
-  // bootstrapDaemon() 里，waitFor 开始轮询时锁早就写好了，T15 会假绿通过。
-  // 重定向让子 shell 立刻放掉描述符，spawnSync 才能马上返回。
-  '    if [ -n "$CCMEM_FAKE_START_DELAY" ]; then ( sleep 3; NOW=$(($(date +%s) * 1000)); set_lock ) </dev/null >/dev/null 2>&1 & exit 0; fi',
-  // Step 2b 的 start_timeout：job 被接受了，但锁永远不出现。
+  // job 被接受了，但锁永远不由 fake 写出来 —— 谁来写、什么时候写，交给测试自己决定。
   '    if [ -n "$CCMEM_FAKE_START_NEVER" ]; then exit 0; fi',
   '    set_lock',
   '    ;;',
 ```
+
+**There is only one seam, and it is the one above.** Do not add a delayed-write seam to the fake `launchctl`. Two earlier attempts did, and both failed for different reasons — the second one leaked a background subshell that outlived its own test and wrote `daemon_lock` into the *next* test's window, since the lock table is shared across the file's module-scope data root. A slow start is now modelled by a timer the test owns and clears (Step 2), so no process outlives the test that created it. (Human ruling, 2026-08-06, after the third BLOCKED report.)
 
 - [ ] **Step 2: Write the failing test**
 
@@ -281,16 +274,32 @@ test('T15: a daemon that takes three seconds to come up is reported as started',
   writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
 
   const db = openDb();
-  process.env.CCMEM_FAKE_START_DELAY = '1';
+  // 慢启动由这条测试自己拥有的定时器模拟，不用后台子 shell：子 shell 会活过本测试，
+  // 把锁写进下一条测试的等待窗口里（实测发生过，下一条测试看到 pid=9876 "启动成功"）。
+  // 定时器归本测试所有，finally 里 clearTimeout，结构上不可能泄漏。
+  // fake bootstrap 用 CCMEM_FAKE_START_NEVER 保证锁只可能由下面这一处写出来。
+  process.env.CCMEM_FAKE_START_NEVER = '1';
+  const lockAppears = setTimeout(() => {
+    const at = Date.now();
+    db.prepare(
+      `INSERT OR REPLACE INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive)
+       VALUES (1, 9876, 'fake-slow-start', ?, ?, 1)`
+    ).run(at, at);
+  }, 3000);
+
   try {
     const result = await cmdAdminDaemon(db, { verb: 'restart' });
 
     assert.equal(result.status, 'restarted', 'a slow-but-successful start must not be reported as a failure');
   } finally {
-    delete process.env.CCMEM_FAKE_START_DELAY;
+    clearTimeout(lockAppears);
+    delete process.env.CCMEM_FAKE_START_NEVER;
+    db.prepare(`DELETE FROM daemon_lock WHERE id = 1`).run();
   }
 }));
 ```
+
+`waitFor` polls by `await sleep(WAIT_INTERVAL_MS)`, so the event loop stays free and the timer fires on schedule. On the Step 3 red run the wait gives up at ~2000ms and `clearTimeout` runs before the timer ever fires — which is exactly why this shape cannot contaminate the next test the way the subshell did.
 
 - [ ] **Step 2b: Write the timeout-branch coverage test**
 

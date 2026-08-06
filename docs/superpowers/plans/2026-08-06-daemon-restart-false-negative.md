@@ -24,7 +24,7 @@
 |---|---|
 | `scripts/lib/admin/daemon.mjs` | New `START_WAIT_TIMEOUT_MS` constant; three `waitFor` call sites inside `startDaemon` use it; two `restartDaemon` returns get their spread order corrected. |
 | `scripts/cli.mjs` | New `else if` branches for `restart_failed` and the two timeout statuses, before the generic fallback. |
-| `tests/integration/plist-drift.test.mjs` | Two new opt-in seams in the module-scope fake `launchctl` (`CCMEM_FAKE_BOOTOUT_FAIL`, `CCMEM_FAKE_START_DELAY`) plus three new tests. |
+| `tests/integration/plist-drift.test.mjs` | Two new opt-in seams in the module-scope fake `launchctl` (`CCMEM_FAKE_BOOTOUT_FAIL`, `CCMEM_FAKE_START_NEVER`) plus five new tests. |
 
 ---
 
@@ -223,7 +223,7 @@ tells a real failure apart from a slow start."
 
 **Files:**
 - Modify: `scripts/lib/admin/daemon.mjs:14` (new constant), `:606`, `:625`, `:635` (three `waitFor` calls inside `startDaemon`)
-- Modify: `tests/integration/plist-drift.test.mjs` (fake-launchctl `kickstart)` case; new test)
+- Modify: `tests/integration/plist-drift.test.mjs` (fake-launchctl `bootstrap)` case; new test)
 
 **Interfaces:**
 - Consumes: `waitFor(check, timeoutMs = WAIT_TIMEOUT_MS)` at `daemon.mjs:441` — already takes an explicit override, so no signature change.
@@ -232,18 +232,6 @@ tells a real failure apart from a slow start."
 **Scope note — read before editing:** `WAIT_TIMEOUT_MS` is shared by **five** call sites: three in `startDaemon` (`:606` wrapper, `:625` launchd, `:635` spawn) and two in `stopDaemon` (`:650`, `:687`). Only the three inside `startDaemon` change. **If you find a fourth `waitFor` call inside `startDaemon`, or fewer than three, stop and report — do not adjust the count silently.**
 
 - [ ] **Step 1: Add the slow-start seam to the fake launchctl**
-
-`runLaunchctl` is synchronous, so a `sleep` in the fake would finish *before* `waitFor` starts and prove nothing. The lock must appear **asynchronously**, from a background subshell, while `waitFor` is polling. In the `kickstart)` case, insert after the existing not-loaded guard:
-
-```javascript
-  '  kickstart)',
-  '    if [ ! -f "$STATE" ]; then',
-  '      printf %s\\n "service not loaded" >&2',
-  '      exit 1',
-  '    fi',
-  '    set_lock',
-  '    ;;',
-```
 
 **Leave `kickstart)` unchanged** — both seams go in `bootstrap)` instead, and this is not a style preference. `withFakeLaunchctl` deletes the STATE marker before every test in this file, so `kickstart` always exits 1 with "service not loaded" and `startDaemon` always falls through to `bootstrapDaemon`. A seam placed in `kickstart)` is unreachable from every test here: T15 passes vacuously in ~37ms without ever exercising the wait. (Corrected 2026-08-06 after the first implementation attempt hit exactly this and reported BLOCKED.)
 

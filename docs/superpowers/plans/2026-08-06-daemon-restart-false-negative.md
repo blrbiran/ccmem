@@ -16,7 +16,7 @@
 - **Every regression test must be watched red before it is made green, and red for the right reason.** A crash red does not count; "function not defined" does not count. The red must land on the assertion that names the behavior.
 - **Suite baseline: 535 pass / 0 fail.** Three files are known intermittent flakes — `stop-daemon-flow.test.mjs`, `admin-cron-command.test.mjs`, `admin-daemon-command.test.mjs`. Confirm the filename before calling any red a regression.
 - **Never print or persist plist contents** — `renderPlist()` output can contain `ANTHROPIC_*` values from `DAEMON_ENV_PASSTHROUGH`.
-- Expected final count: **538 pass / 0 fail** (three new tests).
+- Expected final count: **539 pass / 0 fail** (four new tests — three planned, plus the timeout-branch test added to Task 3 by human ruling on 2026-08-06).
 
 ## File Structure
 
@@ -244,7 +244,15 @@ tells a real failure apart from a slow start."
   // bug-063 缺陷 1。同步 sleep 会在 waitFor 开始轮询之前就结束，证明不了任何事;
   // 必须让锁在后台异步出现。3 秒落在旧预算 2000 之外、新预算 5000 之内。
   '    if [ -n "$CCMEM_FAKE_START_DELAY" ]; then ( sleep 3; NOW=$(($(date +%s) * 1000)); set_lock ) & exit 0; fi',
+  '    if [ -n "$CCMEM_FAKE_START_NEVER" ]; then exit 0; fi',
   '    set_lock',
+  '    ;;',
+```
+
+And the same suppression in the `bootstrap)` case, as its **last** statement before `;;` — a `start` verb whose `kickstart` fails falls through to `bootstrap`, and the lock must not appear there either:
+
+```javascript
+  '    if [ -n "$CCMEM_FAKE_START_NEVER" ]; then exit 0; fi',
   '    ;;',
 ```
 
@@ -272,11 +280,52 @@ test('T15: a daemon that takes three seconds to come up is reported as started',
 }));
 ```
 
+- [ ] **Step 2b: Write the timeout-branch coverage test**
+
+**Why this is here:** Task 2 added a `start_timeout` / `stop_timeout` branch to `scripts/cli.mjs` and the plan never asked for a test for it — a drafting gap in this plan, caught by Task 2's review and ruled on by the human on 2026-08-06: cover it here, where the seam already exists. Unlike every other test in this plan, **this one will be green the moment you write it** — the branch already works. Step 5b is what makes it honest.
+
+`restart` cannot reach this branch: `restartDaemon` rewrites both timeout statuses into `restart_failed`. Only the bare `start` verb surfaces `start_timeout` to the CLI.
+
+```javascript
+// bug-063。Task 2 给 cli.mjs 加了 start_timeout / stop_timeout 分支却没有任何测试
+// 覆盖它 —— 人类 2026-08-06 裁定在这里补上。注意 restart 到不了这个分支：
+// restartDaemon 会把两个 timeout 状态都改写成 restart_failed，只有裸 start verb
+// 才会把 start_timeout 原样交给 CLI。
+// launchd 那条 start_timeout 返回值不带 pid，所以这里同时钉住"不许打印 pid"。
+test('CLI reporting: a start that never comes up says it timed out, without inventing a pid', () => withFakeLaunchctl(async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const cliPath = fileURLToPath(new URL('../../scripts/cli.mjs', import.meta.url));
+
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
+
+  process.env.CCMEM_FAKE_START_NEVER = '1';
+  try {
+    const result = spawnSync(process.execPath, [cliPath, 'admin', '--', 'daemon', 'start'], {
+      env: process.env,
+      encoding: 'utf8'
+    });
+
+    assert.equal(result.status, 1, 'a start that never came up must exit non-zero');
+    assert.match(result.stderr, /timed out/, 'the operator must be told this was a timeout, not a diagnosed failure');
+    assert.match(result.stderr, /via=launchctl/, 'the path that timed out must be named');
+    assert.match(result.stderr, /admin daemon status/, 'a timeout must point at the check that tells it apart from a real failure');
+    assert.doesNotMatch(result.stderr, /pid=/, 'the launchd start_timeout carries no pid — the CLI must not print one');
+  } finally {
+    delete process.env.CCMEM_FAKE_START_NEVER;
+  }
+}));
+```
+
 - [ ] **Step 3: Run it and confirm the red is the right red**
 
 Run: `env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" node --test tests/integration/plist-drift.test.mjs`
 
 Expected: T15 fails after roughly 2 seconds with `'restart_failed' !== 'restarted'` (Task 1's fix means the status is now honestly `restart_failed` rather than `start_timeout`).
+
+Expected: the Step 2b timeout test **passes** on this same run. That is not a problem — it is covering a branch that already works. Do not try to make it fail here.
 
 **This red is the bug itself reproduced in a test** — the fake daemon *did* come up, and the code called it a failure. If T15 instead passes on this run, the delay seam is not firing; stop and report rather than weakening the assertion.
 
@@ -320,6 +369,20 @@ grep -n "START_WAIT_TIMEOUT_MS" scripts/lib/admin/daemon.mjs
 
 Expected: exactly **four** lines — the declaration plus `:606`, `:625`, `:635`. If a `stopDaemon` line appears, revert it.
 
+- [ ] **Step 5b: Prove the Step 2b test with a targeted mutation red**
+
+A test that was green the moment it was written has proven nothing yet. This repo's standing ruling (#9) is that a red-evidence gap is filled with a **targeted mutation red**, never a cheap one — the red must land on the assertion that names the behavior, with the control tests staying green.
+
+Mutate: in `scripts/cli.mjs`, temporarily change the timeout branch's condition to something unreachable — `} else if (result.status === 'start_timeout__mutant' || result.status === 'stop_timeout') {` — so a real `start_timeout` falls through to the generic fallback.
+
+Run: `env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" node --test tests/integration/plist-drift.test.mjs`
+
+Expected: the Step 2b test fails on the `/timed out/` assertion (stderr reads `ccmem: daemon start failed`). **The `result.status === 1` assertion must still pass** — the generic fallback also exits 1, which is precisely why exit code alone was never enough to catch this.
+
+Expected: T14, T15, and both pre-existing `CLI reporting:` tests stay **green** under the mutation — they do not touch this branch. A mutation that reds them too is not targeted; investigate before proceeding.
+
+**Then revert the mutation** and re-run to confirm green. Record both the mutated output and the restored output in your report. Do not commit the mutation.
+
 - [ ] **Step 6: Commit**
 
 ```bash
@@ -339,7 +402,7 @@ restart. Matches PLIST_PROBE_TIMEOUT_MS, whose comment already argues this."
 ## Final verification (do not skip)
 
 - [ ] Run the full suite: `npm test`
-- [ ] Expected: **538 pass / 0 fail** (535 baseline + 3 new).
+- [ ] Expected: **539 pass / 0 fail** (535 baseline + 4 new).
 - [ ] If red: check the filename against the three known flakes (`stop-daemon-flow.test.mjs`, `admin-cron-command.test.mjs`, `admin-daemon-command.test.mjs`) **before** calling it a regression. Re-run the single file in isolation to confirm.
 - [ ] Confirm no test wrote to the real `~/Library/LaunchAgents/com.ccmem.daemon.plist`: `ls -l ~/Library/LaunchAgents/com.ccmem.daemon.plist` — mtime must predate this session. **Do not print the file's contents.**
 - [ ] Do **not** push. Branch integration is the human's call (see `superpowers:finishing-a-development-branch`).

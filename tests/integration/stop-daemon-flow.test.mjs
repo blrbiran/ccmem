@@ -1861,6 +1861,21 @@ test('stop hook wake supersedes a stale queued retry when a newer stop seq arriv
       cwd: process.cwd()
     });
 
+    // Same hazard as s-flow-bridge-timeout-stale-retry: anchoring the stale
+    // retry's due-time to `Date.now() - 1` races the wall clock against the
+    // `scheduled_for` handleStop() just stamped on the seq=3 row. Under load,
+    // >1ms between the two flips mainLoop's `scheduled_for ASC` dispatch order
+    // and the retry never supersedes. Anchor to the persisted value instead.
+    // See that test for the full reasoning.
+    const newerTask = db.prepare(
+      `SELECT scheduled_for
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = ?
+         AND json_extract(payload, '$.last_message_seq') = 3`
+    ).get('s-flow-bridge-stale-retry');
+
     db.prepare(
       `UPDATE tasks
        SET scheduled_for = ?
@@ -1868,7 +1883,7 @@ test('stop hook wake supersedes a stale queued retry when a newer stop seq arriv
          AND status = 'queued'
          AND json_extract(payload, '$.session_id') = ?
          AND json_extract(payload, '$.last_message_seq') = 2`
-    ).run(Date.now() - 1, 's-flow-bridge-stale-retry');
+    ).run(newerTask.scheduled_for - 60_000, 's-flow-bridge-stale-retry');
 
     writeFileSync(script, buildBridgeScriptSuccess('Bridge stale retry result'));
     setBridgeCommand(script);
@@ -2092,6 +2107,21 @@ test('stop hook wake supersedes a stale default-rate-limit retry when a newer st
       cwd: process.cwd()
     });
 
+    // Same hazard as s-flow-bridge-timeout-stale-retry: anchoring the stale
+    // retry's due-time to `Date.now() - 1` races the wall clock against the
+    // `scheduled_for` handleStop() just stamped on the seq=3 row. Under load,
+    // >1ms between the two flips mainLoop's `scheduled_for ASC` dispatch order
+    // and the retry never supersedes. Anchor to the persisted value instead.
+    // See that test for the full reasoning.
+    const newerTask = db.prepare(
+      `SELECT scheduled_for
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = ?
+         AND json_extract(payload, '$.last_message_seq') = 3`
+    ).get('s-flow-bridge-rate-limit-default-stale-retry');
+
     db.prepare(
       `UPDATE tasks
        SET scheduled_for = ?
@@ -2099,7 +2129,7 @@ test('stop hook wake supersedes a stale default-rate-limit retry when a newer st
          AND status = 'queued'
          AND json_extract(payload, '$.session_id') = ?
          AND json_extract(payload, '$.last_message_seq') = 2`
-    ).run(Date.now() - 1, 's-flow-bridge-rate-limit-default-stale-retry');
+    ).run(newerTask.scheduled_for - 60_000, 's-flow-bridge-rate-limit-default-stale-retry');
 
     writeFileSync(script, buildBridgeScriptSuccess('Bridge stale default retry result'));
     setBridgeCommand(script);
@@ -2323,6 +2353,21 @@ test('stop hook wake supersedes a stale second-based retry when a newer stop seq
       cwd: process.cwd()
     });
 
+    // Same hazard as s-flow-bridge-timeout-stale-retry: anchoring the stale
+    // retry's due-time to `Date.now() - 1` races the wall clock against the
+    // `scheduled_for` handleStop() just stamped on the seq=3 row. Under load,
+    // >1ms between the two flips mainLoop's `scheduled_for ASC` dispatch order
+    // and the retry never supersedes. Anchor to the persisted value instead.
+    // See that test for the full reasoning.
+    const newerTask = db.prepare(
+      `SELECT scheduled_for
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = ?
+         AND json_extract(payload, '$.last_message_seq') = 3`
+    ).get('s-flow-bridge-rate-limit-seconds-stale-retry');
+
     db.prepare(
       `UPDATE tasks
        SET scheduled_for = ?
@@ -2330,7 +2375,7 @@ test('stop hook wake supersedes a stale second-based retry when a newer stop seq
          AND status = 'queued'
          AND json_extract(payload, '$.session_id') = ?
          AND json_extract(payload, '$.last_message_seq') = 2`
-    ).run(Date.now() - 1, 's-flow-bridge-rate-limit-seconds-stale-retry');
+    ).run(newerTask.scheduled_for - 60_000, 's-flow-bridge-rate-limit-seconds-stale-retry');
 
     writeFileSync(script, buildBridgeScriptSuccess('Bridge stale second-based retry result'));
     setBridgeCommand(script);
@@ -2554,6 +2599,21 @@ test('stop hook wake supersedes a stale minute-based retry when a newer stop seq
       cwd: process.cwd()
     });
 
+    // Same hazard as s-flow-bridge-timeout-stale-retry: anchoring the stale
+    // retry's due-time to `Date.now() - 1` races the wall clock against the
+    // `scheduled_for` handleStop() just stamped on the seq=3 row. Under load,
+    // >1ms between the two flips mainLoop's `scheduled_for ASC` dispatch order
+    // and the retry never supersedes. Anchor to the persisted value instead.
+    // See that test for the full reasoning.
+    const newerTask = db.prepare(
+      `SELECT scheduled_for
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = ?
+         AND json_extract(payload, '$.last_message_seq') = 3`
+    ).get('s-flow-bridge-rate-limit-minutes-stale-retry');
+
     db.prepare(
       `UPDATE tasks
        SET scheduled_for = ?
@@ -2561,7 +2621,7 @@ test('stop hook wake supersedes a stale minute-based retry when a newer stop seq
          AND status = 'queued'
          AND json_extract(payload, '$.session_id') = ?
          AND json_extract(payload, '$.last_message_seq') = 2`
-    ).run(Date.now() - 1, 's-flow-bridge-rate-limit-minutes-stale-retry');
+    ).run(newerTask.scheduled_for - 60_000, 's-flow-bridge-rate-limit-minutes-stale-retry');
 
     writeFileSync(script, buildBridgeScriptSuccess('Bridge stale minute-based retry result'));
     setBridgeCommand(script);
@@ -2785,6 +2845,21 @@ test('stop hook wake supersedes a stale too-many-requests retry when a newer sto
       cwd: process.cwd()
     });
 
+    // Same hazard as s-flow-bridge-timeout-stale-retry: anchoring the stale
+    // retry's due-time to `Date.now() - 1` races the wall clock against the
+    // `scheduled_for` handleStop() just stamped on the seq=3 row. Under load,
+    // >1ms between the two flips mainLoop's `scheduled_for ASC` dispatch order
+    // and the retry never supersedes. Anchor to the persisted value instead.
+    // See that test for the full reasoning.
+    const newerTask = db.prepare(
+      `SELECT scheduled_for
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = ?
+         AND json_extract(payload, '$.last_message_seq') = 3`
+    ).get('s-flow-bridge-too-many-requests-stale-retry');
+
     db.prepare(
       `UPDATE tasks
        SET scheduled_for = ?
@@ -2792,7 +2867,7 @@ test('stop hook wake supersedes a stale too-many-requests retry when a newer sto
          AND status = 'queued'
          AND json_extract(payload, '$.session_id') = ?
          AND json_extract(payload, '$.last_message_seq') = 2`
-    ).run(Date.now() - 1, 's-flow-bridge-too-many-requests-stale-retry');
+    ).run(newerTask.scheduled_for - 60_000, 's-flow-bridge-too-many-requests-stale-retry');
 
     writeFileSync(script, buildBridgeScriptSuccess('Bridge stale too-many-requests retry result'));
     setBridgeCommand(script);

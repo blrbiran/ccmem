@@ -1608,6 +1608,24 @@ test('stop hook wake supersedes a stale timeout-scheduled retry when a newer sto
       cwd: process.cwd()
     });
 
+    // mainLoop dispatches due tasks in `scheduled_for ASC` order, and this test
+    // requires the stale seq=2 retry to be dispatched (and self-supersede)
+    // strictly before the fresh seq=3 task. Anchoring the retry's forced
+    // due-time to `Date.now() - 1` raced the wall clock against the
+    // `scheduled_for` handleStop() had just stamped on the seq=3 row a moment
+    // earlier: under load, more than 1ms could elapse between the two,
+    // leaving the retry's timestamp >= the seq=3 row's and flipping the
+    // dispatch order. Anchor to the seq=3 row's actual persisted
+    // scheduled_for instead, so the ordering is guaranteed rather than timed.
+    const newerTask = db.prepare(
+      `SELECT scheduled_for
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status = 'queued'
+         AND json_extract(payload, '$.session_id') = ?
+         AND json_extract(payload, '$.last_message_seq') = 3`
+    ).get('s-flow-bridge-timeout-stale-retry');
+
     db.prepare(
       `UPDATE tasks
        SET scheduled_for = ?
@@ -1615,7 +1633,7 @@ test('stop hook wake supersedes a stale timeout-scheduled retry when a newer sto
          AND status = 'queued'
          AND json_extract(payload, '$.session_id') = ?
          AND json_extract(payload, '$.last_message_seq') = 2`
-    ).run(Date.now() - 1, 's-flow-bridge-timeout-stale-retry');
+    ).run(newerTask.scheduled_for - 60_000, 's-flow-bridge-timeout-stale-retry');
 
     writeFileSync(script, buildBridgeScriptSuccess('Bridge stale timeout retry result'));
     restoreTimeoutConfig();

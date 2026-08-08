@@ -1,162 +1,171 @@
 # ccmem —— Handoff
 
-> Finding 15 的探针早已合并。**本轮给它加上了"只在实际使用 CC 时才采样"的活动闸门，已合并进 `main`**；
-> 同时把 `admin daemon restart` 的假阴性诊断清楚并单独合入（**只有诊断，没有修**）。
-> ✅ **探针链路已实测打通**（2026-08-06 08:59 冻结快照：闸门产出 22 个样本）—— 见 Ⅰ。
-> 上一轮记的"零产出"是判据下早了，已在 Ⅰ 原地更正。**当前没有待查的活口，只等数据积累。**
-> 本文档只做索引与状态提要 —— **不要仅凭它重建状态**，实质内容在下表的材料、ledger 与提交信息里。
-> **本文档不写任何 commit SHA，也不假设 HEAD 停在哪里** —— 提交本文档本身就会移动 HEAD，
-> 之后每一次提交又会再移一次。用 `git log --oneline -20` 按**提交标题**找；
-> 文中出现的**行号是写作当时工作树的，会漂**，用符号名（函数名、SQL 片段）grep 复核，不要照行号跳。
+> **bug-063（`admin daemon restart` 假阴性）已修完并合进 `main`**。
+> ⚠️ **套件不是稳定绿的：96 次全量跑里 18% 会红**（详见 Ⅹ）。"540 pass / 0 fail" 只是单次跑的结果，不是基线。
+> 探针仍在积累：**2026-08-07 20:37 冻结快照 n=55**（目标 ~300）。
+> **没有待修的产品 bug，但有两条已定位的测试抖动没修**（`admin-daemon-command`、`plist-drift`，见 Ⅹ）。
+> 本文档只做索引与状态提要 —— **不要仅凭它重建状态**，实质内容在材料、ledger 与提交信息里。
+> **本文档不写任何 commit SHA，也不假设 HEAD 停在哪里** —— 提交本文档本身就会移动 HEAD。
+> 用 `git log --oneline -20` 按**提交标题**找；文中**行号是写作当时的，会漂**，用符号名 grep 复核。
 
 ---
 
 # 🚀 快速接手 —— 先读这 6 行
 
-1. **探针链路是通的，不要再去查它。** 2026-08-06 08:59 冻结快照：`tasks` 里 **22 条 completed** `embed_latency_probe`，
-   探针文件 23 行 = **22 行闸门产出** + 1 行 2026-08-05 08:47 手工冒烟（`ms=733`，不计入分析）。
-2. **上一轮"零产出"的结论是判据下早了**，不是链路坏了：闸门**首次入队在 22:21:19**，而那次判定发生在 22:18。三个待排假设已逐条证伪，详见 Ⅰ。
-3. 当前唯一要做的事是**等样本积累**（n=22，目标 ~300）。取数方法见 Ⅰ 末尾。**不要中途改探针代码**，改了样本就不同源。
-4. 攒够数据后要回答的问题没变：**把超时从 800 抬到 ~1300，那 34% 里能捞回几次**（`P(ms≤1300) − P(ms≤800)`）。上界 ≲1360ms 由预算实测约束，不由分布决定。
-   ⚠️ **已经出现一个 10003ms 的截尾样本**（撞探针自己的 10s 上限）—— 尾巴确实伸到 1360ms 之外，**任何预算内的超时都救不回它**。
+1. **先跑 `git status` 和 `git log --oneline -15`。** ⚠️ **`origin/main` 已与 `main` 同步**（人类已 push；旧版本说的"领先十几个提交未 push"已过期）。
+   **禁令不变：不要 push。** 分支 `daemon-restart-false-negative` 已合并但**未删除**（删分支要先问）。
+2. **没有待修的产品 bug**，但**有两条已定位、未修的测试抖动**。见 Ⅹ —— **接手前先读 Ⅹ**，它推翻了旧版"套件稳定绿"的说法。
+3. **唯一在等的事是探针数据积累**，n=55 / 目标 ~300。取数方法见 Ⅰ 末尾。**不要改探针代码**（样本要同源）。
+4. **⚠️ 数据结论变了，不要照抄旧版 handoff：** 差值已**不再是 0**（2/55 = 3.6%），
+   且**尾巴比原先以为的肥** —— 55 个样本里有 **5 个超出 ~1360ms 预算上限**。见 Ⅰ。
 5. **分位数对比不可作判据**，v0.14 已坐实，不要复活。
 6. 硬性禁止：**不要 push**、**删分支/worktree 先问**、**不要把 plist 或配置内容打印/落盘**。
 
 ---
 
-# Ⅰ. ✅ 探针链路已确认打通（原"零产出"结论已更正）
+# Ⅰ. 探针现状（2026-08-07 20:37 单一冻结快照）
 
-## 更正：22:18 那次"零产出"是判据下早了
+链路早已确认打通，**不要再去查它**。daemon 实测 `uptime_sec≈167356`（起于 08-05 22:08），一直活着。
 
-上一轮实测四个前置条件全真却看不到产出，当场定下"1 分钟后还是 1 行就是真有问题"的判据并据此判定链路有问题。
-**该判定是错的。** 闸门**首次入队时间是 22:21:19** —— 比那次判定晚 3 分钟。
-判据本身用错了节奏：30 秒一 tick 只在 `wakeRecently()` 为真时成立（Ⅳ.11），而首发还要等 `lastProbeAtMs`
-从 daemon 启动时刻起满 5 分钟静默期（Ⅱ.1），**首发延迟的合理上界是「5 分钟速率上限 + 一个 tick」，不是 1 分钟。**
+**2026-08-08 重新取数（干净快照，n=58）—— 结论与上一版一致：**
 
-## 三个待排假设全部证伪（2026-08-05 23:25 取证）
+```
+n = 58  (正常计时 57 + 截尾 1)     另有 1 个错误样本被排除并打印：'Connection error.'
+P(ms≤800)  = 49/58 = 84.5%
+P(ms≤1300) = 52/58 = 89.7%
+DIFF P(800<ms≤1300) = 3/58 = 5.2%   Wilson 95% CI [1.8%, 14.1%]
+>1360ms 预算上限: 5/58
+>>> n<300，数据不足，不要从区间里读点估计
+```
 
-| 假设 | 实测 | 结论 |
-|---|---|---|
-| `getMode(db) === 'off'`，`scheduleCronTasks` 轮不到 | `ccmem mode` ⇒ **`active`** | 证伪 |
-| daemon 反复重启，静默期一直被推后 | pid 9622，`uptime_sec=4484`（起于 22:08:16，晚于闸门合并 21:33） | 证伪，且证明进程里有闸门代码 |
-| 两个时间戳不同源／不同单位 | `session_context.updated_at` 由三个 hook 写 `Date.now()`（`prompt-submit.mjs:33`），与 `lastProbeAtMs` 同为毫秒 | 证伪 |
+（上一版 2026-08-07 20:37 的 n=55 快照是 `2/55 = 3.6%`、CI `[1.0%, 12.3%]` —— 新旧一致，多了 3 个干净样本。）
 
-## 冻结快照（2026-08-06 08:59，单一时点）
+🔴 **取数时必须剔除被本机负载污染的时段，否则会读出假信号。**
+2026-08-07 21:00 之后有 **16 个样本与"跑 96 次全量测试套件"重合**，被系统性拉慢：
 
-- `tasks` 中 `embed_latency_probe`：**22 条 completed**，入队区间 `2026-08-05 22:21:19` → `2026-08-06 01:57:51`。
-- 探针文件 `embed-latency-probe.jsonl`：**23 行** = 22 行闸门产出 + 1 行 08-05 08:47 手工冒烟（`ms=733`）。
-- 22 个闸门样本：**21 个正常计时 + 1 个截尾**（08-06 01:58:01，`ms=10003`，撞探针自身 10s 上限）。
-  正常样本的 `ms`：`310, 324, 337, 443, 313, 1330, 314, 372, 649, 283, 302, 307, 303, 321, 338, 691, 305, 389, 536, 353, 303`。
-- **两个正面对照，闸门确实按"只在使用时采样"工作**：
-  - 08-05 22:49 → 23:18 的 27 分钟空档，对应一段没用 CC 的时间；
-  - **08-06 01:58 → 08:59 的 7 小时里一个样本都没有**（无人使用），而 daemon 一直活着（`uptime_sec≈39091`）。
-  - ⚠️ 这两条同时也是"零产出不等于坏了"的现成反例 —— **看到 0 先查这段时间有没有人在用 CC。**
-- 活跃时段实测速率约 **6 样本/小时**（22:21–01:58 共 3.6 小时出 22 个；5 分钟上限给的理论上界是 12/小时）。
+| 时段 | n | P(ms≤800) | 带内 800–1300 |
+|---|---|---|---|
+| 08-07 21:00 **之前**（干净） | 58 | **84.5%** | **5.2%** |
+| 08-07 21:00 **之后**（污染） | 16 | **50.0%** | **37.5%** |
+
+把两段合起来算会得到 `9/74 = 12.2%`，**看着像"抬超时能捞回的量级翻了三倍"，实际全是测试负载**。
+⇒ **跑全量套件（每次 17 秒满载 10 核）会污染同期探针样本。取数前先比对采样窗口与你自己的重活时段。**
+
+## 与上一版相比，两件事变了 —— 这是本文档最值得读的一段
+
+1. **差值不再是 0。** n=22 时是 `0/22`，现在是 `2/55`（落在带内的两个样本：`1020`、`1040`）。
+   区间下界已离开 0（1.0%），也就是说**"抬超时能捞回一些"这件事本身已经有正证据**，只是量级仍不确定。
+2. **尾巴比原先以为的肥得多。** 除了原来那个 `10003` 截尾，本轮新出现 `3635 / 5221 / 5285 / 5973`。
+   ⇒ **55 个样本里 5 个（≈9%）超出 ~1360ms 的 prompt_submit 预算上限**，
+   **任何预算内的超时都救不回它们。** 抬超时能救的只有中间那一段。
+   ⚠️ 下结论前请注意：这条本身也才 5 个样本，**别把 9% 当成稳定估计**。
 
 ## 取数（只读，不入库）
 
-**没有把脚本提交进仓库**（Rule 2：一次性分析工具不进代码库）。上一轮那份在 session scratchpad 里，
-会随 session 目录消失。要用就按下面的定义重写，**它只有十几行**：
+**脚本没有提交进仓库**（Rule 2：一次性分析工具不进代码库），它只有十几行，按下面的定义重写即可：
 
 - 逐行读 `~/.claude/ccmem/embed-latency-probe.jsonl`，**默认剔除 `ts === 1785890876078`**（08-05 08:47 手工冒烟）。
 - 分三类，**任何一类都不许静默丢弃**：正常计时（`ok===true`）、**截尾**（`timed_out_at_probe_limit===true`，
-  它是一个合法的"> 上限"观测，前提是 `timeout_ms > 1300`）、**失败**（报错，不是延迟观测，报出来但不进分母）。
+  它是合法的"> 上限"观测，前提是 `timeout_ms > 1300`）、**失败**（报错，不是延迟观测，**报出来但不进分母**）。
 - 输出 n、`P(ms≤800)`、`P(ms≤1300)`，以及**两者之差 + 95% Wilson 区间**。
-  **关键简化：`P(≤1300) − P(≤800)` 就是 `P(800 < ms ≤ 1300)`，本身是单个二项比例**，
-  所以 Wilson 直接可用，不需要处理两个相关比例。
-- **刻意不输出任何分位数** —— 见 Ⅶ，分位数对比作判据已作废。
-- n < 300 时打印一句"数据不足"，**不要从区间里读点估计**。
+  **关键简化：`P(≤1300) − P(≤800)` 就是 `P(800 < ms ≤ 1300)`，本身是单个二项比例**，Wilson 直接可用。
+- **刻意不输出任何分位数** —— 见 Ⅶ。
+- n < 300 时打印"数据不足"，**不要从区间里读点估计**。
 
-**当前结果（同一冻结快照）**：n=22，`P(≤800)=20/22`，`P(≤1300)=20/22`，**差值 0/22，95% CI `[0%, 14.9%]`**。
-差值为 0 **不是**"抬超时没用" —— 那 1330ms 落在 1300 之外、10003ms 是截尾，而 n=22 的区间上界还有 14.9%。
+## 关于"看到 0 先别慌"
+
+闸门只在实际使用 CC 时采样。历史上出现过 7 小时零样本，原因是没人用 CC，daemon 一直好好的。
+**看到 0 先查这段时间有没有人在用 CC。** 另见 Ⅴ 关于"等待期算错会把健康系统判成故障"那条。
 
 ---
 
-# Ⅱ. 本轮交付了什么
+# Ⅱ. 本轮交付：bug-063 已修完并合并
 
-## 1. 探针活动闸门（已合并，标题 `Merge branch 'probe-activity-gate': ...`）
+**症状**：成功的 `ccmem admin daemon restart` 会打印 `daemon restart failed` 并退出 1。三个缺陷叠加。
 
-探针原本按 daemon 的 24/7 时钟入队。现在只在 `MAX(session_context.updated_at) > lastProbeAtMs`
-且速率上限已过时才入队；`interval_ms` 语义从"采样周期"变成"两次探针的最小间隔"。
+| 缺陷 | 修法 | 提交标题（用 `git log --grep` 找） |
+|---|---|---|
+| 1. `restartDaemon` 展开顺序把自己刚设的 `restart_failed` 覆盖掉 | 展开放前面，与已正确的同胞返回对齐 | `fix(daemon): stop restartDaemon from overwriting its own failure status` |
+| 2. CLI 没有对应分支，`phase`/`reason`/`previous_pid` 全丢 | 新增 `restart_failed` 与两个 timeout 分支 | `fix(cli): report the phase and reason behind a failed daemon restart` |
+| 3. 启动等待 2000ms 短于实测冷启动 | 新增 `START_WAIT_TIMEOUT_MS = 5000` 只给 start 三个调用点，stop 仍 2000 | `fix(daemon): give the start path a 5s wait, leaving stop at 2s` |
 
-- 信号由三个 hook 自己写（`prompt-submit.mjs:33` / `session-start.mjs:40` / `stop.mjs:25`），
-  **daemon 只读，hook 零变更** —— 裁决 #1 是字面保住的，不是靠论证。
-- `lastProbeAtMs` 从 **daemon 启动时刻**起算（原本是 0）。代价：**重启后头 5 分钟一律不发探针**。
-- **没有新增任何配置项**，也因此**没有退回 24/7 采样的开关**。这是刻意的。
-- 预期产出 **≈44 样本/天**（对比无条件的 288），300 样本约 6.8 天。
-  **首个实测窗口（2026-08-05 22:21 → 08-06 01:58）：活跃时段约 6 样本/小时**（理论上界 12/小时）。
-  与 ≈44/天 相容的前提是每天约 7 小时活跃使用 —— **n=22 的外推，只作量级参考，不要当作产出率结论。**
+收尾修复波（最终全分支审查提出）：`fix(daemon): surface restart's failed_status and stop advising a plist check that never applies`
 
-| 材料 | 用途 |
-|---|---|
-| `docs/superpowers/specs/2026-08-05-probe-activity-gate-design.md` | 设计，含 5 条 review 修正、样本量推导、8 条已知局限 |
-| `docs/superpowers/plans/2026-08-05-probe-activity-gate.md` | 两个 Task 的实现计划 |
-| `.superpowers/sdd/2026-08-05-probe-activity-gate/progress.md` | **ledger**，全程取证与裁定 |
+- **新增 `failed_status` 字段**：`restartDaemon` 会把 `start_timeout` 改写成 `restart_failed`，
+  导致 CLI 那条"超时不等于失败"的分支**对 restart 永远不可达** —— 而 restart 正是 bug 被报出来的动作。
+  现在子状态被带出来，操作者分得清"我们等到放弃了"和"launchd 拒绝了"。
+- **`plist=in_sync` 那句建议只对 `via=launchctl` 成立**，已加门；container-fallback 装法根本没有 plist，
+  照着做会把 `plist=not_installed` 读成"启动失败" —— 与本分支要消灭的假阴性同一类。
 
-## 2. `admin daemon restart` 假阴性（**只诊断，未修**）
+计划与全部裁定：`docs/superpowers/plans/2026-08-06-daemon-restart-false-negative.md`、
+`.superpowers/sdd/2026-08-06-daemon-restart-false-negative/progress.md`（**ledger，含四次尝试与每一条裁决**）。
+诊断 spec：`docs/superpowers/specs/2026-08-05-daemon-restart-false-negative.md`。
 
-标题 `Merge branch 'daemon-restart-false-negative': ...`。**成功的重启会打印 `daemon restart failed` 并退出 1。**
-本轮亲历两次。三个缺陷叠加，外加一个**没有替你定的判断题**（启动等待该改多少，还是不动超时只修消息）。
+## 另外修掉一条真实抖动（不是 bug-063 的一部分）
 
-全部细节在 `docs/superpowers/specs/2026-08-05-daemon-restart-false-negative.md` 与 `.wolf/buglog.json` 的 `bug-063`。
+提交标题 `test(stop-daemon-flow): anchor the stale-retry ordering to a persisted value`。
+`Date.now() - 1` 与 `handleStop()` 刚写进 seq=3 行的 `scheduled_for` 抢时钟，负载下超过 1ms 就翻转派发顺序，
+seq=2 永不 supersede，`getLatestAudit()` 返回 undefined。改为锚定已持久化的值。
+⚠️ **这条没有过 review subagent**，证据是前后失败率测量 + 断言未变、只让 setup 变确定。已在 ledger 如实标注。
 
-> **实用判据：重启后不要看退出码，看 `admin daemon status`** —— `uptime_sec` 是小值 + `plist=in_sync` 就是成功了。
+🔴 **这一段当时写的"实测：未修 ~4/8，修后 0/8"是错的，两个数都不能用：**
+
+- **"修后 0/8" 是假绿。** 该抖动真实频率约 **4.2%**（3/72 全量跑），8 次全绿的概率约 **59%** —— 掷一次就有一半机会得到 0/8。
+- **它只修了 6 处同构副本中的 1 处。** 另外 5 处在 2026-08-08 才修完，提交标题
+  `test(stop-daemon-flow): anchor the remaining five stale-retry variants too`。
+- ⇒ **教训见 Ⅴ 新增的"确定性判据"那条。** 这是 Ⅲ.1（对间歇现象做小 n 判定）在自己的验收环节里复发了一次。
 
 ---
 
 # Ⅲ. 本轮新踩到的坑（每条都真栽过）
 
-1. **配置加了却完全不生效，且静默。** `latency_probe` 被加在 `config.json` **顶层**，而代码读的是
-   `cfg.embedding?.latency_probe`。没有任何报错。
-   ⇒ **判据不是看你关心的那个键，是看同块的其它键有没有回落到默认** ——
-   `interval_ms` 显示 300000 就说明**整块没被读到**，而不只是某个键写错。
-2. **计划里的枚举可能是错的，而实现者会照做。** 计划写"4 个 `_resetProbeSchedule()` 调用点"，实际 6 个
-   （两个藏在 `captureStderr` 辅助函数下面）。**挡住它的唯一东西是 brief 里那句"若发现第五处，停下来报告"。**
-   ⇒ **给 subagent 的 brief 里要写死"数目不符就停"，不要只给清单。**
-3. **给既有测试加 fixture，会让它们的旧断言不再依赖旧守护。** 本轮给四个既有测试加了活动记录，
-   结果**三个守护变得不可检测** —— 其中一个正是"默认关，因为它花钱"，把 `enabled === true` 改成恒真时 **87 个测试全绿**。
-   ⇒ **改了既有测试之后，必须重跑那些测试原本守护的旧变异，不能只跑新变异。**
-4. **同一个提交改了两行之下的句子，漏了这一句。** `loop.mjs` 的注释仍写着 288 行/天（无条件采样的数），
-   而本分支自己的 spec 是 ≈44。**又一次 Ⅲ 类文档漂移。**
-5. **`ps` 读不到时 `launchctl list` 能读到。** 本机 `ps -eo command | grep ccmem` 查不到 daemon，
-   但 `launchctl list | grep ccmem` 给出 PID，再 `ps -p <pid>` 就正常。
-6. **🆕 未诊断的观察：`head -1 <probe.jsonl> | jq` 报 `Invalid numeric literal at line 1, column 9`**，
-   而同一文件整块喂 `jq`、或用 node 读都正常。**没有查出原因**（怀疑本机 shell 侧的命令改写，未证实）。
-   影响很实：**它看起来像"文件第一行坏了"，其实文件是好的。** 取探针数据请用 node 直接读，
-   或整块喂 `jq`；**不要用 `head -N | jq` 作为"文件是否合法"的判据。**
+1. **🆕 对间歇性失败做 n=1 对照，等于没做对照。** 本轮先用"1 次失败 vs 1 次通过"就断定"是我的测试导致的"，
+   补测到 n=8/arm 才发现结论反了。**间歇现象的每一个 arm 都要重复测量并计数。**
+2. **🆕 被中断的 subagent 可能已经改了工作树。** 中断一次 Agent 派发后，它其实已经写入了文件；
+   我把那处**未提交的工作树改动读成了仓库历史**，并在打了补丁的树上做测量，得出"没问题"的错误结论。
+   ⇒ **中断 subagent 之后、以及对任何文件下结论之前，先 `git status` / `git diff`。**
+3. **🆕 文件名在已知抖动清单上，不等于这次的红就是那个抖动。** 判据是必要不充分的。
+   要么测失败率，要么找出机制 —— **"它在清单上"不是解释。**
+4. **🆕 计划里的测试脚手架错三次都可能是同一个根因。** 本轮同一个 seam 连错三次
+   （放在到不了的 `kickstart)`；后台子 shell 阻塞 `spawnSync` 的管道；子 shell 活过自己那条测试污染下一条）。
+   共同点是**用"测试不拥有的机制"去模拟时序**。⇒ **能用测试自己拥有并能清理的定时器，就不要用外部进程。**
+5. **配置加了却完全不生效，且静默。** `latency_probe` 加在 `config.json` **顶层**，而代码读 `cfg.embedding?.latency_probe`。
+   ⇒ **判据是看同块其它键有没有回落到默认**，不是看你关心的那个键。
+6. **`head -1 <probe.jsonl> | jq` 会报 `Invalid numeric literal`**，而整块喂 `jq` 或用 node 读都正常。
+   原因未查明。**不要用 `head -N | jq` 判断文件是否合法**，取探针数据请用 node 直接读。
 
 ---
 
 # Ⅳ. 会咬人的既定事实（跨轮次长期有效）
 
-1. **`npm test` 同时钉 `CCMEM_DATA_ROOT` 和 `-u CCMEM_CONFIG_PATH`**。
-   只 unset 配置路径**不构成隔离** —— 配置回落会让测试读到真实的 `config.json`，**含 API key**。
+1. **`npm test` 同时钉 `CCMEM_DATA_ROOT` 和 `-u CCMEM_CONFIG_PATH`**。只 unset 配置路径**不构成隔离** —— 会读到真实 `config.json`（**含 API key**）。
 2. **`npm test -- <文件>` 不隔离单文件**。跑单文件用：
    `env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" node --test <文件>`，**两个变量缺一不可**。
-3. **`loadConfig()` 无缓存、每次读盘，且 `mergeConfig` 是递归深合并**（`config.mjs:279`）。
-   ⇒ 改配置**不需要重启 daemon**，且只需写你要改的那一个键。**但层级必须对**（见 Ⅲ.1）。
-4. **`ps eww` 在这台机器上读不到进程环境。** 可靠替身：进程自己写出的签名验 daemon /
-   `launchctl list` 拿 PID 再 `ps -p` / `memory_feedback.session_id` + 时间戳验 hook 归属会话。
-5. **hook 侧代码改动下次调用即生效**（`~/.claude/plugins/ccmem` 是指向本仓库的符号链接）。
-   **但 daemon 侧改动必须重启才进进程** —— 本轮就栽过：daemon 起于早上，闸门是晚上合并的，
-   直接开 `enabled` 会得到 24/7 采样且不报错。**改完 daemon 代码，先确认 `uptime_sec` 晚于合并时间。**
-6. **daemon `restart` 会在四道闸门全过时自动重写 plist**，但指向类 key（`CCMEM_CONFIG_PATH`/`CCMEM_DATA_ROOT`）
-   的改动会被拦下，仍需人工 `uninstall && install`。⚠️ **拦它的通常是 G1 而不是 G2。**
-7. **坏配置会让 daemon 拒绝启动**（`ConfigError`）。刻意如此，**明确不回落 `DEFAULT_CONFIG`**。**hook 不受影响。**
-8. **`task_runs` 有 30 天清理**（`tier15.mjs:62` 与 `:130`）；**没有清理的是 `tasks`** ——
-   全仓库无 `DELETE FROM tasks`，且无 `(status, scheduled_for)` 索引，`mainLoop` 的 due 查询全表扫。
-   活动闸门把探针的增量从 288 行/天降到 ≈44，但**问题本身还在**。
-9. **被测二进制要显式跑目标 checkout 的 `./bin/ccmem`** —— PATH 上的 `ccmem` 走符号链接指向主仓库。
-10. **`openaiConfigFrom` 里 `maxRetries: 0` 是硬编码的** ⇒「`new OpenAI({timeout})` 默认重试 2 次、最坏 timeout×3」
-    这个陷阱**在本仓库不成立**。
-11. **`mainLoop` 空闲时睡 300 秒、活跃时 30 秒**，由 `wakeRecently()` 决定，
-    而**只有 `stop.mjs:74` 会 touch 那个 wake 文件**，且 `setTimeout` 叫不醒它。
+3. **`npm test` 给整轮所有测试文件共用一个 data root**，而 `node --test` **并行跑文件**。
+   ⇒ 跨文件干扰是真实存在的向量；但 `plist-drift.test.mjs` 在模块级把自己的 `CCMEM_DATA_ROOT` 改成独立目录。
+4. **`loadConfig()` 无缓存、每次读盘，`mergeConfig` 递归深合并**。⇒ 改配置**不需要重启 daemon**，但**层级必须对**（Ⅲ.5）。
+5. **hook 侧改动下次调用即生效**（`~/.claude/plugins/ccmem` 是符号链接）。
+   **daemon 侧改动必须重启才进进程** ⇒ **改完 daemon 代码，先确认 `uptime_sec` 晚于合并时间。**
+6. **`ps eww` 在这台机器上读不到进程环境**；`ps -eo command | grep ccmem` 也查不到 daemon，
+   但 `launchctl list | grep ccmem` 给得出 PID，再 `ps -p <pid>` 正常。
+7. **daemon `restart` 会在四道闸门全过时自动重写 plist**，但指向类 key 的改动会被拦下，仍需人工 `uninstall && install`。⚠️ **拦它的通常是 G1 而不是 G2。**
+8. **坏配置会让 daemon 拒绝启动**（`ConfigError`），刻意如此，**明确不回落 `DEFAULT_CONFIG`**。**hook 不受影响。**
+9. **`task_runs` 有 30 天清理；`tasks` 没有清理** —— 全仓库无 `DELETE FROM tasks`，且无 `(status, scheduled_for)` 索引，`mainLoop` 的 due 查询全表扫。活动闸门只降了增量，**问题还在**。
+10. **`openaiConfigFrom` 里 `maxRetries: 0` 是硬编码的** ⇒「`new OpenAI({timeout})` 默认重试 2 次、最坏 timeout×3」**在本仓库不成立**。
+11. **`mainLoop` 空闲睡 300 秒、活跃睡 30 秒**，由 `wakeRecently()` 决定，而**只有 `stop.mjs` 会 touch 那个 wake 文件**。
     ⇒ 每个工作时段的**第一个样本可能比第一次 prompt 晚最多 5 分钟**。
-12. **mode 为 `off` 时 `mainLoop` 在调用 `scheduleCronTasks` 之前就 `continue` 了**
-    （`loop.mjs` 里 `mainLoop` 开头的 `getMode(db) === 'off'` 分支，早于同函数内的 `scheduleCronTasks(db)`；
-    2026-08-06 复核时是 `:395` vs `:400`，**行号会漂，按符号名 grep**）。
-    ⇒ **任何 cron 类功能"配置全对却不工作"，先查 mode。**
-    ⚠️ 但 2026-08-05 那次探针"零产出"**不是**这条造成的（mode 实测 `active`）—— 见 Ⅰ。**它是排查顺位第一，不是默认答案。**
+12. **mode 为 `off` 时 `mainLoop` 在调用 `scheduleCronTasks` 之前就 `continue`**。
+    ⇒ **任何 cron 类功能"配置全对却不工作"，先查 mode。**（但它是排查顺位第一，不是默认答案。）
+13. **被测二进制要显式跑目标 checkout 的 `./bin/ccmem`** —— PATH 上的 `ccmem` 指向主仓库。
+14. **`restartDaemon` 没有导出**，只有 `cmdAdminDaemon(db, { verb })` 导出。要驱动它只能走这个入口。
+15. **launchd 的 stop 路径根本不 `waitFor`** —— `bootoutDaemon()` 之后直接返回。
+    ⇒ 谈"stop 等待"时先确认你说的是哪条安装路径。
+16. **`runLaunchctl` 用 `spawnSync` 且 stdio 是 pipe** ⇒ 它会等到所有继承的管道描述符关闭才返回。
+    **在 fake 里后台化子进程而不重定向 stdio，会让"异步"变成同步。**
+17. **🆕 G4 闸门会在测试里真的 spawn `claude -p --help`。** `rewritePlistIfAllowed` → `evaluateGates` 的
+    `probe` 参数是 `probeClaudeJsonSchemaSupport(command, env, 5000)`，只要 `newEnv.CCMEM_CLAUDE_P_COMMAND`
+    非空就执行（在本机**确实非空**，已实测）。`withFakeLaunchctl` **只清 fake launchctl 的状态文件，不 fake 这个 probe**。
+    实测空载耗时 **147–247ms**，距 5000ms 有 20–34 倍余量 ⇒ **单纯的"超时被负载打爆"解释不成立**（已证伪，见 Ⅹ）。
 
 ---
 
@@ -164,51 +173,66 @@
 
 - **每个回归测试必须先被亲眼看着变红，且红得对。** **廉价红不算数**："函数不存在"不算，**"崩溃红"同样不算**。
   要**定向变异红**：红在被测断言自己命名的行为上，**且对照测试保持绿**。
-- **改了既有测试，就要重跑它原本守护的旧变异**（Ⅲ.3 是本轮的新血教训）。
+- **本来就绿的测试要用定向变异补红证据。** 本轮 CLI timeout 分支的测试写出来就是绿的（分支本来就工作），
+  靠"把 CLI 条件改成不可达、看它红在 `/timed out/` 而 `exit code === 1` 仍然通过"来证明它**能**失败。
+- **改了既有测试，就要重跑它原本守护的旧变异。**
 - **纯函数有测试 ≠ 接线有测试。** 回归测试要打在**进程边界**（退出码 + stderr）。
+- **退出码常常什么都证明不了。** 本轮通用兜底和正确分支都 `exit 1`，**只有 stderr 文本能区分**。
 - **读码推出来的影响面必须实测复核。**
-- **撤回一个说法时，要去原话所在的位置作废它**，不能只在发现问题的那一条里记。
+- **撤回一个说法时，要去原话所在的位置作废它。**
 - **给"什么都没发生"立时限判据时，时限必须由该路径自己的最慢节奏推出，不能由最快节奏推。**
-  2026-08-05 探针那次：按"30 秒一 tick"立了 1 分钟判据，而首发的合理上界是「5 分钟速率上限 + 一个 tick」，
-  于是在首发前 3 分钟判了链路死亡（Ⅰ）。**等待期算错，会把一个健康的系统判成故障，代价和相反的错误一样大。**
-- **0 计数 / 不动的数字，先解释来源再当结论。已出现九种来源**：分母为 0、进程比代码旧、链条死掉、
-  幸存者偏差、查错字段名（`hook`≠`event`）、签名为 null 让 SQL 谓词恒不成立、分母只有 1、
-  被测二进制解析到错的 checkout、**配置键嵌套层级错**。
-- **写进文档的任何计数都必须来自单一冻结快照**（`metrics.jsonl` 是活文件）。
-  **`jq -r 'select(...)'` 会把整个对象美化成多行** ⇒ 用 `jq -c` 或投影成标量。
+- **0 计数 / 不动的数字，先解释来源再当结论。已出现十种来源**：分母为 0、进程比代码旧、链条死掉、
+  幸存者偏差、查错字段名、签名为 null 让 SQL 谓词恒不成立、分母只有 1、被测二进制解析到错的 checkout、
+  配置键嵌套层级错、**在已被别人打过补丁的工作树上测量**（Ⅲ.2）。
+- **写进文档的任何计数都必须来自单一冻结快照。**
 - **描述"持续过程"的测量结论必须带日期**，且**建立在它之上前先用当前数据重新推导**。
 - **反面的"什么都没发生"需要正面对照才可信**，且对照必须和目标同处一地。
-- **恢复/写入类操作要用校验和或读回验证，不要信退出码。**
-  ⚠️ **`mv`/`cp` 在本机是交互式别名**，会静默拒绝覆盖 ⇒ 用 `command mv` / `command cp -f` **并读回验证**。
+- **恢复/写入类操作要用校验和或读回验证，不要信退出码。** ⚠️ **`mv`/`cp` 在本机是交互式别名** ⇒ 用 `command mv` / `command cp -f` **并读回验证**。
 - **测试隔离必须是模块级默认。** 本仓库曾有一条测试跑真 `launchctl` 并劫走本机 daemon 注册。
-- **在 live 库的副本上验证**（`mode=ro`），**不要用 mtime/size 比对**（该判据已作废）。
+- **在 live 库的副本上验证**（`mode=ro`），**不要用 mtime/size 比对**。
 - **不要从缺失下结论**；**不能解释的 0 就写"不可判定"**。
 - **subagent 的每条命令都要显式 `cd`** —— cwd 会在回合之间静默重置。
-- **git-ignored 的账本只有主仓库那份算数**（`.wolf/buglog.json`、`.superpowers/`）；worktree 副本随 worktree 消失。
+- **git-ignored 的账本只有主仓库那份算数**；worktree 副本随 worktree 消失。
 - **不要重做已完成的 Task。** 信 ledger 和 `git log`，不信对话摘要。
+- **🆕 间歇性修复不许用自然频率验收，必须用确定性判据。** 跑 N 次全绿在低频现象上毫无分辨力
+  （4.2% 的抖动，8 次全绿概率 59%）。正确做法：**先找到能强制它变红的变异**，
+  用"**修复前该变异逼出红、修复后同一变异全绿**"作为判据 —— 它不受负载和运气影响。
+  本轮实操：在 `handleStop()` 与取时钟之间插 10ms，修复前 5 条全红、修复后 0/8。
+  ⚠️ 且**变异实验必须带正面对照**（证明变异手法真的生效），并**核对自然红与变异红的失败形态一致**，
+  否则你验的可能是另一个东西。
+- **🆕 "同一个 bug 只有一处"是危险假设。** 上一轮修了 6 处同构副本中的 1 处就宣告完成。
+  **修完一处，先 grep 同构模式数一遍总数。**
+- **🆕 你自己的重活会污染正在采集的观测。** 本轮跑 96 次全量套件，把同期探针样本的 `P(ms≤800)`
+  从 84.5% 压到 50%，带内比例从 5.2% 抬到 37.5% —— 差点被读成"信号变强了"。
+  ⇒ **对任何持续采集的数据下结论前，先把采样窗口和自己的重活时段对一遍。**
+  这是"0 计数/异常数字先解释来源"的镜像：**数字异常升高同样要先解释来源。**
 
 ---
 
 # Ⅵ. 人类裁决 —— 不得静默推翻
-
-完整理由在各轮 ledger。最容易误伤的：
 
 1. **切到 OpenAI 是既定方向**，按 `config.json` 的声明走。
 2. **换模型检测器整体移除**；**签名契约返回 `null`**，不是抛错。
 3. **`CCMEM_CONFIG_PATH` 统一回落到数据根下的 `config.json`**，该变量降级为覆盖。
 4. **provider API key 不进 daemon 环境白名单。** `renderPlist()` 是唯一求值点。
 5. **探针决策流文件无上限，`diagnose --feedback` 打印其磁盘占用** —— **刻意让成本可见，不要"优化"掉。**
-6. **熔断容忍 2 次失败才开**（Finding 14 的行为变更是刻意的）。
-7. **坏配置 = 响亮地死，daemon 不刷栈**，明确不回落 `DEFAULT_CONFIG`。
+6. **熔断容忍 2 次失败才开。**
+7. **坏配置 = 响亮地死，daemon 不刷栈。**
 8. **`plist_rewrite` 被拦时必须打到 stderr。**
 9. **红证据缺口用变异红补，不用廉价红。**
-10. **SDD workspace 保留，不按 SDD 流程删。** 目前保留四个，均 gitignore。
+10. **SDD workspace 保留，不按 SDD 流程删。** 现有五个，均 gitignore。
+    ⚠️ `superpowers:subagent-driven-development` 的最后一步会让你删掉 workspace，**本裁决优先，不要删。**
 11. **探针的六条**（daemon 侧带外、常驻仪器、取本地真实文本、默认关、记 `prompt_chars`、模块内部也要有 `enabled` 闸门）。
-12. **🆕 活动闸门只放在入队处，不进探针模块内部。** #11 末条守的是**花钱**性质的闸门；
-    活动不是安全属性，已入队的行最多晚一个 tick 执行。
-13. **🆕 不新增配置项来控制活动闸门。** 依据是 Rule 2 与 `daemon.mjs:696` 自己写的
-    「新增配置项就是新增一个可与代码分歧的面」。**代价是没有退回 24/7 采样的开关，这是刻意的。**
-14. **🆕 速率上限保持 5 分钟默认。**
+12. **活动闸门只放在入队处，不进探针模块内部。**
+13. **不新增配置项来控制活动闸门。** 代价是没有退回 24/7 采样的开关，这是刻意的。
+14. **速率上限保持 5 分钟默认。**
+15. **🆕 启动等待 5000ms、停止等待 2000ms，且不做成配置项。**
+    理由：restart 是人为动作、**没有外部截止时间**，抬高的唯一代价是真失败时多等 3 秒；
+    而 2000ms 不够一次冷启动，代价是把成功报成失败并诱使再重启一次。
+    ⚠️ **5000 是判断不是测量** —— 唯一那次冷启动观测是截尾的（只知 >2000ms），热机器复现不了冷启动。
+    **真正的安全网是可读的错误消息，不是这个数字。不要在没有测量的情况下重新翻这笔账。**
+16. **🆕 fake `launchctl` 里不许有延迟写锁的 seam。** 慢启动只能用**测试自己拥有并在 `finally` 里清理的定时器**模拟。
+    依据是连续三次 BLOCKED（见 Ⅲ.4）。
 
 ## 一条关于 plist 与凭据的、两个方向都错的说法
 
@@ -228,12 +252,14 @@
 - **Finding 13 的深层解**：让预算对同步工作真正生效需把 hook 工作切段 —— **设计改动，需人类裁决**。
 - **回填失败的退避策略**：永久性失败（key 失效、账单停用）会一直重试。
 - `@xenova/transformers` **已停止维护**，真解是迁移到 `@huggingface/transformers`。
-- **`tasks` 表没有清理逻辑**（Ⅳ.8），值得单独立项。
-- **🆕 `admin daemon restart` 的假阴性**（Ⅱ.2），spec 已就位，只差那个判断题。
-- **🆕 抖动测试现在是三个文件**（见 Ⅷ），合并为一个 issue，不阻塞。
-- **🆕 本轮延后的 minor**：见 `2026-08-05-probe-activity-gate/progress.md` 的 `minor (deferred)` 行
-  （生产初值 `lastProbeAtMs = Date.now()` 无直接测试、spec §8b 的尾随界应是 `interval_ms + 一个 tick`、
-  时钟回拨会压制探针）。全分支审查已逐条分诊为「可以 ship」。
+- **`tasks` 表没有清理逻辑**（Ⅳ.9），值得单独立项。
+- **🆕 裸 `start` / `stop` 失败时仍然丢 `reason`** —— 与本轮为 `restart` 修好的是同一类缺陷，刻意没在本轮修。
+  一并做的话还有两项：`stop_timeout` 那半个 CLI 条件零覆盖、`phase:'start'` 现在有了测试但 `stop_timeout` 没有。
+  **三者共用一个 seam 和一条红，适合合成一个 issue。**
+- **🆕 `stop-daemon-flow.test.mjs` 仍有一处负载敏感设计**：`Promise.race` 用 1000ms 硬上限去框住真实子进程工作，
+  外加 50ms 的任务超时。本轮修的是另一处（时钟抢跑），**这处没动**。
+- ~~抖动测试清单需要复核~~ **已于 2026-08-08 复核完毕，结果见 Ⅹ。** 旧清单两条错误：漏了 `plist-drift`，
+  且把 `stop-daemon-flow` 当成已修好。**未修的两条（`admin-daemon-command`、`plist-drift`）是 v0.14 的待办。**
 
 ## 核心问题：`l25_cov` 是否存在可行阈值
 
@@ -247,66 +273,147 @@
 1. Finding 13 之前，长会话的 stop hook 可能被 harness 杀掉 ⇒ 现有数据可能系统性缺失慢会话。
 2. Finding 14 之前，熔断在第一次失败就开、且会在零失败下误开 ⇒ 该时期通道统计偏向词法。
 3. **超时未重新定值之前，约 1/3 的检索因 embed 超时根本没拿到查询向量** —— 同样偏向词法。
-   **⚠️ 这条至今仍在持续产生**；尺子已于 2026-08-05 22:21 开始量，截至 08-06 08:59 有 **22 个样本**，远不足以下结论。
+   **⚠️ 这条至今仍在持续产生**；尺子已于 2026-08-05 22:21 开始量，**截至 08-07 21:00 有 58 个干净样本**
+   （之后的 16 个被本机测试负载污染，见 Ⅰ）。
 
 ## 分析阶段的方法要求（造好尺子不等于能下结论）
 
 外推被截断的区间之前，**必须先检验探针能不能代表 hook**：拿探针 <800ms 的那部分对照 hook 已知的
-105 条成功样本，并拿 `text_chars` 对 `prompt_chars` 校准（⚠️ `prompt_chars` 目前样本极少，要等积累）。
-**对不上就是"不可判定"，不是硬外推。** 这**不是**复活 Ⅶ 那条作废的分位数判据 ——
-那条作废的是拿分位数当阈值判据，这里是对仪器有效性的检验，失败时输出"不可判定"。
+105 条成功样本，并拿 `text_chars` 对 `prompt_chars` 校准（⚠️ `prompt_chars` 样本仍少）。
+**对不上就是"不可判定"，不是硬外推。** 这**不是**复活作废的分位数判据 —— 那条作废的是拿分位数当阈值判据，
+这里是对仪器有效性的检验，失败时输出"不可判定"。
 
-**🆕 截尾样本必须进分母。** 08-06 01:58 那个 `ms=10003` 撞到探针自己的 10s 上限，
-它**是**一个合法观测（"> 10000ms"），只是不知道具体值。把它从分母里剔掉会**高估** `P(ms≤1300)`，
-正好朝着"抬超时很划算"的方向骗人。规则：截尾样本计入 n、计为"> 阈值"，
-**只有真正报错的探针（不是延迟观测）才排除**，且排除要打印出来。
-它同时说明**尾巴伸到 1360ms 预算之外** —— 抬超时能救的是中间那段，救不了这一类。
+**截尾样本必须进分母。** 规则：截尾计入 n、计为"> 阈值"，**只有真正报错的探针才排除**，且排除要打印出来。
+本轮已经出现第一个错误样本（`Connection error.`），脚本按此规则处理了。
 
 ---
 
 # Ⅷ. 建议使用的 skills
 
-- **`superpowers:systematic-debugging`** —— 2026-08-05 那轮开场用它查 Ⅰ，**四条命令就把三个假设全证伪，且没改一行代码**。
-  这正是它该被用的方式：**先取证，再决定要不要改**。下一次看到"配置全对却不工作"仍然从它开始。
-- **⚠️ 但先问一句"现在还有 bug 吗"。** Ⅰ 的教训是：接手时最像 bug 的那一条，可能只是上一轮的判据下早了。
+- **⚠️ 先问一句"现在还有 bug 吗"。** 接手时最像 bug 的那一条，可能只是上一轮的判据下早了。
   **在派 subagent、开分支、写 spec 之前，先花两分钟实测复核症状还在不在。**
-- **`superpowers:subagent-driven-development`** —— 本轮用它跑完活动闸门全程。
-  **经验重申并加强：把能力预算花在审查上。** 实现用中档模型足够；**全分支审查务必用最强模型** ——
-  本轮它抓出 1 Critical + 3 Important，全部是"测试变得不可能失败"这一类，而 per-task 审查一条都看不到。
-  **它是本轮唯一发现"默认关因为花钱"那条裁决当时零覆盖的环节。**
+- **`superpowers:systematic-debugging`** —— 看到"配置全对却不工作"从它开始。**先取证，再决定要不要改。**
+- **`superpowers:subagent-driven-development`** —— 本轮用它跑完 bug-063 全程。
+  **把能力预算花在审查上**：实现用中档模型足够；**全分支审查务必用最强模型** ——
+  本轮它抓出的那条 Important（"超时消息对 restart 永远不可达"）是 per-task 审查全部漏掉的，
+  而那恰好是 bug 被报出来的那个动作。
+  ⚠️ **它的最后一步会让你删 workspace，Ⅵ.10 裁决优先，不要删。**
+- **`superpowers:writing-plans`** —— 改生产常数前必须先出计划。
+  ⚠️ **计划里的测试脚手架也要经得起推敲**：本轮同一个 seam 错了三次（Ⅲ.4），每次都花掉一整轮派发。
 - **`superpowers:verification-before-completion`** —— 多次差点把"没验证"当"已完成"。
 - **`superpowers:test-driven-development`** —— 要读到"接线也要测""崩溃红不算红"那一层。
-- **`superpowers:writing-plans`** —— 改生产常数（`openai_timeout_ms`）那一步必须先出计划。
-- **`superpowers:brainstorming`** —— 若转向 v0.14 的阈值可行性判据（设计问题，先发散）。
 - **`superpowers:finishing-a-development-branch`** —— 分支收尾走它；它会先在**合并结果**上重跑全套。
 
 ---
 
 # Ⅸ. 备注
 
-- **⚠️ 工作树可能有未提交的改动。** 2026-08-06 这轮结束时，`docs/handoff/handoff.md` 与 `.wolf/cerebrum.md`
-  是**已改未提交**状态（本轮没有 commit，因为没人要求）。**接手第一件事跑 `git status`**，
-  别把它们当成脏文件清掉 —— 它们就是本文档的最新内容。**没有任何代码改动，套件基线不受影响。**
-- **不要 push**（人类自己做）。**删分支/worktree 必须先问。**
-  现存分支：`main`、`v0.13-spec`、`v0.13-dogfood-fixes`、`ccmem-v012-finalization`。
+- **不要 push**（人类自己做）。`main` 领先 `origin/main` 十几个提交。**删分支/worktree 必须先问。**
+  现存分支：`main`、`daemon-restart-false-negative`（**已合并未删**）、`v0.13-spec`、`v0.13-dogfood-fixes`、`ccmem-v012-finalization`。
   worktree：仅 `ccmem-v012-finalization`（与本线无关）。
-  **本轮的 `probe-activity-gate` 与 `daemon-restart-false-negative` 已在人类授权下删除**
-  （合并后 `-d`，两个都成功，内容全在 `main` 历史里）。
-- **四个 SDD workspace 都刻意保留**（均 gitignore）。承载全部人类裁决及理由、实测取证、事故经过 ——
-  **git 历史一条都不记。**
+- **五个 SDD workspace 都刻意保留**（均 gitignore）。承载全部人类裁决及理由、实测取证、事故经过 —— **git 历史一条都不记。**
   ⚠️ `.superpowers/sdd/progress.md`（旧扁平路径）**是 git 跟踪的**，属更早的计划，别删。
-- **套件基线 535 pass / 0 fail**（在合并结果上实测）。
-  **已知抖动现在是三个文件**：`stop-daemon-flow.test.mjs`、`admin-cron-command.test.mjs`、
-  以及**本轮新发现的** `admin-daemon-command.test.mjs`（3 次全量跑里红 1 次，单跑 3/3 绿）。
-  **红了要先确认是这三个文件之一，再谈回归。**
-- OpenWolf 记账：`.wolf/buglog.json`、`.wolf/memory.md` 已 gitignore；`.wolf/cerebrum.md` 入库。
-  已记到 `bug-063`。**未修的 finding 不记 bug，只活在 dogfood/spec 文档里。**
-- 附录 A 不变量现为 **120–144**，**没有 runner，是人工 checklist**。#143 与 #144 都是部分验红并已如实披露。
+- ⚠️ **套件基线不是"稳定绿"。** 单次跑是 540 tests；但 **96 次全量跑里约 18% 会红**，全部来自测试抖动，
+  非产品缺陷。**旧版写的"连续 8 次全量跑绿"是样本不足的假绿，不要引用。** 完整抖动谱见 Ⅹ。
+- OpenWolf 记账：`.wolf/buglog.json`、`.wolf/memory.md` 已 gitignore；`.wolf/cerebrum.md` 入库。已记到 `bug-063`。
+  **未修的 finding 不记 bug，只活在 dogfood/spec 文档里。**
+- 附录 A 不变量现为 **120–144**，**没有 runner，是人工 checklist**。
 - 所有产物中不含任何凭据或个人数据；API key 存放于仓库外的用户配置文件，从未进入仓库或本文档。
-- **成本提示**：Finding 12/13 那轮 >$110，Finding 14 ~$60，文档回填 ~$45，10/11+附录 A+Finding 5 ~$80，
-  Finding 10 修复 ~$140，Finding 15 取证+设计+Task 1 ~$100，Finding 15 Task 2–4+审查+合并 ~$66，
-  活动闸门那轮（设计+计划+SDD 两任务+全分支审查+修复波+合并+restart 诊断）~$195，
-  **本轮（探针零产出取证 + handoff/cerebrum 更新）~$19** ——
-  **纯取证轮比实现轮便宜一个量级，因为它没派 subagent、没改代码。**
-  活动闸门那轮**远超 CLAUDE.md Rule 6 的单会话 450k 预算**，成本主要在四次 subagent 派发与前期取证对话。
+- **成本提示**：纯取证轮 ~$19；实现轮 $60–195；**本轮（bug-063 设计+计划+三任务+四次尝试+全分支审查+修复波+抖动修复）~$160**，
+  远超 CLAUDE.md Rule 6 的单会话 450k 预算。成本主要在 Task 3 的四次派发（三次是计划缺陷，见 Ⅲ.4）。
   **开新一轮前先 `/compact`。**
+
+---
+
+# Ⅹ. 测试抖动谱（2026-08-08 冻结，96 次全量 `npm test`）
+
+**这一章推翻了旧版"套件稳定绿"的说法。接手前先读这里。**
+
+所有数据来自同一台机器、同一 checkout，**单一冻结快照**：修复前 72 次 + `stop-daemon-flow` 修复后 24 次。
+
+| 测试 | 红次数 | 频率 | 状态 |
+|---|---|---|---|
+| `admin-daemon-command.test.mjs:686` fallback stop/start/restart | 12/112 | ~11% | 🔴 **未修，多模态，见下** |
+| `admin-daemon-command.test.mjs:621` install falls back | 2/96 | ~2% | 🔴 **未修，机制未知** |
+| `stop-daemon-flow.test.mjs` stale-retry supersede ×5 变体 | 3/72 → **0/24** | 4.2% → 0 | ✅ **2026-08-08 修完** |
+| `plist-drift.test.mjs` T2 + T13（同时红） | 1/96 | ~1% | 🔴 **未修，取证未完成** |
+| `admin-cron-command.test.mjs` | **0/96** | — | ⚪ 96 次未复现（Wilson 上界 ~3.8%）。**"未复现"不是"不抖"。** |
+
+**整体约 18% 的全量跑会红。** 全部是测试抖动，**没有一条指向产品缺陷**。
+
+## 未修条目的已有取证 —— 别从头再查一遍
+
+### `admin-daemon-command`（头号抖动源，两条不同测试）
+
+```
+:686  expected /ccmem: daemon started pid=\d+/
+      actual   'ccmem: daemon started pid=null\n'
+:621  cli admin daemon install falls back when launchctl bus is unavailable
+```
+
+⚠️ **`pid=null` 与 bug-063 是同族症状**（成功的动作被报成缺失），走的是 container-fallback 路径而非 launchctl 路径。
+**这是 v0.14 最该动的一条**（频率最高、且与已修的 bug 同族）。**根因仍未确认**，但下面这些别再重查：
+
+- `startDaemon` 三条路径的等待条件**不一致**：`spawn` 路径等 `next.pid === child.pid`，
+  而 **`wrapper`（本测试走这条）只等 `next.alive && next.wrapper_pid`、`launchctl` 只等 `next.alive`**
+  ⇒ 后两条**不保证 `pid` 非空**就返回 `started`。这是事实，不是假说。
+- `isDaemonAlive()` **只看 `heartbeat_at`，完全不看 `holder_pid`**；而 `pid` 取自 `lock?.holder_pid ?? null`。
+  ⇒ 两者**可以脱钩**。
+- `loadDaemonStatus()` 里 `lock` 在函数开头查、`alive: isDaemonAlive(db)` 在 return 时才查，
+  中间夹着 `readInstallState()` / `readWrapperPid()` / `isProcessAlive()` 三次 I/O ⇒ 存在**读撕裂窗口**。
+- ❌ **但"读撕裂"假说实测未获支持**：把该窗口人为拉大到 15ms（busy wait），单跑 **0/8 红**（未变异基线同为 0/8）。
+  **别把它当成已确认的根因照抄。**
+- `acquireDaemonLock` 的 INSERT/UPDATE 是**单条语句同时写** `holder_pid` 与 `heartbeat_at`
+  ⇒ **NULL 不可能来自写入侧**，方向应朝读取侧或第三方路径找。
+
+**🔴 `:686` 是多模态的 —— 不要按"一个抖动"处理。** 跨 112 次全量跑的 12 条红，实际分布：
+
+| 失败模式 | 次数 | 判别特征 |
+|---|---|---|
+| `daemon started pid=null` | 8 | stdout 正则不匹配 |
+| `waitForDaemonLock` 超时 | 2 | `actual: false`（`assert.equal(..., true)`），耗时 ~3200ms |
+| 未分类 | 2 | 日志没匹配上，**如实计入** |
+
+⚠️ **教训：前一版把 11/96 整个当成 "pid=null 的频率"，是只查了前 3 条详情就按"文件:行号"归并的结果**
+—— 即 Ⅲ.3 那条（"它在清单上"不是解释）在统计口径上的翻版。**按行号计数前先逐条分类失败模式。**
+
+**为什么单跑复现不了**：`npm test` 全轮共用一个 `CCMEM_DATA_ROOT`（Ⅳ.3），而**有 7 个测试文件都碰 `daemon_lock`**
+（`admin-daemon-command` / `stop-daemon-flow` / `admin-cron-command` / `admin-diagnose-command` / `stats-command` /
+`save-list-session-start` / `plist-drift`），`node --test` 又并行跑文件 ⇒ **那一行是跨文件共享的**。
+`daemon.mjs:687` 还有一句**无条件** `DELETE FROM daemon_lock WHERE id = 1`（stop 路径遇 ESRCH 时清陈旧锁）。
+⇒ **单跑 0/8 说明不了任何事，必须在全量下取证。**
+
+**下次直接用这个仪器（已验证可用，别重新设计）**：在 `scripts/cli.mjs` 的 `result.status === 'started'` 分支里，
+`result.pid == null` 时把整个 `result` JSON 追加落盘；**同时无条件往另一个文件写一行作正面对照**
+（否则空文件分不清"没复现"和"仪器静默失效"）。**一锤定音的判据**：
+
+- `hostname` / `acquired_at` / `heartbeat_at` **全 null 而 `alive:true`** ⇒ **读撕裂确认**
+  （它们与 `pid` 同出一个 `lock` 对象，全 null 意味着 `lock` 查询时行不存在，而 `alive` 查询时已存在）。
+- `heartbeat_at` **非 null 而只有 `pid` 为 null** ⇒ `holder_pid` 列真是 NULL，**上面整条推理作废**，换方向。
+
+⚠️ **仪器已装过一轮但没抓到**（16 次全量，pid=null 恰好 0 次；控制文件 31 行证明路径是通的）。
+按 ~7% 频率，**期望约 14 次全量跑命中一次，建议一次跑 32–48 次**。
+
+### `plist-drift.test.mjs` T2/T13
+
+两条**总是同时红**，同一条断言 `a PATH refresh must reach the installed plist`，即 `plist_rewrite.written === false`。
+
+**已排除 / 已确认：**
+
+- `written:false` 只有 5 条返回路径，其中"闸门拦下"最可疑（Ⅳ.7：**通常是 G1 而不是 G2**）。
+- **G4 确实会执行**（`CCMEM_CLAUDE_P_COMMAND` 非空已实测），它真的 spawn `claude -p --help`（见 Ⅳ.17）。
+- ❌ **"G4 的 5000ms 超时被负载打爆"已证伪**：空载 147–247ms，余量 20–34 倍；
+  且**纯 CPU 负载下单跑 0/12 复现不出**（9 个 busy 进程 / 10 核机器）。
+- ⚠️ **尚存但未证的假说**：`spawnSync` 在高 fork 压力下失败（`EAGAIN`/非零退出）—— 全量跑有十几个测试文件并发 spawn 子进程，
+  这是纯 CPU 负载**没有**复现出来的那一维。
+- 🔴 **`blocked_by` 至今未被观测到。** 48 次带诊断仪器的全量跑**零命中**（频率只有 ~1%）。
+
+**下次取证的建议**：不要再靠碰运气跑全量。要么给 fork 压力而非 CPU 压力，要么把 `blocked_by` 直接接到一个独立的复现脚本上。
+临时仪器的写法：把断言消息改成带 `JSON.stringify(result.plist_rewrite)`（**用完必须还原**）。
+
+## 复现与取数方法（脚本刻意不入库，Rule 2）
+
+- **单文件隔离跑**：`env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" node --test <文件>`（Ⅳ.2，两个变量缺一不可）。
+- **只跑某几条**：加 `--test-name-pattern="<子串>"`。**务必核对日志里的 `tests N`** —— pattern 没匹配上会得到"0 fail"的假绿。
+- ⚠️ **抖动只在全量 `npm test` 下才有代表性**（并行 + 子进程压力）。单文件孤立跑几乎全绿，**与历史基线不可比**。
+- 单次全量约 **17 秒**，24 次约 7 分钟 —— 便宜，**没有理由再用 n=8 下判断**。

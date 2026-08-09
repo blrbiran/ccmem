@@ -25,6 +25,20 @@ export const HOOK_BUDGET_MS = {
 /** Kept for callers that import the prompt-submit budget by name. */
 export const PROMPT_SUBMIT_BUDGET_MS = HOOK_BUDGET_MS.prompt_submit;
 
+/**
+ * How much wall clock must still be available AFTER the embed call gives up.
+ * A timed-out embed is not the end of the hook: prompt_submit then runs the
+ * whole lexical fallback and writes its context file, and that work is
+ * synchronous, so no budget can interrupt it — only the harness kill can.
+ *
+ * 1500 is the measured max of (ms_total - embedMs) across the B-fail rows of
+ * the 2026-08-05..08-09 window (observed max 1476ms, p50 161, p90 263).
+ * It is deliberately the MAX and not a quantile: this reserve exists to keep
+ * the worst case inside the harness timeout, and the harness kill is not a
+ * budget that degrades gracefully — it takes stdout and the metrics row with it.
+ */
+export const LEXICAL_FALLBACK_RESERVE_MS = 1500;
+
 const HOOK_EVENT_NAMES = {
   session_start: 'SessionStart',
   prompt_submit: 'UserPromptSubmit'

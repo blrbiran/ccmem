@@ -15,7 +15,7 @@ export const DEFAULT_CONFIG = {
     openai_api_key: null,
     jina_api_key: null,
     api_timeout_ms: 30000,
-    openai_timeout_ms: 800,
+    openai_timeout_ms: 1200,
     backfill_timeout_ms: 30000,
     openai_base_url: null,
     openai_model: 'text-embedding-3-small',

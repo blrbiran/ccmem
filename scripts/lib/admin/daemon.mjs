@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isDaemonAlive } from '../../daemon/lock.mjs';
+import { isLockRowAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
 import { getDataRoot } from '../db.mjs';
 import { comparePlist, EMPTY_LISTS, evaluateGates, parseEnvDict, splitPlist } from './plist-drift.mjs';
@@ -424,7 +424,7 @@ function loadDaemonStatus(db) {
   const wrapperAlive = isProcessAlive(wrapperPid);
 
   return {
-    alive: isDaemonAlive(db),
+    alive: isLockRowAlive(lock),
     pid: lock?.holder_pid ?? null,
     hostname: lock?.hostname ?? null,
     acquired_at: lock?.acquired_at ?? null,

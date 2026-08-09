@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
-import { isDaemonAlive } from '../../daemon/lock.mjs';
+import { isLockRowAlive } from '../../daemon/lock.mjs';
 import { probeFile } from '../../daemon/tasks/embed-latency-probe.mjs';
 import { writeAudit } from '../audit.mjs';
 import { loadConfig } from '../config.mjs';
@@ -1254,7 +1254,7 @@ export async function cmdAdminDiagnose(
     : [];
   const projectKey = resolveProjectKey(cwd);
   const fallbackKey = fallbackProjectKey(cwd);
-  const daemonAlive = isDaemonAlive(db);
+  const daemonAlive = isLockRowAlive(lock);
   const cfg = loadConfig();
   const tuningDiagnostics = tuning ? getTuningDiagnostics(db, cfg) : null;
   const metricsDiagnostics = metrics ? getMetricsDiagnostics(db, { days, cfg }) : null;

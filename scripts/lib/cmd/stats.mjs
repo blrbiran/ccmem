@@ -1,4 +1,4 @@
-import { isDaemonAlive } from '../../daemon/lock.mjs';
+import { isLockRowAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
 import { getTuningDiagnostics } from '../admin/diagnose.mjs';
 import { getProvider } from '../embedding/provider.mjs';
@@ -205,7 +205,7 @@ export async function cmdStats(db, { buckets = false } = {}) {
     tier1: { available: true },
     tier15,
     tier2: {
-      alive: isDaemonAlive(db),
+      alive: isLockRowAlive(lock),
       pid: lock?.holder_pid ?? null,
       hostname: lock?.hostname ?? null,
       heartbeat_age_ms: lock ? Math.max(0, now - lock.heartbeat_at) : null,

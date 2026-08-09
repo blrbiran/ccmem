@@ -45,7 +45,10 @@ export function releaseDaemonLock(db) {
   ).run(process.pid);
 }
 
-export function isDaemonAlive(db) {
-  const row = db.prepare(`SELECT heartbeat_at FROM daemon_lock WHERE id = 1`).get();
+export function isLockRowAlive(row) {
   return Boolean(row && (Date.now() - row.heartbeat_at) < 60000);
+}
+
+export function isDaemonAlive(db) {
+  return isLockRowAlive(db.prepare(`SELECT heartbeat_at FROM daemon_lock WHERE id = 1`).get());
 }

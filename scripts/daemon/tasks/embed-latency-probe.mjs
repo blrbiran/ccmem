@@ -1,4 +1,5 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../../lib/config.mjs';
 import { openaiEmbedding } from '../../lib/embedding/openai.mjs';
@@ -80,6 +81,11 @@ export async function runEmbedLatencyProbe(db, _task, deps = {}) {
   }
   const ms = Date.now() - t0;
 
+  // 负载采样必须在往返之后：恰好在请求期间开始的重活正是要抓的那一类污染，
+  // 在 t0 之前取样会把它整个漏掉。1 分钟均值本身是平滑的，取在这里等于"这次测量
+  // 前后这一分钟机器有多忙"，正好是判定这条样本干不干净需要的东西。
+  const load1m = (deps.loadavg ?? (() => os.loadavg()[0]))();
+
   // The dim here is the CONFIGURED one, not the observed one — openai_dim
   // defaults to null, so a run against a 3072-dim model can be stamped :1536.
   // What actually discriminates two distributions is the model name, which is
@@ -103,6 +109,12 @@ export async function runEmbedLatencyProbe(db, _task, deps = {}) {
       // that made the hook path's censoring invisible in the first place.
       timeout_ms: timeoutMs,
       text_chars: text.length,
+      // 负载协变量。污染判定必须从"事后手画时间窗口"改成"按测量值过滤"：这台机器上会
+      // 并行跑别的 Claude Code 实例做别的项目，它们的重活从 ccmem 的会话窗口里完全看不见，
+      // 而手画窗口已经出过事（边界差 6 秒，带内比例从 5.1% 读成 9.2%）。
+      // cpus 一起记下来，行才是自解释的 —— load_1m 只有除以并行度才可比。
+      load_1m: load1m,
+      cpus: os.availableParallelism(),
       signature
     })}\n`
   );

@@ -143,3 +143,34 @@ test('a truthy-but-not-true enabled value is treated as disabled — strict === 
   assert.equal(calls, 0, 'a truthy string must not be enough to enable real spend');
   assert.equal(result.skipped, 'disabled');
 });
+
+test('the machine load is sampled after the round trip, not before it', async () => {
+  // 这个字段存在的唯一理由：把"这条样本干不干净"从事后手画时间窗口变成按测量值过滤。
+  // 这台机器上会并行跑别的 Claude Code 实例，它们的重活从 ccmem 的会话窗口里根本看不见 ——
+  // 而手画窗口已经出过事：边界差 6 秒就把带内比例从 5.1% 读成 9.2%。
+  // 采样点必须在往返之后：恰好在请求期间开始的重活正是要抓的那一类，
+  // 在 t0 之前取样会把它整个漏掉。
+  const db = freshDb();
+  let embedFinished = false;
+  const provider = {
+    async load() {},
+    async embed() {
+      await new Promise((r) => setTimeout(r, 20));
+      embedFinished = true;
+      return [new Float32Array(1536)];
+    }
+  };
+
+  let sawFinishedEmbed = null;
+  const loadavg = () => {
+    sawFinishedEmbed = embedFinished;
+    return 3.5;
+  };
+
+  await runEmbedLatencyProbe(db, {}, { config: openaiCfg(), provider, loadavg });
+
+  const last = readFileSync(probeFile({}), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).at(-1);
+  assert.equal(sawFinishedEmbed, true, 'the load sample was taken before the round trip finished — a burst during the request would be invisible');
+  assert.equal(last.load_1m, 3.5, 'the sampled load must reach the row, otherwise contamination stays unfilterable');
+  assert.ok(Number.isInteger(last.cpus) && last.cpus > 0, `cpus must be recorded to normalise load_1m, got ${last.cpus}`);
+});

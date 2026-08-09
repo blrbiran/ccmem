@@ -595,8 +595,11 @@ export function ensureSchema(db) {
 export function openDb() {
   mkdirSync(getDataRoot(), { recursive: true });
   const db = new DatabaseSync(getDbPath());
-  db.exec('PRAGMA journal_mode = WAL;');
+  // busy_timeout 必须先装：打开/恢复 WAL 要拿排它锁，而 `PRAGMA journal_mode = WAL`
+  // 在 busy handler 装上之前执行的话，任何并发开库都会让它 0ms 抛 `database is locked`
+  // （实测 errcode 5 与 261 SQLITE_BUSY_RECOVERY），配置好的 5 秒容忍度形同虚设。
   db.exec('PRAGMA busy_timeout = 5000;');
+  db.exec('PRAGMA journal_mode = WAL;');
   ensureSchema(db);
   return db;
 }

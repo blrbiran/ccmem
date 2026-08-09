@@ -216,7 +216,23 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
 而 `admin-daemon-command` 每条用例都 spawn 若干 CLI 子进程，同时有一个真 daemon 在写心跳。
 ⇒ **它现在是 `:686` 那条 SQLITE_BUSY 红的头号候选，但仍未证实**：要坐实必须拿到那次失败的 `errcode`
 （**517 + ~0ms 才是它；5 + ~5000ms 是普通锁竞争**）。**那条抖动在拿到 errcode 之前仍然算开着。**
-⚠️ **这条改动没有过 review subagent**（本轮未获授权派 subagent），已如实标注。
+✅ **这条过了 review subagent（最强模型），Critical 2 + Important 2 —— 全部已修**，提交标题
+`fix(db): close the remaining BEGIN sites and stop locking on read-only opens`。
+
+- **Critical 1（我的锅）**：测试的自证开火只数了"注入跑过几次"。审查者实测把注入的目标表名改错一个字，
+  **在修复被回退的情况下让测试变绿**。判据已改成钉注入的**结果**（对手写入必须以 `SQLITE_BUSY(5)` 失败）。
+  **三个变异各自红在自己的断言上**：回退修复红在"对手成功提交"、表名写错红在"errcode 1 而非 5"、掐掉注入红在"从未开火"。
+  教训见 Ⅴ 新增那条。
+- **Critical 2**：`scripts/migrations/015_v012_repair.cjs` 有同构的 deferred `BEGIN` + 先读后 DDL，
+  且它由 `runJsMigration` **直接调用、不经过 `runInTransaction`**，所以上一版没盖到。
+  **全仓库 4 处 `BEGIN` 站点现已全部 IMMEDIATE**（另两处在 `vec-backfill.mjs` / `revalidation.mjs`，
+  审查者核实它们事务内第一条就是写、本来不暴露，改成 IMMEDIATE 只为统一，免得下个人再推一遍）。
+- **Important（也是我的锅）**：上一版让**每次 `openDb()` 都取一次写锁** —— `ensureSchema` 每次开库都调
+  `reconcileFtsArtifacts`，而稳态下那段全是读。无条件 IMMEDIATE 会把所有 `openDb()` 串行化到彼此
+  和 daemon 的写批次上，**而那正是 `errcode=5` 那条未解释抖动所在的路径**。现已改为**纯读的门控**
+  （`ftsReconcileNeeded`）挡在事务外，进去之后再判一遍，稳态开库不再取锁。
+- **Important**：测试不再按本机是否支持 fts5 分叉（那会留下一条谁都没跑过的分支），改为直接
+  `CCMEM_DISABLE_FTS5=1` 走单一路径。
 
 ---
 
@@ -333,6 +349,13 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
   本轮实操：在 `handleStop()` 与取时钟之间插 10ms，修复前 5 条全红、修复后 0/8。
   ⚠️ 且**变异实验必须带正面对照**（证明变异手法真的生效），并**核对自然红与变异红的失败形态一致**，
   否则你验的可能是另一个东西。
+- **🆕🔴 变异仪器要证明的是"条件被施加了"，不是"仪器跑过了"。计数器不够。**
+  2026-08-09 的 review 实测演示：把注入写入的目标表名改错一个字，**修复被回退的情况下测试照样绿** ——
+  注入回调确实跑了（计数 > 0），但那条 INSERT 当场抛 `errcode 1 (no such table)` 被 `catch {}` 吞掉，
+  **对手根本没提交、条件从未成立**，缺陷代码就这么过了。
+  ⇒ **把注入的"结果"分类并钉住它的成功特征**（本例：对手写入必须以 `SQLITE_BUSY(5)` 失败 ——
+  只有我们的事务从 BEGIN 就持有写锁时才会这样）。判据要能把"仪器坏了"和"缺陷不在"分开。
+  ⚠️ 这是上一轮"seam 必须自证开火"那条的**加强版**：上一轮修的是"仪器没跑"，这次栽在"仪器跑了但没用"。
 - **🆕 变异仪器必须自证开火，否则它失效时你会读到假绿。** 光有"正面对照文件"不够 ——
   还要让**仪器自己数触发次数并断言 > 0**。尤其当断言是**否定式**（"不许出现 A 且 B"）时：
   仪器一失效，一个完全自洽的结果就能满足它，测试静默失去分辨力。

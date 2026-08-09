@@ -7,7 +7,11 @@
 > 🆕 **`pid=null` 的根因已确认并修复 —— 它是产品缺陷，不是测试抖动**（读撕裂，见 Ⅱ 末尾）。
 > 🆕 **2026-08-09 又修掉一条产品缺陷（写事务用 deferred `BEGIN` ⇒ 517），但它在本机潜伏，
 > 不解释任何一条已观测的红** —— 见 Ⅱ 末尾，**别把它当成 SQLITE_BUSY 那条抖动的答案**。
-> **仍有未修的测试抖动**：`admin-daemon-command` 剩下的两种失败模式、`plist-drift`（见 Ⅹ）。
+> 🆕 **2026-08-09 又修掉一条产品缺陷，而且它就是 `:686` `database is locked` 那条抖动的根因**
+> （`openDb()` 把 `journal_mode = WAL` 排在 `busy_timeout` 之前 ⇒ 并发开库时 0ms 硬抛）。见 Ⅱ 末尾。
+> ⚠️ **它是被 Ⅹ 里一条写着"❌ 已排除"的条目伪装掉的** —— 那次排除测错了竞争类型。教训见 Ⅴ。
+> **仍有未修的测试抖动**：`:621` 的 `waitForDaemonLock` 3s 超时、`plist-drift`（见 Ⅹ），
+> 另有 **`daemon-loop.test.mjs` 一次未解释的红**（2026-08-09，n=1，见 Ⅹ 末尾，**不要当成已知抖动**）。
 > 本文档只做索引与状态提要 —— **不要仅凭它重建状态**，实质内容在材料、ledger 与提交信息里。
 > **本文档不写任何 commit SHA，也不假设 HEAD 停在哪里** —— 提交本文档本身就会移动 HEAD。
 > 用 `git log --oneline -20` 按**提交标题**找；文中**行号是写作当时的，会漂**，用符号名 grep 复核。
@@ -276,6 +280,44 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
 - ✅ **已闭环：`08-09 10:26:58` 落盘的样本带 `load_1m=4.982 cpus=10`，且 `ms=409 ok=true`**
   （`ts` 晚于 `uptime_sec` 反推的启动时刻 `10:17:25`）⇒ 进程、字段、`ms` 测法三者同时确认。**这条交付到此完整。**
 
+## 🆕 2026-08-09 交付：`openDb()` 先装 `busy_timeout` 再开 WAL（**产品缺陷，且它就是那条抖动的根因**）
+
+提交标题 `fix(db): arm busy_timeout before opening the WAL, not after`。
+
+**根因（实测，不是推断）**：`openDb()` 里 `PRAGMA journal_mode = WAL` 排在 `PRAGMA busy_timeout = 5000`
+**前面**。打开/恢复 WAL 本身要拿排它锁，而此时 busy handler 还没装上 ⇒ **只要有别的进程正在开同一个库，
+这句 pragma 就 0ms 硬抛 `database is locked`，配置好的 5 秒容忍度对它完全无效。**
+
+| 实验（全部实测） | 结果 |
+|---|---|
+| 12 进程并发开一个**已建好、已是 WAL** 的库 ×240 | **12 失败（5%）**，全抛在 `journal_mode` 那行，2–10ms，errcode **5** 与 **261**（SQLITE_BUSY_RECOVERY） |
+| 只调换那两行，同一实验 ×240 | **0 失败** |
+
+**它就是 Ⅹ 里 `:686` 那条 `database is locked` 的根因**：抛点（测试自己的 `readDaemonLock → openDb`）、
+报文、耗时量级三者全对得上，而该测试每次 `waitForDaemonLock` 会以 50ms 轮询**最多开库 60 次**，
+同时有多个 CLI 子进程与 fallback daemon 在开同一个库。
+
+🔴 **它顶掉了旧版的头号候选 517**：517 只可能出现在事务内，而抛点**早于任何事务**；
+且 517 那条在 `BEGIN IMMEDIATE` 落地时就已修掉，若它是成因，这条红本该早已绝迹。
+
+🔴 **这不是测试专有的问题** —— hook、CLI、daemon 每次开库都走这条路径，任何一次并发开库都可能
+让调用方 0ms 吃到一个本该被等掉的错误。
+
+**验收用确定性变异，三个方向都验过**（新增 `tests/integration/db-open-busy-timeout.test.mjs`）：
+持一把 `locking_mode = EXCLUSIVE` 的文件锁全程不放，正确行为是"等满 busy_timeout 再失败"，缺陷行为是"约 0ms 就失败"。
+
+- 回退修复 ⇒ 红在 `openDb must let its own busy_timeout govern the wait, but it gave up after 0ms (errcode=5)`。
+- 掐掉注入的排它锁 ⇒ 红在 `the exclusive holder must actually have blocked the open`（**这条把"缺陷不在"和"仪器坏了"分开**）。
+- 修复后 ⇒ 绿，且并发实验从 12/240 变 0/240。
+
+⚠️ **这条测试固定要跑满 5 秒**（`busy_timeout` 硬编码 5000，且 `openDb()` 同步阻塞 ⇒ 同进程里的
+释放定时器永远等不到执行，只能让锁全程持住、以耗时为判据）。**它会改变整个套件的时序画像**，
+⇒ **此后跑批测出的红率与 Ⅹ 里 12.5% / 16% 那两个基线不再严格可比。**
+
+**一条与本线无关、但顺带撞出来的窄口**：多进程**同时冷启动一个全新空库**会撞并发 migration
+（`errcode=1 duplicate column name`，240 次里近 200 次）。真实套件由测试进程先串行建库，撞不到，
+**未修，也未立项**，记在这里免得下个人重新发现。
+
 ---
 
 # Ⅲ. 踩过的坑（每条都真栽过）
@@ -351,9 +393,14 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
     Ⅶ 里词法通道那条样本偏差不受影响。** 只有 PATH 上那个 nvm node 没有 fts5。
     🔴 **2026-08-09 曾因为用裸 `node` 跑单文件而得出"本机 FTS 分支是死的"这个错误结论**，并据此把一条
     真实缺陷误判为"潜伏、不解释观测"。⇒ **跑任何隔离验证都要显式用 `/usr/local/bin/node`（Ⅳ.2）。**
-21. **🆕 `openDb()` 本来就设了 `PRAGMA journal_mode = WAL` 与 `PRAGMA busy_timeout = 5000`**（`db.mjs:564-565`）。
-    ⇒ 见到 `database is locked` **不要再假设"缺 busy 重试"**。普通锁竞争会等满 5 秒；**0ms 立刻抛的那种是
-    `errcode=517`（SQLITE_BUSY_SNAPSHOT），busy handler 压根不被调用**。**用"耗时≈0 还是≈5000ms"当判别特征。**
+21. **🆕 `openDb()` 本来就设了 `PRAGMA journal_mode = WAL` 与 `PRAGMA busy_timeout = 5000`**。
+    ⇒ 见到 `database is locked` **不要再假设"缺 busy 重试"**。
+    🔴 **2026-08-09 更正：旧版写的"用『耗时≈0 还是≈5000ms』当判别特征"是错的，别再用。**
+    实测在 0ms 抛出的至少有三种：`errcode=5`（SQLITE_BUSY）、`errcode=261`（SQLITE_BUSY_RECOVERY）、
+    `errcode=517`（SQLITE_BUSY_SNAPSHOT）。**耗时只能证明 busy handler 没被调用，不能区分是哪一种。**
+    ⇒ **唯一的判别特征是 errcode 本身**，且 **node:sqlite 把它放在 `error.errcode` 上 ——
+    `error.code` 恒为字符串 `ERR_SQLITE_ERROR`，照着读 `.code` 什么都拿不到，`.errno` 是 `undefined`。**
+    （这两行 pragma 的**次序**本身曾是一条产品缺陷，已于 2026-08-09 修复，见 Ⅱ 末尾。）
 22. **🆕 `admin-daemon-command.test.mjs:192` 在模块级把 `CCMEM_DATA_ROOT` 改成自己的 mkdtemp 目录**
     （和 `plist-drift` 一样）⇒ **Ⅹ 里"7 个测试文件跨文件共享 `daemon_lock` 那一行"的解释对这个文件不成立**，
     它的竞争者只能是它自己 spawn 的 CLI 子进程与真正跑起来的 fallback daemon。
@@ -411,6 +458,13 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
   先害我写出一个"红在错误理由上"的测试，再害我把一条活的缺陷判成"潜伏、不解释观测"。
   ⇒ **跑任何隔离验证前，先确认解释器与 `package.json` 的 `test` 脚本一致**（Ⅳ.2 已改）。
   这是 Ⅳ.13"被测二进制要显式跑目标 checkout"的同族陷阱：**工具链的解析结果也要显式钉死。**
+- **🆕🔴 排除一条机制时，台架必须复现它**真实的触发条件**，否则那条"排除"是假的。**
+  2026-08-09 实测：上一轮排除"`journal_mode` 排在 `busy_timeout` 之前"时，台架施加的是**并发写**
+  （持写事务），而这条缺陷需要的是**并发开库**。条件错了，于是"全过"，于是被写成 ❌ 排除 ——
+  而它其实就是根因，在文档里以"已排除"的身份躺了一整轮，还把调查引向了错误的头号候选。
+  ⇒ **写下"❌ 排除"之前，先问：我施加的条件，和现场真正发生的那件事是同一件吗？**
+  这是"变异实验必须复现目标的真实条件"那条在**排除方向**上的镜像 —— 假阴性比假阳性更贵，
+  因为它会让后面所有人绕开正确答案。
 - **🆕 "同一个 bug 只有一处"是危险假设。** 上一轮修了 6 处同构副本中的 1 处就宣告完成。
   **修完一处，先 grep 同构模式数一遍总数。**
 - **🆕 你自己的重活会污染正在采集的观测。** 本轮跑 96 次全量套件，把同期探针样本的 `P(ms≤800)`
@@ -477,8 +531,9 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
   **v0.14 剩下的抖动待办（`pid=null` 已不在其列，已修）：**
   1. **`waitForDaemonLock` 的 3s 上限**（`:621` 与 `:686` 共用这个 helper，本批 5/7 条红都来自它）。
      最自然的解释是全量负载下 fallback wrapper 冷启动超过 3s，**未取证**。
-  2. **`readDaemonLock()` 抛 `database is locked`** —— 🔴 **旧版"测试侧缺 busy 重试"已作废**（Ⅳ.21）。
-     2026-08-09 排除两条、修掉一条潜伏的产品缺陷，**机制仍未知**，详见 Ⅹ。
+  2. ~~**`readDaemonLock()` 抛 `database is locked`**~~ ✅ **2026-08-09 根因确认并修复** ——
+     `openDb()` 把 `journal_mode = WAL` 排在 `busy_timeout` 之前。详见 Ⅱ 末尾与 Ⅹ。
+     ⚠️ **仍欠一次全量跑的确认**（修复后它是否真的绝迹）。
   3. **`plist-drift` T2/T13**，48 次仍未复现，取证方向见 Ⅹ（给 fork 压力而非 CPU 压力）。
 
 ## 核心问题：`l25_cov` 是否存在可行阈值
@@ -610,7 +665,7 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
 | `:621` install falls back | `waitForDaemonLock(true)` **3s 超时** → `typeof holder_pid === 'undefined'` | 4 | 🔴 **未修**（本批最高频，非 `:686`） |
 | `:686` fallback stop/start/restart | **`pid=null`** | 1 | ✅ **2026-08-09 已修**（根因见 Ⅱ 末尾） |
 | `:686` | `waitForDaemonLock(false)` 3s 超时（`actual:false`） | 1 | 🔴 **未修** |
-| `:686` | 🆕 **`database is locked`**（抛在测试自己的 `readDaemonLock` 里） | 1 | 🔴 **未修，机制未知（2026-08-09 排除了两条）** |
+| `:686` | 🆕 **`database is locked`**（抛在测试自己的 `readDaemonLock` 里） | 1 | ✅ **2026-08-09 根因确认并修复**（`openDb()` pragma 次序，见 Ⅱ 末尾） |
 | `plist-drift` T2/T13 | —— | **0** | ⚪ **48 次未复现**。~1% 频率下不中的概率就有 62%，**这不是排除** |
 
 **新增认知：**
@@ -619,14 +674,21 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
   旧版那"未分类 2"很可能就是它。
   🔴 **旧版这里写的"这是测试侧缺 busy 重试，不是产品问题"已于 2026-08-09 作废** —— `openDb()` 本来就设了
   `busy_timeout=5000`（Ⅳ.21），加重试是照着症状打。**2026-08-09 排除了两条、留下一条真缺陷，但都不解释这次的红：**
-  - ❌ **排除**：`PRAGMA journal_mode = WAL` 跑在 `busy_timeout` 之前所以容忍度为 0 —— 台架实测，
-    库已是 WAL 时那句是 no-op，持有写事务下全过。
+  - 🔴 **这条"排除"于 2026-08-09 被推翻，它其实就是根因，已修**（见 Ⅱ 末尾）：
+    ~~排除：`PRAGMA journal_mode = WAL` 跑在 `busy_timeout` 之前所以容忍度为 0 —— 台架实测，
+    库已是 WAL 时那句是 no-op，持有写事务下全过。~~
+    **当时的台架测错了竞争类型**：它施加的是**并发写**（持写事务），而这条缺陷需要的是**并发开库** ——
+    打开/恢复 WAL 要拿排它锁。实测 12 进程并发开一个**已建好、已是 WAL** 的库，240 次里 **12 次（5%）**
+    抛在那句 pragma 上（2–10ms，errcode 5 与 261），只调换两行即 **0/240**。
   - ❌ **排除**：轮询开销吃掉预算 —— 稳态 `openDb()` 实测 **~1ms**（首次 18ms），对 3000ms 余量 3000 倍。
   - ✅ **确认、且在出红的环境里是活的**：`runInTransaction` 的 deferred `BEGIN` 会撞 517（已修，见 Ⅱ 末尾）。
     `supportsFts()` 的探测是事务内的真实写，**每个进程第一次 `openDb()` 都跑一次**，而本测试每条用例都 spawn
     多个 CLI 子进程、同时有真 daemon 在写心跳。⚠️ **曾一度被误判为"潜伏、不相干"，那是用错 node 的结果**（Ⅳ.20）。
-  ⇒ **它是头号候选但仍未证实。** 下一步装带 `errcode` + 堆栈的仪器，跟 A 一起跑 32–48 次全量把它钉死。
-  **判别特征已经现成：`errcode=5` 且等满 ~5000ms 是普通锁竞争；`errcode=517` 且 ~0ms 是升级死锁；两者报文相同。**
+  🔴 **2026-08-09 收尾：517 那条候选已被顶掉，真正的根因是上面那条被误排除的 pragma 次序，已修。**
+  理由：517 只可能出现在事务内（读快照失效），而实测抓到的抛点在 `openDb()` 的 `journal_mode` 那一行，
+  **早于任何事务**；且 517 那条在 `BEGIN IMMEDIATE` 落地时就已经被修掉了，若它是成因，这条红本该早已绝迹。
+  ⚠️ **仍未做的一步**：修复后的代码尚未在全量跑里观测到"`database is locked` 确实不再出现"。
+  仪器留着（见本节末尾），下一批全量跑顺带确认。
 - **`waitForDaemonLock` 的 3s 上限是本批最主要的红源（5/7 条）**，`:621`、`:686` 共用这个 helper。
   全量负载下 container-fallback wrapper 冷启动超过 3s 是最自然的解释，**但尚未取证，别当已确认。**
 - ⚠️ **修完 `pid=null` 后不要指望用跑批验证**：它本来就只占 1/48，红率从 12.5% 掉到约 10%，
@@ -709,6 +771,21 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
 
 **下次取证的建议**：不要再靠碰运气跑全量。要么给 fork 压力而非 CPU 压力，要么把 `blocked_by` 直接接到一个独立的复现脚本上。
 临时仪器的写法：把断言消息改成带 `JSON.stringify(result.plist_rewrite)`（**用完必须还原**）。
+
+## 🆕 `daemon-loop.test.mjs` —— 一次未解释的红（2026-08-09，**n=1，不要当成已知抖动**）
+
+修完 pragma 次序后的第一次全量跑，`daemon-loop.test.mjs` **整个文件**失败（报在 `1:1`，是模块级
+错误不是断言），耗时 `5333ms`。**第二次全量跑全绿；隔离跑 87/87 绿。**
+
+🔴 **现在对它下任何结论都是错的**（Ⅲ.1：对间歇现象做 n=1 对照等于没做对照）。已知的只有：
+
+- 它**从没出现在前 160 次全量跑的红里**（112 次 + 48 次两个快照都没有它），所以"旧抖动"这个解释没有依据。
+- `5333ms` 贴着 `busy_timeout` 的 5000ms，而本轮刚把"0ms 硬抛"改成"最多等 5 秒" ——
+  **这是一条必须查、但尚未取证的关联**。
+- 同轮新增的 `db-open-busy-timeout.test.mjs` **固定同步阻塞 5 秒**，会占住一个 worker 槽位、
+  改变套件并发时序，**这是另一条独立的候选解释**。
+
+⇒ **下一批全量跑必须把它计入分类**；若复现，先分清是"等待放行导致的新行为"还是"被时序扰动带出来的旧问题"。
 
 ## 复现与取数方法（脚本刻意不入库，Rule 2）
 

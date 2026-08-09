@@ -45,6 +45,8 @@ export function releaseDaemonLock(db) {
   ).run(process.pid);
 }
 
+// row 必须是带 heartbeat_at 的锁行（或 undefined，表示行不存在）。传一个不含该列的行
+// 会得到 NaN < 60000 === false，即静默判死 —— 存在性检查请用 isDaemonAlive/SELECT 1。
 export function isLockRowAlive(row) {
   return Boolean(row && (Date.now() - row.heartbeat_at) < 60000);
 }

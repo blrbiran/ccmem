@@ -208,10 +208,14 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
 修前红在 `errcode 517`（堆栈 `dropTriggerIfExists → runInTransaction → ensureSchema`），修后绿；
 把 seam 掐掉则红在 `seam never fired`。全量 544 pass（543 + 新增 1）。
 
-🔴 **必须一起记住的边界：这条缺陷在本机是潜伏的，它不解释那次观测到的 `database is locked` 红。**
-本机没有 fts5（Ⅳ.20）⇒ `supportsFts()` 恒 false ⇒ 稳态下 `ensureSchema` 的事务**全是读、不会升级为写** ⇒ 撞不到 517。
-测试是靠**手工造出"触发器存在、需要被 DROP"的状态**才把写分支逼出来的。
-⇒ **`:686` 的 SQLITE_BUSY 那条抖动仍然未解释、仍然开着**（见 Ⅹ）。
+🔴 **这一段最初写的"缺陷在本机潜伏、不解释那次红"已在同日作废** —— 那个结论建立在"本机没有 fts5"之上，
+而那是**用错 node 得出的**（裸 `node` 是 nvm v22.13.1；`npm test` 与 daemon 用的 `/usr/local/bin/node` v24.13.0
+**支持 fts5**，见 Ⅳ.20）。**在出红的那个环境里这条缺陷是活的：**
+`supportsFts()` 的探测（`CREATE VIRTUAL TABLE ccmem_fts_probe` + `DROP`）**是事务内的真实写**，
+且它在**每个进程第一次 `openDb()` 时都会执行一次**（`cachedFtsSupport` 只在进程内缓存）——
+而 `admin-daemon-command` 每条用例都 spawn 若干 CLI 子进程，同时有一个真 daemon 在写心跳。
+⇒ **它现在是 `:686` 那条 SQLITE_BUSY 红的头号候选，但仍未证实**：要坐实必须拿到那次失败的 `errcode`
+（**517 + ~0ms 才是它；5 + ~5000ms 是普通锁竞争**）。**那条抖动在拿到 errcode 之前仍然算开着。**
 ⚠️ **这条改动没有过 review subagent**（本轮未获授权派 subagent），已如实标注。
 
 ---
@@ -244,7 +248,9 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
 
 1. **`npm test` 同时钉 `CCMEM_DATA_ROOT` 和 `-u CCMEM_CONFIG_PATH`**。只 unset 配置路径**不构成隔离** —— 会读到真实 `config.json`（**含 API key**）。
 2. **`npm test -- <文件>` 不隔离单文件**。跑单文件用：
-   `env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" node --test <文件>`，**两个变量缺一不可**。
+   `env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test <文件>`，**两个变量缺一不可**。
+   🔴 **必须显式写 `/usr/local/bin/node`**：`package.json` 的 `test` 脚本钉的是它，而 PATH 上的 `node` 是
+   nvm 的 v22.13.1，**两者能力不同**（见 Ⅳ.20）。旧版这条写的是裸 `node`，**2026-08-09 因此得出过一个错误结论**。
 3. **`npm test` 给整轮所有测试文件共用一个 data root**，而 `node --test` **并行跑文件**。
    ⇒ 跨文件干扰是真实存在的向量；但 `plist-drift.test.mjs` 在模块级把自己的 `CCMEM_DATA_ROOT` 改成独立目录。
 4. **`loadConfig()` 无缓存、每次读盘，`mergeConfig` 递归深合并**。⇒ 改配置**不需要重启 daemon**，但**层级必须对**（Ⅲ.6）。
@@ -276,11 +282,17 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
     非空就执行（在本机**确实非空**，已实测）。`withFakeLaunchctl` **只清 fake launchctl 的状态文件，不 fake 这个 probe**。
     实测空载耗时 **147–247ms**，距 5000ms 有 20–34 倍余量 ⇒ **单纯的"超时被负载打爆"解释基本不成立**（见 Ⅹ）。
     ⚠️ 但**这不等于 G4 与 `plist-drift` 抖动无关** —— 闸门失败还有 `spawnSync` 报错、非零退出等路径。
-20. **🆕 这台机器的 `node:sqlite` 没有 fts5 模块**（`/usr/local/bin/node` v22.13.1，实测 `no such module: fts5`，
-    且 `CCMEM_DISABLE_FTS5` **未设置**）⇒ **`supportsFts()` 恒为 false，`memories_fts` 与三个触发器从来不存在，
-    整条 FTS/词法分支在本机是死的。** 取证前务必确认你要测的分支在本机真的会执行，否则会像 2026-08-09 那样
-    写出一个"红在错误理由上"的测试。⚠️ **这条的影响面可能远超测试** —— Ⅶ 里关于词法通道的样本偏差讨论
-    应当重新评估（daemon 用的是不是同一个 node 二进制，**未查**，别直接当结论）。
+20. **🆕 这台机器上有两个 node，能力不同 —— 别混用：**
+    | 二进制 | 版本 | fts5 |
+    |---|---|---|
+    | PATH 上的 `node`（nvm，`~/.nvm/versions/node/v22.13.1/bin/node`） | v22.13.1 | ❌ **不支持** |
+    | **`/usr/local/bin/node`** | v24.13.0 | ✅ **支持** |
+
+    **`npm test` 脚本、`admin-daemon-command.test.mjs:203` 的 `NODE`、以及实际在跑的 daemon（实测
+    `ps -p <pid> -o comm=` 为 `/usr/local/bin/node`）用的都是后者** ⇒ **FTS 在生产与套件里都是活的，
+    Ⅶ 里词法通道那条样本偏差不受影响。** 只有 PATH 上那个 nvm node 没有 fts5。
+    🔴 **2026-08-09 曾因为用裸 `node` 跑单文件而得出"本机 FTS 分支是死的"这个错误结论**，并据此把一条
+    真实缺陷误判为"潜伏、不解释观测"。⇒ **跑任何隔离验证都要显式用 `/usr/local/bin/node`（Ⅳ.2）。**
 21. **🆕 `openDb()` 本来就设了 `PRAGMA journal_mode = WAL` 与 `PRAGMA busy_timeout = 5000`**（`db.mjs:564-565`）。
     ⇒ 见到 `database is locked` **不要再假设"缺 busy 重试"**。普通锁竞争会等满 5 秒；**0ms 立刻抛的那种是
     `errcode=517`（SQLITE_BUSY_SNAPSHOT），busy handler 压根不被调用**。**用"耗时≈0 还是≈5000ms"当判别特征。**
@@ -329,9 +341,11 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
 - **🆕 确认了"机制类别"不等于解释了"那一次观测"。** 本轮实测确认了 517 升级死锁真实存在、报文与观测完全一致，
   差一点就当成结论；实际上本机缺 fts5 让那条路径稳态下**根本不写**，撞不到它。
   ⇒ **下结论前先问：这条路径在本机、在那次跑的条件下，真的会被执行吗？** 报文相同不等于成因相同。
-- **🆕 环境能力会让整条分支静默休眠，测试会因此"红在错误理由上"。** 本轮第一版测试假定 FTS 触发器存在，
-  而本机 `supportsFts()` 恒 false ⇒ 触发器永远不会被建 ⇒ 红的是断言而不是缺陷。
-  ⇒ **写变异测试前，先实测确认被变异的那条分支在本机会执行**，别从代码读出来就当它会跑。
+- **🆕 隔离跑用的解释器必须和套件是同一个。** 本轮用裸 `node`（nvm v22.13.1，无 fts5）跑单文件，
+  而 `npm test` 钉的是 `/usr/local/bin/node`（v24.13.0，有 fts5）。**同一份代码在两者下走不同分支** ——
+  先害我写出一个"红在错误理由上"的测试，再害我把一条活的缺陷判成"潜伏、不解释观测"。
+  ⇒ **跑任何隔离验证前，先确认解释器与 `package.json` 的 `test` 脚本一致**（Ⅳ.2 已改）。
+  这是 Ⅳ.13"被测二进制要显式跑目标 checkout"的同族陷阱：**工具链的解析结果也要显式钉死。**
 - **🆕 "同一个 bug 只有一处"是危险假设。** 上一轮修了 6 处同构副本中的 1 处就宣告完成。
   **修完一处，先 grep 同构模式数一遍总数。**
 - **🆕 你自己的重活会污染正在采集的观测。** 本轮跑 96 次全量套件，把同期探针样本的 `P(ms≤800)`
@@ -518,9 +532,10 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
   - ❌ **排除**：`PRAGMA journal_mode = WAL` 跑在 `busy_timeout` 之前所以容忍度为 0 —— 台架实测，
     库已是 WAL 时那句是 no-op，持有写事务下全过。
   - ❌ **排除**：轮询开销吃掉预算 —— 稳态 `openDb()` 实测 **~1ms**（首次 18ms），对 3000ms 余量 3000 倍。
-  - ✅ **确认但潜伏**：`runInTransaction` 的 deferred `BEGIN` 会撞 517（已修，见 Ⅱ 末尾）。
-    **但本机没有 fts5（Ⅳ.20），那个事务稳态下不写 ⇒ 撞不到 ⇒ 不是这次红的成因。**
-  ⇒ **机制仍然未知。** 下一步只能装带 `errcode` + 堆栈的仪器，跟 A 一起跑 32–48 次全量把它钉死。
+  - ✅ **确认、且在出红的环境里是活的**：`runInTransaction` 的 deferred `BEGIN` 会撞 517（已修，见 Ⅱ 末尾）。
+    `supportsFts()` 的探测是事务内的真实写，**每个进程第一次 `openDb()` 都跑一次**，而本测试每条用例都 spawn
+    多个 CLI 子进程、同时有真 daemon 在写心跳。⚠️ **曾一度被误判为"潜伏、不相干"，那是用错 node 的结果**（Ⅳ.20）。
+  ⇒ **它是头号候选但仍未证实。** 下一步装带 `errcode` + 堆栈的仪器，跟 A 一起跑 32–48 次全量把它钉死。
   **判别特征已经现成：`errcode=5` 且等满 ~5000ms 是普通锁竞争；`errcode=517` 且 ~0ms 是升级死锁；两者报文相同。**
 - **`waitForDaemonLock` 的 3s 上限是本批最主要的红源（5/7 条）**，`:621`、`:686` 共用这个 helper。
   全量负载下 container-fallback wrapper 冷启动超过 3s 是最自然的解释，**但尚未取证，别当已确认。**

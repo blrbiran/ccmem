@@ -164,7 +164,10 @@ export function hasUsableFts(db) {
 }
 
 function runInTransaction(db, work) {
-  db.exec('BEGIN');
+  // IMMEDIATE，不是裸 BEGIN：这里的 work 全是写（migration 与 FTS 对账）。deferred 事务会
+  // 先读后写，别的连接一旦在中间提交，SQLite 就判读快照失效、返回 SQLITE_BUSY_SNAPSHOT，
+  // 而且不调用 busy handler —— openDb() 设的 busy_timeout 对那一类失败完全无效。
+  db.exec('BEGIN IMMEDIATE');
   try {
     const result = work();
     db.exec('COMMIT');

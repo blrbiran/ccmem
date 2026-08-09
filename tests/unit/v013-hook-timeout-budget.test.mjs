@@ -3,8 +3,9 @@ import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PROMPT_SUBMIT_BUDGET_MS, HOOK_BUDGET_MS, withHookSafety } from '../../scripts/lib/hook-safety.mjs';
+import { PROMPT_SUBMIT_BUDGET_MS, HOOK_BUDGET_MS, LEXICAL_FALLBACK_RESERVE_MS, withHookSafety } from '../../scripts/lib/hook-safety.mjs';
 import { openaiConfigFrom } from '../../scripts/lib/embedding/openai.mjs';
+import { DEFAULT_CONFIG } from '../../scripts/lib/config.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -102,4 +103,26 @@ test('the OpenAI client does not silently multiply its own timeout', () => {
   const cfg = openaiConfigFrom({ embedding: { openai_timeout_ms: 800 } });
   assert.equal(cfg.timeoutMs, 800);
   assert.equal(cfg.maxRetries, 0, 'a retry turns the timeout into a multiple of itself');
+});
+
+/**
+ * Raising openai_timeout_ms is safe right up until the point where a timed-out
+ * embed plus its lexical fallback can outlive the harness's own kill. Past that
+ * line the failure mode changes character: instead of degrading to lexical
+ * retrieval, the hook is killed before it can write stdout or its metrics row,
+ * so the incident is also invisible afterwards. The internal 2000ms budget does
+ * NOT protect this — it has never fired in 3069 prompt_submit rows because it
+ * cannot interrupt synchronous work. The harness timeout is the only real limit.
+ */
+test('a timed-out embed plus its lexical fallback still fits inside the harness kill', () => {
+  const harnessMs = hookTimeoutSeconds(HOOK_EVENTS.prompt_submit) * 1000;
+  assert.ok(harnessMs > 0, 'UserPromptSubmit must declare a harness timeout');
+
+  const worstCase = DEFAULT_CONFIG.embedding.openai_timeout_ms + LEXICAL_FALLBACK_RESERVE_MS;
+  assert.ok(
+    worstCase < harnessMs,
+    `an embed that times out at ${DEFAULT_CONFIG.embedding.openai_timeout_ms}ms still owes the `
+    + `lexical fallback up to ${LEXICAL_FALLBACK_RESERVE_MS}ms, so the worst case is ${worstCase}ms, `
+    + `which must stay under the ${harnessMs}ms harness kill`
+  );
 });

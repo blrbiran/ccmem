@@ -1116,7 +1116,7 @@ test('config default version is 0.13', () => {
 
 
 test('config defaults include context_history and openai timeout settings', () => {
-  const raw = readFileSync('/Users/biran/code/skills/ccmem/config.default.json', 'utf8');
+  const raw = readFileSync(path.join(ROOT, 'config.default.json'), 'utf8');
   assert.match(raw, /"context_history"/);
   assert.match(raw, /"openai_timeout_ms": 1200/);
   assert.match(raw, /"max_chars_per_memory": 500/);

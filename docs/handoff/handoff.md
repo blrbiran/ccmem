@@ -1194,3 +1194,48 @@ WARM 的第 1 次调用 = 463ms   ← 判别器
   已知的是效应真实、量级 ~220ms、且在探针的真实采样节奏（间隔 90s–47000s）下**依然成立**
   —— 依据是 158 条真实探针样本的 p50=357 落在 WARM 一侧，这是实测不是推断。
 - **没有改任何产品代码，没有跑全量套件。**
+
+## 9. 🆕 2026-08-10 落地：`openai_timeout_ms` 已抬到 1200 并合进 `main`
+
+合并提交标题 `merge: raise openai_timeout_ms 800 -> 1200 (hemostasis + uncensored sampling)`
+（`--no-ff`，**未 push**）。分支 `raise-openai-timeout` 与其 worktree **均未删除**（删除要先问人类）。
+
+**套件在合并结果上重跑：`547 tests / 547 pass / 0 fail`**（控制者亲自跑，不是转述）。
+
+🔴 **测量窗口起点（这是读数的唯一分界点，别用别的）：`2026-08-10 01:53:30`，
+此刻 `metrics.jsonl` 为 `6496` 行。** 该时刻之后的 `prompt_submit` 行才走 1200。
+
+🔴 **判据已在改动之前冻结提交**，见 `docs/superpowers/plans/2026-08-10-raise-openai-timeout-prereg.md`
+（提交标题 `docs(plan): pre-register the timeout-raise measurement before touching the constant`）。
+**不许修改那份文件，也不许另立判据。** 要点：成功 = 新窗口 Wilson 上界 < 40.3%；
+**n < 150 次真实尝试时只许报"数据不足"**；三条中止判据每天看一次。
+
+**执行中撞出的两条计划缺陷（都已修，且都是文档没记过的事实）：**
+
+- 🆕 **默认值有两个真相源**：`scripts/lib/config.mjs:18`（运行时读）与 `config.default.json:22`
+  （**运行时不读**，`scripts/` 下零引用，是随仓库发布的模板）。两处现已都是 1200。
+- 🆕🔴 **没有任何测试在守它们的值级一致。** `tests/unit/v013-config-sync.test.mjs` 只比对
+  `version` 字符串与 **key-path 形状**，`800` 与 `1200` 产生相同的 key path ⇒ **它结构上看不见值漂移。**
+  这就是计划会漏掉 `config.default.json` 的原因。**未修，未立项。**
+
+**⚠️ 一条影响面可能更大的既有缺陷（未修，仅记录）：至少 10 个集成测试硬编码
+`/Users/biran/code/skills/ccmem`**（`admin-diagnose-command` / `admin-daemon-command` /
+`stats-command` / `plist-drift` 所在的那批里就有多个）⇒ **在 worktree 里跑时它们读的是主 checkout，
+不是被测代码。** 最讽刺的是 `admin-diagnose-command.test.mjs:21` **自己就定义了正确的 `ROOT` 常量**，
+而 1113/1119 两行无视它（本轮只修了 1119，因为那是本分支弄红的那一行）。
+🔴 **推论（未验证，值得单独查）：Ⅹ 里凡是在 worktree 里跑批得出的、涉及这些文件的结论，可比性存疑。**
+
+## 10. 🆕 2026-08-10：B 线的方案 2（TLS 会话恢复）已排除
+
+上一版把它标成"未判定"，理由是我第一次测时在 `secureConnect` 当场取票、可能取空。**已用两种方法重测：**
+
+| 测法 | 结果 |
+|---|---|
+| 手工包 `net` socket，监听 `session` 事件，等 400ms | `proto` 未取，`ticket=NONE`，cold TLS 220.2ms |
+| **plain `tls.connect`，监听 `session` 事件，等 1500ms** | **`proto=TLSv1.3`，`ticket=NONE`**，cold TLS 169.2ms |
+
+⇒ **服务器根本不下发 NewSessionTicket，不是我们取早了。跨进程复用 TLS 票这条路走不通。**
+⚠️ **局限**：这是今天、从这台机器、对这个 endpoint 的观测，**不是永久属性**；两次都是单次试验（但两种方法一致）。
+
+**⇒ B 只剩两条**：**方案 1（hook 的 embed 走常驻 daemon，唯一有实测支撑）** 与 方案 3（不做，靠 A 吸收）。
+方案 1 的裁决点仍是"愿不愿意让 hook 依赖 daemon"（需要一条无条件可用的回落路径），**不是收益问题**。

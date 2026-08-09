@@ -61,7 +61,20 @@ hook 把 prompt 文本交给 daemon，daemon 用它已经热着的连接池做�
   - hook 是同步为主的进程，IPC 要选不会把 5000ms harness 硬限吃掉的形式。
   - ⚠️ **把 prompt 文本交给另一个进程**，需要确认与 Ⅵ.4（凭据不进 daemon 环境）等既有裁决不冲突。
 
-### 方案 2：跨进程复用 TLS 会话票
+### ~~方案 2：跨进程复用 TLS 会话票~~ 🔴 **2026-08-10 已排除**
+
+**重测结论：服务器根本不下发 NewSessionTicket。** 本文档上一版把它标成"未判定"，理由是首次测量在
+`secureConnect` 当场取票、可能取空 —— **那个解释是错的**。两种方法都重测过：
+
+| 测法 | 结果 |
+|---|---|
+| 手工包 `net` socket，监听 `session` 事件，等 400ms | `ticket=NONE`，cold TLS 220.2ms |
+| **plain `tls.connect`，监听 `session` 事件，等 1500ms** | **`proto=TLSv1.3`，`ticket=NONE`**，cold TLS 169.2ms |
+
+⚠️ **局限**：今天、这台机器、这个 endpoint 的观测，**不是永久属性**；两次都是单次试验（但两法一致）。
+⇒ **本方案不再是候选。下面原文保留，仅为留住"为什么曾经考虑它"。**
+
+~~跨进程复用 TLS 会话票~~
 
 把 session ticket 落到数据根下，新进程启动时带票握手。
 

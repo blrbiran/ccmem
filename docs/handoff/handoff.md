@@ -163,6 +163,15 @@ CLI 照着打 `ccmem: daemon started pid=null`。
 新增 `tests/integration/daemon-status-consistency.test.mjs`，让**快照读（取 `holder_pid` 那次）落空、
 存活读（只取 `heartbeat_at`）照常看见行**。修前 3/3 红在 `reported alive=true with pid=null`，修后 3/3 绿，全量 543 pass。
 
+✅ **这条过了 review subagent（最强模型），Critical 0，Important 1 —— 已修**，提交标题
+`test(daemon-status-consistency): make the torn-read seam prove it fired`。
+Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"时开火**，
+一旦快照查询改成 `SELECT *` 或挪进 helper，仪器静默失效，而"不许 alive 配 null pid"这个否定式断言
+**会被一个完全自洽的快照满足** ⇒ 测试失去分辨力却仍然绿。审查者实测确认了这一点。
+现在 seam **自己数触发次数并断言 > 0**，断言也改成钉正面语义（`alive === false` 且 `pid === null`）。
+两个方向都重验过：重新引入两次读取仍 3/3 红在原形态；把 seam 掐掉则红在"seam never fired"（加固前这里是绿的）。
+审查另确认：**没有第四处同构站点**；`alive` 提前求值只会偏向"假的不活"，对三条 `waitFor` 都是安全方向。
+
 ---
 
 # Ⅲ. 本轮新踩到的坑（每条都真栽过）
@@ -259,6 +268,11 @@ CLI 照着打 `ccmem: daemon started pid=null`。
   本轮实操：在 `handleStop()` 与取时钟之间插 10ms，修复前 5 条全红、修复后 0/8。
   ⚠️ 且**变异实验必须带正面对照**（证明变异手法真的生效），并**核对自然红与变异红的失败形态一致**，
   否则你验的可能是另一个东西。
+- **🆕 变异仪器必须自证开火，否则它失效时你会读到假绿。** 光有"正面对照文件"不够 ——
+  还要让**仪器自己数触发次数并断言 > 0**。尤其当断言是**否定式**（"不许出现 A 且 B"）时：
+  仪器一失效，一个完全自洽的结果就能满足它，测试静默失去分辨力。
+  ⇒ **否定式断言要配"我确实被施加了那个条件"的正面证据，并尽量改钉正面语义。**
+  本轮 review 抓到的就是这一条（seam 只认某个 SQL 形状，查询改写就静默失效）。
 - **🆕 "同一个 bug 只有一处"是危险假设。** 上一轮修了 6 处同构副本中的 1 处就宣告完成。
   **修完一处，先 grep 同构模式数一遍总数。**
 - **🆕 你自己的重活会污染正在采集的观测。** 本轮跑 96 次全量套件，把同期探针样本的 `P(ms≤800)`

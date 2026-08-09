@@ -220,6 +220,24 @@ function rebuildFtsIndex(db) {
   `);
 }
 
+// 纯读，用来决定要不要进写事务。进去之后 work() 会把同样的判断再做一遍，
+// 所以两个进程同时判断"要写"也是安全的。
+function ftsReconcileNeeded(db, ftsUsable, rebuild) {
+  if (!ftsUsable) {
+    return (
+      triggerExists(db, 'memories_ai') || triggerExists(db, 'memories_ad') || triggerExists(db, 'memories_au')
+    );
+  }
+
+  return (
+    rebuild ||
+    !tableExists(db, 'memories_fts') ||
+    !triggerExists(db, 'memories_ai') ||
+    !triggerExists(db, 'memories_ad') ||
+    !triggerExists(db, 'memories_au')
+  );
+}
+
 function reconcileFtsArtifacts(db, { rebuild = false, transactional = true } = {}) {
   const work = () => {
     if (!supportsFts(db)) {
@@ -262,7 +280,20 @@ function reconcileFtsArtifacts(db, { rebuild = false, transactional = true } = {
     return true;
   };
 
-  return transactional ? runInTransaction(db, work) : work();
+  if (!transactional) {
+    return work();
+  }
+
+  // 稳态下这里没有任何要写的东西，而 ensureSchema 每次 openDb() 都会走到 —— 若无条件进事务，
+  // BEGIN IMMEDIATE 会为一次纯读取取一次写锁，把每个 openDb() 都串行化到彼此和 daemon 的写批次上。
+  // supportsFts() 首次调用会自己写（建/删探测表），放在事务外让它走 autocommit：那是一次独立的写，
+  // 本来就该受 busy_timeout 管，而不是钉在一个读快照后面。
+  const ftsUsable = supportsFts(db);
+  if (!ftsReconcileNeeded(db, ftsUsable, rebuild)) {
+    return ftsUsable;
+  }
+
+  return runInTransaction(db, work);
 }
 
 function runV06Migration(db) {

@@ -85,7 +85,8 @@ export function revalidationAuditCore(db, { trigger, suppressAudit = false } = {
   let quarantined = 0;
   let flagged = 0;
 
-  db.exec('BEGIN');
+  // IMMEDIATE 与这里的 deferred 等价（事务内第一条语句就是写），显式写出来是为了不必再推一遍。
+  db.exec('BEGIN IMMEDIATE');
   try {
     for (const memory of candidates) {
       const now = Date.now();

@@ -3,7 +3,10 @@ module.exports = function runV015Repair(db) {
   const hasTable = (name) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1").get(name));
   const now = Date.now();
 
-  db.exec('BEGIN');
+  // IMMEDIATE：下面每一步都是先读 sqlite_master / PRAGMA table_info 再决定要不要 DDL。
+  // deferred 事务在这种形态下会被别的连接的提交作废读快照，抛 SQLITE_BUSY_SNAPSHOT 且不走 busy_timeout。
+  // 这个迁移由 runJsMigration 直接调用，不经过 db.mjs 的 runInTransaction，所以要自己钉。
+  db.exec('BEGIN IMMEDIATE');
   try {
     if (!hasColumn('memories', 'summary_meta')) {
       db.exec('ALTER TABLE memories ADD COLUMN summary_meta TEXT');

@@ -128,7 +128,8 @@ export async function runVecBackfill(db, _task = null) {
        WHERE id = ?`
     );
 
-    db.exec('BEGIN');
+    // IMMEDIATE 与这里的 deferred 等价（事务内第一条语句就是写），显式写出来是为了不必再推一遍。
+    db.exec('BEGIN IMMEDIATE');
     try {
       const now = Date.now();
       for (let i = 0; i < rows.length; i += 1) {

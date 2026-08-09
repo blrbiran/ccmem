@@ -17,8 +17,10 @@ export function openaiConfigFrom(override = null) {
     apiKey,
     timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : 30000,
     // The SDK retries twice by default, which turns a timeout into a multiple
-    // of itself: openai_timeout_ms: 800 measured 1683ms of wall clock on the
-    // hook path — one attempt plus one retry — against a 2000ms hook budget.
+    // of itself. Historical note: before maxRetries was pinned to 0 (2026-08-02),
+    // a nominal 800ms cap was measured at 1683ms of wall clock — one timeout plus
+    // one retry. The default moved to 1200ms on 2026-08-10; see
+    // docs/superpowers/plans/2026-08-10-raise-openai-timeout.md for the evidence.
     // A timeout is only a budget if nothing silently repeats it. Failures are
     // not lost: the backfill re-queues them and the circuit breaker covers a
     // provider that is down.

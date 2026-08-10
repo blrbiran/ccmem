@@ -936,6 +936,14 @@ the remedy to stderr`** 从绿翻红（30/30 → 28/30），其余 28 条不受�
 **Finding 15 的超时取值本身刻意没有条目**（探针的隔离另有 #144 —— 那是已落地的机制，
 不是这句在说的、仍未重新推导的超时值）。它已取证但**未修**（`openai_timeout_ms: 800`
 落在查询嵌入延迟分布中间），没有任何已落地的行为可钉。为未修的 finding 编一条不变量，
+
+> 🆕🔴 **上一段的事实前提已于 2026-08-10（v0.13 闭合之后）失效**：`openai_timeout_ms` **已抬至 1200
+> 并合进 `main`**，因此"未修""没有已落地的行为可钉"两句**只对 v0.13 闭合时点成立**。
+> **本清单是 v0.13 的冻结产物，故不追补条目**；但下一版若要补，现在**确实有可钉的行为** ——
+> 同一轮已落地一条把"embed 超时 + 词法回落"钉在 harness 硬限内的测试（提交标题
+> `test(hook-budget): pin the embed timeout against the harness kill, not the budget that never fires`）。
+> 完整状态见 `docs/ccmem-v0.13-dogfood.md` 末节《v0.13 闭合后：Finding 15 的后续》与 `docs/handoff/handoff.md` Ⅺ。
+
 产出的只会是一条恒绿的检查
 —— **#129 就是这么来的**：它原本针对 `signature.mjs`，而该文件根本不写 audit、`logAudit(` 也不存在于全仓，
 **任何改动都无法让它失败**。（另两条返工是别的毛病，别混为一谈：#125 原写法需人判断，改成机械可检；

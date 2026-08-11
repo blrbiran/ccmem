@@ -4,14 +4,16 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-flow-'));
 
 const NODE = '/usr/local/bin/node';
 const TEST_CWD = '/Users/biran/code/skills/ccmem';
-const CLI = '/Users/biran/code/skills/ccmem_paper/reference/ccmem/scripts/cli.mjs';
-const HOOK = '/Users/biran/code/skills/ccmem_paper/reference/ccmem/scripts/hook.mjs';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const CLI = path.join(ROOT, 'scripts/cli.mjs');
+const HOOK = path.join(ROOT, 'scripts/hook.mjs');
 const TEST_REPO_CWD = '/Users/biran/code/skills/ccmem_paper/reference/ccmem';
 const PROJECT_CWD = '/Users/biran/code/skills/ccmem';
 const GLOBAL_CWD = TEST_REPO_CWD;

@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-stats-'));
 process.env.CCMEM_TEST_MODE = '1';
@@ -17,7 +18,8 @@ const env = {
 
 const NODE = '/usr/local/bin/node';
 const TEST_CWD = '/Users/biran/code/skills/ccmem';
-const CLI = '/Users/biran/code/skills/ccmem_paper/reference/ccmem/scripts/cli.mjs';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const CLI = path.join(ROOT, 'scripts/cli.mjs');
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { cmdStats } = await import('../../scripts/lib/cmd/stats.mjs');

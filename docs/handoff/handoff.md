@@ -1822,17 +1822,59 @@ paper 初稿（`ccmem_paper/docs/paper/generated/ccmem-agent-systems-paper.revie
    ⚠️ **删配置键是独立动作，不要顺手做掉。**
 3. **W2 覆盖 retrieval 四处 + `injection-cache.mjs:42`（生产者），不动 `session-start.mjs:68`（消费者）。**
    依据改为"哪条 lane 决定什么进模型"（只读代码可判），**不等 harness**。
-4. **P0#2 归 paper 仓库 harness，ccmem 侧零改动** ——
+4. **P0#2 归 paper 仓库 harness，ccmem 侧零改动** —— 🆕 **最后一块已于 2026-08-12 核查闭合，见 ⅩⅢ.7**
+   （那里也更正了下面这个"7 个调用点"：实测是 **6 个**）。
    `insertMemory`（`lib/cmd/save.mjs:32`）已是唯一写入口，7 个调用点全走它；
    `cfg.security.tier3.enabled=false` ⇒ `t3` 恒 `allow` ⇒ `force_demote`/`quarantine` 都进不去
    ⇒ `C-NAIVE` 不必 `direct_sql`。
 5. **C 拆成 A/B 两个测试**（见上）。
 
+## 7. ✅ `evaluateTier2` 的副作用已核查完（2026-08-12，P0#2 最后一块收尾）
+
+**结论：`evaluateTier2` 是纯函数，且 tier3 关掉时它的结果可证明是死的。P0#2 的 ccmem 侧到此闭合。**
+
+① **函数本身（`lib/threat-scan.mjs:62-85`）零副作用**：不碰 db、不写 audit、不打点、不落盘、不打印、
+不抛、不改实参。**也不改模块态** —— `TIER2_PATTERNS` 六条正则**只带 `i`、没有 `g`/`y`**，
+所以 `test()` 不推进 `lastIndex`。⚠️ 这一点不能靠"看着像"就放过：同文件的 `SECRET_PATTERNS` 全是 `/g`，
+`secretScan(:45)` 因此必须显式 `pattern.re.lastIndex = 0`。**同一个文件里两种正则、两种要求，
+共享模块级正则这个坑在这里是真实存在的，只是恰好不落在 tier2 上。**
+
+② **`t2` 的消费者全仓只有两个**（`grep '\bt2\b' lib/cmd/save.mjs` 四处命中，声明 1 + 消费 3）：
+
+| 位置 | 消费方式 | 门控 |
+|---|---|---|
+| `save.mjs:72` | 喂给 `evaluateTier3` | `cfg.security.tier3.enabled`，关掉即 `{action:'allow'}` |
+| `save.mjs:156-157` | `security_quarantine_in` 审计行的 `suspicion_score` / `evidence` | 外层 `if (resolvedDecayStatus === 'quarantine')` |
+
+③ **第二个门控在 tier3 关掉后不可达**：`resolvedDecayStatus` 变成 `'quarantine'` 只有两条路 ——
+`:83`（`t3.action==='quarantine'`）或调用方显式传 `decayStatus`（`:68`）。
+**实测 `scripts/` 全域 `decayStatus` 零命中于 `save.mjs` 之外** ⇒ 六个生产调用点没有一个传它
+（`monthly-meta-synthesis:80`、`weekly-synthesis:340`、`summarize-pending:330`、
+`resurrect:280`、`save.mjs:181`、`import.mjs:35`）。
+⇒ **tier3 关掉 ⇒ `:74` 与 `:82` 两个分支都不进 ⇒ type/scope/trust/tags/decay/quarantined_at
+全部保持调用方给的值，`t2` 只是被算了一遍然后丢掉。**
+
+🔴 **但"关掉 tier3 = 零写入时干预"这句话本身要收窄，撞出两条同路径上的非 tier3 干预：**
+
+- **`evaluateTier1`（`save.mjs:59`）不受 `tier3.enabled` 门控**，命中即 `throw` + `exitCode 64`
+  （role injection / hidden unicode）。**它是硬拒，不是降级** ⇒ 若 harness 要的是"写入口完全不设防"，
+  关 tier3 **不够**。
+- **`cmdSave` 在 `insertMemory` 之前先跑 `maybeRunTier15(db)`（`save.mjs:178`）**，
+  它按天租约 `UPDATE memories SET decay_status='archived' …`（`tier15.mjs:97-100`）等 ——
+  **那是对存量记忆的写，与本条待存记忆无关，但它确实在 save 路径上写库**，且同样不受 tier3 门控。
+
+⇒ **精确表述应为："关掉 tier3 ⇒ 对本次待存记忆零写入时降级/隔离"**，而不是"save 路径零干预"。
+**P0#2 若只需要前者，已成立；若需要后者，tier1 与 tier1.5 要单独裁决。**
+
+📌 **两条与既有记录的出入**（都不影响结论，但别再照抄旧数）：
+`insertMemory` 的生产调用点实测是 **6 个**，不是 ⅩⅢ.6 第 4 条写的 7 个；
+另 `tests/integration/forget-pin-cache.test.mjs:46` **自己定义了一个同名的裸 SQL `insertMemory`**
+⇒ "唯一写入口"是**生产侧**的断言，测试侧存在绕过。
+
+---
+
 **仍未做（按建议顺序）：**
 
-- 🔴 **一行 grep 就能收尾的**：`evaluateTier2`（`lib/cmd/save.mjs:71`）是**无条件执行**的，
-  本轮只看到它的结果经 `t3` 消费。**要断言"关掉 tier3 = 零写入时干预"，必须确认它没有别的副作用**
-  （写库 / 打点）。**这是 P0#2 的最后一块，未验证，不要当成已答。**
 - **C 的测试 B 先出死键清单**（只读、不进 CI、零时序影响，窗口期内可做）。
 - **W1 的 2a/2b 与 W2 覆盖面走 `superpowers:brainstorming` 定稿** → 再走 `writing-plans` 出**三份独立计划**。
 - **W1/W2/W3 一行代码都不写，等窗口关闭。**

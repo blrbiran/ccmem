@@ -18,7 +18,11 @@
 - **记录失败绝不能让 daemon 任务失败**：吞掉并继续（与 v0.13 A1 探针"probe 失败不阻断 Stop hook 其余逻辑"同构）。
 - **走 `mockOutput` 的调用不产生任何行**（`scripts/daemon/claude-p.mjs:180-182` 在 `runClaudeP` 之前就返回）。
 - **超时路径（`:146-149`）与 `child.on('error')`（`:159`）都没有退出码 ⇒ 一律记 `null`。**
-- **不改 `recordMetric`。** 它是 `metrics.jsonl` 的写入器，而**现在有一个预登记的测量窗口正在跑**（起点 `2026-08-10 01:53:30`）。宁可让新写入器重复一小段轮转逻辑，也不动那个热写入器。
+- 🔴 **轮转逻辑抽成公共 helper，两个写入器共用**（人类裁决 2026-08-11，**推翻了本计划初稿"不改 `recordMetric`、宁可重复"的写法**）。
+  ⇒ **这意味着要在测量窗口期间修改 `metrics.jsonl` 的热写入器**（窗口起点 `2026-08-10 01:53:30`）。因此附带两条不可省的安全要求：
+  ① **重构前先跑现有 metrics 相关测试并记下绿的证据，重构后必须仍绿**；
+  ② **必须补一条正向测试钉住"`recordMetric` 仍然会在超过 `MAX_METRICS_BYTES` 时轮转到 `.1`"** ——
+  hook 遥测若因这次重构悄悄坏掉，等于毁掉整个测量窗口。
 - **跑单文件测试必须显式用 `/usr/local/bin/node`**：`env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test <文件>`。**两个环境变量缺一不可**，PATH 上的 `node` 是 nvm v22.13.1，能力不同（handoff Ⅳ.2 / Ⅳ.20）。
 - **落地时机**：W4 可先行，**但在本仓库跑批会往 `metrics.jsonl` 追加行**。预登记要求"剔除本机跑批窗口，并在跑批发生时**当场记下起止时间**"。⇒ **执行本计划期间每次跑全量套件，起止时间当场记进 ledger。**
 - **不 push。删分支/worktree 先问。**
@@ -27,8 +31,9 @@
 
 | 文件 | 责任 | 动作 |
 |---|---|---|
+| 6 个 A1 测试文件（见 Task 0） | 硬编码主 checkout 路径 → 改为从 `import.meta.url` 派生 | 修改（**Task 0，worktree 的前提**）|
 | `scripts/lib/claude-p-usage.mjs` | 两个纯函数：判 args 是否选中 JSON、从结果信封抽 usage/cost。**无 I/O，可单测** | 新建 |
-| `scripts/lib/metrics.mjs` | 新增 `daemonCostFile()` + `recordDaemonCost(event)`。**`recordMetric` 一个字不动** | 修改 |
+| `scripts/lib/metrics.mjs` | 抽出 `appendWithRotation` 公共 helper；新增 `daemonCostFile()` + `recordDaemonCost(event)` | 修改 |
 | `scripts/daemon/claude-p.mjs` | 在 `finish()` 漏斗上记录；计时分排队与执行两段 | 修改 |
 | `scripts/lib/admin/diagnose.mjs` | 新增 `--cost` 子命令，做周聚合 | 修改 |
 | `tests/unit/v014-claude-p-usage.test.mjs` | Task 1 的纯函数测试 | 新建 |
@@ -39,6 +44,90 @@
 **为什么不扩 audit 行**：per-run 的次数与耗时**已经**在 audit 行里（`contradiction-audit.mjs:176-177`、`security-audit.mjs:270-271`、`weekly-synthesis.mjs:534`、`monthly-meta-synthesis.mjs:57`）。W4 要的是 **per-call 粒度 + token/成本**，audit 行是 per-run 的，装不下。**这个取舍在 spec 里被要求"实现计划里再确认一次"—— 本节即为确认。**
 
 **为什么不加 config 开关**：Rule 2（最小代码）。spec 未要求，且这是纯观测、零行为影响。**若将来要关，再加。**
+
+---
+
+### Task 0: 修 A1 硬编码路径（**worktree 的前提，必须最先做**）
+
+**为什么它在这个计划里**：本计划要在 worktree 里执行，而 handoff Ⅺ.13 记录 **6 个测试文件把被测代码的路径硬编码成主 checkout**。
+**在 worktree 里跑这 6 个文件，测的是主 checkout 的代码，不是刚改的代码** ⇒ Task 3 / Task 4 的两次全量套件跑会得出无意义的绿。
+人类已于 2026-08-11 裁决：**先修 A1，再建 worktree**。
+
+**Files（全部 Modify）:**
+
+| 文件 | 站点 |
+|---|---|
+| `tests/integration/admin-daemon-command.test.mjs` | `:202 ROOT` → `:204 CLI`、`:205 BIN`（**派生式，按字面形状 grep 会漏掉**）|
+| `tests/integration/resurrect-command.test.mjs` | `:19 CLI` |
+| `tests/integration/promote-command.test.mjs` | `:19 CLI` |
+| `tests/integration/admin-cron-command.test.mjs` | `:19 CLI` |
+| `tests/integration/cli-mode-audit.test.mjs` | `:19 CLI` |
+| `tests/integration/stop-hook-dispatch.test.mjs` | `:20 HOOK` → 主 checkout 的 `scripts/hook.mjs` |
+
+⚠️ **行号是记录当时的，会漂。按常量名 grep 复核，不要照行号下刀。**
+
+**正确写法已经在仓库里**（照它改，不要自创）：`tests/integration/admin-diagnose-command.test.mjs:21`
+
+```javascript
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const CLI = path.join(ROOT, 'scripts/cli.mjs');
+```
+
+- [ ] **Step 1: 逐个文件确认它到底怎么解析被测代码**
+
+```bash
+grep -n "/Users/biran/code/skills/ccmem" tests/integration/*.test.mjs
+```
+
+对上表 6 个文件，**逐个打开看清楚该常量是不是真的用于执行**（例如 `promote-command.test.mjs:215` 的 `execFileSync(NODE, [CLI, …])`）。
+🔴 **不要只 grep `硬编码前缀 + /scripts/`** —— `admin-daemon-command.test.mjs` 是 `const ROOT='…'` 再 `` const CLI=`${ROOT}/scripts/cli.mjs` ``，**按字面形状会漏掉派生站点**（Ⅺ.13 记过这个教训）。
+
+- [ ] **Step 2: 先证明"在 worktree 里这 6 个文件测的不是本地代码"**
+
+在 worktree 里，往**本 worktree** 的 `scripts/cli.mjs` 顶部临时插一行 `process.exit(42);`，然后跑其中一个文件：
+
+```bash
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/integration/promote-command.test.mjs
+```
+
+Expected: **仍然绿**（因为它跑的是主 checkout 的 `cli.mjs`，看不见这个改动）。
+**这就是缺陷的红证据。看到绿之后把 `process.exit(42)` 撤回。**
+⚠️ **不做这一步就没有证据说明这次修改修好了什么** —— handoff Ⅴ："每个回归测试必须先被亲眼看着变红，且红得对。"
+
+- [ ] **Step 3: 逐个文件改成派生写法**
+
+每个文件都改成从 `import.meta.url` 派生，**不要引入新的 helper 模块**（6 处各自 3 行，抽公共模块反而要求每个测试文件依赖另一个测试文件）。
+需要的 import：`import path from 'node:path';` 与 `import { fileURLToPath } from 'node:url';`（**先看该文件是否已有，不要重复 import**）。
+
+- [ ] **Step 4: 用同一个变异证明修好了**
+
+重复 Step 2（在 worktree 的 `scripts/cli.mjs` 插 `process.exit(42)`），重跑同一个文件：
+Expected: **这次必须红**（它终于在跑本地代码了）。**撤回 `process.exit(42)`。**
+
+对 `stop-hook-dispatch.test.mjs` 用同样手法，但插进 worktree 的 `scripts/hook.mjs`。
+
+- [ ] **Step 5: 跑这 6 个文件 + 一次全量（当场记起止时间）**
+
+```bash
+date '+%F %T'
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/integration/admin-daemon-command.test.mjs tests/integration/resurrect-command.test.mjs tests/integration/promote-command.test.mjs tests/integration/admin-cron-command.test.mjs tests/integration/cli-mode-audit.test.mjs tests/integration/stop-hook-dispatch.test.mjs
+npm test
+date '+%F %T'
+```
+
+Expected: 全绿。
+⚠️ **若有文件在改成本地路径后变红，那是它一直没被真正跑过而暴露出的真实问题** —— **不要把红改回去掩盖掉**，报 DONE_WITH_CONCERNS 并把红的形态写进报告。
+🔴 **起止时间当场记进 ledger**（预登记要求，见 Global Constraints）。
+
+📌 **已知不修**：`stats-command.test.mjs` 与 `save-list-session-start.test.mjs`（A2 类，指向 `ccmem_paper/reference/ccmem` 的 v0.12 快照）。
+人类本轮只裁决修 A1。**它俩在主 checkout 里也是坏的，所以"全量绿"仍含着两个测别人家代码的文件 —— 不要把全量绿当成"套件验证过本次改动"。**
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add tests/integration/
+git commit -m "test: resolve the CLI and hook under test from the test file, not a fixed path"
+```
 
 ---
 
@@ -249,7 +338,7 @@ import path from 'node:path';
 
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-cost-'));
 
-const { daemonCostFile, recordDaemonCost, metricsFile, MAX_METRICS_BYTES } =
+const { daemonCostFile, recordDaemonCost, recordMetric, metricsFile, MAX_METRICS_BYTES } =
   await import('../../scripts/lib/metrics.mjs');
 
 test('the cost stream is its own file, not metrics.jsonl', () => {
@@ -282,6 +371,20 @@ test('an oversized cost file rotates to .1 instead of growing forever', () => {
   assert.equal(lines.length, 1, 'the live file must restart with just the new row');
 });
 
+// The shared helper is extracted out of recordMetric while a pre-registered
+// measurement window is reading metrics.jsonl. If this rotation stops working,
+// hook telemetry is silently lost and the window is ruined -- so it gets a
+// positive test of its own, on the ORIGINAL writer, not just the new one.
+test('recordMetric still rotates metrics.jsonl after the extraction', () => {
+  const file = metricsFile();
+  writeFileSync(file, 'x'.repeat(MAX_METRICS_BYTES + 1));
+
+  recordMetric({ hook: 'prompt_submit', ms_total: 1 });
+
+  assert.ok(existsSync(`${file}.1`), 'metrics.jsonl must still rotate to .1');
+  assert.equal(readFileSync(file, 'utf8').trim().split('\n').length, 1);
+});
+
 test('a write failure never throws at the caller', () => {
   // The daemon tasks must not fail because telemetry could not be written.
   const dir = mkdtempSync(path.join(tmpdir(), 'ccmem-cost-ro-'));
@@ -309,7 +412,58 @@ Expected: FAIL，报 `daemonCostFile is not a function`。
 
 - [ ] **Step 3: 写最小实现**
 
-在 `scripts/lib/metrics.mjs` 末尾追加（**不要修改文件里已有的任何函数**）：
+🔴 **先跑一次现有的 metrics 相关测试并把绿的证据记进报告**（重构热写入器之前的基线）：
+
+```bash
+grep -rln "metrics.mjs\|recordMetric\|metricsFile" tests/ | tr '\n' ' '
+# 用上面列出的文件跑：
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test <列出的文件>
+```
+
+**先把 `recordMetric` 里的轮转段抽成公共 helper**（人类裁决，见 Global Constraints），
+`recordMetric` 改为调用它、**外部行为一个字不变**：
+
+```javascript
+/**
+ * Append one json line, rotating a single generation aside first when the file
+ * has outgrown the cap.
+ *
+ * Shared by the two rotating streams (metrics.jsonl, daemon-cost.jsonl). The
+ * decision stream deliberately does NOT use this: it must never rotate.
+ *
+ * A rotation failure is announced rather than swallowed, because a silently
+ * unenforced size cap is how a log eats a disk. ENOENT is the expected
+ * first-write case.
+ */
+function appendWithRotation(file, event) {
+  mkdirSync(getDataRoot(), { recursive: true });
+
+  try {
+    if (statSync(file).size > MAX_METRICS_BYTES) {
+      renameSync(file, `${file}.1`);
+    }
+  } catch (err) {
+    if (err?.code !== 'ENOENT') {
+      process.stderr.write(`ccmem: ${path.basename(file)} rotation failed (${err?.code ?? err?.message}) — size cap not enforced\n`);
+    }
+  }
+
+  appendFileSync(file, `${JSON.stringify({ ts: Date.now(), ...event })}\n`);
+}
+
+export function recordMetric(event) {
+  appendWithRotation(metricsFile(), event);
+}
+```
+
+⚠️ **原 `recordMetric` 的 stderr 文案是 `metrics rotation failed`，helper 里改成了 `path.basename(file)` 派生。
+这是行为改变（文案），若有测试断言那句原文，以测试为准 —— 保留原文案并给 helper 传一个 label 参数。先 grep 确认：**
+
+```bash
+grep -rn "rotation failed" tests/ scripts/
+```
+
+然后在文件末尾追加成本流：
 
 ```javascript
 const DAEMON_COST_FILE = 'daemon-cost.jsonl';
@@ -326,31 +480,15 @@ export function daemonCostFile() {
  *
  * Deliberately NOT metrics.jsonl. A pre-registered measurement window is
  * anchored in that file; adding a second writer to it would raise rotation
- * pressure on the exact stream that window is read from. The rotation block
- * below duplicates a few lines of recordMetric on purpose — refactoring the
- * two into a shared helper would mean editing the hot writer while that window
- * is live, and this telemetry is not worth that risk.
+ * pressure on the exact stream that window is read from.
  *
  * Never throws: a daemon task must not fail because its telemetry could not be
- * written. A rotation failure is still announced, because a silently
- * unenforced size cap is how a log eats a disk.
+ * written. recordMetric does not need this guard — its callers are hooks that
+ * already run under withHookSafety — but a daemon task has no such net.
  */
 export function recordDaemonCost(event) {
   try {
-    mkdirSync(getDataRoot(), { recursive: true });
-    const file = daemonCostFile();
-
-    try {
-      if (statSync(file).size > MAX_METRICS_BYTES) {
-        renameSync(file, `${file}.1`);
-      }
-    } catch (err) {
-      if (err?.code !== 'ENOENT') {
-        process.stderr.write(`ccmem: daemon-cost rotation failed (${err?.code ?? err?.message}) — size cap not enforced\n`);
-      }
-    }
-
-    appendFileSync(file, `${JSON.stringify({ ts: Date.now(), ...event })}\n`);
+    appendWithRotation(daemonCostFile(), event);
   } catch (err) {
     process.stderr.write(`ccmem: daemon-cost record failed (${err?.code ?? err?.message})\n`);
   }
@@ -363,7 +501,10 @@ export function recordDaemonCost(event) {
 env -u CCMEM_CONFIG_PATH /usr/local/bin/node --test tests/unit/v014-daemon-cost-file.test.mjs
 ```
 
-Expected: PASS（4 个测试）。
+Expected: PASS（5 个测试）。
+
+**再跑一遍 Step 3 开头列出的那批现有 metrics 测试，必须与重构前同样绿。**
+🔴 **若有任何一条由绿转红，立刻停下报 BLOCKED** —— 那说明重构改变了 `metrics.jsonl` 写入器的行为，而测量窗口正读着那个文件。
 
 然后**临时**把 `recordDaemonCost` 里的 `daemonCostFile()` 换成 `metricsFile()` 并重跑：
 Expected: FAIL 在 `the cost stream is its own file` 之外的写入类断言上（行会落到 metrics.jsonl）。**看到红之后撤回。**
@@ -896,6 +1037,8 @@ git commit -m "feat(cost): report the trailing week's daemon calls, tokens, and 
 ## 已知不做的事
 
 - **不加 config 开关**（Rule 2；spec 未要求，纯观测、零行为影响）。
-- **不重构 `recordMetric`**，尽管两处轮转逻辑有重复 —— 理由写在 Task 2 的代码注释里（不在测量窗口期间动热写入器）。
+- **不修 A2 的两个文件**（`stats-command.test.mjs` / `save-list-session-start.test.mjs`，指向 `ccmem_paper` 的 v0.12 快照）——
+  人类本轮只裁决修 A1。⇒ **"全量绿"里仍含着两个测别人家代码的文件，不要拿它当本次改动的验证证据。**
+- **不给成本流做保留期或裁剪** —— 8MB 单代轮转已经够；`daemon-cost.jsonl` 不是决策数据，与 `l25-probe.jsonl` 的"永不轮转"策略是两回事。
 - **不动 `llm-parse.mjs`** —— 它丢弃信封是对的，W4 另起一个解析器。
 - **不改任何 daemon task 的调用点**，`taskType` 已经由现有调用方传入。

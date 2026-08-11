@@ -297,7 +297,7 @@ export function extractUsage(stdout) {
 env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v014-claude-p-usage.test.mjs
 ```
 
-Expected: PASS（8 个测试）。
+Expected: PASS（9 个测试）。
 
 然后**临时**把 `finiteOrNull` 改成 `return Number(value) || null;` 并重跑：
 Expected: FAIL 在 `non-numeric usage values are rejected, not coerced`（`'lots'` 会变成 `null` 但 `'free'` 也是 —— 若这条没红，改成 `return Number(value) ?? null;` 再试，必须看到红在这一条）。**看到红之后把改动撤回。**

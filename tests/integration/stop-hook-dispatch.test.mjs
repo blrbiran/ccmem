@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-stop-hook-'));
 const transcript = path.join(dataRoot, 'session.jsonl');
@@ -17,7 +18,8 @@ const env = {
 };
 
 const NODE = '/usr/local/bin/node';
-const HOOK = '/Users/biran/code/skills/ccmem/scripts/hook.mjs';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const HOOK = path.join(ROOT, 'scripts/hook.mjs');
 
 async function openStopDb() {
   process.env.CCMEM_TEST_MODE = '1';

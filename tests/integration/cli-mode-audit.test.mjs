@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-cli-'));
 process.env.CCMEM_TEST_MODE = '1';
@@ -16,7 +17,8 @@ const env = {
 };
 
 const NODE = '/usr/local/bin/node';
-const CLI = '/Users/biran/code/skills/ccmem/scripts/cli.mjs';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const CLI = path.join(ROOT, 'scripts/cli.mjs');
 
 test('cli mode updates stored mode', () => {
   const output = execFileSync(NODE, [CLI, 'mode', 'shadow'], {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -96,6 +96,7 @@ test('a non-zero exit still records a row, with its exit code', async () => {
 });
 
 test('a timeout records timed_out with a null exit code', async () => {
+  const before = rows().length;
   const HANG_STUB = path.join(STUB_DIR, 'stub-hang.mjs');
   writeFileSync(HANG_STUB, 'process.stdin.resume(); setTimeout(() => {}, 60000);');
   withStub(HANG_STUB);
@@ -103,6 +104,11 @@ test('a timeout records timed_out with a null exit code', async () => {
   await assert.rejects(() => callClaudeP('prompt', { taskType: 'monthly_meta_synthesis', timeoutMs: 300 }));
 
   const row = rows().at(-1);
+  // The timeout->late-close path is the one place a double-write (once from
+  // the timer, once from a close event that fires after SIGTERM) is
+  // plausible, so this is the one case that must assert the count grew by
+  // exactly one, not just that the last row looks right.
+  assert.equal(rows().length, before + 1);
   assert.equal(row.timed_out, true);
   // SIGTERM leaves no exit code. Recording 0 here would read as success.
   assert.equal(row.exit_code, null);
@@ -114,4 +120,9 @@ test('a mockOutput call records nothing', async () => {
   await callClaudeP('prompt', { taskType: 'weekly_synthesis', mockOutput: 'canned' });
 
   assert.equal(rows().length, before, 'mocked calls never spawn, so they have no cost to record');
+});
+
+test.after(() => {
+  rmSync(process.env.CCMEM_DATA_ROOT, { recursive: true, force: true });
+  rmSync(STUB_DIR, { recursive: true, force: true });
 });

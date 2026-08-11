@@ -69,3 +69,37 @@ test('an empty window reports zero calls and null cost rather than throwing', ()
   assert.equal(got.total_cost_usd, null);
   assert.equal(got.wall_clock_ms.p50, null);
 });
+
+// Finding 2: unmeasured_calls must be defined by what was actually measured,
+// not by output_format. A json-path call that timed out carries the exact
+// same all-null tokens as a text-path call and must count the same way.
+test('json-path calls with all-null tokens count as unmeasured too, not just text-path', () => {
+  const got = summarizeDaemonCost(
+    [
+      row({ output_format: 'json', timed_out: true, exit_code: null, input_tokens: null, output_tokens: null, total_cost_usd: null }),
+      row({ output_format: 'json', timed_out: true, exit_code: null, input_tokens: null, output_tokens: null, total_cost_usd: null }),
+      row({ output_format: 'json', timed_out: true, exit_code: null, input_tokens: null, output_tokens: null, total_cost_usd: null })
+    ],
+    NOW,
+    7
+  );
+  assert.equal(got.calls, 3);
+  assert.equal(got.unmeasured_calls, 3);
+});
+
+// A row that measured tokens but not cost (or vice versa) is partially
+// measured — it must not be double-counted as unmeasured just because one
+// of the three fields is null.
+test('a row with tokens but no cost is not counted as unmeasured', () => {
+  const got = summarizeDaemonCost([row({ total_cost_usd: null })], NOW, 7);
+  assert.equal(got.unmeasured_calls, 0);
+});
+
+test('failed_calls counts timeouts and non-zero exits, independent of measurement coverage', () => {
+  const got = summarizeDaemonCost(
+    [row({ timed_out: true, exit_code: null }), row({ exit_code: 3 }), row()],
+    NOW,
+    7
+  );
+  assert.equal(got.failed_calls, 2);
+});

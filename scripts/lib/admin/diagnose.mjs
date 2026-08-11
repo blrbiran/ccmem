@@ -1442,6 +1442,14 @@ function formatFeedbackCohort(label, rows, { warnOnZeroLegacy = true } = {}) {
 // Named distinctly from the file's existing percentile(values, ratio) above,
 // which sorts internally and uses a floor-index formula — this one expects an
 // already-sorted array and a ceil-index formula, per the W4 brief verbatim.
+//
+// Also distinct from quantile(sorted, p) above (also pre-sorted): quantile
+// uses a floor(p*(len-1)) index and returns 0 on an empty array. Reusing it
+// here would violate this feature's domain rule that "not measured" must
+// read as null, never 0, and the two formulas genuinely diverge at small n /
+// extreme percentiles (e.g. len=2, p=0.95: quantile picks index 0,
+// costPercentile picks index 1) — not just a naming difference, so this
+// stays its own function rather than folding into quantile.
 function costPercentile(sorted, q) {
   if (!sorted.length) {
     return null;
@@ -1453,11 +1461,22 @@ function costPercentile(sorted, q) {
 /**
  * What the daemon spent in the trailing window.
  *
- * Text-path calls carry no usage envelope. They are counted in `calls` and in
- * `unmeasured_calls`, but contribute nothing to the sums, and a window with no
- * measured call reports null rather than 0 — the question this answers is
- * "what does a steady-state week cost", and a zero would be a wrong answer
- * where null is an honest "not measured".
+ * `unmeasured_calls` is defined by the absence of any measured usage/cost —
+ * input_tokens, output_tokens, and total_cost_usd all null — not by
+ * output_format. A JSON-path call that timed out, exited non-zero, or
+ * returned an unparseable envelope carries the exact same all-null tokens as
+ * a text-path call; keying off output_format alone undercounted those rows
+ * as "measured", which is how a partially-broken week read as a fully
+ * measured one. Unmeasured calls contribute nothing to the sums, and a
+ * window with no measured call reports null rather than 0 — the question
+ * this answers is "what does a steady-state week cost", and a zero would be
+ * a wrong answer where null is an honest "not measured".
+ *
+ * `failed_calls` is separate: a call that timed out or exited non-zero,
+ * regardless of what it measured. exit_code and timed_out are written by
+ * claude-p.mjs on every call but were previously read by nobody here, so a
+ * week in which every call timed out could print a table with no visible
+ * sign of trouble.
  */
 export function summarizeDaemonCost(rows, nowMs, windowDays = 7) {
   const cutoff = nowMs - windowDays * 86_400_000;
@@ -1491,7 +1510,10 @@ export function summarizeDaemonCost(rows, nowMs, windowDays = 7) {
     input_tokens: sum('input_tokens'),
     output_tokens: sum('output_tokens'),
     total_cost_usd: sum('total_cost_usd'),
-    unmeasured_calls: inWindow.filter((r) => r.output_format === 'text').length
+    unmeasured_calls: inWindow.filter(
+      (r) => r.input_tokens == null && r.output_tokens == null && r.total_cost_usd == null
+    ).length,
+    failed_calls: inWindow.filter((r) => r.timed_out === true || (r.exit_code != null && r.exit_code !== 0)).length
   };
 }
 
@@ -1629,20 +1651,25 @@ export function cmdDiagnoseCost(db, { days = 7 } = {}) {
 
   const lines = [];
   lines.push(`Daemon cost — trailing ${summary.window_days}d${unparseableNote}`);
-  lines.push(`  calls: ${summary.calls} (${summary.unmeasured_calls} unmeasured, text-path)`);
+  lines.push(`  calls: ${summary.calls} (${summary.unmeasured_calls} unmeasured)`);
+  lines.push(`  failed_calls: ${summary.failed_calls} (timed out or non-zero exit)`);
   lines.push(
     `  by task: ${Object.entries(summary.calls_by_task).map(([task, n]) => `${task}=${n}`).join(', ')}`
   );
   lines.push(
     `  wall_clock_ms: p50=${summary.wall_clock_ms.p50 ?? 'n/a'} p95=${summary.wall_clock_ms.p95 ?? 'n/a'} max=${summary.wall_clock_ms.max ?? 'n/a'}`
   );
-  if (summary.input_tokens == null) {
-    lines.push('  tokens: no measured calls in window (all text-path)');
-    lines.push('  total_cost_usd: no measured calls in window (all text-path)');
-  } else {
-    lines.push(`  tokens: input=${summary.input_tokens} output=${summary.output_tokens}`);
-    lines.push(`  total_cost_usd: $${summary.total_cost_usd.toFixed(4)}`);
-  }
+  // Each of the three usage fields is independently nullable (extractUsage
+  // nulls them one at a time), so each gets its own null check rather than
+  // gating all three off input_tokens — a JSON envelope with usage but no
+  // total_cost_usd, or cost but no usage, must print its measured value(s)
+  // and "not measured" for the rest, never crash and never discard a number.
+  lines.push(
+    `  tokens: input=${summary.input_tokens ?? 'not measured'} output=${summary.output_tokens ?? 'not measured'}`
+  );
+  lines.push(
+    `  total_cost_usd: ${summary.total_cost_usd == null ? 'not measured' : `$${summary.total_cost_usd.toFixed(4)}`}`
+  );
 
   process.stdout.write(`${lines.join('\n')}\n`);
 }

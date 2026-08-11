@@ -199,10 +199,10 @@ const env = {
   CCMEM_LAUNCHAGENT_DIR: launchAgentDir
 };
 
-const ROOT = '/Users/biran/code/skills/ccmem';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const NODE = '/usr/local/bin/node';
-const CLI = `${ROOT}/scripts/cli.mjs`;
-const BIN = `${ROOT}/bin/ccmem`;
+const CLI = path.join(ROOT, 'scripts/cli.mjs');
+const BIN = path.join(ROOT, 'bin/ccmem');
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { cmdAdminDaemon, getLaunchAgentPath, maybeRespawnContainerFallback, resolveInstallNodePath } = await import('../../scripts/lib/admin/daemon.mjs');

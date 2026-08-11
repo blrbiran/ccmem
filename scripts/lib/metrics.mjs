@@ -13,23 +13,40 @@ export function metricsFile() {
   return path.join(getDataRoot(), 'metrics.jsonl');
 }
 
-export function recordMetric(event) {
+/**
+ * Append one json line, rotating a single generation aside first when the file
+ * has outgrown the cap.
+ *
+ * Shared by the two rotating streams (metrics.jsonl, daemon-cost.jsonl). The
+ * decision stream deliberately does NOT use this: it must never rotate.
+ *
+ * A rotation failure is announced rather than swallowed, because a silently
+ * unenforced size cap is how a log eats a disk. ENOENT is the expected
+ * first-write case.
+ *
+ * `label` names the stream in that stderr line. It is a caller-supplied word,
+ * not derived from the filename, so recordMetric's existing text
+ * ("metrics rotation failed") is preserved exactly for the live measurement
+ * window reading metrics.jsonl.
+ */
+function appendWithRotation(file, event, label) {
   mkdirSync(getDataRoot(), { recursive: true });
-  const file = metricsFile();
 
   try {
     if (statSync(file).size > MAX_METRICS_BYTES) {
       renameSync(file, `${file}.1`);
     }
   } catch (err) {
-    // ENOENT is the expected first-write case. Anything else means rotation is
-    // genuinely failing and the cap has stopped being enforced — say so.
     if (err?.code !== 'ENOENT') {
-      process.stderr.write(`ccmem: metrics rotation failed (${err?.code ?? err?.message}) — size cap not enforced\n`);
+      process.stderr.write(`ccmem: ${label} rotation failed (${err?.code ?? err?.message}) — size cap not enforced\n`);
     }
   }
 
   appendFileSync(file, `${JSON.stringify({ ts: Date.now(), ...event })}\n`);
+}
+
+export function recordMetric(event) {
+  appendWithRotation(metricsFile(), event, 'metrics');
 }
 
 const DEFAULT_DECISION_DATA_FILE = 'l25-probe.jsonl';
@@ -127,4 +144,32 @@ export function pruneDecisionMetrics(decisionCfg, olderThanMs) {
   const tmp = `${file}.tmp`;
   writeFileSync(tmp, kept.length ? `${kept.map((row) => JSON.stringify(row)).join('\n')}\n` : '', 'utf8');
   renameSync(tmp, file);
+}
+
+const DAEMON_COST_FILE = 'daemon-cost.jsonl';
+
+/** The daemon-cost stream's on-disk path. Exported for the same reason
+ * metricsFile() and decisionDataFile() are: the reader (diagnose --cost) must
+ * resolve the exact path this writer uses rather than re-deriving it. */
+export function daemonCostFile() {
+  return path.join(getDataRoot(), DAEMON_COST_FILE);
+}
+
+/**
+ * One row per real `claude -p` spawn: what the daemon actually spent.
+ *
+ * Deliberately NOT metrics.jsonl. A pre-registered measurement window is
+ * anchored in that file; adding a second writer to it would raise rotation
+ * pressure on the exact stream that window is read from.
+ *
+ * Never throws: a daemon task must not fail because its telemetry could not be
+ * written. recordMetric does not need this guard — its callers are hooks that
+ * already run under withHookSafety — but a daemon task has no such net.
+ */
+export function recordDaemonCost(event) {
+  try {
+    appendWithRotation(daemonCostFile(), event, 'daemon-cost');
+  } catch (err) {
+    process.stderr.write(`ccmem: daemon-cost record failed (${err?.code ?? err?.message})\n`);
+  }
 }

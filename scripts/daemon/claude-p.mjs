@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 
 import { openDb } from '../lib/db.mjs';
 import { loadConfig } from '../lib/config.mjs';
+import { argsSelectJson, extractUsage } from '../lib/claude-p-usage.mjs';
+import { recordDaemonCost } from '../lib/metrics.mjs';
 
 const BLACKLIST_TTL_MS = 30 * 60 * 1000;
 
@@ -110,9 +112,11 @@ function registerBlacklistedSession(sessionId) {
   }
 }
 
-function runClaudeP(prompt, opts) {
+function runClaudeP(prompt, opts, queuedAt) {
   const { command, args } = resolveCommand(opts);
   const timeoutMs = resolveTimeoutMs(opts);
+  const tStart = Date.now();
+  const outputFormat = argsSelectJson(args) ? 'json' : 'text';
   const childSessionId = opts.env?.CLAUDE_CODE_SESSION_ID ?? randomUUID();
   const childEnv = {
     ...process.env,
@@ -133,19 +137,35 @@ function runClaudeP(prompt, opts) {
     let stderr = '';
     let settled = false;
 
-    const finish = (fn, value) => {
+    const finish = (fn, value, outcome) => {
       if (settled) {
         return;
       }
 
       settled = true;
       clearTimeout(timer);
+
+      // Telemetry must never change control flow: recordDaemonCost swallows its
+      // own failures, and this call sits before fn() only so a throw here could
+      // not skip settling.
+      recordDaemonCost({
+        task_type: opts.taskType ?? null,
+        output_format: outputFormat,
+        queue_wait_ms: tStart - queuedAt,
+        wall_clock_ms: Date.now() - tStart,
+        exit_code: outcome.exitCode,
+        timed_out: outcome.timedOut,
+        ...(outputFormat === 'json'
+          ? extractUsage(stdout)
+          : { input_tokens: null, output_tokens: null, total_cost_usd: null })
+      });
+
       fn(value);
     };
 
     const timer = setTimeout(() => {
       child.kill('SIGTERM');
-      finish(reject, new Error(`claude -p timeout after ${timeoutMs}ms`));
+      finish(reject, new Error(`claude -p timeout after ${timeoutMs}ms`), { exitCode: null, timedOut: true });
     }, timeoutMs);
 
     child.stdout.on('data', (chunk) => {
@@ -156,10 +176,10 @@ function runClaudeP(prompt, opts) {
       stderr += String(chunk);
     });
 
-    child.on('error', (error) => finish(reject, error));
+    child.on('error', (error) => finish(reject, error, { exitCode: null, timedOut: false }));
     child.on('close', (code) => {
       if (code === 0) {
-        finish(resolve, stdout);
+        finish(resolve, stdout, { exitCode: 0, timedOut: false });
         return;
       }
 
@@ -169,7 +189,7 @@ function runClaudeP(prompt, opts) {
       if (retryAfter != null) {
         error.retryAfter = retryAfter;
       }
-      finish(reject, error);
+      finish(reject, error, { exitCode: code, timedOut: false });
     });
 
     child.stdin.end(String(prompt ?? ''));
@@ -181,7 +201,8 @@ export function callClaudeP(prompt, opts = {}) {
     return Promise.resolve(opts.mockOutput);
   }
 
-  const run = () => runClaudeP(prompt, opts);
+  const queuedAt = Date.now();
+  const run = () => runClaudeP(prompt, opts, queuedAt);
   const pending = tail.then(run, run);
   tail = pending.catch(() => {});
   return pending;

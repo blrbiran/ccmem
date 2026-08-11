@@ -6,7 +6,7 @@ import { loadConfig } from '../config.mjs';
 import { getDbPath, getSchemaVersion } from '../db.mjs';
 import { getProvider } from '../embedding/provider.mjs';
 import { currentEmbeddingSig } from '../embedding/signature.mjs';
-import { decisionDataFile, decisionDataSizeBytes, metricsFile } from '../metrics.mjs';
+import { daemonCostFile, decisionDataFile, decisionDataSizeBytes, metricsFile } from '../metrics.mjs';
 import { fallbackProjectKey, resolveProjectKey } from '../project-key.mjs';
 import { collectInjectionRows, countNeverInjected } from '../recent-injections.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
@@ -1439,6 +1439,84 @@ function formatFeedbackCohort(label, rows, { warnOnZeroLegacy = true } = {}) {
  * report. `db` is accepted (and unused) only to keep the call signature
  * uniform with those siblings for CLI routing.
  */
+// Named distinctly from the file's existing percentile(values, ratio) above,
+// which sorts internally and uses a floor-index formula — this one expects an
+// already-sorted array and a ceil-index formula, per the W4 brief verbatim.
+//
+// Also distinct from quantile(sorted, p) above (also pre-sorted): quantile
+// uses a floor(p*(len-1)) index and returns 0 on an empty array. Reusing it
+// here would violate this feature's domain rule that "not measured" must
+// read as null, never 0, and the two formulas genuinely diverge at small n /
+// extreme percentiles (e.g. len=2, p=0.95: quantile picks index 0,
+// costPercentile picks index 1) — not just a naming difference, so this
+// stays its own function rather than folding into quantile.
+function costPercentile(sorted, q) {
+  if (!sorted.length) {
+    return null;
+  }
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1));
+  return sorted[idx];
+}
+
+/**
+ * What the daemon spent in the trailing window.
+ *
+ * `unmeasured_calls` is defined by the absence of any measured usage/cost —
+ * input_tokens, output_tokens, and total_cost_usd all null — not by
+ * output_format. A JSON-path call that timed out, exited non-zero, or
+ * returned an unparseable envelope carries the exact same all-null tokens as
+ * a text-path call; keying off output_format alone undercounted those rows
+ * as "measured", which is how a partially-broken week read as a fully
+ * measured one. Unmeasured calls contribute nothing to the sums, and a
+ * window with no measured call reports null rather than 0 — the question
+ * this answers is "what does a steady-state week cost", and a zero would be
+ * a wrong answer where null is an honest "not measured".
+ *
+ * `failed_calls` is separate: a call that timed out or exited non-zero,
+ * regardless of what it measured. exit_code and timed_out are written by
+ * claude-p.mjs on every call but were previously read by nobody here, so a
+ * week in which every call timed out could print a table with no visible
+ * sign of trouble.
+ */
+export function summarizeDaemonCost(rows, nowMs, windowDays = 7) {
+  const cutoff = nowMs - windowDays * 86_400_000;
+  const inWindow = rows.filter((r) => Number(r?.ts) >= cutoff);
+
+  const callsByTask = {};
+  for (const r of inWindow) {
+    const key = r.task_type ?? 'unknown';
+    callsByTask[key] = (callsByTask[key] ?? 0) + 1;
+  }
+
+  const sum = (field) => {
+    const values = inWindow.map((r) => r[field]).filter((v) => typeof v === 'number' && Number.isFinite(v));
+    return values.length ? values.reduce((a, b) => a + b, 0) : null;
+  };
+
+  const durations = inWindow
+    .map((r) => r.wall_clock_ms)
+    .filter((v) => typeof v === 'number' && Number.isFinite(v))
+    .sort((a, b) => a - b);
+
+  return {
+    window_days: windowDays,
+    calls: inWindow.length,
+    calls_by_task: callsByTask,
+    wall_clock_ms: {
+      p50: costPercentile(durations, 0.5),
+      p95: costPercentile(durations, 0.95),
+      max: durations.length ? durations.at(-1) : null
+    },
+    input_tokens: sum('input_tokens'),
+    output_tokens: sum('output_tokens'),
+    total_cost_usd: sum('total_cost_usd'),
+    unmeasured_calls: inWindow.filter(
+      (r) => r.input_tokens == null && r.output_tokens == null && r.total_cost_usd == null
+    ).length,
+    failed_calls: inWindow.filter((r) => r.timed_out === true || (r.exit_code != null && r.exit_code !== 0)).length
+  };
+}
+
 export function cmdDiagnoseFeedback(db, { days = 7 } = {}) {
   const cfg = loadConfig();
   const decisionCfg = cfg.metrics?.decision_data;
@@ -1515,6 +1593,83 @@ export function cmdDiagnoseFeedback(db, { days = 7 } = {}) {
     lines.push('           cannot be shown to clear anything, which is the question v0.13 exists');
     lines.push('           to answer. Check feedback.l25_probe.control_sample_size (default 3).');
   }
+
+  process.stdout.write(`${lines.join('\n')}\n`);
+}
+
+/**
+ * v0.14 W4 read side: what the daemon spent in the trailing window.
+ *
+ * Self-contained like cmdDiagnoseFeedback above, reading its own stream
+ * directly rather than going through cmdAdminDiagnose: daemon-cost.jsonl is
+ * its own file, not DB-backed state. `db` is accepted (and unused) only to
+ * keep the call signature uniform with its sibling diagnose subcommands for
+ * CLI routing.
+ *
+ * "No data" (file missing, or present but with no parseable rows, or with
+ * rows but none inside the window) is always reported as prose, never as a
+ * table of zeros — a zeroed cost table reads as "the daemon is free", and
+ * this outlet exists to give an honest answer to "what did it actually
+ * spend". Lines that fail to JSON.parse are counted and reported, not
+ * silently dropped.
+ */
+export function cmdDiagnoseCost(db, { days = 7 } = {}) {
+  const file = daemonCostFile();
+  let raw;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch {
+    process.stdout.write(`no daemon-cost data yet (${file} not found)\n`);
+    return;
+  }
+
+  const rows = [];
+  let unparseable = 0;
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      unparseable += 1;
+    }
+  }
+  const unparseableNote = unparseable ? ` (${unparseable} unparseable line(s) skipped)` : '';
+
+  if (!rows.length) {
+    process.stdout.write(`no daemon-cost data yet (${file} has no parseable rows${unparseableNote})\n`);
+    return;
+  }
+
+  const summary = summarizeDaemonCost(rows, Date.now(), days);
+
+  if (summary.calls === 0) {
+    process.stdout.write(
+      `no daemon calls in the trailing ${summary.window_days}d (${rows.length} row(s) on disk, all outside the window)${unparseableNote}\n`
+    );
+    return;
+  }
+
+  const lines = [];
+  lines.push(`Daemon cost — trailing ${summary.window_days}d${unparseableNote}`);
+  lines.push(`  calls: ${summary.calls} (${summary.unmeasured_calls} unmeasured)`);
+  lines.push(`  failed_calls: ${summary.failed_calls} (timed out or non-zero exit)`);
+  lines.push(
+    `  by task: ${Object.entries(summary.calls_by_task).map(([task, n]) => `${task}=${n}`).join(', ')}`
+  );
+  lines.push(
+    `  wall_clock_ms: p50=${summary.wall_clock_ms.p50 ?? 'n/a'} p95=${summary.wall_clock_ms.p95 ?? 'n/a'} max=${summary.wall_clock_ms.max ?? 'n/a'}`
+  );
+  // Each of the three usage fields is independently nullable (extractUsage
+  // nulls them one at a time), so each gets its own null check rather than
+  // gating all three off input_tokens — a JSON envelope with usage but no
+  // total_cost_usd, or cost but no usage, must print its measured value(s)
+  // and "not measured" for the rest, never crash and never discard a number.
+  lines.push(
+    `  tokens: input=${summary.input_tokens ?? 'not measured'} output=${summary.output_tokens ?? 'not measured'}`
+  );
+  lines.push(
+    `  total_cost_usd: ${summary.total_cost_usd == null ? 'not measured' : `$${summary.total_cost_usd.toFixed(4)}`}`
+  );
 
   process.stdout.write(`${lines.join('\n')}\n`);
 }

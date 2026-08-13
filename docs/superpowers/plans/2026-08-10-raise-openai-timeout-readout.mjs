@@ -56,6 +56,14 @@ const THRESHOLD_UNROUNDED = SELFCHECK_LO;
 // become a new degree of freedom.
 const THRESHOLD_SENSITIVITY = 0.387;
 
+// Addendum 5.2, ruled 2026-08-13: 38.7% is a DISPLAYED value and carries the
+// same rounding band addendum 1 removed for 40.3%. The unrounded bound is
+// 0.3866305962…, so the band is 0.0369pp — wider than addendum 1's 0.0139pp —
+// and the literal 38.7% is the more permissive side. The rule is now symmetric
+// with addendum 1: compare against both, agreement required, no picking.
+// Frozen here as a literal rather than recomputed, for the same reason z is.
+const THRESHOLD_SENSITIVITY_UNROUNDED = 0.3866305962017976;
+
 // prereg "样本量": n >= 150, extended to 300 if the interval still straddles.
 const N_GATE = 150;
 const N_GATE_EXTENDED = 300;
@@ -234,14 +242,19 @@ function readout(snapshotPath) {
   const vsLiteral = ci.hi < THRESHOLD_LITERAL;
   const vsUnrounded = ci.hi < THRESHOLD_UNROUNDED;
   const vsSensitivity = ci.hi < THRESHOLD_SENSITIVITY;
+  const vsSensitivityUnrounded = ci.hi < THRESHOLD_SENSITIVITY_UNROUNDED;
   console.log(`  vs 40.3% literal        : ${vsLiteral ? 'below' : 'not below'}`);
   console.log(`  vs 40.2862% unrounded   : ${vsUnrounded ? 'below' : 'not below'}`);
   console.log(`  vs 38.7% sensitivity    : ${vsSensitivity ? 'below' : 'not below'}  (addendum 4)`);
+  console.log(`  vs 38.6631% unrounded   : ${vsSensitivityUnrounded ? 'below' : 'not below'}  (addendum 5.2)`);
 
   const straddles = ci.lo <= THRESHOLD_LITERAL && THRESHOLD_LITERAL <= ci.hi;
   if (vsLiteral !== vsUnrounded) {
     console.log('\nVERDICT: 不可判定 — the two readings of the primary threshold disagree');
     console.log('         (addendum 1: 一致才判，不一致就上交). Escalate to the human.');
+  } else if (vsSensitivity !== vsSensitivityUnrounded) {
+    console.log('\nVERDICT: 不可判定 — the two readings of the SENSITIVITY threshold disagree');
+    console.log('         (addendum 5.2, symmetric with addendum 1). Escalate to the human.');
   } else if (vsLiteral !== vsSensitivity) {
     console.log('\nVERDICT: 不可判定 — the primary threshold and the 38.7% sensitivity check');
     console.log('         disagree (addendum 4 ③). Escalate to the human; do not pick one.');
@@ -277,10 +290,17 @@ function reportCriteria(kept, ps) {
 
   const ms = kept.map((r) => r.ms_total).filter((v) => typeof v === 'number').sort((a, b) => a - b);
   const p99 = percentiles(ms, 0.99);
-  console.log(`criterion 2 (p99 > ${C2_BAR_MS}ms): nearest-rank ${p99.nearestRank}, linear ${p99.linear}`);
+  // Addendum 5.1, ruled 2026-08-13: the method is nearest-rank, pinned by
+  // reverse-engineering the frozen baseline p99 of 1945ms — nearest-rank
+  // reproduces it in 360 of 360 (start x row set) combinations, linear
+  // interpolation in zero. The verdict reads nearestRank and nothing else.
+  const hit = p99.nearestRank !== null && p99.nearestRank > C2_BAR_MS;
+  console.log(`criterion 2 (p99 > ${C2_BAR_MS}ms): ${hit ? 'HIT' : 'no hit'}`
+    + `  — nearest-rank ${p99.nearestRank} (binding, addendum 5.1)`);
+  console.log(`  [informational] linear interpolation ${p99.linear} — NOT the criterion`);
   if (p99.nearestRank !== null && ((p99.nearestRank > C2_BAR_MS) !== (p99.linear > C2_BAR_MS))) {
-    console.log('  🔴 the two percentile methods land on OPPOSITE sides of the bar, and the');
-    console.log('     pre-registration never pinned a method => 不可判定, escalate to the human.');
+    console.log('  ⚠️  the two methods land on opposite sides of the bar. Addendum 5.1 pinned');
+    console.log('     nearest-rank, so this is reported, not escalated — the verdict stands.');
   }
   reportCriterion3();
 }
@@ -308,16 +328,26 @@ if (arg === '--selfcheck') {
 }
 
 // ---------------------------------------------------------------------------
-// 🔴 UNRESOLVED, surfaced rather than silently decided (candidates for an
-//    addendum 5, to be ruled BEFORE this script is run against real data):
+// ✅ BOTH formerly-unresolved items were ruled on 2026-08-13 (addendum 5),
+//    before this script was ever run against real data. Nothing is open here.
 //
-// 1. Percentile method is not pinned anywhere in the pre-registration, yet
-//    criterion 2 is a threshold test on p99. This is the same class of gap
-//    addendum 1 closed for z. Handled here by computing both nearest-rank and
-//    linear interpolation and escalating if they straddle the bar — but that is
-//    a report-time guard, not a ruling.
-// 2. Addendum 4 pins the sensitivity threshold as the displayed "38.7%", which
-//    inherits exactly the rounding band addendum 1 identified for 40.3%. The
-//    band is printed by the self-check. Nobody has ruled which value binds if
-//    the upper bound lands inside it.
+// 1. Percentile method — RULED nearest-rank (addendum 5.1). Not a convention:
+//    on the attempts set that reproduces the frozen n=136, nearest-rank gives
+//    p99 = 1945.4 (the frozen 1945) and linear gives 1718.8; across a sweep of
+//    360 (start x row set) combinations nearest-rank reproduces 1945 in all
+//    360 and linear in none. Criterion 2 now reads nearest-rank alone; linear
+//    is still printed, as information.
+//    ⚠️ The same sweep could NOT reproduce the baseline table's p50 924 or p90
+//    1024 under any combination. Those two remain of unknown provenance —
+//    verified are max and p99 only. Criterion 2 uses p99, so this does not
+//    affect the verdict, but do not cite that table as reviewed.
+// 2. The 38.7% rounding band — RULED symmetric with addendum 1 (addendum 5.2):
+//    compare against both 38.7% and the unrounded 0.3866305962…, agreement
+//    required, disagreement escalates. Band is 0.0369pp.
+//
+// This file was frozen on 2026-08-12 and edited on 2026-08-13 to carry those
+// rulings. That is not a break in the freeze: the edit happened before any
+// read-out, and it only closes degrees of freedom. The discipline that makes
+// it legitimate is in addendum 5 — addendum first, script second, self-check
+// re-run, branches re-verified on synthetic data only.
 // ---------------------------------------------------------------------------

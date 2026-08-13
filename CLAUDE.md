@@ -30,7 +30,7 @@ Do NOT use me for: routing, retries, deterministic transforms.
 If code can answer, code answers.
 
 ## Rule 6 — Token budgets are not advisory
-Per-task: 200,000 tokens. Per-session: 450,000 tokens.
+Per-task: 330,000 tokens. Per-session: 450,000 tokens.
 If approaching budget, summarize and start fresh.
 Surface the breach. Do not silently overrun.
 

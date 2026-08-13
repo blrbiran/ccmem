@@ -1847,10 +1847,14 @@ paper 初稿（`ccmem_paper/docs/paper/generated/ccmem-agent-systems-paper.revie
 | 测试 | 内容 | 进 CI？ |
 |---|---|---|
 | A | `config.default.json` 与 `DEFAULT_CONFIG` **值级**一致 | 是 |
-| B | 每个 `DEFAULT_CONFIG` 叶子键**至少有一个消费者** | **先出清单给人类，确认死键名单后再定** |
+| B | 每个 `DEFAULT_CONFIG` 叶子键**至少有一个消费者** | ✅ **清单已出（2026-08-14）**：`specs/2026-08-14-default-config-dead-keys.md`，**8 个死键**。**进不进 CI 待人类定** |
 
 ⚠️ **B 有实现风险**：静态 grep 对动态取键、以及整块传下去的 `cfg.security.tier3` 容易假阴/假阳。
 处置同 W3 的"报告不进 CI、回归进 CI"。
+🆕 **这条担心已于 2026-08-14 被实测坐实 —— 两类都真的发生了**（见 `specs/2026-08-14-default-config-dead-keys.md`）：
+**子串匹配**把 `inject.max_chars` 误判成活的（匹配到了另一个键 `max_chars_per_memory`），**漏掉一个真死键**；
+**路径匹配**在 151 个键里假阴 **87 个**（子树整块传参后路径就消失了）。
+⇒ **测试 B 的判据已定死：叶子键名全词匹配 ＋ 对唯一一处动态取键（`claude-p.mjs:58`）的显式豁免。**
 
 ## 6. 人类已批准的处置方向（2026-08-12），与仍未做的事
 
@@ -1968,6 +1972,11 @@ paper 初稿（`ccmem_paper/docs/paper/generated/ccmem-agent-systems-paper.revie
 
 **仍未做（按建议顺序）：**
 
-- **C 的测试 B 先出死键清单**（只读、不进 CI、零时序影响，窗口期内可做）。
+- ~~**C 的测试 B 先出死键清单**（只读、不进 CI、零时序影响，窗口期内可做）。~~
+  ✅ **已于 2026-08-14 做完** → `docs/superpowers/specs/2026-08-14-default-config-dead-keys.md`。
+  **151 个叶子键里 8 个是死的**（含已知的 `block_user_explicit`）。
+  🔴 **那份文档同时定死了测试 B 该怎么写**：判据必须是**叶子键名全词出现**＋对唯一一处动态取键的显式豁免；
+  **子串匹配漏掉过一个真死键、路径匹配假阴性 87/151** —— ⅩⅢ.5 担心的两类**都真的发生了**。
+  **下一步是人类确认这 8 个的处置**（删 / 接线 / 留），**不要顺手删**。
 - **W1 的 2a/2b 与 W2 覆盖面走 `superpowers:brainstorming` 定稿** → 再走 `writing-plans` 出**三份独立计划**。
 - **W1/W2/W3 一行代码都不写，等窗口关闭。**

@@ -52,6 +52,11 @@ export function evaluateTier3(t2Result, source, options = {})
 
 读 `options.quarantineAllSourcesAtWrite`。
 
+📌 **命名有一次大小写转换，别写混**：配置键是 snake_case 的
+`security.quarantine_all_sources_at_write`，而函数 option 是 camelCase 的
+`quarantineAllSourcesAtWrite`。**转换只发生在调用点 `save.mjs:72` 一处**，
+`evaluateTier3` 内部只认 camelCase，不认配置键名。
+
 - **函数内不 `loadConfig()`** —— 保持纯函数（spec 原稿这条正确，保留）。
 - 用 `options = {}` 而非第三个裸布尔：调用点写 `evaluateTier3(t2, source, true)` 读不出 `true` 是什么。
   `options = {}` 也是本仓库既有写法（`llm-parse.mjs:76`、`claude-p.mjs:199`），符合 Rule 11。
@@ -64,7 +69,7 @@ export function evaluateTier3(t2Result, source, options = {})
 | ≠ `force_demote` | 任意 | 任意 | `allow`（**开关不得扩大入口条件**） |
 | `force_demote` | `user_explicit` / `cron_consolidated` | `false`（默认） | `force_demote`（**与今天逐字节相同**） |
 | `force_demote` | `user_explicit` / `cron_consolidated` | `true` | 落到 evidence 检查 ⇒ `quarantine` |
-| `force_demote` | 其他 source | 任意 | 不受开关影响 |
+| `force_demote` | 其他 source（如 `auto_inferred`） | 任意 | 走 evidence 检查 ⇒ `quarantine`（**今天就是这样，开关不改它**） |
 
 ### 3.4 🔴 一条必须钉住的不变量（W3 会撞它）
 

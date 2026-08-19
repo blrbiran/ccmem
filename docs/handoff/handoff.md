@@ -167,7 +167,12 @@
       `block_user_explicit` 证明只测值级**测不出死键**。
       ✅ **其中测试 B 的第一阶段已做完（2026-08-14）**：死键清单在
       `docs/superpowers/specs/2026-08-14-default-config-dead-keys.md`，**8 个死键**，
-      那份文档同时定死了测试 B 的判据写法。**测试 A 仍未做；8 个键的处置待人类定，不要顺手删。**
+      那份文档同时定死了测试 B 的判据写法。
+      🆕 **测试 A 已于 2026-08-19 写完并验证，但按人类裁决"不合并"** ——
+      在分支 `config-value-parity` 上（`main` 未动）。**窗口关闭后才合并并跑全量套件。**
+      🆕 **8 个键的处置提案已出**：`docs/superpowers/specs/2026-08-19-dead-key-disposition.md`
+      —— **提案把 8 个键分成三类（配置与行为矛盾 / 承诺未实现 / 纯孤儿），处置不该一刀切。**
+      **仍待人类定，仍不要顺手删。**
    **建议 skills**：清单见 **Ⅷ**。🆕 **按下一轮实际要做的事对号入座**：
    ~~裁决候选补遗 5 与~~ W1/W2 定稿走 `superpowers:brainstorming` → `superpowers:writing-plans`（出**三份独立计划**）；
    （📌 **补遗 5 已于 2026-08-13 走 `brainstorming` 裁完**，那一半不再是待办；W1/W2 仍欠。）
@@ -1985,6 +1990,11 @@ paper 初稿（`ccmem_paper/docs/paper/generated/ccmem-agent-systems-paper.revie
   🔴 **那份文档同时定死了测试 B 该怎么写**：判据必须是**叶子键名全词出现**＋对唯一一处动态取键的显式豁免；
   **子串匹配漏掉过一个真死键、路径匹配假阴性 87/151** —— ⅩⅢ.5 担心的两类**都真的发生了**。
   **下一步是人类确认这 8 个的处置**（删 / 接线 / 留），**不要顺手删**。
+  🆕 **2026-08-19 已出处置提案** → `docs/superpowers/specs/2026-08-19-dead-key-disposition.md`
+  （**只给依据与两个方向的代价，不做决定**）。**两条要先看**：
+  ① `like_fallback.max_terms` 是**配置与实际行为直接矛盾**（配置写 5，唯一调用点写死 10）；
+  ② `quarantine.hard_delete_days` 是**一条从未兑现的数据留存承诺**（全仓库无自动硬删路径），
+  **接线它 = 不可逆批量删除**，风险远高于其余 7 个。
 - **W1 的 2a/2b 与 W2 覆盖面走 `superpowers:brainstorming` 定稿** → 再走 `writing-plans` 出**三份独立计划**。
 - **W1/W2/W3 一行代码都不写，等窗口关闭。**
 
@@ -2047,7 +2057,7 @@ paper 初稿（`ccmem_paper/docs/paper/generated/ccmem-agent-systems-paper.revie
 | 事 | 状态 |
 |---|---|
 | **Task 5 读数** | **前置待办为零**，只剩"复制冻结快照 + 跑一次"。**不可逆，人类没点头别按。** |
-| **8 个死键的处置** | 删 / 接线 / 留，**待人类定**。`block_user_explicit` 明确不要顺手删（ⅩⅢ.6 ②） |
+| **8 个死键的处置** | 删 / 接线 / 留，**待人类定**。🆕 **提案已出**（`specs/2026-08-19-dead-key-disposition.md`，分三类）。`block_user_explicit` 明确不要顺手删（ⅩⅢ.6 ②） |
 | **测试 A（值级一致）** | 未做 |
 | **测试 B 落地成测试** | 判据已定死，**进不进 CI 待人类定** |
 | **W1 / W2 定稿** | 仍欠 `brainstorming` → `writing-plans`（三份独立计划）。**一行代码都不写，等窗口关闭** |

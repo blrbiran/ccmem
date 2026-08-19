@@ -186,7 +186,7 @@ git commit -m "feat(security): let evaluateTier3 take a write-time quarantine-al
 ### Task 2: 钉住 W3 会撞的那条不变量
 
 **Files:**
-- Modify: `tests/unit/v014-quarentine-all-sources.test.mjs` → **注意正确路径是** `tests/unit/v014-quarantine-all-sources.test.mjs`（追加，不新建文件）
+- Modify: `tests/unit/v014-quarantine-all-sources.test.mjs`（**追加到 Task 1 建的那个文件，不要新建**）
 
 **Interfaces:**
 - Consumes: Task 1 的 `evaluateTier3` 签名、`evaluateTier2`
@@ -253,7 +253,7 @@ test('不变量：force_demote 蕴含 evidence 非空（W3 改扫描器时这条
 - [ ] **Step 2: 跑测试**
 
 ```bash
-env -y 2>/dev/null; env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v014-quarantine-all-sources.test.mjs
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v014-quarantine-all-sources.test.mjs
 ```
 
 Expected: **PASS**（8 个测试）。
@@ -451,6 +451,11 @@ test('开关打开时：user_explicit 真的被隔离，且三个副作用都发
     embedSync: false
   });
 
+  // insertMemory 的返回值形状（实测 save.mjs:163-169）：
+  // { id, scope, project_key, type, decay_status, embedded, ... }
+  assert.equal(result.decay_status, 'quarantine', '返回值应当也报告隔离状态');
+  assert.equal(result.embedded, false, '返回值的 embedded 应为 false');
+
   const row = db.prepare('SELECT * FROM memories WHERE id = ?').get(result.id);
 
   // ① 状态
@@ -479,7 +484,8 @@ env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --te
 
 Expected: **PASS**（Task 3 已经把线接上了）。
 ⚠️ **若"前提自检"失败**，先解决它再看别的 —— 那说明配置根本没生效，后面三条测的都不是你以为的东西。
-⚠️ **若 `tags` 那条报错说列不存在**，先 `sqlite3` 看一眼 `memories` 表的实际列名再改断言，**不要把断言删掉了事**。
+📌 列名已核实存在（`001_initial.sql`：`tags TEXT`、`trust_score REAL`、`decay_status TEXT`），
+`insertMemory` 的返回值形状也已核实（`save.mjs:163-169`）。若仍报列不存在，说明迁移没跑全，先查迁移，**不要把断言删掉了事**。
 
 - [ ] **Step 3: 证明它会红（必做）**
 
@@ -708,4 +714,5 @@ grep -rn "quarantine_all_sources_at_write" scripts/lib/admin/diagnose.mjs
 函数 option `quarantineAllSourcesAtWrite`（camelCase，boolean）；
 `evaluateTier3(t2Result, source, options = {})` 返回 `{ action }`；
 `insertMemory(db, {...})` 返回带 `.id` 的对象。
-Task 2 的 Files 段一度把测试文件名写成 `v014-quarentine-...`（拼错），**已在该段就地标出正确路径**。
+自查中发现并已修掉三处**计划自身**的缺陷：Task 2 的文件名拼错、Task 2 Step 2 混进一段无意义的 shell 片段、
+Task 4 里 `result.id` 与 `tags` 列当时**尚未核实**（现已核实：`save.mjs:163-169` 与 `001_initial.sql`）。

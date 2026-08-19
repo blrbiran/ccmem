@@ -1830,8 +1830,24 @@ paper 初稿（`ccmem_paper/docs/paper/generated/ccmem-agent-systems-paper.revie
 
 ⇒ **白名单关掉的只是"突发聚类"那条 lane，不是整个审计面。** `lib/tier15.mjs:141` 同理。
 
-**③ 纳入那两处 SQL 的收益近乎零**：两处都是突发探测器（`GROUP BY source` + 同日 + `COUNT>=5` + `trust<0.2`），
-而 `user_explicit` 初始 trust 是 **0.9**（`lib/trust.mjs:4`）⇒ 新写的记忆**够不着 `trust<0.2` 的门槛**。
+**③ 纳入那两处 SQL 的收益近乎零**（🔴 **结论仍成立，但下面这行的理由已于 2026-08-19 更正 —— 它对 pool B 是错的，且推论方向是反的**）：
+
+~~两处都是突发探测器（`GROUP BY source` + 同日 + `COUNT>=5` + `trust<0.2`），
+而 `user_explicit` 初始 trust 是 **0.9**（`lib/trust.mjs:4`）⇒ 新写的记忆**够不着 `trust<0.2` 的门槛**。~~
+
+**更正（2026-08-19 逐处复核源码）**：`COUNT>=5` 与 `trust<0.2` **是 `tier15.mjs:141` 一处的参数**
+（`cfg.security.tier1_5_security.trust_max = 0.2`、`cluster_min_size = 5`），
+上面那行**把它们当成两处共有的**，实际不是：
+
+| 站点 | 真实门槛 | 原说法 |
+|---|---|---|
+| `lib/tier15.mjs:141` | `trust_score < 0.2` + 同源同日 `COUNT >= 5` | ✅ 成立 |
+| `daemon/tasks/security-audit.mjs:78`（pool B） | **无任何 `trust_score` 条件**；只有 source 白名单 + 同源同日 `COUNT(*) >= cfg.pool_b.clusterMinSize = **3**` + 7 天窗 | ❌ **不成立** |
+
+🔴 **而且对 pool B 推论是反的**：`user_explicit` 一天写 **3** 条记忆是家常便饭
+⇒ 若把 pool B 的白名单纳入开关，它**不是"几乎抓不到"，而是"会持续抓到普通用户记忆"**，把 LLM 审计淹掉。
+⇒ **"不纳入"这个结论反而更强，但依据必须是"太容易够着"，不是"够不着"。**
+📌 这条是"结论对、依据错"的又一个实例 —— **引用 ③ 时用更正后的理由，不要用划掉那行。**
 
 ## 4. 🔴 W2：站点覆盖面不能等 harness 回答（**harness 那条 runner 还没写**）
 

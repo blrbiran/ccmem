@@ -28,7 +28,23 @@ spec 里"`user_explicit` 永不 quarantine"这句是对的，但**容易被读�
 |---|---|---|
 | 开关是新东西 | `security.tier3.block_user_explicit` **已存在，声明了十一个版本、零消费者、零测试** | **不接线它**，新增新键并**删掉**它（ⅩⅢ.6 ②） |
 | `user_explicit` 记忆**永不进** LLM 安全审计 | **错**。三个 pool 里只有 pool B(`security-audit.mjs:78`) 有 source 白名单；pool A(`:60-70`) 与 C(`:97-107`) **没有** | spec 就地更正；**审计面不在 W1 范围内** |
-| 应考虑把两处 SQL 白名单一并纳入开关 | **收益近乎零**：两处都是突发探测器，要 `trust < 0.2`，而 `user_explicit` 初始 trust 是 **0.9**（`trust.mjs:4`） | **明确不纳入**，语义收窄为**写入时** |
+| 应考虑把两处 SQL 白名单一并纳入开关 | **不该纳入 —— 但理由与 ⅩⅢ.3 ③ 写的相反**，见 §2.1 | **明确不纳入**，语义收窄为**写入时** |
+
+### 2.1 🔴 更正 ⅩⅢ.3 ③ 的理由（2026-08-19 逐处复核源码）
+
+ⅩⅢ.3 ③ 写「两处都是突发探测器，要 `COUNT>=5` + `trust<0.2`」。**那是 `tier15.mjs:141` 一处的参数，
+被当成了两处共有的。** 逐处核：
+
+| 站点 | 真实门槛 | ⅩⅢ.3 ③ 的说法 |
+|---|---|---|
+| `lib/tier15.mjs:141` | `trust_score < ?` ← `tier1_5_security.trust_max = **0.2**`；同源同日 `COUNT >= cluster_min_size = **5**` | ✅ 成立 |
+| `daemon/tasks/security-audit.mjs:78`（pool B） | **无任何 `trust_score` 条件**；只有 source 白名单 + 同源同日 `COUNT(*) >= cfg.pool_b.clusterMinSize = **3**` + 7 天窗 | ❌ **不成立** |
+
+🔴 **对 pool B，推论方向是反的**：`user_explicit` 一天写 **3** 条记忆是家常便饭
+⇒ 纳入 pool B **不是"几乎抓不到"，而是"会持续抓到普通用户记忆"**，把 LLM 审计淹掉。
+
+⇒ **"不纳入"的结论不但成立，而且更强 —— 但依据是"太容易够着"，不是"够不着"。**
+**引用时用本节，不要用 ⅩⅢ.3 ③ 划掉的那行**（该行已在 handoff 里就地划掉并更正）。
 
 ## 三、设计
 
@@ -71,7 +87,33 @@ export function evaluateTier3(t2Result, source, options = {})
 | `force_demote` | `user_explicit` / `cron_consolidated` | `true` | 落到 evidence 检查 ⇒ `quarantine` |
 | `force_demote` | 其他 source（如 `auto_inferred`） | 任意 | 走 evidence 检查 ⇒ `quarantine`（**今天就是这样，开关不改它**） |
 
-### 3.4 🔴 一条必须钉住的不变量（W3 会撞它）
+### 3.4 🔴 开关打开后**实际发生什么**（比"变成 quarantine"重得多）
+
+§3.3 只说结果是 `quarantine`，**那低估了杀伤力**。`save.mjs:83-88` 那个分支做三件事：
+
+```js
+resolvedDecayStatus = 'quarantine';
+resolvedQuarantinedAt = Date.now();
+trustScore = Math.min(Number(trustScore ?? 0.3), 0.3);   // user_explicit: 0.9 → 0.3
+resolvedTags = uniqueTags([...resolvedTags, 'quarantine_at_write']);
+```
+
+紧接着 `:90-92`：`resolvedDecayStatus === 'quarantine'` ⇒ **`embedding = null`，这条记忆压根不生成向量。**
+
+⇒ 对一条 `user_explicit` 记忆，开关打开的真实后果是：
+
+1. **信任度 0.9 → 0.3**（`trust.mjs` 的初始值被砍掉三分之二）
+2. **永久没有向量** —— 除非日后被 vec-backfill 捞回
+   🔴 **没有向量 = 对 cosine 检索那条 lane 不可见**，而 **W2 / `S-SCOPE-03` 正跑在那条 lane 上**
+3. 打上 `quarantine_at_write` 标签
+
+`cron_consolidated`（初始 trust **0.85**）同理，**而它是合成任务的产物**，写入时被 quarantine 的后果更重。
+
+📌 **本设计不改这三个副作用**（那会把 W1 从"加一个开关"扩成"改 quarantine 语义"，范围明显变大）。
+**但它们必须在设计里可见，并被验收测试断言** —— 人类裁决 2026-08-19。
+**⚠️ 谁要打开这个开关，得先知道自己同时在放弃这些记忆的向量与信任度。**
+
+### 3.5 🔴 一条必须钉住的不变量（W3 会撞它）
 
 fall-through 那里是 `if (Array.isArray(t2Result.evidence) && t2Result.evidence.length > 0)`，否则 `allow`。
 
@@ -93,7 +135,11 @@ fall-through 那里是 `if (Array.isArray(t2Result.evidence) && t2Result.evidenc
 **只加键不证明它活着，等于造第 9 个死键。**
 
 1. **`evaluateTier3` 真值表**（单元）：覆盖 §3.3 那张表的每一行，含默认关时的回归锁。
-2. **不变量测试**（§3.4）。
+2. **不变量测试**（§3.5）。
+   🆕 **2.5 副作用断言**（§3.4）：开关打开写入一条 `user_explicit` 后，断言
+   `decay_status === 'quarantine'`、**`trust_score === 0.3`**、**`embedding IS NULL`**、
+   标签含 `quarantine_at_write`。**只断言"被 quarantine 了"不够** —— 那会让 trust 降级与
+   丢向量这两个后果继续隐形。
 3. **调用点集成测试**：走真实 `save` 路径，开关打开时一条 `user_explicit` 记忆确实被 quarantine。
    **单元测试证明函数对，这条才证明它被接上了。**
 4. **`diagnose` 可见性**：开关处于非默认值时必须报出来 —— 见 §六的 W0 依赖。
@@ -129,8 +175,11 @@ fall-through 那里是 `if (Array.isArray(t2Result.evidence) && t2Result.evidenc
 
 ## 八、效力边界
 
-- §二那张表的"实测"依据是 ⅩⅢ.3，**本设计未重跑那次调查**，只复核了 `evaluateTier3` /
-  `evaluateTier2` / `save.mjs:72` / `trust.mjs:4` 四处源码。
-- §3.4 的"今天不可能"依赖 `evaluateTier2` 当前实现与 `save.mjs` 是唯一调用方
+- §二那张表的"实测"依据是 ⅩⅢ.3。**2026-08-19 的审阅逐处复核了源码，并推翻了 ⅩⅢ.3 ③ 的理由**（见 §2.1）——
+  ⇒ **ⅩⅢ.3 的其余各条同样是二手的，本设计只核过下列站点**：
+  `threat-scan.mjs`（`evaluateTier2` / `evaluateTier3`）、`save.mjs:60-92`、`trust.mjs:1-10`、
+  `tier15.mjs:138-144`、`security-audit.mjs:58-108`、`revalidation.mjs:103-110`、`config.mjs`（tier1_5 / pool_b）。
+  **§二第 2 行（pool A/C 无 source 白名单）本轮已顺带核实成立；第 1 行（死键）沿用 ⅩⅢ.3，未重查。**
+- §3.5 的"今天不可能"依赖 `evaluateTier2` 当前实现与 `save.mjs` 是唯一调用方
   （实测 `evaluateTier3` 全仓库只有这一个调用点）。**`evaluateTier3` 是导出函数**，
   外部若手工构造 `t2Result` 传入，该论证不适用 —— 这正是要把不变量写成测试的原因。

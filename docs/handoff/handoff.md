@@ -1947,10 +1947,26 @@ paper 初稿（`ccmem_paper/docs/paper/generated/ccmem-agent-systems-paper.revie
 
 - `retrieval.mjs` 四处确认在 **`:131 / :150 / :170 / :430`**，与 spec 逐字对得上。
 - 🔴 **`handlers/session-start.mjs:68` 读的是 `injection_cache` 表，不是 `memories`。**
-  真正决定"什么记忆进得了缓存"的是**生产者 `lib/injection-cache.mjs:42`**（`scope='project' AND project_key=?`，
+  ~~真正决定"什么记忆进得了缓存"的是**生产者 `lib/injection-cache.mjs:42`**（`scope='project' AND project_key=?`，
   **比 retrieval 四处更严，连 global 都不含**）。
   ⇒ **只改消费者必然无效**，与 review 抓到的 `:430` 那条同构（"做完了但不起作用"）。
-  ⚠️ **未验证**：只读了那段 SELECT，**没读缓存行是怎么写的、`scope` 怎么赋值** —— 实现计划里必须坐实。
+  ⚠️ **未验证**：只读了那段 SELECT，**没读缓存行是怎么写的、`scope` 怎么赋值** —— 实现计划里必须坐实。~~
+
+  🆕🔴 **2026-08-20 已坐实，上面那段划掉的话理由错、结论也跟着错**（完整取证见
+  `specs/2026-08-20-w2-scope-isolation-switch-design.md` §二）：
+  - `rebuildInjectionCache()` 跑**两条** SELECT、写**两行**：`:16-19` 全部 global 记忆 → `scope='global'` 那一行；
+    `:40-42` 本项目记忆 → `scope='project:<key>'` 那一行。
+    ⇒ **`:42` 不是"更严、连 global 都不含"** —— global 进了**另一行**。
+    拿 `:42` 单独比 retrieval 的 `(scope='global' OR project_key=?)`，是**拿一半比一个整体**。
+  - `injection_cache` 的 DDL 是 **`scope TEXT PRIMARY KEY`**（`001_initial.sql:49`），
+    存的是**按 scope 预渲染好的整块文本**，**不是行级过滤**。
+  - ⇒ **"只改消费者必然无效"是错的**：消费者读全部行**是有效的**（会拼进其他项目的块），
+    限制只是"仅对存在缓存行的项目有效"。
+  - ⇒ **反倒是动生产者代价极高**：缓存按 scope 主键存整块文本，**没有"去掉一个谓词"这种改法**，
+    要支持不隔离就得发明新缓存键并管住 **13 个调用点**。
+  - ⇒ **真正的取舍是"要不要覆盖 session-start"，不是"消费者还是生产者"。**
+    人类 2026-08-20 裁决：**覆盖消费者，不动生产者。**
+  📌 **真实路径是 `scripts/lib/…` 与 `scripts/handlers/…`**，不是上面写的 `lib/…` —— 照上面找会找不到文件。
 - 🔴 **spec 说 W2 覆盖面"取决于评测 harness 实际触发哪些 hook"，而这个事实今天不存在：**
   harness **存在且被 git 跟踪**（`../ccmem_paper/docs/paper/eval/`，1125 个文件），
   但 **`S-SCOPE-03` 只有 fixtures、没有 runner** —— 全仓唯一一条 runner 是 `s-poison-01/run-condition.mjs`。

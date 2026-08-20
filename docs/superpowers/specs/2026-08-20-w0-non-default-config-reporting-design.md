@@ -260,6 +260,10 @@ execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', '--config'], { cwd, env, enc
   | `security.quarantine_all_sources_at_write` | W0 落地时**还不存在**，W1 才加 | W1 加键那一步把 W0 的测试弄红 |
   | `eval.disable_scope_isolation` | W0 落地时**还不存在**，W2 才加 | 同上 |
   ⇒ **规则一句话：W0 的测试对真实 `DEFAULT_CONFIG` 的内容零假设。**
+  ✅ **人类 2026-08-20 放行了唯一一个例外：顶层 `version` 键存在可以假设**
+  （`v013-config-sync.test.mjs` 已经依赖它，不是新耦合；完全零假设就没有"已存在的键"可改，
+  `nonDefault` 那条链路在集成层测不到）。**只放行这一个键，上表三个仍然一个都不许用。**
+  实现细节见计划文件末尾自审记录第 4 条。
   （§3.4 与 §3.5 里出现这几个键**只是文档示例**，不是测试样本。）
 
 ## 七、明确不做

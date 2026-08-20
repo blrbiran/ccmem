@@ -1,7 +1,17 @@
 # ccmem —— Handoff
 
-> 🆕🔴🔴 **最新一轮（2026-08-19）：巡检已补做（断档 5 天）、测试 A 已写、死键处置提案已出、
-> W1 的设计与实现计划已落盘。** 先读 **ⅩⅤ**（本轮总账），再按需回 ⅩⅣ / ⅩⅢ。
+> 🆕🔴🔴 **最新一轮（2026-08-19/20）：巡检回到每日节奏（断档已止）、又抓到一个跨项目负载实例、
+> W0 的设计与实现计划已落盘。** 先读 **ⅩⅥ**（本轮总账），再按需回 ⅩⅤ / ⅩⅢ。
+> **窗口期内还剩的唯一一件事是 W2 的 brainstorming → writing-plans。**
+>
+> 🔴 **原始 `n` 现在是 214**（2026-08-19 23:31 那次巡检）。下面各处写着 200 的是**更早那一次**，
+> 不是过期错误，但**引用"最新的 n"时用 214**。
+>
+> 🔴 **`bin/ccmem` 里是裸 `node`（nvm v22.13.1，无 fts5）** —— Ⅳ.13 原本的措辞会让人踩这个坑，
+> **本轮已就地更正**。spawn CLI 一律 `/usr/local/bin/node` + `<repo>/scripts/cli.mjs`。
+>
+> 🔴🔴 **上一轮（2026-08-19 早）：巡检已补做（断档 5 天）、测试 A 已写、死键处置提案已出、
+> W1 的设计与实现计划已落盘。** 见 **ⅩⅤ**。
 > **本轮未改任何产品代码、未跑任何全量套件、未读任何窗口结局数字、未 push、未删任何分支或 worktree。**
 >
 > 🔴🔴 **接手第一件事仍然是做当天的巡检。** 本轮已补做一次（计划文件末尾那张表的第 4 行）。
@@ -195,6 +205,14 @@
       与 `plans/2026-08-19-w1-quarantine-all-sources.md`）⇒ **W1 不必再走 brainstorming，直接执行即可**，
       🆕 **但 spec 的 W1/W2 两节已被 ⅩⅢ.3/ⅩⅢ.4 推翻若干条，写计划前必须先读 ⅩⅢ。**
       **三条都必须等窗口关闭**（W3 改写入行为、W1/W2 保守起见同等）。见 **Ⅻ.1**。
+      🆕🔴 **W0 的设计与实现计划也已于 2026-08-20 落盘**
+      （`specs/2026-08-20-w0-non-default-config-reporting-design.md` 与
+      `plans/2026-08-20-w0-non-default-config-reporting.md`，6 个任务）⇒
+      **四条里只剩 W2 还欠 brainstorming → writing-plans。**
+      🔴 **W0 也等窗口关闭**（它新增测试、改 `diagnose` 输出 ⇒ 会改套件时序），
+      但**落地顺序上 W0 必须先于 W1**（W1 计划 Task 9 是这条依赖的闸门）。见 **ⅩⅥ.3**。
+      📌 **`docs/ccmem-v0.14-spec.md` 目前还写着"四条互相独立的工作流"、不知道 W0 存在** ——
+      就地更正是 W0 计划的 Task 5，**别在别处重复做**。
    ④ 🆕 **P0#2 已闭合**（ccmem 侧零改动，最后一块 `evaluateTier2` 已核查，见 **ⅩⅢ.7**）；
       **W1/W2 两条仍待 brainstorming** —— 人类已批准处置方向，见 **ⅩⅢ.6**。
       **W1 涉及删一个配置键，不要顺手做掉。**
@@ -213,8 +231,10 @@
       **仍待人类定，仍不要顺手删。**
    **建议 skills**：清单见 **Ⅷ**。🆕 **按下一轮实际要做的事对号入座**：
    ~~裁决候选补遗 5 与~~ ~~W1/W2 定稿走 `superpowers:brainstorming` → `superpowers:writing-plans`（出**三份独立计划**）~~
-   ⬆️ **已部分完成（2026-08-19）**：**W1 走完了 brainstorming → writing-plans，计划已落盘**；
-   **仍欠 W0 与 W2 两份**（计划总数由三份改为四份，见 ⅩⅤ.5）。
+   ⬆️ ~~**已部分完成（2026-08-19）**：**W1 走完了 brainstorming → writing-plans，计划已落盘**；
+   **仍欠 W0 与 W2 两份**（计划总数由三份改为四份，见 ⅩⅤ.5）。~~
+   ⬆️ **上面那行已被 2026-08-20 更新**：**W0 也走完了 brainstorming → writing-plans**（见 ⅩⅥ.3）
+   ⇒ **四份里只欠 W2 一份。**
    （📌 **补遗 5 已于 2026-08-13 走 `brainstorming` 裁完**，那一半不再是待办；W1/W2 仍欠。）
    窗口关闭后动代码走 `superpowers:subagent-driven-development` + **独立整分支 review**；
    宣布"做完了"之前走 `superpowers:verification-before-completion`（本轮四次结论全部先取证后下判断）。
@@ -622,7 +642,19 @@ Important 是：**seam 只在"SQL 同时含 `FROM daemon_lock` 和 `holder_pid`"
     ⇒ 每个工作时段的**第一个样本可能比第一次 prompt 晚最多 5 分钟**。
 12. **mode 为 `off` 时 `mainLoop` 在调用 `scheduleCronTasks` 之前就 `continue`**。
     ⇒ **任何 cron 类功能"配置全对却不工作"，先查 mode。**（但它是排查顺位第一，不是默认答案。）
-13. **被测二进制要显式跑目标 checkout 的 `./bin/ccmem`** —— PATH 上的 `ccmem` 指向主仓库。
+13. **被测 CLI 要显式跑目标 checkout 的那一份** —— PATH 上的 `ccmem` 指向主仓库。
+    🔴 **2026-08-20 更正：本条原写"要显式跑 `./bin/ccmem`"，那句照字面做会撞上 Ⅳ.2/Ⅳ.20。**
+    `bin/ccmem` 最后一行是 `exec node --no-warnings --experimental-sqlite "$DIR/../scripts/cli.mjs" "$@"`
+    —— **它 exec 的是裸 `node`，即 nvm v22.13.1（无 fts5）**，不是 `/usr/local/bin/node`。
+    ✅ **既有两个测试文件的正确写法（照抄它，别走 `bin/ccmem`）**：
+    ```js
+    const NODE = '/usr/local/bin/node';
+    const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+    const CLI  = path.join(ROOT, 'scripts/cli.mjs');
+    execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', ...], { cwd, env, encoding: 'utf8' });
+    ```
+    见 `tests/integration/admin-diagnose-command.test.mjs:20-22` 与 `v014-diagnose-cost.test.mjs`。
+    本条要挡的是"用 PATH 上的 `ccmem`"，这样写同样挡住，且不违反 Ⅳ.2。
 14. **`restartDaemon` 没有导出**，只有 `cmdAdminDaemon(db, { verb })` 导出。要驱动它只能走这个入口。
 15. **launchd 的 stop 路径根本不 `waitFor`** —— `bootoutDaemon()` 之后直接返回。
     ⇒ 谈"stop 等待"时先确认你说的是哪条安装路径。
@@ -2277,3 +2309,132 @@ paper 初稿（`ccmem_paper/docs/paper/generated/ccmem-agent-systems-paper.revie
   提交信息宣称"已修"而实际未修（已由下一个提交更正并说明）。
   ⇒ **教训：`python - <<EOF` 里"全部替换完再一次性写盘"的写法，一处 anchor 不匹配就会静默丢掉所有编辑；
   提交前先 `git diff --stat` 确认改动真的存在，不要把"命令退出了"当成"改动落盘了"。**
+
+---
+
+# ⅩⅥ. 2026-08-19/20：巡检回到每日节奏、第二个跨项目负载实例、W0 设计与计划落盘
+
+> **本轮零产品代码改动、零全量套件、零窗口读数、未 push、未删任何分支或 worktree。**
+> **产物全是 docs**：一条巡检记录、一份 W0 设计、一份 W0 实现计划，外加三处就地更正。
+
+## 1. 巡检第 5 次（2026-08-19 23:31，间隔 23.4 h，**断档已止**）
+
+完整记录在 `plans/2026-08-10-raise-openai-timeout.md` 末尾（提交标题
+`docs(plan): log the 2026-08-19 23:31 inspection …`）。要点：
+
+- **本窗口第一次真正"每日"且无断档** —— 前两次断档是 46.6 h 与 121.0 h。
+- 判据 1 **0 命中**；判据 2 **0 条 >3000ms**、max **2864.04ms 仍未变**、>2000ms 仍 **4 条逐条相同**；
+  新增 50 行 / 25 次 `prompt_submit`，**0 条新的 >2000ms** ⇒ **"高值稀疏、未见上移"连续三次成立。**
+- 判据 3 照写**不可操作化、未执行**。
+- 🔴 **原始 `n` = 214**（未剔除，**不是闸门值**）。**原始 n 越过 150/200/214 都不等于闸门开了。**
+- **尺子自检**：截止时刻卡回 `00:08` 逐项复现 `583 / 281 / n=200 / 4 条 / max 2864.040875`。
+- 📌 **活文件漂移当场量到**：跑完时 7129 行，几分钟后 7130 行 —— **Task 5 读数必须先冻结快照，别省。**
+
+## 2. 🔴 第二个跨项目负载实例 —— 比 `tsc` 那例重，且与巡检**同时**发生
+
+ⅩⅤ.2 那条（`metrics.jsonl` 全局、每行不带 project 归属）**本轮再次被实证**：
+
+- `2026-08-19 23:30:15 → 23:32:21`，`~/.npm/_logs/` 现存 11 份日志**全部**是
+  `npm exec --yes --package @playwright/cli -- playwright-cli …`，
+  **cwd 全是 `/Users/biran/project/yan/HFUT_devmgmt_system`** —— 不是本仓库。
+- 它**驱动真实浏览器 + 一个 `localhost:3000` 的 dev server**，且每次 `npm exec --yes` 过 registry
+  ⇒ **持续、多进程的本机负载**，**与本窗口 `23:00` 那一小时的 10 次 `prompt_submit` 重叠**。
+
+⚠️ **不触发窄义剔除**（只剔本仓库全量套件运行期 +60s）⇒ **批次表不动。**
+🔴 **但读数报告必须把它和 `00:11` 那条 `tsc` 一起写** —— 两次巡检两次抓到，**外来负载是常态。**
+
+📌 顺带给两条效力边界补了实证：那 11 条 playwright **一条都没进 `~/.zsh_history`**
+（⇒ zsh_history 排除不了 agent 驱动，这条边界现在有实例了）；
+`~/.npm/_logs/` 这次是**正向**证据可用，**反向仍零效力**（`logs-max=10`）——
+**别因为这次能用就把上次那条 "absence ≠ evidence" 翻过来。**
+
+## 3. W0：设计 + 实现计划都已落盘（**一行代码未写**）
+
+- 设计：`specs/2026-08-20-w0-non-default-config-reporting-design.md`
+- 计划：`plans/2026-08-20-w0-non-default-config-reporting.md`（**6 个任务，35 步**）
+
+**四条由人类 2026-08-20 裁决的口径：**
+
+| # | 裁决 | 关键理由 |
+|---|---|---|
+| 1 | **值级 diff**（`loadConfig()` 结果 vs `DEFAULT_CONFIG`），值不同才算 | 否掉文件级（要改 `loadConfig` 返回形状）与生效级（`config_kv` 是运行时状态，与操作员意图不是一回事） |
+| 2 | 🔴 **只报键路径，永不报值** | `openai_api_key` / `jina_api_key` 一设置就是非默认键；**denylist 漏一个 = 凭据打到 stdout**，而"没人维护的名单会烂"刚被 8 个死键证明过 |
+| 3 | **默认输出一行摘要 + 新增 `--config` 全量** | 只在 flag 下报 ⇒ 没人传就等于不存在；默认展开全量 ⇒ 那 4 行长度失控 |
+| 4 | **未知键一并报，单独一组** | 同一次遍历天然产出；**W1 删死键后用户 config 里的残留正好被它接住** |
+
+✅ **另一条裁决（2026-08-20）**：计划对 spec §六"测试对真实 `DEFAULT_CONFIG` 零假设"
+**放行唯一一个例外 —— 顶层 `version` 键存在可以假设**（`v013-config-sync` 已依赖它）。
+🔴 **只放行这一个键**：`security.tier3.block_user_explicit`（W1 会删）、
+`security.quarantine_all_sources_at_write`（W1 才加）、`eval.disable_scope_isolation`（W2 才加）
+**仍然一个都不许在 W0 的测试里用** —— 用了就会被 W1/W2 的那一步弄红。
+
+### 3.1 设计里三条是**读源码撞出来的**，不是推的
+
+1. 🔴 **`config.default.json` 有 2 个 `_comment` 键而 `DEFAULT_CONFIG` 一个都没有**（JSON 带不了注释）。
+   而 `config.default.json` 正是给用户抄的模板 ⇒ **凡是从模板起手的 `config.json` 都会被报成 2 个 unknown key。**
+   沿用测试 A 的 `_` 前缀跳过约定，**不另立**。
+2. **`mergeConfig` 的两条行为**：标量覆盖对象会**整个换掉子树**（子路径真的消失）；
+   而 **`null` 会经 `override ?? base` 回落成 base** ⇒ **null 清空不了一个子树**，别按直觉理解。
+3. **`npm test` 全轮共用一个 `CCMEM_DATA_ROOT`** ⇒ 往里写 `config.json` 会**跨文件污染**。
+   绕法**照仓库既有 pattern**（模块级 `mkdtemp` + 覆盖 `process.env.CCMEM_DATA_ROOT`，
+   靠 `node --test` 每文件独立进程隔离），**不自己发明**。
+
+### 3.2 🔴 设计审阅抓到的一条 Critical（已改进仓库）
+
+**spec 原稿把两条"硬约束"并排写着，而它们互相矛盾**：Ⅳ.2/Ⅳ.20 要求显式 `/usr/local/bin/node`，
+Ⅳ.13 要求跑 `./bin/ccmem` —— 但 **`bin/ccmem` 最后一行 `exec node …`，用的正是那个裸 `node`**。
+✅ 改成照既有测试的写法（`NODE` + `ROOT/scripts/cli.mjs`，绕开 `bin/ccmem`），
+**且 §四判据 3 与 §五两处一起改**，没有只改一处。
+🔴 **同时把 handoff Ⅳ.13 本身就地改了**（本轮，见上文 Ⅳ.13）—— 那句措辞是这次矛盾的源头。
+
+另有 3 条 Important 也已改：分类表缺「`base` 有、`cfg` 没有」那一行（production 不可能、
+**但测试注入合成 cfg 时是常态**，两节原本互相打架）；测试绕法与仓库既有解法不一致；
+**判据 2 注入 cfg ⇒ 永不走 `loadConfig → collectConfigDeltas` 真链，只有判据 3 走**，
+已写明分工并**禁止把判据 3 改成 in-process**。
+
+### 3.3 计划的几个刻意设计
+
+- **每个测试任务的"故意改坏"都写死了必须红的测试名与红的内容** —— 不是"确认变红"四个字。
+  Task 3 那处尤其点明：**改坏后第三条测试仍然绿**，这正是判据 4（干净配置下也要报）存在的理由。
+- **Task 5 不含代码**：把 W0 接进 `docs/ccmem-v0.14-spec.md`（那份 spec 现在还写着"四条互相独立的工作流"，
+  **它不知道 W0 存在**），**独立提交便于单独回滚**，且验证步骤是
+  `grep -n '四条互相独立'` **必须无输出** —— 验的是"旧措辞真的被就地改掉"，不是"新说法被追加在别处"。
+- **Task 6 不产生功能代码**：全量套件 + **当场记批次窗口** + 对 W1 的交接闸门，
+  并明写**不许在这里实现 W1 的任何东西**。
+
+## 4. 本轮的状态变化（相对 ⅩⅤ）
+
+| 项 | ⅩⅤ（08-19 早） | 现在 |
+|---|---|---|
+| 巡检 | 第 4 次，断档 121.0 h | **第 5 次，间隔 23.4 h，断档已止** |
+| 原始 `n` | 200 | **214** |
+| 跨项目负载实例 | 1 个（`tsc`） | **2 个**（+ playwright 驱动浏览器） |
+| 窗口期内待做的计划 | W0 与 W2 各欠一份 | **只欠 W2**（W0 设计 + 计划均已落盘） |
+| handoff Ⅳ.13 | 措辞会误导 | **已就地更正** |
+
+## 5. 下一轮怎么接（**执行顺序**）
+
+1. **每天巡检**（判据 1、2 + 原始 `n`），照 `plans/2026-08-10-raise-openai-timeout.md` 末尾那节做。
+   **判据 3 照写"未执行"。断档刚止住，别再让它断。**
+2. **窗口仍开着**：读数那一按**不可逆，人类没点头别按**；**W0/W1/W2/W3 一行代码都别写**；
+   8 个死键别删；测试 A（分支 `config-value-parity`）别合并。
+   🔴 **按之前要在看到区间之前决定**：`08-14…08-18` 那段是否保守回退（原始 `n` 200 → 178）。
+3. **窗口期内还剩的唯一一件**：**W2 走 `superpowers:brainstorming` → `writing-plans`**。
+   ⚠️ **写 W2 计划前必读 ⅩⅢ.4**（站点覆盖面不能等 harness；`session-start.mjs:68` 是消费者，
+   真正决定什么进缓存的是生产者 `injection-cache.mjs:42`）。
+   📌 **W2 的"diagnose 上报"那部分工作量已经不属于它了** —— W0 接管，见 ⅩⅥ.3。
+4. **窗口关闭后的执行顺序**：**W0 先落**（它是 W1 判据 4 的前置件），再 W1，再 W2/W3。
+   执行方式已定：**`superpowers:subagent-driven-development`**（人类 2026-08-19 选定），
+   W0 与 W1 两份计划都是按这个方式写的。
+5. 宣布"做完了"之前走 `superpowers:verification-before-completion`。
+
+## 6. 效力边界
+
+- ⅩⅥ.1 的巡检读的是**活文件**，不是冻结快照 —— 对判据 1/2 可接受，**Task 5 读数仍必须先冻结**。
+- ⅩⅥ.2 的 playwright 实例是**直接观测**（`~/.npm/_logs/` 逐份读了 argv 与 cwd），不是推断。
+  但**它证明的是"外来负载存在"，不是"断档期具体跑过什么"** —— 那一段仍是"证据倾向 + 人类确认"。
+- ⅩⅥ.3 的设计结论**逐处复核过源码**（`config.mjs` / `paths.mjs` / `cli.mjs` / `bin/ccmem` /
+  `admin/diagnose.mjs` / `config.default.json` / 分支 `config-value-parity` 上的测试 A）。
+  **计划里的行号是写作当时的，会漂** —— 计划里给的每个插入点都同时写了符号名或上下文锚点，**按那个找**。
+- 🔴 **本轮未跑任何测试**（全量与单文件都没有），**所以计划里那些代码一行都没有被执行过。**
+  它们是**照着源码写的、未运行的**代码。**执行时按 TDD 步骤走，别假设它们能直接跑通。**

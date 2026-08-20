@@ -968,10 +968,15 @@ env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node scri
 **转换点唯一，就在 Task 2 Step 3d**，且已在 Task 2 的 Interfaces 段显式点名，
 避免实现者在 Task 3 里去找一个叫 `nonDefault` 的字段。
 
-**4. 一条对 spec 的已知收窄（**故意的，写出来供人类裁决**）**：
+**4. 一条对 spec 的已知收窄 —— ✅ 人类已裁决（2026-08-20）：保留**：
 spec §六 要求"测试对真实 `DEFAULT_CONFIG` 零假设"。本计划**保留了一个假设：顶层 `version` 键存在**
 （Task 2、Task 3、Task 4 都用它当"改一个已存在的键"的样本）。
 理由：`tests/unit/v013-config-sync.test.mjs` 已经依赖 `version`，这不是新引入的耦合；
 而完全零假设就没有任何"已存在的键"可改，`nonDefault` 那条链路在集成层就测不到了。
-**若人类不接受这个收窄**，替代方案是在集成测试里运行时挑一个叶子来改，
-代价是测试变得难读、且失败时不知道改的是哪个键。
+~~**若人类不接受这个收窄**，替代方案是在集成测试里运行时挑一个叶子来改，
+代价是测试变得难读、且失败时不知道改的是哪个键。~~
+✅ **裁决：采纳保留**（人类 2026-08-20）。⇒ **spec §六"零假设"那句要按这条读成
+"除顶层 `version` 外零假设"**，实现时不必再问。**替代方案不执行。**
+🔴 **但那三个受保护的真键仍然一个都不许用**（`security.tier3.block_user_explicit` /
+`security.quarantine_all_sources_at_write` / `eval.disable_scope_isolation`）——
+本裁决只放行 `version` 一个键，**不是把"零假设"整条废掉。**

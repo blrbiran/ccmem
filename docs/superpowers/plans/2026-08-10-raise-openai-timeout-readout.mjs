@@ -12,7 +12,7 @@
 //
 // It implements, and does not extend:
 //   …-prereg.md            the frozen pre-registration (byte-unchanged)
-//   …-prereg-addendum.md   addenda 1-4 (all ruled and in effect)
+//   …-prereg-addendum.md   addenda 1-6 (all ruled and in effect)
 //   …-raise-openai-timeout.md  the batch-window table and the daily inspections
 //
 // If you find yourself editing a constant below at read-out time, stop: that is
@@ -98,6 +98,21 @@ const BATCH_WINDOWS = [
   from: new Date(from).getTime() - EXCLUSION_BUFFER_MS,
   to: new Date(to).getTime() + EXCLUSION_BUFFER_MS
 }));
+
+// Addendum 6, ruled 2026-08-20: the 08-14..08-18 inspection blackout. The
+// primary arm KEEPS it (the human's 2026-08-19 ruling stands); a second,
+// mandatory arm drops it on top of the narrow-sense exclusion, and the verdict
+// is declared only when both arms agree. This is not a new kind of rule — it is
+// addendum 4 (3) and addendum 5.2 (3) applied to a second axis: which rows enter
+// the analysis, rather than which threshold they are compared against.
+//
+// Half-open on purpose: a closed interval would count the 08-19 00:00:00.000
+// millisecond on both sides. Pinned as a literal, never recomputed at read-out:
+// the plan file measured this segment at -22 real attempts on 2026-08-19 and an
+// independent script reproduced exactly 22 on 2026-08-20, so the boundary is
+// known not to have drifted. Editing it here is the move addendum 6 forbids.
+const BLACKOUT_FROM = new Date('2026-08-14T00:00:00+08:00').getTime(); // 1786636800000
+const BLACKOUT_TO = new Date('2026-08-19T00:00:00+08:00').getTime();   // 1787068800000
 
 // ---------------------------------------------------------------------------
 // Wilson score interval — addendum 1's formula, verbatim. No variant.
@@ -186,7 +201,68 @@ function loadSnapshot(snapshotPath) {
 }
 
 const inExcluded = (ts) => BATCH_WINDOWS.some((w) => ts >= w.from && ts <= w.to);
+const inBlackout = (ts) => ts >= BLACKOUT_FROM && ts < BLACKOUT_TO;
 const pct = (x) => `${(x * 100).toFixed(4)}%`;
+
+// ---------------------------------------------------------------------------
+// Addendum 6: both arms must be counted and judged by identical code, or the
+// comparison between them means nothing. These two functions are that code.
+// ---------------------------------------------------------------------------
+
+// IV.23: 真实尝试 = (A − 缓存命中) + B-fail; B-circuit / B-off never enter the
+// denominator. Cache hits never reached the provider.
+function attempts(kept) {
+  const ps = kept.filter((r) => r.hook === 'prompt_submit');
+  const aRows = ps.filter((r) => r.retrieval_path === 'A');
+  const aCacheHits = aRows.filter((r) => r.retrieval_embed_ms === 0);
+  const aReal = aRows.filter((r) => r.retrieval_embed_ms !== 0);
+  const bFail = ps.filter((r) => r.retrieval_path === 'B-fail');
+  return { ps, aCacheHits, aReal, bFail, n: aReal.length + bFail.length };
+}
+
+// One arm's verdict. Every threshold reading below predates addendum 6 and is
+// unchanged; addendum 6 only makes this run twice.
+function armVerdict(k, n) {
+  if (n < N_GATE) return { label: '数据不足', why: `n = ${n} < ${N_GATE}`, k, n, ci: null };
+  const ci = wilson(k, n);
+  const vsLiteral = ci.hi < THRESHOLD_LITERAL;
+  const vsUnrounded = ci.hi < THRESHOLD_UNROUNDED;
+  const vsSensitivity = ci.hi < THRESHOLD_SENSITIVITY;
+  const vsSensitivityUnrounded = ci.hi < THRESHOLD_SENSITIVITY_UNROUNDED;
+  const straddles = ci.lo <= THRESHOLD_LITERAL && THRESHOLD_LITERAL <= ci.hi;
+  const base = { k, n, ci, vsLiteral, vsUnrounded, vsSensitivity, vsSensitivityUnrounded };
+  if (vsLiteral !== vsUnrounded) {
+    return { ...base, label: '不可判定', why: 'the two readings of the primary threshold disagree (addendum 1)' };
+  }
+  if (vsSensitivity !== vsSensitivityUnrounded) {
+    return { ...base, label: '不可判定', why: 'the two readings of the SENSITIVITY threshold disagree (addendum 5.2)' };
+  }
+  if (vsLiteral !== vsSensitivity) {
+    return { ...base, label: '不可判定', why: 'primary threshold and the 38.7% sensitivity check disagree (addendum 4 ③)' };
+  }
+  if (vsLiteral) return { ...base, label: '达成', why: 'upper bound below every threshold read' };
+  if (straddles && n < N_GATE_EXTENDED) {
+    return { ...base, label: '延长', why: `interval still straddles 40.3% and n = ${n} < ${N_GATE_EXTENDED}` };
+  }
+  return { ...base, label: '未达成', why: '效果不足以与基线区分' };
+}
+
+function printArm(title, v) {
+  console.log(`\n--- ${title} ---`);
+  if (v.ci === null) {
+    console.log(`n                   : ${v.n}   数据不足 — ${v.why}.`);
+    console.log('  No truncation rate and no interval printed for this arm (gate, addendum 6).');
+    return;
+  }
+  console.log(`truncation rate     : ${v.k}/${v.n} = ${pct(v.k / v.n)}`);
+  console.log(`Wilson 95%          : [${pct(v.ci.lo)}, ${pct(v.ci.hi)}]`);
+  console.log(`upper bound         : ${pct(v.ci.hi)}   (4 decimals, never the rounded display)`);
+  console.log(`  vs 40.3% literal        : ${v.vsLiteral ? 'below' : 'not below'}`);
+  console.log(`  vs 40.2862% unrounded   : ${v.vsUnrounded ? 'below' : 'not below'}`);
+  console.log(`  vs 38.7% sensitivity    : ${v.vsSensitivity ? 'below' : 'not below'}  (addendum 4)`);
+  console.log(`  vs 38.6631% unrounded   : ${v.vsSensitivityUnrounded ? 'below' : 'not below'}  (addendum 5.2)`);
+  console.log(`arm verdict         : ${v.label}${v.why ? ` — ${v.why}` : ''}`);
+}
 
 // ---------------------------------------------------------------------------
 // Read-out
@@ -209,17 +285,19 @@ function readout(snapshotPath) {
   console.log(`rows in window      : ${inWindow.length} -> ${kept.length} after exclusion (${dropped} dropped)`);
 
   // --- attempts, on the POST-exclusion set (addendum 3) ---------------------
-  const ps = kept.filter((r) => r.hook === 'prompt_submit');
-  const aRows = ps.filter((r) => r.retrieval_path === 'A');
-  const aCacheHits = aRows.filter((r) => r.retrieval_embed_ms === 0);
-  const aReal = aRows.filter((r) => r.retrieval_embed_ms !== 0);
-  const bFail = ps.filter((r) => r.retrieval_path === 'B-fail');
-  // IV.23: 真实尝试 = (A − 缓存命中) + B-fail; B-circuit / B-off never enter the
-  // denominator. Cache hits never reached the provider.
-  const n = aReal.length + bFail.length;
+  const A = attempts(kept);
+  const { ps, aCacheHits, aReal, bFail, n } = A;
+
+  // Addendum 6: the sensitivity arm drops the 08-14..08-18 blackout ON TOP of
+  // the narrow-sense exclusion. Never instead of it.
+  const keptB = kept.filter((r) => !inBlackout(r.ts));
+  const B = attempts(keptB);
 
   console.log('\n=== unlock gate ===');
   console.log(`n (post-exclusion)  : ${n}   gate ${N_GATE}`);
+  console.log(`  arm A (primary)   : ${n}   blackout 08-14..08-18 KEPT (human ruling 2026-08-19)`);
+  console.log(`  arm B (addendum 6): ${B.n}   blackout dropped (${kept.length - keptB.length} rows, ${n - B.n} attempts)`);
+  console.log('  The gate is evaluated on arm A (addendum 3); arm B is a sensitivity arm.');
 
   reportCriteria(kept, ps);
 
@@ -230,41 +308,26 @@ function readout(snapshotPath) {
     return;
   }
 
-  // --- primary outcome ------------------------------------------------------
-  const k = bFail.length;
-  const rate = k / n;
-  const ci = wilson(k, n);
-  console.log('\n=== primary outcome (止血) ===');
-  console.log(`truncation rate     : ${k}/${n} = ${pct(rate)}`);
-  console.log(`Wilson 95%          : [${pct(ci.lo)}, ${pct(ci.hi)}]`);
-  console.log(`upper bound         : ${pct(ci.hi)}   (4 decimals, never the rounded display)`);
+  // --- primary outcome, both arms (addendum 6) ------------------------------
+  const vA = armVerdict(bFail.length, n);
+  const vB = armVerdict(B.bFail.length, B.n);
+  console.log('\n=== primary outcome (止血) — TWO ARMS, addendum 6: 一致才判 ===');
+  printArm('arm A (primary — blackout kept)', vA);
+  printArm('arm B (sensitivity — blackout dropped)', vB);
 
-  const vsLiteral = ci.hi < THRESHOLD_LITERAL;
-  const vsUnrounded = ci.hi < THRESHOLD_UNROUNDED;
-  const vsSensitivity = ci.hi < THRESHOLD_SENSITIVITY;
-  const vsSensitivityUnrounded = ci.hi < THRESHOLD_SENSITIVITY_UNROUNDED;
-  console.log(`  vs 40.3% literal        : ${vsLiteral ? 'below' : 'not below'}`);
-  console.log(`  vs 40.2862% unrounded   : ${vsUnrounded ? 'below' : 'not below'}`);
-  console.log(`  vs 38.7% sensitivity    : ${vsSensitivity ? 'below' : 'not below'}  (addendum 4)`);
-  console.log(`  vs 38.6631% unrounded   : ${vsSensitivityUnrounded ? 'below' : 'not below'}  (addendum 5.2)`);
-
-  const straddles = ci.lo <= THRESHOLD_LITERAL && THRESHOLD_LITERAL <= ci.hi;
-  if (vsLiteral !== vsUnrounded) {
-    console.log('\nVERDICT: 不可判定 — the two readings of the primary threshold disagree');
-    console.log('         (addendum 1: 一致才判，不一致就上交). Escalate to the human.');
-  } else if (vsSensitivity !== vsSensitivityUnrounded) {
-    console.log('\nVERDICT: 不可判定 — the two readings of the SENSITIVITY threshold disagree');
-    console.log('         (addendum 5.2, symmetric with addendum 1). Escalate to the human.');
-  } else if (vsLiteral !== vsSensitivity) {
-    console.log('\nVERDICT: 不可判定 — the primary threshold and the 38.7% sensitivity check');
-    console.log('         disagree (addendum 4 ③). Escalate to the human; do not pick one.');
-  } else if (vsLiteral) {
-    console.log('\nVERDICT: 达成 — 抬超时确实止住了血 (upper bound below every threshold read).');
-  } else if (straddles && n < N_GATE_EXTENDED) {
-    console.log(`\nVERDICT: 延长 — the interval still straddles 40.3% and n = ${n} < ${N_GATE_EXTENDED}.`);
+  if (vA.label !== vB.label) {
+    console.log('\nVERDICT: 不可判定 — the two arms disagree');
+    console.log(`         (arm A: ${vA.label}; arm B: ${vB.label}). Addendum 6 ③: 不许择一宣布.`);
+    console.log('         Escalate to the human.');
+  } else if (vA.label === '达成') {
+    console.log('\nVERDICT: 达成 — 抬超时确实止住了血 (both arms, upper bound below every threshold read).');
+  } else if (vA.label === '延长') {
+    console.log(`\nVERDICT: 延长 — both arms straddle 40.3% below n = ${N_GATE_EXTENDED}.`);
     console.log('         The pre-registration requires extending the window, NOT concluding now.');
+  } else if (vA.label === '未达成') {
+    console.log('\nVERDICT: 未达成 — 效果不足以与基线区分。不许改读点估计。(both arms)');
   } else {
-    console.log('\nVERDICT: 未达成 — 效果不足以与基线区分。不许改读点估计。');
+    console.log(`\nVERDICT: ${vA.label} — both arms agree. ${vA.why}. Escalate to the human.`);
   }
 
   // --- secondary outcome (the round's real product) -------------------------
@@ -345,9 +408,23 @@ if (arg === '--selfcheck') {
 //    compare against both 38.7% and the unrounded 0.3866305962…, agreement
 //    required, disagreement escalates. Band is 0.0369pp.
 //
-// This file was frozen on 2026-08-12 and edited on 2026-08-13 to carry those
-// rulings. That is not a break in the freeze: the edit happened before any
-// read-out, and it only closes degrees of freedom. The discipline that makes
-// it legitimate is in addendum 5 — addendum first, script second, self-check
-// re-run, branches re-verified on synthetic data only.
+// 3. Whether the 08-14..08-18 inspection blackout is dropped — RULED on
+//    2026-08-20 (addendum 6) into a two-arm sensitivity check rather than a
+//    pick: arm A keeps the segment (the human's 08-19 ruling stands), arm B
+//    drops it on top of the narrow-sense exclusion, and a verdict is declared
+//    only when both arms agree. Same shape as addendum 4 (3) and 5.2 (3),
+//    applied to a second axis — which rows enter, not which threshold they
+//    meet. It RAISES P(不可判定); that was stated and accepted before the read.
+//
+// This file was frozen on 2026-08-12 and edited on 2026-08-13 and 2026-08-20 to
+// carry those rulings. That is not a break in the freeze: every edit happened
+// before any read-out, and each only closes degrees of freedom. The discipline
+// that makes it legitimate is in addendum 5 — addendum first, script second,
+// self-check re-run, branches re-verified on synthetic data only.
+//
+// The 2026-08-20 edit additionally proved itself behaviour-preserving for arm
+// A: the pre-edit script and this one produce byte-identical gate, abort
+// criteria, primary and secondary output on four synthetic snapshots spanning
+// 达成 / 未达成 / arms-disagree / arm-B-below-gate. Addendum 6 only ADDS an arm;
+// Z, all four thresholds, BATCH_WINDOWS and arm A's row set are untouched.
 // ---------------------------------------------------------------------------

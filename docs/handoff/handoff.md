@@ -34,7 +34,9 @@
 > 🆕🔴🔴 **2026-08-21 更正一句本文档到处都在写的话：「未 push」只对"我没推"成立，
 > 对"远端没有这些提交"不成立。** `.git/logs/refs/remotes/origin/main` 记着 08-19 以来
 > **6 次 `update by push`**，最近一次 **`2026-08-21 00:25:01`** ⇒ 写着"未 push"的那几轮，
-> **提交早已在 `origin` 上**（本地 `main` 现在只 **ahead 1**，就是 ⅩⅦ 那轮的 handoff 提交本身）。
+> **写着"未 push"的那几轮，提交其实早已在 `origin` 上**。
+> ⚠️ **本文档不写"现在 ahead 几个"** —— 提交本文档就会改变它。**状态以你自己跑的
+> `git status -sb` / `git ls-remote origin refs/heads/main` 为准。**
 > ✅ **源头已问清（人类 2026-08-21 亲口确认）：人类自己推的，用 Warp / GUI / 别的终端** ——
 > **那些入口不写 `~/.zsh_history`**，所以三次巡检的取证一次都没看见它。
 > ⇒ **别照抄"未 push"**：要写就写"**本轮我未 push**"，**推没推上以 `git ls-remote` / reflog 为准**。
@@ -217,6 +219,9 @@
    另：**分位数对比不可作判据**（v0.14 已坐实，不要复活）；**"0 fail"不是基线**（0/48 不是排除）。
 9. 🆕 **下一轮的执行顺序（2026-08-19 交接，照此走即可；细节一律不在这里复述，去对应章节）：**
    ① **日常**：每天巡检中止判据 **1 与 2**（判据 2 在 `n<150` 时只作离群监视，不算 p99）。
+      🆕🔴 **2026-08-23 起有两层定时器兜着它，其中会话内那层每次新会话都要重新挂 ——
+      照抄 ⅩⅧ.7 里的参数与 prompt 全文；取消条件也在那节（只有读数做完才取消）。**
+      🔴 **当天的巡检当场做** —— 本窗口两次"稍晚再做"两次都没兑现（各断 46.6 h 与 58.9 h）。
       🆕 **巡检的边界、方法与历史记录已落进
       `docs/superpowers/plans/2026-08-10-raise-openai-timeout.md` 末尾的「每日巡检记录」一节 ——
       照那一节做，不要另发明。** 那里也写死了"刻意不算截尾率与 Wilson 区间"。
@@ -2637,7 +2642,8 @@ paper 初稿（`ccmem_paper/docs/paper/generated/ccmem-agent-systems-paper.revie
 
 - 本仓库 `.git/logs/refs/remotes/origin/main`：08-19 以来 **6 次 `update by push`** ——
   `08-19 00:06:10` / `08-19 22:48:50` / `08-19 23:30:04` / `08-20 00:33:36` /
-  `08-20 23:06:21` / `08-21 00:25:01`。本地 `main` 现在只 **ahead 1**（`b662915`，ⅩⅦ 那轮的 handoff 提交本身）。
+  `08-20 23:06:21` / `08-21 00:25:01`（此后 `08-21 00:43:23` 又推了一次）。
+  ⚠️ **不写"现在 ahead 几个"** —— 提交本文档就会改变它，**自己跑 `git status -sb` 看。**
 - **不是任何 Claude 会话推的**：全局扫 `~/.claude/projects/*/*.jsonl`（08-19 起）与
   `~/.claude/bash-commands.log`，`git push` 的 tool call **零命中**（命中的全是"查 push"的 grep）。
 - **不是钩子推的**：`.git/hooks/` 全是 `.sample`、`core.hooksPath` 指回本目录；
@@ -2676,11 +2682,13 @@ paper 初稿（`ccmem_paper/docs/paper/generated/ccmem-agent-systems-paper.revie
 
 ---
 
-# ⅩⅧ. 2026-08-23：第 7 次巡检（补做，断档 58.9 h）、第四个跨项目负载实例
+# ⅩⅧ. 2026-08-23：第 7 次巡检（补做，断档 58.9 h）、第四个跨项目负载实例、两层巡检定时器
 
 > **本轮零产品代码改动、零全量套件、零窗口读数、我未 push、未删任何分支或 worktree。**
-> 产物只有两处文档记录。📌 上一轮结束时那两个提交**已由人类推上 `origin`**
-> （`08-21 00:25:01` 与 `00:43:23`）⇒ 现在 `main == origin/main == 138242e`。
+> 产物是**三个 docs-only 提交**（巡检记录、push 更正、定时器一节）、**一个装在本机的 launchd 提醒**
+> （在仓库外，见 ⅩⅧ.7），以及 scratchpad 里一个**未入库的只读巡检脚本**。
+> 📌 上一轮那两个提交**已由人类推上 `origin`**（`08-21 00:25:01` 与 `00:43:23`）。
+> ⚠️ **本节不写 HEAD 停在哪、也不写差几个提交** —— 提交本文档就会移动它，**按提交标题找。**
 
 ## 1. 巡检第 7 次（2026-08-23 10:02）
 
@@ -2829,4 +2837,24 @@ rm ~/.ccmem-inspect-reminder.log     # 可选，那是它自己的触发日志
 - 第 2 层**只弹通知，不会自己做巡检**，而且 **macOS 可能把通知静音**
   （`~/.ccmem-inspect-reminder.log` 有行 = 脚本确实跑了；**通知看没看见要人类自己确认**）。
 - **两层都不保证巡检真的发生** —— 它们把失败模式从"忘了"降到"看见了但没做"。**最后仍然靠人。**
+
+## 8. 本轮未闭合的一件小事
+
+⚠️ **launchd 提醒的通知"看不看得见"未经人类确认。** `~/.ccmem-inspect-reminder.log` 已证明
+**脚本确实跑了**（`2026-08-23 10:42:43 reminder fired`），但 **macOS 有可能把 `osascript` 的通知静音**，
+而"日志有行"**证明不了"人看见了"**。⇒ **下一位：先问人类那条通知有没有弹出来。**
+没弹就换通知方式（`terminal-notifier`，或改成必须点掉的对话框），**别默认它在工作** ——
+这正是本项目最典型的静默失败（见横幅第一条铁律）。
+
+## 9. 建议使用的 skills（本轮实际用过 / 下轮会用）
+
+| 场景 | skill |
+|---|---|
+| 开工第一件事（任何会话） | `superpowers:using-superpowers` |
+| 挂 / 改定时器 | `loop`（本轮用它挂的会话内 cron；⚠️ **它会先问云端还是本会话 —— 云端读不到本机 `metrics.jsonl`，别选云端**） |
+| 落地 W0/W1/W2（窗口关闭后） | `superpowers:subagent-driven-development`（**已定**） |
+| 每个任务做完 | `superpowers:requesting-code-review` → `superpowers:receiving-code-review` |
+| 宣布完成之前 | `superpowers:verification-before-completion` |
+| 撞到 bug | `superpowers:systematic-debugging` |
+| 若还要新设计 | `superpowers:brainstorming` → `superpowers:writing-plans` |
 

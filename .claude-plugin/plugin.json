@@ -1,9 +1,26 @@
 {
   "name": "ccmem",
-  "version": "0.2.0",
+  "version": "0.13.1",
   "description": "Cross-session semantic memory for Claude Code using SQLite and FTS5.",
+  "author": {
+    "name": "blrbiran",
+    "url": "https://github.com/blrbiran"
+  },
+  "homepage": "https://github.com/blrbiran/ccmem",
+  "repository": "https://github.com/blrbiran/ccmem",
   "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "plugin",
+    "memory",
+    "sqlite",
+    "fts5",
+    "semantic-search",
+    "hooks"
+  ],
   "mcpServers": {},
-  "commands": ["./commands/"],
+  "commands": [
+    "./commands/"
+  ],
   "skills": []
 }

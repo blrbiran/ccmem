@@ -3117,3 +3117,43 @@ ccmem 不声明是对的，那条 `omits hooks` 的断言也是对的。**别再
 - §3 中 `secretScan` 吃绕过的判断**来自读正则，未实测**。
 - §5 只跑了**两个单元测试文件**，**未跑全量套件** ⇒ "没弄坏别的"这句话**没有全量证据**。
 - 本轮**未跑语料、未生成基线、未改强、未 bump `scan_patterns_version`、未跑冻结读数脚本**。
+
+## 8. 接手第一分钟：状态怎么自己查（**别信本文档写的位置**）
+
+本文档一提交就会移动 HEAD、也会改变"领先 origin 几个"，所以**本节不写这两个数**。
+接手时自己跑，三条就够：
+
+```bash
+git -C . status -sb                      # 分支 / 是否 clean / 领先几个（以这个为准）
+git log --oneline -6                     # 本轮提交按标题认：docs(spec) W3 / docs review+resync / fix(plugin) / docs(handoff) XX
+git ls-remote origin refs/heads/main     # 远端到哪了 —— "未 push" 只对"我没推"成立
+tail -5 ~/.ccmem-inspect-reminder.log    # 20:47 那几行后面是 ACK 还是 NOACK
+```
+
+📌 **本轮产物按提交标题找**，别按 hash 记：
+`docs(spec): add the W3 design…` / `docs: apply the W3 design review…` /
+`fix(plugin): correct the manifest version drift…` / `docs(handoff): record the 2026-08-25 W3 round…`。
+⚠️ **上一批 4 个提交人类已于 `08-25 00:43:38` 自己推上 origin**；本批我未 push。
+
+## 9. 建议使用的 skills
+
+| 场景 | skill |
+|---|---|
+| 开工第一件事（任何会话） | `superpowers:using-superpowers` |
+| 🔴 **本轮欠的那件事：写 W3 实现计划** | `superpowers:writing-plans`（输入 = `specs/2026-08-25-w3-threat-scan-bypass-suite-design.md`） |
+| 挂 / 改定时器 | `loop`（⚠️ 它会先问云端还是本会话 —— **云端读不到本机 `metrics.jsonl`，别选云端**） |
+| 落地 W0/W1/W2/W3（窗口关闭后） | `superpowers:subagent-driven-development`（已定） |
+| 每个任务做完 | `superpowers:requesting-code-review` → `superpowers:receiving-code-review` |
+| 宣布完成之前 | `superpowers:verification-before-completion` |
+| 撞到 bug | `superpowers:systematic-debugging` |
+| 若还要新设计 | `superpowers:brainstorming` → `superpowers:writing-plans` |
+
+⚠️ **不要对 W3 再跑一次 `brainstorming`** —— 设计已定稿并过了 review，直接 `writing-plans`。
+
+## 10. 本轮未闭合
+
+1. 🔴 **W3 的实现计划没写**（唯一一件实质欠账，见 §6 第 3 条）。
+2. ⚠️ **`P0#2「同一写入口」的归属`仍无裁决记录** —— v0.14-spec §四 4.5 写着"待裁决"，
+   本轮已把它标出来但**没有裁**。写 W3 计划时用不到它，但**排 W1/W2 时会撞上**。
+3. ⚠️ **第 1 层 cron（本轮 job `19f03c01`）会随本会话死掉** —— 这不是未闭合事项，
+   是**每个 session 的例行动作**，照 ⅩⅧ.7 重挂。

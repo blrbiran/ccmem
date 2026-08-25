@@ -3745,3 +3745,52 @@ spec 自己已经把答案的位置指出来了 ——
   paper 的措辞必须跟着改。**写入口这条和那条是同一片代码。**
 - ⚠️ **spec 原文已经命令过这件事**："**实现计划前必须查清这一条，别让它没有主人。**"
   ⇒ **本条不是新发明，是把一条一直没人执行的既有要求归位。**
+
+## 13. 🆕 下一位怎么接（**窗口已关，这是接手的唯一入口**）
+
+> ✅ **§12 的建议已获人类同意（2026-08-26）** ⇒ **P0#2 就按"核查题"办，不再出裁决简报。**
+
+### 13.1 开工检查清单（**自己跑，别信文档里的状态**）
+
+| 查什么 | 怎么查 | 预期 |
+|---|---|---|
+| 仓库状态 | `git status -sb` | 干净；**领先 origin 几个自己看** —— 本文档一提交就会变，故不写死 |
+| 定时器**确实**没了 | `CronList` + `launchctl print gui/$(id -u)/local.ccmem-inspect-reminder` | 前者无 ccmem 巡检任务；后者报 `Could not find service` |
+| 快照在库里 | `shasum -a256 docs/superpowers/plans/2026-08-10-raise-openai-timeout-snapshot-20260826.jsonl` | `81c3f6c1…592a2` |
+| 四条计划齐不齐 | `ls docs/superpowers/specs/ docs/superpowers/plans/` | W0/W1/W2/W3 **各有一份 design + 一份 plan** ⚠️ **这句话曾经错了五轮，自己核** |
+
+🔴 **不要再挂 cron、不要再做巡检** —— 那是测量窗口期的纪律，**随 §11 一起终止了**。
+看见 `~/.ccmem-inspect-reminder.log` 别以为提醒还活着：**它是保留的证据，不是活机制。**
+
+### 13.2 第一件事
+
+**W0 开工**：`superpowers:subagent-driven-development`，输入是
+`specs/2026-08-20-w0-non-default-config-reporting-design.md` +
+`plans/2026-08-20-w0-non-default-config-reporting.md`。
+🔴 **四条都不要再跑 `brainstorming` / `writing-plans`** —— 设计与计划都齐了。
+
+**动 W1 之前**先做 §12 那次源码核查（读 `save.mjs:72` 附近与 `insertMemory` 的签名/门控），
+**结论自己决定 P0#2 的归属**；只有"ccmem 确实缺东西"时才需要回来问人类。
+
+### 13.3 🔴 仍然有效的禁令（**与窗口无关，不随窗口关闭解禁**）
+
+1. **`config-value-parity` 不合并。**
+2. **那 8 个死键不删**（处置见 `specs/2026-08-19-dead-key-disposition.md`）。
+3. **不许改本机电源设置**（ⅩⅩⅡ.4，人类明确否决）。
+4. **不许 push**（除非人类当场要求）。人类通常自己推。
+5. **读数不许重跑**：主要结局已判 `达成`，重跑或换快照就是事后调参。
+   **要再问"抬到 1200 以上还能不能再砍"，只能另开一份预登记 + 另一个窗口**（ⅩⅩⅢ.7）。
+
+### 13.4 建议使用的 skills
+
+| 场景 | skill |
+|---|---|
+| 开工第一件事（任何会话） | `superpowers:using-superpowers` |
+| 落地 W0/W1/W2/W3 | `superpowers:subagent-driven-development`（已定，别换） |
+| 每个任务做完 | `superpowers:requesting-code-review` → `superpowers:receiving-code-review` |
+| 宣布完成之前 | `superpowers:verification-before-completion` |
+| 撞到 bug | `superpowers:systematic-debugging` |
+| 写测试 | `superpowers:test-driven-development`（CLAUDE.md Rule 9：测试要编码"为什么"） |
+| 一条分支做完要合 | `superpowers:finishing-a-development-branch` |
+
+⚠️ **不要再用** `loop` / `CronCreate` —— 巡检定时器已终止。

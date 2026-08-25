@@ -312,9 +312,12 @@ for(const r of R) console.log(new Date(r.ts).toLocaleString("sv"), r.retrieval_p
 
 ### Task 5：（**约 4–5 天后**，n ≥ 150 时才执行）按预登记读数
 
-- [ ] **Step 1: 把 `metrics.jsonl` 复制成冻结快照再分析**（活文件会在分析过程中被追加）
-- [ ] **Step 2: 严格照 `2026-08-10-raise-openai-timeout-prereg.md` 的口径算**，不新增判据
-- [ ] **Step 3: 每天至少看一次中止判据 1 和 2**，不要等到第 5 天才发现要回退
+> 🎉 **本 Task 已于 2026-08-26 执行完毕，主要结局 `达成`（两臂一致）。报告见 handoff ⅩⅩⅢ。**
+> 快照 `~/.claude/ccmem/task5-snapshot-20260826.jsonl`，sha256 `81c3f6c1…`，7420 行 / 0 解析失败。
+
+- [x] **Step 1: 把 `metrics.jsonl` 复制成冻结快照再分析**（活文件会在分析过程中被追加）
+- [x] **Step 2: 严格照 `2026-08-10-raise-openai-timeout-prereg.md` 的口径算**，不新增判据
+- [x] **Step 3: 每天至少看一次中止判据 1 和 2**，不要等到第 5 天才发现要回退
 
   ⚠️ **本轮实际生效的中止判据只有 1 与 2。判据 3 已于 2026-08-10 裁决为"不可操作化、未执行"** ——
   它钉的 `additional_context_empty` 测的是"走没走文件通道"而不是"上下文是否为空"，照字面读 100% 误命中，
@@ -322,7 +325,7 @@ for(const r of R) console.log(new Date(r.ts).toLocaleString("sv"), r.retrieval_p
   裁决全文见 `2026-08-10-raise-openai-timeout-prereg-addendum.md` 的"补遗 2 → 裁决"与 handoff **Ⅺ.14**。
   **读数报告必须显式写出"判据 3 从未执行"，不得默认它通过了。预登记本体零改动。**
   ⚠️ 判据 2 在 `n < 150` 时只作**离群监视**（看 max），**不算 p99**。
-- [ ] **Step 4: 把结果写进 handoff Ⅺ**，成功与否都要写；**若主要结局未达成，按预登记的"失败可能"那段判断是"没用"还是"太保守"**
+- [x] **Step 4: 把结果写进 handoff Ⅺ**（⇒ 实际写进 **ⅩⅩⅢ**，Ⅺ 处留了指针），成功与否都要写；**若主要结局未达成，按预登记的"失败可能"那段判断是"没用"还是"太保守"**
 
 **回退（任一中止判据命中时）：** `scripts/lib/config.mjs:18` 改回 `800`，撤销 `admin-diagnose-command.test.mjs:1121` 的断言，跑一次全量，提交。**Task 2 的不变式测试保留** —— 它与本次取值无关，是长期护栏。
 

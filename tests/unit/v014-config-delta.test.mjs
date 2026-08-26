@@ -113,6 +113,19 @@ test('both arrays come back sorted so callers can assert them directly', () => {
   assert.deepEqual(deltas.unknown, ['a_stray', 'z_stray']);
 });
 
+test('an unknown section with no reportable keys is still reported, at the section itself', () => {
+  const base = { a: 1 };
+
+  // Second exception to "objects produce no path" (the first is the scalar/
+  // object-mismatch case above): a subtree with zero leaves — because it's
+  // empty, or because every key inside it is a `_`-prefixed doc key — has
+  // nothing to descend into, so descending would silently drop it from the
+  // report. An empty or documentation-only section is still something the
+  // operator wrote; the honest statement is the section path itself.
+  assert.deepEqual(collectConfigDeltas({ a: 1, stray: {} }, base).unknown, ['stray']);
+  assert.deepEqual(collectConfigDeltas({ a: 1, stray: { _c: 'x' } }, base).unknown, ['stray']);
+});
+
 test('an empty result is two empty arrays, never null and never a missing field', () => {
   const deltas = collectConfigDeltas({ a: 1 }, { a: 1 });
 

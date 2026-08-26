@@ -13,6 +13,13 @@ import { fileURLToPath } from 'node:url';
 // config.json written into the shared root would be visible to every other test
 // file's loadConfig(). node --test runs each file in its own process, which is
 // what makes overriding the variable here safe.
+//
+// The spawned-CLI tests below have a second hazard: loadConfig() gives
+// CCMEM_CONFIG_PATH priority over the data-root config path (scripts/lib/config.mjs
+// :317-320). If that variable is set in the environment this file runs in, an
+// inherited value silently points the spawned CLI at the operator's real config
+// instead of the config.json the test just wrote — so runDiagnose() must not let
+// the child inherit it.
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-w0-config-'));
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = dataRoot;
@@ -93,9 +100,12 @@ function runDiagnose(configJson, extraArgs = []) {
     writeFileSync(path.join(root, 'config.json'), JSON.stringify(configJson), 'utf8');
   }
 
+  const env = { ...process.env, CCMEM_TEST_MODE: '1', CCMEM_DATA_ROOT: root };
+  delete env.CCMEM_CONFIG_PATH;
+
   return execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', ...extraArgs], {
     cwd,
-    env: { ...process.env, CCMEM_TEST_MODE: '1', CCMEM_DATA_ROOT: root },
+    env,
     encoding: 'utf8'
   });
 }

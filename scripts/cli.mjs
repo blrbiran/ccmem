@@ -412,6 +412,15 @@ function circuitVerbFromArgv(argv) {
   return 'status';
 }
 
+function printConfigSummary(result) {
+  const nonDefaultCount = result.config.non_default_keys.length;
+  const unknownCount = result.config.unknown_keys.length;
+  process.stdout.write(
+    `ccmem: config ${nonDefaultCount} non-default ${nonDefaultCount === 1 ? 'key' : 'keys'}, ` +
+    `${unknownCount} unknown ${unknownCount === 1 ? 'key' : 'keys'}\n`
+  );
+}
+
 function printMetrics(result) {
   const metrics = result.metrics;
 
@@ -961,6 +970,7 @@ try {
 
       process.stdout.write(`ccmem: project_key ${result.project_key.value} source=${result.project_key.source}\n`);
       process.stdout.write(`ccmem: tier2 ${result.tier2.available ? 'available' : 'unavailable'}\n`);
+      printConfigSummary(result);
 
       if (result.migrations) {
         for (const row of result.migrations) {

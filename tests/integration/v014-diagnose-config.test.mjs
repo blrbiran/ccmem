@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Module-level data root, set BEFORE importing anything that reads it. This is
 // the established pattern in this repo (see admin-diagnose-command.test.mjs and
@@ -68,4 +70,57 @@ test('result.config carries paths only, never the values behind them', async () 
   // embedding.openai_api_key is a non-default key the moment an operator sets
   // it. Anything that lets a value ride along with the path leaks credentials.
   assert.equal(JSON.stringify(result.config).includes('secret-looking-value'), false);
+});
+
+// Spawning the real CLI is the ONLY test in this plan that exercises the real
+// loadConfig() -> collectConfigDeltas -> stdout path. The in-process tests above
+// inject cfg, so they can all stay green while the wiring from the config file
+// to the printed line is broken. Do not "optimise" this into an in-process call.
+//
+// It runs scripts/cli.mjs directly rather than ./bin/ccmem: bin/ccmem ends with
+// `exec node …`, and the `node` on PATH here is nvm v22.13.1, a different
+// interpreter from the /usr/local/bin/node v24.13.0 that npm test and the real
+// daemon use.
+const NODE = '/usr/local/bin/node';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const CLI = path.join(ROOT, 'scripts/cli.mjs');
+
+function runDiagnose(configJson, extraArgs = []) {
+  const root = mkdtempSync(path.join(tmpdir(), 'ccmem-w0-cli-'));
+  const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-w0-cwd-'));
+
+  if (configJson !== null) {
+    writeFileSync(path.join(root, 'config.json'), JSON.stringify(configJson), 'utf8');
+  }
+
+  return execFileSync(NODE, [CLI, 'admin', '--', 'diagnose', ...extraArgs], {
+    cwd,
+    env: { ...process.env, CCMEM_TEST_MODE: '1', CCMEM_DATA_ROOT: root },
+    encoding: 'utf8'
+  });
+}
+
+test('the default diagnose output reports the config line when there is no config.json', () => {
+  // A brand-new install has no config.json at all. The line must still appear:
+  // a line that shows up only when there is something to say is indistinguishable
+  // from a mechanism that is not running, which is how eight config keys in this
+  // repo stayed dead across eleven versions.
+  const output = runDiagnose(null);
+
+  assert.match(output, /^ccmem: config 0 non-default keys, 0 unknown keys$/m);
+});
+
+test('documentation keys copied from the template do not show up as unknown', () => {
+  // config.default.json is the file operators copy, and it carries two _comment
+  // keys because JSON cannot hold comments. If those were reported, every
+  // template-derived config would show two phantom unknown keys on day one.
+  const output = runDiagnose({ _comment: 'documentation, not configuration' });
+
+  assert.match(output, /^ccmem: config 0 non-default keys, 0 unknown keys$/m);
+});
+
+test('the default output counts a real off-default value and a real unknown key', () => {
+  const output = runDiagnose({ version: 'w0-probe', zz_w0_probe: { sample: 1 } });
+
+  assert.match(output, /^ccmem: config 1 non-default key, 1 unknown key$/m);
 });

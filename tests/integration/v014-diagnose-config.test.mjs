@@ -124,3 +124,33 @@ test('the default output counts a real off-default value and a real unknown key'
 
   assert.match(output, /^ccmem: config 1 non-default key, 1 unknown key$/m);
 });
+
+test('--config lists every key under a summary line identical to the default one', () => {
+  const output = runDiagnose(
+    { version: 'w0-probe', zz_w0_probe: { sample: 1 } },
+    ['--config']
+  );
+
+  // The summary line is byte-identical to the one the flagless run prints, so
+  // an operator learns one format, and the assertion has one shape.
+  assert.match(output, /^ccmem: config 1 non-default key, 1 unknown key$/m);
+  assert.match(output, /^non-default:\n {2}version$/m);
+  assert.match(output, /^unknown:\n {2}zz_w0_probe\.sample$/m);
+});
+
+test('--config prints the group headers even when a group is empty', () => {
+  const output = runDiagnose({ version: 'w0-probe' }, ['--config']);
+
+  assert.match(output, /^ccmem: config 1 non-default key, 0 unknown keys$/m);
+  assert.match(output, /^non-default:\n {2}version$/m);
+  // A vanishing header would leave the reader unsure whether the group was
+  // empty or the mechanism skipped it — the same ambiguity Task 3 removed
+  // from the summary line.
+  assert.match(output, /^unknown:$/m);
+});
+
+test('--config never prints the value behind a key', () => {
+  const output = runDiagnose({ version: 'secret-looking-value' }, ['--config']);
+
+  assert.equal(output.includes('secret-looking-value'), false);
+});

@@ -1,6 +1,19 @@
 # ccmem —— Handoff
 
-> 🎉🔴🔴 **最新一轮（2026-08-26，见 ⅩⅩⅢ）：Task 5 读数已执行，测量窗口关闭。
+> 🎉🔴 **最新一轮（2026-08-26 深夜，见 ⅩⅩⅣ）：W0 已实现、已过 review、已合入 `main`，全量套件 `606/606`。**
+> 合并提交标题 `merge: report non-default and unknown config keys (W0)`
+> —— ⚠️ **本文档刻意不写任何 SHA、也不写领先 `origin/main` 几个**：提交本文档就会同时改掉这两个数。
+> **`ccmem admin diagnose` 现在恒打一行 `ccmem: config N non-default keys, M unknown keys`，
+> 并新增 `--config` 列出全部键路径。🔴 只报键路径、永不报值**（`openai_api_key` 一被设置就是非默认键）。
+> **分支 `w0-non-default-config-reporting` 已合并并删除；未 push。**
+> ⇒ 🔴 **下一件事不是 W1，是先做 P0#2 源码核查**（`save.mjs:72` 附近 + `insertMemory`），
+> 核查结果自己决定归属；然后才 W1 → W2 → W3。**见 ⅩⅩⅣ.6。**
+> 🔴🔴 **接手前必读 ⅩⅩⅣ.3：W0 的计划里有 4 处错，其中 1 处照做会弄坏 `admin diagnose --feedback`。
+> W1/W2/W3 三份计划出自同一套流程，动手前必须先做同样的预检。**
+> 🔴 **禁令一条都没有解禁，共 6 条，见 ⅩⅩⅣ.7** —— 含 `config-value-parity` 不合并、8 个死键不删、
+> 不改本机电源设置、不 push、**Task 5 读数不许重跑**、不要再挂 cron 或做巡检。
+>
+> 🎉🔴🔴 **上一轮（2026-08-26 白天，见 ⅩⅩⅢ）：Task 5 读数已执行，测量窗口关闭。
 > 主要结局 `达成` —— 两臂一致，抬超时确实止住了血。**
 > **主臂 `61/295 = 20.6780%`，Wilson95 `[16.4477%, 25.6621%]`；敏感性臂 `50/273 = 18.3150%`，
 > `[14.1773%, 23.3321%]`。基线 `48.5% [40.3%, 56.9%]` ⇒ 主臂上界比基线下界低 14.6pp。**
@@ -3764,13 +3777,18 @@ spec 自己已经把答案的位置指出来了 ——
 
 ### 13.2 第一件事
 
-**W0 开工**：`superpowers:subagent-driven-development`，输入是
-`specs/2026-08-20-w0-non-default-config-reporting-design.md` +
-`plans/2026-08-20-w0-non-default-config-reporting.md`。
-🔴 **四条都不要再跑 `brainstorming` / `writing-plans`** —— 设计与计划都齐了。
+⬆️ ✅ **本小节已于 2026-08-26 深夜执行完毕，就地标注，原文保留** —— **W0 已做完并合入 `main`，见 ⅩⅩⅣ。**
+**现在的"第一件事"是 P0#2 源码核查，然后才是 W1。去 ⅩⅩⅣ.6 拿最新的入口，别照下面这段做。**
+
+~~**W0 开工**：`superpowers:subagent-driven-development`，输入是~~
+~~`specs/2026-08-20-w0-non-default-config-reporting-design.md` +~~
+~~`plans/2026-08-20-w0-non-default-config-reporting.md`。~~
+🔴 **"四条都不要再跑 `brainstorming` / `writing-plans`"这条仍然有效** —— 设计与计划都齐了，
+**但"齐了"不等于"对了"，见 ⅩⅩⅣ.3。**
 
 **动 W1 之前**先做 §12 那次源码核查（读 `save.mjs:72` 附近与 `insertMemory` 的签名/门控），
 **结论自己决定 P0#2 的归属**；只有"ccmem 确实缺东西"时才需要回来问人类。
+⬆️ **这条没变，而且它现在就是下一个动作。**
 
 ### 13.3 🔴 仍然有效的禁令（**与窗口无关，不随窗口关闭解禁**）
 
@@ -3794,3 +3812,140 @@ spec 自己已经把答案的位置指出来了 ——
 | 一条分支做完要合 | `superpowers:finishing-a-development-branch` |
 
 ⚠️ **不要再用** `loop` / `CronCreate` —— 巡检定时器已终止。
+
+---
+
+# ⅩⅩⅣ. 2026-08-26（深夜）：✅ **W0 已实现、过 review、合入 `main`** —— 兼「W1 之前必读」
+
+> **这一节是 W0 的终点，也是下一位的入口。** 窗口已关（ⅩⅩⅢ），红线已解禁，本轮把 W0 从设计走到合并。
+> **本轮零 push、未删任何别的分支或 worktree、未碰 `DEFAULT_CONFIG`、未重跑读数。**
+> ⚠️ **本节不写 SHA、不写领先数** —— 提交本文档就会改掉它们。**按提交标题找。**
+
+## 1. 交付了什么
+
+`ccmem admin diagnose` 现在会报「哪些配置键的生效值与产品默认值不同」「哪些键 ccmem 根本不认识」。
+
+| | 行为 |
+|---|---|
+| 默认输出 | **恒定**多打一行 `ccmem: config N non-default keys, M unknown keys`（`N=M=0` 时照打） |
+| 新增 `--config` | 同一行摘要 + `non-default:` / `unknown:` 两组，每键一行、缩进两格；**空组也打标题** |
+| 🔴 输出契约 | **只报键路径，永不报值**，任何形式包括打码 |
+
+**为什么"零也要打"**：只在有内容时才出现的东西，没内容时和"机制根本没跑"无法区分 ——
+8 个死键就是这么在十一个版本里活下来的。**这是验收判据 4，不是洁癖。**
+
+**为什么"永不报值"**：`embedding.openai_api_key` / `jina_api_key` 一旦被设置就是非默认键，
+报值等于把凭据打到 stdout。设计阶段否掉过 denylist 打码方案：**没人维护的名单会烂**。
+
+新增/改动（详见合并提交的 diff，不在此复述）：
+`scripts/lib/config-delta.mjs`（新，纯函数）、`scripts/lib/admin/diagnose.mjs`（接线 + 可注入 `cfg`）、
+`scripts/cli.mjs`（`printConfigSummary` helper + `--config` 分支 + `printHelp`）、
+`tests/unit/v014-config-delta.test.mjs`（12 条）、`tests/integration/v014-diagnose-config.test.mjs`（10 条）。
+
+## 2. 验证到什么程度
+
+- **全量套件 `606/606`，0 fail，跑了三次**：分支上一次（`605`，改测试文件前）、
+  交接前在待交付那棵树上一次（`606`）、**合并后在合并结果上一次（`606`）**。三次都记进了
+  `docs/superpowers/plans/2026-08-10-raise-openai-timeout.md` 的批次表。
+  🔴 **`605 → 606` 正好等于修复波新增的那 1 条单元测试** —— 这是交叉验证，不是漂移。
+- **每个测试任务都做了定向变异**，且**红落在被断言的行为上**，不是崩溃红。
+- **`admin -- diagnose --config` 在 `main` 上实跑过**，干净配置下打出摘要行 + 两个空组。
+- ⚠️ **批次表那几行现在只是审计留痕，不是剔除输入** —— 窗口已关，读数已定论。
+
+## 3. 🔴🔴 W0 的计划里有 4 处错 —— **动 W1/W2/W3 之前必须做同样的预检**
+
+**这是本节对下一位最有价值的一条。** 三份计划出自同一套流程，**"计划齐了"不等于"计划对了"**。
+
+| # | 计划怎么写的 | 实际 | 照做的后果 |
+|---|---|---|---|
+| 1 | `const cfg = loadConfig();` 在 `diagnose.mjs` 里**只有一处**，并给了一条"grep 应无输出"的验收 | **有两处**，第二处是 `cmdDiagnoseFeedback` 的第一行 | 🔴 **那条 grep 只有删掉兄弟命令的 cfg 才能满足** ⇒ `admin diagnose --feedback` 直接 `ReferenceError` |
+| 2 | 两个分支各抄一份**逐字相同**的摘要行代码块 | 设计要求两行**逐字相同** | 两份副本迟早漂开；已改为共用 `printConfigSummary` helper |
+| 3 | Task 5 的验收 grep 是 `四条互相独立` | 该字符串**当时就不存在** | **空验收：做没做都"通过"** |
+| 4 | Task 6 的批次表行是**三列** | 真表是**四列** `\| 起 \| 止 \| 位置 \| 结果 \|`，且按日期分组 | 表格渲染坏掉 |
+
+另有两处算术/口径错：Task 6 说新增测试 **18** 条（漏了 Task 4 的 3 条，实为 **21**）；
+Task 6 的批次记录理由写着"为了剔除"，**而窗口那时已经关了**。
+
+⇒ 🔴 **接手 W1/W2/W3 时，照 `superpowers:subagent-driven-development` 的 preflight 要求，
+先把计划扫一遍再动手**：每一对共享文件/接口的任务列一行、每个任务自己跟自己对一遍，
+**并且把计划里写死的行号、符号名、验收命令逐条拿去源码里核**。W0 这 4 处全是这样查出来的。
+
+## 4. 本轮做过的裁决（**会随 ledger 一起消失，所以记在这里**）
+
+`.superpowers/sdd/` 是 git-ignored 的，`git clean -fdx` 会抹掉它。下面这些是必须活下来的部分：
+
+1. **不用 worktree**，在主 checkout 开分支干活。理由：`git grep -ln` 显示 **10 个**测试文件硬编码主 checkout 路径
+   ⇒ **在 worktree 里跑全量套件等于测了主 checkout**，正是 A2 那类事故。**W1/W2/W3 同样适用。**
+2. **Task 5 的范围被扩大过两次**，判据是"**这条陈述是不是被本分支自己弄假的**"：
+   §七那段"等窗口关闭"、以及卷首"尚未落任何代码"/"本文档全文没有它"，都是本分支弄假的 ⇒ 就地改；
+   §一那行 `daemon/claude-p.mjs` 用 `git merge-base --is-ancestor` 证明**早于本分支** ⇒ 不改。
+3. **判据「每条都要亲眼看着变红」压过计划的"每任务一次变异"**：
+   `--config never prints the value` 那条测试从没红过，补做了一次针对性变异才收工。
+4. **交接前重跑全量套件**，压过计划"只跑一次"的规定 —— 那条规定的目的是别污染窗口，**窗口已关，目的消失**；
+   而最终 review 的修复动过测试文件 ⇒ `605` 已不描述待交付的那棵树。
+
+## 5. 🔴 留给人类的四条（**我没动，需要你定**）
+
+1. **`--config never prints the value behind a key` 这条测试比看上去弱。**
+   它只断言"注入的值不出现"，所以**只要那个值压根没被读取，它就通过** ——
+   这一点被**两次独立证实**：Task 4 的变异红不了它；`CCMEM_CONFIG_PATH` 那个 bug 下它也照过。
+   要真守住，得改成"正面确认机制在真实输入上跑过"，那是测试设计变更，**我没自行做**。
+2. **扁平点号键会被报成 unknown 而看起来像 bug**：用户写 `"retrieval.weights.semantic": 0.5`，
+   `mergeConfig` 存成字面扁平键、设置**静默失效**，W0 如实报 `unknown` —— 但读的人会以为 W0 错了。
+   **建议在 spec 里写一句。**
+3. **`config-delta.mjs` 有一处设计文档没写的第二例外**（空的/只有 `_` 键的对象，报节点自身）。
+   行为是对的、现在也有测试钉住了，**但已定稿的 spec 里没有这条。**
+4. **`commands/admin.md` 的 `argument-hint` 没有 `--config`** —— 它对 `--cost` 等四个 flag 本来就已经漂了，
+   **不是 W0 欠的债**，一并列出。
+
+## 6. ✅ 下一位从这里开始
+
+**第一件事：P0#2 源码核查（不是 W1）。** 读 `save.mjs:72` 附近的 `cfg.security.tier3.enabled` 门控
+与 `insertMemory` 的签名/门控，**核查结果自己决定归属**（判定表在 ⅩⅩⅢ.12）：
+`insertMemory` 够用 ⇒ 归 paper 仓库的 harness、ccmem 零改动、**不必问人类**；缺东西才回来问。
+⚠️ **它与 W1 真的耦合**（`§四 4.5` 的 P0#1 明写 W1 落地后"仅 import 路径"会变成取决于一个配置开关），
+**不是"等触发条件"，是同一片代码。**
+
+**然后 W1 → W2 → W3**，用 `superpowers:subagent-driven-development`，
+**四条都不要再跑 `brainstorming` / `writing-plans`**（设计与计划都齐了），
+**但每一条动手前先做 ⅩⅩⅣ.3 那样的计划预检。**
+**W1 涉及删一个配置键（`security.tier3.block_user_explicit`），那是 W1 的活，别提前做。**
+W1 计划的 **Task 9** 是"W0 已落地"的闸门 —— **W0 已落地，那道闸门现在过得去。**
+
+## 7. 🔴 仍然有效的禁令（一条都没变）
+
+1. **`config-value-parity` 不合并**（分支还在，未动）。
+2. **那 8 个死键不删**（处置提案见 `specs/2026-08-19-dead-key-disposition.md`）。
+3. **不许改本机电源设置。**
+4. **不许 push。** 人类通常自己推。
+5. **Task 5 读数不许重跑** —— 主要结局已判 `达成`，重跑或换快照就是事后调参。
+6. **不要再挂 cron、不要再做巡检**（ⅩⅩⅢ.11 已终止两层定时器）。
+   `~/.ccmem-inspect-reminder.log` 是**保留的证据，不是活机制**。
+
+## 8. ⚠️ 两个会骗人的本机工具（本轮各栽过一次）
+
+1. **`grep` 被改写成 `rg`**：`grep -n -- "--config" file` 报 **`0 matches`**，而那两处改动明明在。
+   **改用 `grep -nF -e '<pattern>'` 或 `/usr/bin/grep`、`git grep`**；
+   🔴 **搜不到时必须换第二种方法复核再下结论**，"没输出"不是证据。
+   （差一点就照这个假阴性去开一轮修复，修一件本来就是对的事。）
+2. **`git status` 被包装**，有时只打一个不透明的 `ok`。要真实输出用 `/usr/bin/git status --short`。
+
+## 9. 建议使用的 skills
+
+| 场景 | skill |
+|---|---|
+| 开工第一件事（任何会话） | `superpowers:using-superpowers` |
+| 落地 W1 / W2 / W3 | `superpowers:subagent-driven-development`（已定，别换；**preflight 那一步不许省**） |
+| 每个任务做完 | `superpowers:requesting-code-review` → `superpowers:receiving-code-review` |
+| 宣布完成之前 | `superpowers:verification-before-completion` |
+| 撞到 bug | `superpowers:systematic-debugging` |
+| 写测试 | `superpowers:test-driven-development` |
+| 一条分支做完要合 | `superpowers:finishing-a-development-branch`（**它要求在合并结果上再跑一次套件，照做**） |
+
+⚠️ **不要用** `loop` / `CronCreate` —— 巡检定时器已终止。
+⚠️ **不要再跑** `brainstorming` / `writing-plans` —— 四条的设计与计划都齐了。
+
+## 10. 成本与预算（照 CLAUDE.md Rule 6 如实报）
+
+本轮（W0 全程：预检 + 6 个任务 + 每任务 review + 整分支 review + 修复波）
+**约 27 万 token、约 $136**。⇒ **W1/W2/W3 各自也该按"一条工作流一个会话"来排，别叠在一个会话里做。**

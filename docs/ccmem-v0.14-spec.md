@@ -88,7 +88,7 @@ v0.13 spec §1.2 与 §十 backlog 已点名了自己的 v0.14 项：L2.5 真修
 
 ### W1 — quarantine 覆盖面开关（**产品特性**）
 
-- 新增 `security.quarantine_all_sources`，**默认 `false`（行为零变化）**。
+- ~~新增 `security.quarantine_all_sources`~~ 🆕🔴 **更正**：实际键名是 **`security.quarantine_all_sources_at_write`**（语义已收窄到写入时，见 `docs/superpowers/specs/2026-08-19-w1-quarantine-all-sources-design.md` §3.1），**默认 `false`（行为零变化）**。
 - 主改动点：`threat-scan.mjs::evaluateTier3` 中对 `user_explicit` / `cron_consolidated` 的提前返回。开关为真时不再豁免。
 - **接口保持纯函数**：判定所需的开关由调用方传入，不在 `evaluateTier3` 内部 `loadConfig()`。
 - **默认 `false` 的理由是产品理由，不是评测理由**：6 条英文正则的误报会直接吞掉用户手写的记忆，而本仓库自己在 dogfood。
@@ -97,10 +97,12 @@ v0.13 spec §1.2 与 §十 backlog 已点名了自己的 v0.14 项：L2.5 真修
 
 | 站点 | 语句 | 后果 |
 |---|---|---|
-| `daemon/tasks/security-audit.mjs:78` | `WHERE m.source IN ('auto_inferred','external','tool_output')` | `user_explicit` 记忆**永远不进 LLM 安全审计** |
+| `daemon/tasks/security-audit.mjs:78` | `WHERE m.source IN ('auto_inferred','external','tool_output')` | ~~`user_explicit` 记忆**永远不进 LLM 安全审计**~~ 🆕🔴 **错**：三个 pool 里只有 pool B（此站点）有 source 白名单；pool A(`:60-70`) 与 pool C(`:97-107`) 没有，`user_explicit` 记忆经这两条路径仍进审计。见 `docs/superpowers/specs/2026-08-19-w1-quarantine-all-sources-design.md` §2.1（表格行） |
 | `lib/tier15.mjs:141` | 同一谓词 | 同上，对 Tier-1.5 聚类不可见 |
 
-⇒ **实现前必须裁决**：是把开关的语义收窄成"写入时"（则名字应为 `quarantine_all_sources_at_write`，并在 spec 里写明审计面不受影响），还是把这两处 SQL 一并纳入开关。**不许默认它们会跟着变。**
+⇒ ~~**实现前必须裁决**：是把开关的语义收窄成"写入时"（则名字应为 `quarantine_all_sources_at_write`，并在 spec 里写明审计面不受影响），还是把这两处 SQL 一并纳入开关。**不许默认它们会跟着变。**~~
+🆕🔴 **已裁决：不纳入**（两处 SQL 白名单不接入开关，审计面不在 W1 范围内）。
+⚠️ 理由**不是** handoff ⅩⅢ.3 ③ 原来写的"够不着 trust 门槛"——pool B（`security-audit.mjs:78`）**根本没有 `trust_score` 条件**，那条推论适用的是 `tier15.mjs:141` 一处。真实理由是反的：`user_explicit` 一天写 3 条记忆是家常便饭，纳入 pool B **不是"几乎抓不到"，而是"太容易够着"，会持续抓到普通用户记忆并把 LLM 审计淹掉**。见 `docs/superpowers/specs/2026-08-19-w1-quarantine-all-sources-design.md` §2.1。
 
 📌 另记一条事实，免得下个人重推：`lib/revalidation.mjs:106` **已经不分 source 地做隔离**（按 trust / pinned 门控）。
 ⇒ **豁免是写入时的性质，不是全局性质。**
@@ -346,7 +348,7 @@ v0.13 spec 定义 backlog #1 为**数据库侧的速率不变量**（入口/出�
 | 工作流 | 必须有的测试 |
 |---|---|
 | W0 | 🆕 已有：`tests/unit/v014-config-delta.test.mjs`（12 条，纯 diff 逻辑）与 `tests/integration/v014-diagnose-config.test.mjs`（10 条，接线到 `diagnose` 输出，含真 spawn CLI） |
-| W1 | ① 不变量：默认 `quarantine_all_sources === false`；② 开关为真时 `user_explicit` 命中 TIER2 确实进隔离（**两个方向都要看着变红**）；③ 若裁决把两处 SQL 白名单纳入开关，则各自要有测试 |
+| W1 | ~~① 不变量：默认 `quarantine_all_sources === false`；② 开关为真时 `user_explicit` 命中 TIER2 确实进隔离（**两个方向都要看着变红**）；③ 若裁决把两处 SQL 白名单纳入开关，则各自要有测试~~ 🆕🔴 **更正**：① 键名是 `quarantine_all_sources_at_write`，不变量不变；② 不变；③ **已裁决：不纳入**，两处 SQL 白名单不接入开关，此条测试不适用。见 `docs/superpowers/specs/2026-08-19-w1-quarantine-all-sources-design.md` §2.1 |
 | W2 | ① 不变量：默认 `disable_scope_isolation === false`；② **关掉后 `C-NAIVE` 与 `C-FULL` 真的能分开**，且**必须覆盖向量 lane**（`:430`）——这是本开关唯一的存在理由；③ `diagnose` 在非默认值时确实报出来 |
 | W3 | 误伤回归进 CI 且必须能失败；bypass 报告不进 CI |
 | W4 | ① 钉住"text 路径记 `null` 而不是 `0`"（**须用真 spawn 打桩，`mockOutput` 到不了 `runClaudeP`**）；② 钉住"`mockOutput` 调用不产生行"；③ 钉住 JSON 路径确实解析出 `usage` |

@@ -45,7 +45,7 @@ function printHelp() {
     '  admin cron <list|run>\n' +
     '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina>]\n' +
     '  admin retrieval-check [--corpus <path>] [--k 1,3,5]\n' +
-    '  admin diagnose [--retrieval] [--embedding-circuit <open|close|status>] [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections|--context-history|--feedback|--cost] [--session ID] [--hash HASH] [--days N]\n' +
+    '  admin diagnose [--retrieval] [--embedding-circuit <open|close|status>] [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections|--context-history|--feedback|--cost|--config] [--session ID] [--hash HASH] [--days N]\n' +
     '  admin alias <old-project-key> <new-project-key>\n' +
     '  stats [--json|--buckets]\n' +
     '  promote <id> [--global]\n' +
@@ -410,6 +410,15 @@ function circuitVerbFromArgv(argv) {
     return argv[idx + 1];
   }
   return 'status';
+}
+
+function printConfigSummary(result) {
+  const nonDefaultCount = result.config.non_default_keys.length;
+  const unknownCount = result.config.unknown_keys.length;
+  process.stdout.write(
+    `ccmem: config ${nonDefaultCount} non-default ${nonDefaultCount === 1 ? 'key' : 'keys'}, ` +
+    `${unknownCount} unknown ${unknownCount === 1 ? 'key' : 'keys'}\n`
+  );
 }
 
 function printMetrics(result) {
@@ -948,6 +957,16 @@ try {
           `restart ts=${row.ts} from=${row.from_version} to=${row.to_version} pid=${row.daemon_pid ?? 'unknown'} waited_ms=${row.waited_ms} task=${row.in_flight_task_type ?? 'none'}#${row.in_flight_task_id ?? 'none'}\n`
         );
       }
+    } else if (args.includes('--config')) {
+      printConfigSummary(result);
+      process.stdout.write('non-default:\n');
+      for (const keyPath of result.config.non_default_keys) {
+        process.stdout.write(`  ${keyPath}\n`);
+      }
+      process.stdout.write('unknown:\n');
+      for (const keyPath of result.config.unknown_keys) {
+        process.stdout.write(`  ${keyPath}\n`);
+      }
     } else {
       process.stdout.write(`ccmem: db ${result.db.health} schema=${result.db.schema_version} path=${result.db.path}\n`);
 
@@ -961,6 +980,7 @@ try {
 
       process.stdout.write(`ccmem: project_key ${result.project_key.value} source=${result.project_key.source}\n`);
       process.stdout.write(`ccmem: tier2 ${result.tier2.available ? 'available' : 'unavailable'}\n`);
+      printConfigSummary(result);
 
       if (result.migrations) {
         for (const row of result.migrations) {

@@ -3,6 +3,7 @@ import { isLockRowAlive } from '../../daemon/lock.mjs';
 import { probeFile } from '../../daemon/tasks/embed-latency-probe.mjs';
 import { writeAudit } from '../audit.mjs';
 import { loadConfig } from '../config.mjs';
+import { collectConfigDeltas } from '../config-delta.mjs';
 import { getDbPath, getSchemaVersion } from '../db.mjs';
 import { getProvider } from '../embedding/provider.mjs';
 import { currentEmbeddingSig } from '../embedding/signature.mjs';
@@ -1224,7 +1225,8 @@ export async function cmdAdminDiagnose(
     contextHistory = false,
     sessionId = null,
     contentHash = null,
-    days = 14
+    days = 14,
+    cfg = loadConfig()
   } = {}
 ) {
   if (tuning || metrics || retrieval || synthesis || injections || contextHistory) {
@@ -1255,7 +1257,6 @@ export async function cmdAdminDiagnose(
   const projectKey = resolveProjectKey(cwd);
   const fallbackKey = fallbackProjectKey(cwd);
   const daemonAlive = isLockRowAlive(lock);
-  const cfg = loadConfig();
   const tuningDiagnostics = tuning ? getTuningDiagnostics(db, cfg) : null;
   const metricsDiagnostics = metrics ? getMetricsDiagnostics(db, { days, cfg }) : null;
   const retrievalDiagnostics = retrieval ? getRetrievalDiagnostics(db, cfg, { days }) : null;
@@ -1297,6 +1298,10 @@ export async function cmdAdminDiagnose(
     tier2: {
       available: daemonAlive
     },
+    config: (() => {
+      const deltas = collectConfigDeltas(cfg);
+      return { non_default_keys: deltas.nonDefault, unknown_keys: deltas.unknown };
+    })(),
     sessions: sessions ? loadSessionDiagnostics(db) : null,
     security: security ? loadSecurityDiagnostics(db) : null,
     tuning: tuningDiagnostics,

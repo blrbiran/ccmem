@@ -69,7 +69,14 @@ export async function insertMemory(db, {
   let resolvedQuarantinedAt = quarantinedAt ?? null;
   let resolvedTags = uniqueTags(tags);
   const t2 = evaluateTier2(content, source, resolvedType);
-  const t3 = cfg.security.tier3.enabled ? evaluateTier3(t2, source) : { action: 'allow' };
+  // 配置键是 snake_case，函数 option 是 camelCase —— 转换只发生在这一处。
+  // `=== true` 是刻意的：老配置文件里没有这个键时值是 undefined，必须落到 false，
+  // 而不是把 undefined 传下去让下游去猜。
+  const t3 = cfg.security.tier3.enabled
+    ? evaluateTier3(t2, source, {
+        quarantineAllSourcesAtWrite: cfg.security.quarantine_all_sources_at_write === true
+      })
+    : { action: 'allow' };
 
   if (t3.action === 'force_demote') {
     resolvedType = 'episode';

@@ -155,6 +155,7 @@ export const DEFAULT_CONFIG = {
   },
   security: {
     scan_patterns_version: '2026.07',
+    quarantine_all_sources_at_write: false,
     tier3: {
       enabled: true,
       block_user_explicit: false

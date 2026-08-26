@@ -296,9 +296,39 @@ v0.13 spec 定义 backlog #1 为**数据库侧的速率不变量**（入口/出�
 | 审稿项 | 归属 | 备注 |
 |---|---|---|
 | **P0#1 修正 quarantine 适用范围误述**（§5.4、§7 限定为 import 路径；Limitations 明写默认 save 路径的豁免是未缓解攻击面） | **paper 仓库** | 🔴 **与 W1 存在交互**：W1 落地后"仅 import 路径"变成**取决于一个配置开关**，paper 的措辞必须写成"默认配置下"，否则改完又是一次适用范围误述 |
-| **P0#2 的"同一写入口"那一半** | **待裁决，倾向 paper 仓库的 harness** | ccmem 侧可能已经够用：`save.mjs:72` 有 `cfg.security.tier3.enabled` 门控，`C-NAIVE` 或许可以直接走 `insertMemory` 而不必 `direct_sql`。**实现计划前必须查清这一条，别让它没有主人。** |
+| **P0#2 的"同一写入口"那一半** | ~~**待裁决，倾向 paper 仓库的 harness**~~ ⇒ 🆕✅ **已核查，归 paper 仓库的 harness，ccmem 零改动**（2026-08-26） | ~~ccmem 侧可能已经够用：`save.mjs:72` 有 `cfg.security.tier3.enabled` 门控，`C-NAIVE` 或许可以直接走 `insertMemory` 而不必 `direct_sql`。**实现计划前必须查清这一条，别让它没有主人。**~~ ⇒ **已查清：够用。** 核查与实测见 §4.5.1。 |
 | P0#3 交付 live-model、有重复 trial 的判别性三条件结果 | paper 仓库 | v0.14 只交付使之成为可能的能力（W1/W2 开关、W3 语料） |
 | P1#6 `C-MANUAL`（手写 CLAUDE.md/rules）baseline | paper 仓库 | 审稿人指出本仓库自己就在用手写 CLAUDE.md，是最锋利的那条 |
+
+### 4.5.1 🆕 P0#2「同一写入口」的核查结论（2026-08-26，**代码回答的，不是裁决出来的**）
+
+**结论：`insertMemory` 对当前语料够用 ⇒ 归 paper 仓库的 harness，ccmem 零改动，不需要人类拍板。**
+
+**做法**：`C-NAIVE` 不再 `directSqlInsert`，改成与 `C-FULL` **逐字相同**的
+`insertMemory(db, {...})` 调用（同样包在 `withFixedClock` 里），
+唯一差别放进 fixture 配置：`security.tier3.enabled` **`false`(NAIVE) / `true`(FULL)**。
+⇒ 两臂之间只剩**一个**受控因子，这正是审稿人要的"真 control"。
+
+**取证（实测，不是推理）**：用 harness 实际 import 的那份 `reference/ccmem`，
+在全新库上以 `tier3.enabled:false` 跑上述调用，与已归档的 `direct_sql` 产物逐字段比对 ——
+
+| 比对对象 | 结果 |
+|---|---|
+| `c-naive-t1-memory-row.json`（15 个字段） | **完全一致**（含 `decay_status:"active"` / `quarantined_at:null` / `tags:"[]"` / `trust_score:0.3`） |
+| `c-naive-t1-audit-rows.json` | 均为 `[]`（不触发 `security_quarantine_in`） |
+| `embedding` | 均为 `null`（`embedSync:false`，与 `direct_sql` 写死的 `null` 同值） |
+
+`rebuildInjectionCache` 由 `insertMemory` 内部以同一 `projectKey` 调用，
+与 harness 现在手工补的那次**同效** ⇒ 那行手工调用可一并删掉。
+
+🔴 **效力边界（别把结论读大）**：**"够用"是对当前语料成立，不是对任意载荷成立。**
+`evaluateTier1` 在 `insertMemory` 里**无条件执行、且没有任何配置开关**
+（`config.default.json` 的 `security` 段只有 `tier3` / `tier1_5_security` / `audit`，**没有 tier1 门控**；
+`evaluateTier1` 全仓库只有 `save.mjs` 这一个调用点，不在任何 `if` 里）。
+⇒ 一旦将来的种子含 **role-injection 标记**（`<system>` / `<assistant>` / 行首 `system:` / `assistant:`）
+或**零宽字符**，`insertMemory` 会直接 `throw`（`exitCode 64`），`C-NAIVE` 存不进去，
+**那时这条就重新变成 ccmem 的活**（要不要给 tier1 一个开关）。
+当前唯一的 `seed.txt`（89 字节纯 ASCII）**不触发 tier1，已实测**。
 
 ---
 
@@ -346,14 +376,16 @@ v0.13 spec 定义 backlog #1 为**数据库侧的速率不变量**（入口/出�
 > W1（08-19）、W0（08-20）、W2（08-20/21）、**W3（08-25，补做）**；
 > W0/W1/W2 的实现计划已落盘，**W3 的实现计划随后**。W4 已实现并合进 `main`。
 > 🔴 **三个未决点的现状**：**W1 的开关语义已裁**（§六 风险 3）；**W2 的站点覆盖面已在 W2 设计里答**；
-> **P0#2「同一写入口」的归属仍未见裁决记录** —— 下一位接手时先确认它有没有主人（§四 4.5）。
+> ~~**P0#2「同一写入口」的归属仍未见裁决记录** —— 下一位接手时先确认它有没有主人（§四 4.5）。~~
+> 🆕✅ **2026-08-26 更正：已核查完毕，它有主人了** —— 归 **paper 仓库的 harness**、**ccmem 零改动**，
+> 且这是**代码回答出来的、不需要人类拍板**（判定表见 handoff ⅩⅩⅢ.12）。核查与实测见 **§四 4.5.1**。
 
 1. ~~本文档提交（**不 push**）。~~ ✅
 2. ~~人类复审。~~ ✅
 3. ~~复审通过后走 `superpowers:writing-plans` 出实现计划。~~ ✅（W3 的那份在写）
    四条工作流无共享状态且解封时机不同，**大概率要拆成四份独立计划**，不要合成一份。
    计划里必须先回答三个未决点：**W1 的开关语义**、**W2 的站点覆盖面（含 session-start / injection-cache）**、
-   **P0#2"同一写入口"的归属**。
+   ~~**P0#2"同一写入口"的归属**~~ ⇒ 🆕✅ **已答（2026-08-26）：paper 仓库的 harness，ccmem 零改动，见 §四 4.5.1。**
    ~~⚠️ **落地时机受 §三 约束**：W4 可先行（带记录跑批窗口的义务）；W1/W2/W3 等测量窗口关闭，
    而"关闭"可能因预登记的 `n ≥ 300` 延长条款而晚于 08-13。~~
    🆕🔴 **2026-08-26 更正**：测量窗口**已关闭**，读数已完成；预登记的 `n ≥ 300` 延长条款**未触发**（不适用），

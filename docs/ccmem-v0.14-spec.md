@@ -2,7 +2,10 @@
 
 - **日期**：2026-08-11
 - **状态**：范围已与人类逐节确认，**已过一轮 review 并按 review 修正**；~~**尚未落任何代码**~~
-  🆕🔴 **2026-08-26 更正**：**W0 的实现已落**（新增 `scripts/lib/config-delta.mjs`；接线 `scripts/lib/admin/diagnose.mjs` 与 `scripts/cli.mjs`；新增 `tests/unit/v014-config-delta.test.mjs` 与 `tests/integration/v014-diagnose-config.test.mjs`），但**仍在分支上，未合入 `main`**，**完整测试套件尚未跑**（见 §七）。**W1–W4 仍无任何代码。**
+  🆕🔴 **2026-08-26 更正**：**W0 的实现已落**（新增 `scripts/lib/config-delta.mjs`；接线 `scripts/lib/admin/diagnose.mjs` 与 `scripts/cli.mjs`；新增 `tests/unit/v014-config-delta.test.mjs` 与 `tests/integration/v014-diagnose-config.test.mjs`），但**仍在分支上，未合入 `main`**，~~**完整测试套件尚未跑**（见 §七）~~
+  🆕🔴 **2026-08-26 更正**：**完整测试套件已跑**——`21:18:24 → 21:18:48`，**605 pass, 0 fail**，
+  记录见 `docs/superpowers/plans/2026-08-10-raise-openai-timeout.md`（不是 §七，§七未提测试套件）。
+  这只说明套件跑过且全绿，**不代表 W0 已合入、已定论或已完成**。**W1–W4 仍无任何代码。**
 - 🆕🔴 **2026-08-25 更新**：本文档写于 2026-08-11，此后范围与状态都变了，**下面逐处标了 🆕**。
   最重要的两条：**① 工作流已是五条，不是四条** —— 2026-08-20 人类从 W1/W2 的共同需求里抽出了
   **W0（通用"非默认配置上报"机制）**，~~本文档全文没有它~~；
@@ -312,6 +315,7 @@ v0.13 spec 定义 backlog #1 为**数据库侧的速率不变量**（入口/出�
 
 | 工作流 | 必须有的测试 |
 |---|---|
+| W0 | 🆕 已有：`tests/unit/v014-config-delta.test.mjs`（12 条，纯 diff 逻辑）与 `tests/integration/v014-diagnose-config.test.mjs`（10 条，接线到 `diagnose` 输出，含真 spawn CLI） |
 | W1 | ① 不变量：默认 `quarantine_all_sources === false`；② 开关为真时 `user_explicit` 命中 TIER2 确实进隔离（**两个方向都要看着变红**）；③ 若裁决把两处 SQL 白名单纳入开关，则各自要有测试 |
 | W2 | ① 不变量：默认 `disable_scope_isolation === false`；② **关掉后 `C-NAIVE` 与 `C-FULL` 真的能分开**，且**必须覆盖向量 lane**（`:430`）——这是本开关唯一的存在理由；③ `diagnose` 在非默认值时确实报出来 |
 | W3 | 误伤回归进 CI 且必须能失败；bypass 报告不进 CI |

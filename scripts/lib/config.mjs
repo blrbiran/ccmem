@@ -155,6 +155,11 @@ export const DEFAULT_CONFIG = {
   },
   security: {
     scan_patterns_version: '2026.07',
+    // Flat under `security`, not `security.tier3`, so it isn't miscategorized
+    // as a dead key by proximity — but that placement hides a real dependency:
+    // save.mjs only calls evaluateTier3 at all when tier3.enabled is true, so
+    // this switch is itself gated by tier3.enabled. If tier3.enabled is false,
+    // setting this to true is inert. See design doc §3.1.
     quarantine_all_sources_at_write: false,
     tier3: {
       enabled: true

@@ -92,6 +92,7 @@ v0.13 spec §1.2 与 §十 backlog 已点名了自己的 v0.14 项：L2.5 真修
 - 主改动点：`threat-scan.mjs::evaluateTier3` 中对 `user_explicit` / `cron_consolidated` 的提前返回。开关为真时不再豁免。
 - **接口保持纯函数**：判定所需的开关由调用方传入，不在 `evaluateTier3` 内部 `loadConfig()`。
 - **默认 `false` 的理由是产品理由，不是评测理由**：6 条英文正则的误报会直接吞掉用户手写的记忆，而本仓库自己在 dogfood。
+- 🆕🔴 **本开关实际被 `security.tier3.enabled` 门控**：`save.mjs` 只在 `cfg.security.tier3.enabled` 为真时才调用 `evaluateTier3`，键位平铺看不出这层依赖，`security.tier3.enabled` 为 `false` 时打开本开关是无效果的（见设计文档 §3.1）。
 
 🔴 **`evaluateTier3` 不是唯一站点**（原稿写"唯一改动点"是错的）。另有两处硬编码的 source 白名单同样把 `user_explicit` 排除在外：
 

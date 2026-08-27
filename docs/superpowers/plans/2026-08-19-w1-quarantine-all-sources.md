@@ -613,7 +613,7 @@ git commit -m "chore(config): delete the dead block_user_explicit switch, supers
 **Files:**
 - Modify: `docs/superpowers/plans/2026-08-19-w1-quarantine-all-sources.md`（本文件，勾掉这一项即可）
 
-- [ ] **Step 1: 确认并留档**
+- [x] **Step 1: 确认并留档**（2026-08-19，随 Task 6 一并完成，见提交 `10d4bbb`）
 
 用户自己的 `~/.claude/ccmem/config.json` 里若留着 `security.tier3.block_user_explicit`，
 删除后它只是变成一个**被忽略的多余键** —— `loadConfig()` 是把用户配置往默认值上合并，
@@ -622,6 +622,10 @@ git commit -m "chore(config): delete the dead block_user_explicit switch, supers
 ⇒ **不需要迁移脚本，不需要清理逻辑，不需要 release note 里的手动步骤。**
 
 **这一步存在的唯一目的，是挡住"顺手加个迁移"的冲动。** 勾掉即可，不产生代码。
+
+🆕 **顺带记一笔**：自 W0 落地后，`ccmem admin diagnose --config` 会把 `DEFAULT_CONFIG` 里不存在的路径
+列在 `unknown:` 下。留着这个残留键的用户，往后会在诊断输出里看到它被列为 unknown —— 这正是 W0 那套
+机制在正常工作，**不是 bug**，不需要因此改动本任务的结论。
 
 ---
 

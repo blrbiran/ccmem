@@ -121,9 +121,9 @@ test('the default diagnose output reports the config line when there is no confi
 });
 
 test('documentation keys copied from the template do not show up as unknown', () => {
-  // config.default.json is the file operators copy, and it carries two _comment
+  // config.default.json is the file operators copy, and it carries three _comment
   // keys because JSON cannot hold comments. If those were reported, every
-  // template-derived config would show two phantom unknown keys on day one.
+  // template-derived config would show three phantom unknown keys on day one.
   const output = runDiagnose({ _comment: 'documentation, not configuration' });
 
   assert.match(output, /^ccmem: config 0 non-default keys, 0 unknown keys$/m);

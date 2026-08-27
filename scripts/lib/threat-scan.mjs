@@ -84,12 +84,16 @@ export function evaluateTier2(content, source = 'user_explicit', type = 'fact') 
   };
 }
 
-export function evaluateTier3(t2Result, source) {
+// options.quarantineAllSourcesAtWrite 由调用方从配置读出后传入（save.mjs）。
+// 这里刻意不 loadConfig()：这个函数是纯的，测试才能穷举真值表而不用摆配置文件。
+export function evaluateTier3(t2Result, source, options = {}) {
   if (!t2Result || t2Result.action !== 'force_demote') {
     return { action: 'allow' };
   }
 
-  if (source === 'user_explicit' || source === 'cron_consolidated') {
+  // 豁免只在开关关着时生效。开关打开后这两个 source 与其它 source 走同一条路。
+  if (!options.quarantineAllSourcesAtWrite
+      && (source === 'user_explicit' || source === 'cron_consolidated')) {
     return { action: 'force_demote' };
   }
 

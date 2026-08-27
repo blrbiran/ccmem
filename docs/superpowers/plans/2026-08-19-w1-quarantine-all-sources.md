@@ -55,7 +55,7 @@
 - Consumes: 无（本计划第一个任务）
 - Produces: `evaluateTier3(t2Result, source, options = {})`，其中 `options.quarantineAllSourcesAtWrite` 为 `boolean`；返回值形状不变，仍是 `{ action: 'allow' | 'force_demote' | 'quarantine' }`。Task 3 的调用点依赖这个签名。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `tests/unit/v014-quarantine-all-sources.test.mjs`：
 
@@ -131,7 +131,7 @@ test('非豁免 source 不受开关影响：两种开关值下都是 quarantine'
 });
 ```
 
-- [ ] **Step 2: 跑测试，确认它失败**
+- [x] **Step 2: 跑测试，确认它失败**
 
 ```bash
 env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v014-quarantine-all-sources.test.mjs
@@ -140,7 +140,7 @@ env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --te
 Expected: **FAIL**。失败的是「开关打开时…⇒ quarantine」那两条（实际得到 `force_demote`，因为函数还没有第三个参数）。
 ⚠️ **若"前提自检"那条就失败了，停下来**——说明 `DANGEROUS` 这串没命中 Tier-2，后面的测试全都测不到点子上，先换一串再继续。
 
-- [ ] **Step 3: 改实现**
+- [x] **Step 3: 改实现**
 
 `scripts/lib/threat-scan.mjs`，把 `evaluateTier3` 改成：
 
@@ -166,7 +166,7 @@ export function evaluateTier3(t2Result, source, options = {}) {
 }
 ```
 
-- [ ] **Step 4: 跑测试，确认全绿**
+- [x] **Step 4: 跑测试，确认全绿**
 
 ```bash
 env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v014-quarantine-all-sources.test.mjs
@@ -174,7 +174,7 @@ env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --te
 
 Expected: **PASS**，7 个测试全过。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tests/unit/v014-quarantine-all-sources.test.mjs scripts/lib/threat-scan.mjs
@@ -197,7 +197,7 @@ git commit -m "feat(security): let evaluateTier3 take a write-time quarantine-al
 一个意图更严的开关产生了放松。今天不可能（分数只由 pattern 命中累加，每次命中都 push 证据），
 **但 W3 的内容正是"扫描器改强"，改的就是这个打分器**。这条测试就是为了那时候先响。
 
-- [ ] **Step 1: 追加失败风险测试（此刻应当直接通过，但必须真的跑）**
+- [x] **Step 1: 追加失败风险测试（此刻应当直接通过，但必须真的跑）**
 
 在 `tests/unit/v014-quarantine-all-sources.test.mjs` 末尾追加：
 
@@ -250,7 +250,7 @@ test('不变量：force_demote 蕴含 evidence 非空（W3 改扫描器时这条
 });
 ```
 
-- [ ] **Step 2: 跑测试**
+- [x] **Step 2: 跑测试**
 
 ```bash
 env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v014-quarantine-all-sources.test.mjs
@@ -258,7 +258,7 @@ env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --te
 
 Expected: **PASS**（8 个测试）。
 
-- [ ] **Step 3: 证明这条测试不是摆设（必做，别跳）**
+- [x] **Step 3: 证明这条测试不是摆设（必做，别跳）**
 
 临时把 `scripts/lib/threat-scan.mjs` 里 `evidence.push(pattern.evidence);` 那行注释掉，重跑上面的命令。
 Expected: **不变量那条 FAIL**，报出「force_demote 却没有证据」。
@@ -266,7 +266,7 @@ Expected: **不变量那条 FAIL**，报出「force_demote 却没有证据」。
 
 ⚠️ 理由：本仓库栽过"全绿但根本没测到东西"（A2 那两个文件指向了别的仓库）。**绿色本身不是证据。**
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add tests/unit/v014-quarantine-all-sources.test.mjs
@@ -286,15 +286,20 @@ git commit -m "test(security): pin the force_demote-implies-evidence invariant W
 - Consumes: Task 1 的 `evaluateTier3(t2Result, source, options = {})`
 - Produces: 配置键 `security.quarantine_all_sources_at_write`（boolean，默认 `false`）。Task 4 与 Task 7 都依赖它存在。
 
-- [ ] **Step 1: 先跑既有的配置一致性测试，确认起点是绿的**
+- [x] **Step 1: 先跑既有的配置一致性测试，确认起点是绿的**
 
 ```bash
-env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v013-config-sync.test.mjs tests/unit/v014-config-value-parity.test.mjs
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v013-config-sync.test.mjs ~~tests/unit/v014-config-value-parity.test.mjs~~
 ```
 
-Expected: **PASS**。（这两个测试守着"两份配置形状一致 + 值一致"，下一步故意只改一边就会让它们变红。）
+⚠️ **2026-08-27 更正**：`tests/unit/v014-config-value-parity.test.mjs` 在本分支（以及 `main`）不存在——它只存在于未合并的 `config-value-parity` 分支，而本仓库对那个分支有明确的"不得合并"规则。按原样跑，这条命令会因该文件不存在而报错。真正在起"两份配置形状一致"这个守卫作用的只有 `tests/unit/v013-config-sync.test.mjs`（它比对的是键路径，不是值——见该测试文件顶部注释）。实际应跑：
+```bash
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v013-config-sync.test.mjs
+```
 
-- [ ] **Step 2: 只改一边，确认守卫真的会响**
+Expected: **PASS**。（这个测试守着"两份配置形状一致"，下一步故意只改一边就会让它变红。）
+
+- [x] **Step 2: 只改一边，确认守卫真的会响**
 
 在 `scripts/lib/config.mjs` 的 `security` 段加一行（**先不要改 `config.default.json`**）：
 
@@ -307,7 +312,7 @@ Expected: **PASS**。（这两个测试守着"两份配置形状一致 + 值一�
 Expected: **FAIL** —— `v013-config-sync` 报 key path 只在 `DEFAULT_CONFIG` 里有。
 ⚠️ 若它没红，停下来：说明守卫没在看你改的那个文件，先查清楚再往下。
 
-- [ ] **Step 3: 补上另一边**
+- [x] **Step 3: 补上另一边**
 
 在 `config.default.json` 的 `"security"` 对象里加同一个键（同样在 `"tier3"` 外面）：
 
@@ -315,15 +320,20 @@ Expected: **FAIL** —— `v013-config-sync` 报 key path 只在 `DEFAULT_CONFIG
     "quarantine_all_sources_at_write": false,
 ```
 
-- [ ] **Step 4: 跑测试，确认两个守卫都回绿**
+- [x] **Step 4: 跑测试，确认两个守卫都回绿**
 
 ```bash
-env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v013-config-sync.test.mjs tests/unit/v014-config-value-parity.test.mjs
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v013-config-sync.test.mjs ~~tests/unit/v014-config-value-parity.test.mjs~~
+```
+
+⚠️ **2026-08-27 更正**：同 Step 1 —— `tests/unit/v014-config-value-parity.test.mjs` 不存在于本分支，只存在于不得合并的 `config-value-parity` 分支。实际应跑：
+```bash
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v013-config-sync.test.mjs
 ```
 
 Expected: **PASS**。
 
-- [ ] **Step 5: 接上调用点**
+- [x] **Step 5: 接上调用点**
 
 `scripts/lib/cmd/save.mjs:72`，把
 
@@ -344,15 +354,20 @@ Expected: **PASS**。
     : { action: 'allow' };
 ```
 
-- [ ] **Step 6: 跑相关测试**
+- [x] **Step 6: 跑相关测试**
 
 ```bash
-env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v014-quarantine-all-sources.test.mjs tests/unit/v013-config-sync.test.mjs tests/unit/v014-config-value-parity.test.mjs
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v014-quarantine-all-sources.test.mjs tests/unit/v013-config-sync.test.mjs ~~tests/unit/v014-config-value-parity.test.mjs~~
+```
+
+⚠️ **2026-08-27 更正**：同上 —— `tests/unit/v014-config-value-parity.test.mjs` 不存在于本分支。实际应跑：
+```bash
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v014-quarantine-all-sources.test.mjs tests/unit/v013-config-sync.test.mjs
 ```
 
 Expected: **PASS**。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add scripts/lib/config.mjs config.default.json scripts/lib/cmd/save.mjs
@@ -375,7 +390,7 @@ git commit -m "feat(security): add security.quarantine_all_sources_at_write and 
 **只加键不证明它活着。** 另外，开关打开的真实后果不止"状态变 quarantine"，还有
 **trust 0.9→0.3** 与 **不生成向量**，这两条必须断言出来，否则它们会一直隐形。
 
-- [ ] **Step 1: 写测试**
+- [x] **Step 1: 写测试**
 
 创建 `tests/integration/v014-quarantine-all-sources-write.test.mjs`：
 
@@ -476,7 +491,7 @@ test('开关打开时：user_explicit 真的被隔离，且三个副作用都发
 });
 ```
 
-- [ ] **Step 2: 跑测试，确认它失败或通过**
+- [x] **Step 2: 跑测试，确认它失败或通过**
 
 ```bash
 env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/integration/v014-quarantine-all-sources-write.test.mjs
@@ -487,12 +502,12 @@ Expected: **PASS**（Task 3 已经把线接上了）。
 📌 列名已核实存在（`001_initial.sql`：`tags TEXT`、`trust_score REAL`、`decay_status TEXT`），
 `insertMemory` 的返回值形状也已核实（`save.mjs:163-169`）。若仍报列不存在，说明迁移没跑全，先查迁移，**不要把断言删掉了事**。
 
-- [ ] **Step 3: 证明它会红（必做）**
+- [x] **Step 3: 证明它会红（必做）**
 
 临时把 `save.mjs` 里刚接的那行改回 `evaluateTier3(t2, source)`（丢掉第三个参数），重跑 Step 2。
 Expected: **「开关打开时」那条 FAIL**。然后改回来，确认 `git diff scripts/lib/cmd/save.mjs` 为空。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add tests/integration/v014-quarantine-all-sources-write.test.mjs
@@ -508,7 +523,7 @@ git commit -m "test(security): prove the new flag is actually wired, and assert 
 
 **Interfaces:** 无代码接口。
 
-- [ ] **Step 1: 就地更正**
+- [x] **Step 1: 就地更正**
 
 在 §二 W1 那节，把下列三处**保留原文并划掉**，紧跟更正（本仓库既有做法，别静默改写）：
 
@@ -518,7 +533,7 @@ git commit -m "test(security): prove the new flag is actually wired, and assert 
 
 每处都加一行指向 `docs/superpowers/specs/2026-08-19-w1-quarantine-all-sources-design.md`。
 
-- [ ] **Step 2: 确认没有漏网的旧措辞**
+- [x] **Step 2: 确认没有漏网的旧措辞**
 
 ```bash
 grep -rn "quarantine_all_sources" docs/ | grep -v "_at_write"
@@ -526,7 +541,7 @@ grep -rn "quarantine_all_sources" docs/ | grep -v "_at_write"
 
 Expected: **无输出**（除了你刚划掉的那些行本身）。有输出就逐处改掉 —— 光在新章节宣布不管用。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 git add docs/ccmem-v0.14-spec.md
@@ -549,7 +564,7 @@ git commit -m "docs(spec): correct the v0.14 W1 section against what XIII.3 and 
 **为什么单独一个提交：** 人类裁决 2026-08-19 —— 删配置键是独立动作，要能单独回滚。
 **不要把它混进 Task 3 那个提交。**
 
-- [ ] **Step 1: 先确认它真的没有消费者（别信文档，自己跑一遍）**
+- [x] **Step 1: 先确认它真的没有消费者（别信文档，自己跑一遍）**
 
 ```bash
 grep -rn "block_user_explicit" scripts/ tests/
@@ -558,20 +573,26 @@ grep -rn "block_user_explicit" scripts/ tests/
 Expected: **只有 `scripts/lib/config.mjs` 一行声明，`tests/` 零命中**。
 ⚠️ **若 `scripts/` 下出现第二处命中，停下来** —— 那说明它已经不是死键了，本任务的前提不成立，回去问人类。
 
-- [ ] **Step 2: 两份配置同步删**
+- [x] **Step 2: 两份配置同步删**
 
 从 `scripts/lib/config.mjs` 的 `security.tier3` 与 `config.default.json` 的 `"security"."tier3"` 里各删掉 `block_user_explicit` 那一行。
-**两边必须一起删** —— 只删一边会被 `v013-config-sync` 与 `v014-config-value-parity` 抓到。
+**两边必须一起删** —— 只删一边会被 `v013-config-sync` ~~与 `v014-config-value-parity`~~ 抓到。
+⚠️ **2026-08-27 更正**：`v014-config-value-parity` 这个守卫在本分支不存在（见下方 Step 3 的更正），只删一边会被 `v013-config-sync` 单独抓到。
 
-- [ ] **Step 3: 跑配置守卫**
+- [x] **Step 3: 跑配置守卫**
 
 ```bash
-env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v013-config-sync.test.mjs tests/unit/v014-config-value-parity.test.mjs
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v013-config-sync.test.mjs ~~tests/unit/v014-config-value-parity.test.mjs~~
+```
+
+⚠️ **2026-08-27 更正**：`tests/unit/v014-config-value-parity.test.mjs` 不存在于本分支（只在不得合并的 `config-value-parity` 分支上），按原样跑会报错。实际应跑：
+```bash
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/v013-config-sync.test.mjs
 ```
 
 Expected: **PASS**。
 
-- [ ] **Step 4: 历史 spec 就地划掉，不要静默删改**
+- [x] **Step 4: 历史 spec 就地划掉，不要静默删改**
 
 `docs/ccmem-v0.3-spec.md:1017` 那行是：
 
@@ -585,12 +606,12 @@ Expected: **PASS**。
 
 ⚠️ **它是历史 spec，是记录，不是待办。** 直接删掉等于抹掉"我们曾经这样声明过"这个事实。
 
-- [ ] **Step 5: 更新死键清单与处置提案**
+- [x] **Step 5: 更新死键清单与处置提案**
 
 - `2026-08-14-default-config-dead-keys.md`：**8 个 → 7 个**，把该行标为已处置（删除），并注明日期与出处。
 - `2026-08-19-dead-key-disposition.md`：Ⅲ 类那条与"建议处置顺序"表里的第 4 行标为**已完成**。
 
-- [ ] **Step 6: 确认没有漏网的引用**
+- [x] **Step 6: 确认没有漏网的引用**
 
 ```bash
 grep -rn "block_user_explicit" . --exclude-dir=node_modules --exclude-dir=.git
@@ -599,7 +620,7 @@ grep -rn "block_user_explicit" . --exclude-dir=node_modules --exclude-dir=.git
 逐条看：`scripts/` 应当**零命中**；`docs/` 里剩下的应当**全是划掉的历史记录或明确写着"已删除"的行**。
 **任何还把它说成现存开关的句子，就地改掉。**（这条规则本仓库已栽过三次。）
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add scripts/lib/config.mjs config.default.json docs/ccmem-v0.3-spec.md docs/superpowers/specs/
@@ -613,7 +634,7 @@ git commit -m "chore(config): delete the dead block_user_explicit switch, supers
 **Files:**
 - Modify: `docs/superpowers/plans/2026-08-19-w1-quarantine-all-sources.md`（本文件，勾掉这一项即可）
 
-- [ ] **Step 1: 确认并留档**
+- [x] **Step 1: 确认并留档**（2026-08-27，随 Task 6 一并完成，见提交 `10d4bbb`）
 
 用户自己的 `~/.claude/ccmem/config.json` 里若留着 `security.tier3.block_user_explicit`，
 删除后它只是变成一个**被忽略的多余键** —— `loadConfig()` 是把用户配置往默认值上合并，
@@ -623,6 +644,10 @@ git commit -m "chore(config): delete the dead block_user_explicit switch, supers
 
 **这一步存在的唯一目的，是挡住"顺手加个迁移"的冲动。** 勾掉即可，不产生代码。
 
+🆕 **顺带记一笔**：自 W0 落地后，`ccmem admin diagnose --config` 会把 `DEFAULT_CONFIG` 里不存在的路径
+列在 `unknown:` 下。留着这个残留键的用户，往后会在诊断输出里看到它被列为 unknown —— 这正是 W0 那套
+机制在正常工作，**不是 bug**，不需要因此改动本任务的结论。
+
 ---
 
 ### Task 8: 全量套件 + 记跑批窗口
@@ -630,7 +655,7 @@ git commit -m "chore(config): delete the dead block_user_explicit switch, supers
 **Files:**
 - Modify: `docs/superpowers/plans/2026-08-10-raise-openai-timeout.md`（批次表）
 
-- [ ] **Step 1: 记下开始时间**
+- [x] **Step 1: 记下开始时间**
 
 ```bash
 date "+%Y-%m-%d %H:%M:%S"
@@ -639,7 +664,7 @@ date "+%Y-%m-%d %H:%M:%S"
 **当场抄进** `docs/superpowers/plans/2026-08-10-raise-openai-timeout.md` 末尾那张批次表。
 ⚠️ **不要跑完再回忆** —— 边界差 6 秒就能把 5.1% 读成 9.2%（Ⅰ 的教训）。
 
-- [ ] **Step 2: 跑全量套件**
+- [x] **Step 2: 跑全量套件**
 
 ```bash
 npm test
@@ -648,7 +673,7 @@ npm test
 Expected: 与本任务开始前的基线**同样的通过数**，加上本计划新增的测试。
 ⚠️ **"0 fail"不是基线** —— 若出现失败，先对照 `Ⅹ. 测试抖动谱` 判断是不是已知抖动，**不要默认是自己改坏的，也不要默认不是**。
 
-- [ ] **Step 3: 记下结束时间，补完批次表**
+- [x] **Step 3: 记下结束时间，补完批次表**
 
 ```bash
 date "+%Y-%m-%d %H:%M:%S"
@@ -656,7 +681,7 @@ date "+%Y-%m-%d %H:%M:%S"
 
 批次表里要有：起、止、以及"前后各留 ≥60s 余量"这一条（补遗 3 的窄义剔除口径）。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add docs/superpowers/plans/2026-08-10-raise-openai-timeout.md
@@ -669,21 +694,45 @@ git commit -m "docs(plan): record the W1 full-suite run window while it is still
 
 **Files:** 无（这是一道闸门，不是一个改动）
 
-- [ ] **Step 1: 确认 W0 已落地**
+- [x] **Step 1: 确认 W0 已落地**
 
 设计文档 §四 的验收判据 4 是「开关处于非默认值时，`diagnose` 必须报出来」。
 **那个通用机制属于 W0，不在本计划范围内**（`admin/diagnose.mjs` 目前没有任何"报告非默认配置"的机制）。
 
 ```bash
-grep -rn "quarantine_all_sources_at_write" scripts/lib/admin/diagnose.mjs
+~~grep -rn "quarantine_all_sources_at_write" scripts/lib/admin/diagnose.mjs~~
 ```
 
-- **有输出** ⇒ W0 已落地并覆盖了本键，**W1 验收完整**，勾掉本任务。
-- **无输出** ⇒ **W1 的功能已完成，但验收未完整**。
+- ~~**有输出** ⇒ W0 已落地并覆盖了本键，**W1 验收完整**，勾掉本任务。~~
+- ~~**无输出** ⇒ **W1 的功能已完成，但验收未完整**。
   **不要在本计划里顺手实现 diagnose 上报** —— 那是 W0 的活，在这里做会产生两份互不知情的实现。
-  正确做法：**如实报告"W1 功能完成、验收判据 4 待 W0"**，并去做 W0。
+  正确做法：**如实报告"W1 功能完成、验收判据 4 待 W0"**，并去做 W0。~~
+
+⚠️ **2026-08-27 更正**：上面这条 grep 是假阴性陷阱，永远不会有输出，因而永远读作"验收未完整"。
+W0 落地后的真实实现是 `scripts/lib/config-delta.mjs`——一个**通用**逐路径 walker，把合并后的配置
+与 `DEFAULT_CONFIG` 逐路径 diff，**不会在源码里按名字列出任何单个配置键**（`admin/diagnose.mjs` 里
+也只调用 `collectConfigDeltas(cfg)`，同样不出现键名字面量）。用这条 grep 当闸门，会把"验收已满足"
+永远误判成"验收未完整"，把已经合入的工作送回下一个人手上重做。
+
+**正确的闸门是正向验证**：把开关设为非默认值，跑真实的 `ccmem admin diagnose --config`，确认该键
+被列出来。已按下列三种配置各跑一遍，**这是真实观测到的输出**（`CCMEM_DATA_ROOT` 为临时目录，
+`CCMEM_CONFIG_PATH` 指向下列各自的配置文件）：
+
+```bash
+/usr/local/bin/node --no-warnings --experimental-sqlite scripts/cli.mjs admin diagnose --config
+```
+
+| 配置 | 观测输出 |
+|---|---|
+| `security.quarantine_all_sources_at_write: true`（非默认） | `ccmem: config 1 non-default key, 0 unknown keys` / `non-default:` / `  security.quarantine_all_sources_at_write` |
+| `security.quarantine_all_sources_at_write: false`（默认） | `ccmem: config 0 non-default keys, 0 unknown keys` |
+| 残留 `security.tier3.block_user_explicit: false`（已删死键） | `ccmem: config 0 non-default keys, 1 unknown key` / `unknown:` / `  security.tier3.block_user_explicit` |
+
+⇒ **验收判据 4 已满足**：开关处于非默认值时会被 `admin diagnose --config` 列在 `non-default:` 下；
+残留的死键会被列在 `unknown:` 下（W0 机制在正常工作，非 bug，见 Task 7 附记）。**W1 验收完整。**
 
 ⚠️ **禁止把本任务标成"完成"来让计划看起来干净。** Rule 12：任何被跳过的东西都要说出来。
+（本次更正基于真实跑过的命令输出，不是"应该会输出"的推测。）
 
 ---
 

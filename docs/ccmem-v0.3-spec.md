@@ -1014,7 +1014,13 @@ ORDER BY ts DESC LIMIT 1`。`by reason` 从最近 N 条 quarantine_in audit 聚�
 
     "tier3": {
       "enabled": true,
-      "block_user_explicit": false      // user_explicit 永不 quarantine
+      ~~"block_user_explicit": false      // user_explicit 永不 quarantine~~
+      // 🆕 2026-08-27：本键随 W1 删除（声明了十一个版本、零消费者、零测试的死开关）。
+      // 语义由 security.quarantine_all_sources_at_write 承接，且**极性相反**：
+      // 本键曾承诺 user_explicit 永不 quarantine；新键为 true 时恰恰会把
+      // user_explicit（与 cron_consolidated）一并 quarantine —— 新键默认 false
+      // 才维持这里记录的旧承诺。详见
+      // docs/superpowers/specs/2026-08-19-w1-quarantine-all-sources-design.md
     },
     "tier1_5_security": {
       "enabled": true,

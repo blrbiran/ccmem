@@ -1,5 +1,9 @@
 # 8 个死键的处置提案（给人类裁决用，**本文件不执行任何处置**）
 
+> 🆕 **2026-08-27 更新**：标题与下方"8 个"是 2026-08-19 调查时点的历史计数，**保留不改**。
+> 其中第 8 个 —— `security.tier3.block_user_explicit` —— 已于 2026-08-27 随 W1 处置（删除），
+> 详见下方 §8。**当前未处置的死键计数为 7 个**，与 `2026-08-14-default-config-dead-keys.md` 的更新一致。
+
 > 输入是 `specs/2026-08-14-default-config-dead-keys.md`（那份只回答"有没有消费者"）。
 > **本文件回答的是它明确不回答的那个问题："这个键该不该存在"** —— 但**只给依据和风险，不做决定**。
 > **只读调查，未删任何键、未改任何代码、未跑全量套件。** 写作时点 2026-08-19，**测量窗口仍开着**。
@@ -96,6 +100,11 @@
 🔴 **人类已批准的方向（ⅩⅢ.6 ②）：W1 不接线它，改为新增新键并把这个死键删掉。**
 ⇒ **本键的处置已有裁决，不在本文件重开** —— 但**删除动作本身仍是独立动作，且要等窗口关闭**。
 
+🆕 **已完成，2026-08-27，随 W1**：`scripts/lib/config.mjs` 与 `config.default.json` 两侧同步删除，
+语义由新增的 `security.quarantine_all_sources_at_write` 承接（极性相反：旧键承诺 user_explicit 永不
+quarantine；新键为 `true` 时才把它 quarantine）。提交
+`chore(config): delete the dead block_user_explicit switch, superseded by quarantine_all_sources_at_write`。
+
 ---
 
 ## 建议的处置顺序（**仅建议，等人类点头**）
@@ -105,7 +114,7 @@
 | 1 | `quarantine.hard_delete_days` | **单独裁决**，不要打包 | 是留存承诺，两个方向都重（接线 = 不可逆批量删除） |
 | 2 | `like_fallback.max_terms` | **先决定"5 还是 10"**，再决定删/接 | 配置与行为矛盾，读者被误导中 |
 | 3 | `l4_review` | 删 | 零风险零行为变更 |
-| 4 | `block_user_explicit` | 按 ⅩⅢ.6 ② 随 W1 删 | 已有裁决 |
+| 4 | `block_user_explicit` | 按 ⅩⅢ.6 ② 随 W1 删 | 已有裁决 —— 🆕 **已完成，2026-08-27，见上方 §8** |
 | 5 | 其余 4 个（`similarity_min` / `minBatchSize` / `inject.max_chars` / `dead_letter_alert`） | 打包裁决 | 同为"承诺未实现"，代价结构相同 |
 
 🔴 **全部处置都要等测量窗口关闭**（第 2 条若选"接线"更是直接改检索行为）。

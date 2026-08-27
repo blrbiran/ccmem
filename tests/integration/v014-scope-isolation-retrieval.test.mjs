@@ -217,3 +217,35 @@ test('vector candidate query crosses projects when the switch is on', async () =
     db.close();
   }
 });
+
+// WHY: retrieveMemories' own likeSearch call (wire site 3) is design §4.2
+// table B row 5 — named alongside ftsSearch (row 4) as the two deadliest
+// missed sites, and criterion 3 (retrievalPath === 'A') exists specifically
+// so neither row's omission is structurally invisible. Task 2's unit test
+// calls the exported likeSearch directly, which cannot detect a dropped 5th
+// argument at retrieveMemories' own call site. Forcing useFts = false (via
+// CCMEM_DISABLE_FTS5) means ftsSearch (site 2) never runs at all, so it
+// cannot mask a broken site 3 the way the like_fallback trigger masked a
+// broken site 2 in Step 7 — and with no embedding on 'other', the vector
+// lane (site 4) cannot rescue it either. likeSearch is the only lane left
+// standing.
+test('likeSearch fallback crosses projects when the switch is on', async () => {
+  const { db, labelById } = seed();
+  const previousDisableFts = process.env.CCMEM_DISABLE_FTS5;
+  try {
+    seedEmbeddings(db);
+    process.env.CCMEM_DISABLE_FTS5 = '1';
+    const config = configWith({ disable_scope_isolation: true });
+    const out = await retrieveMemories(db, 'zebrafish', 'proj-a', config);
+    assert.equal(out.retrievalPath, 'A');
+    const labels = out.rows.map((r) => labelById.get(Number(r.id)));
+    assert.ok(labels.includes('other'), 'proj-b memory must be visible via the likeSearch lane alone');
+  } finally {
+    if (previousDisableFts == null) {
+      delete process.env.CCMEM_DISABLE_FTS5;
+    } else {
+      process.env.CCMEM_DISABLE_FTS5 = previousDisableFts;
+    }
+    db.close();
+  }
+});

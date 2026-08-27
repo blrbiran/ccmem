@@ -4082,6 +4082,26 @@ W1 计划的 **Task 9** 是"W0 已落地"的闸门 —— **W0 已落地，那�
 
 ## 10. 成本与预算（照 CLAUDE.md Rule 6 如实报）
 
-**本轮约 $117**（W1 全程：预检 + 9 个任务 + 每任务 review + 整分支 review + 修复波 + 收尾）。
-🔴 **我在会话中途报过 "$14 / $21 / $27"，那是我自己估的、不是量出来的，差了四倍多。**
-⇒ **只报工具实测值，不要报估算值。** 单会话预算（45 万 token）已超，**W2 与 W3 各自另开会话**。
+**本轮约 $207**（W1 全程：预检 + 9 个任务 + 每任务 review + 整分支 review + 修复波 + 合并 + 收尾）。
+参照：W0 那轮 6 个任务约 $136。**W1 是 9 个任务、外加一次整分支 review 和一次修复波。**
+🔴 **我在会话中途报过 "$14 / $21 / $27"，那是我自己估的、不是量出来的，最终差了近一个数量级。**
+⇒ **只报工具实测值（hook 会给），不要报估算值。** 单会话预算（45 万 token）已超，
+**W2 与 W3 各自另开会话** —— 别把两条叠进一个会话，这是 ⅩⅩⅣ.10 就给过的建议，本轮又验证了一次。
+
+## 11. 🔴 本轮未闭合（**都等人类点头，我一个没动**）
+
+1. **分支 `w1-quarantine-all-sources` 未删**（已合入，但本项目规矩是"删分支先问"）。W0 那轮的分支是删了的。
+2. **`.superpowers/sdd/2026-08-19-w1-quarantine-all-sources/` 未删**（328K / 29 个文件，git-ignored）。
+   `subagent-driven-development` 要求最终 review 干净后删掉它，**但删之前我把全部裁决誊进了本节 §4** ⇒ 删掉不丢东西。
+3. **未 push**（禁令）。合并与本文档都只在本地。
+
+## 12. 状态怎么自己查（**别信本节写的位置，也别信任何写死的 SHA**）
+
+| 查什么 | 怎么查 | 预期 |
+|---|---|---|
+| W1 真的合进去了 | `git log --oneline --merges -5` | 有一条标题 `merge: quarantine-all-sources-at-write switch, and delete the dead block_user_explicit key (W1)` |
+| 套件 | `npm test` | **619 pass, 0 fail** |
+| 新键在不在、默认对不对 | `git grep -nF -e 'quarantine_all_sources_at_write' -- config.default.json scripts/lib/config.mjs` | 两处，都是 `false` |
+| 死键真没了 | `git grep -nF -e 'block_user_explicit' -- scripts tests` | **零命中**（搜不到必须换第二种方法复核，见 §8） |
+| 验收判据 4 | 写个 fixture 把新键设成 `true`，跑 `admin diagnose --config` | `non-default:` 下列出该键 |
+| 领先 origin 几个 | `git status -sb` | **自己看** —— 提交本文档就会变，故不写死 |

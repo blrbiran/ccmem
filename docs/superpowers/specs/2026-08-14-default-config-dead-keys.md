@@ -10,7 +10,7 @@
 
 ## 结论：151 个叶子键里有 **8 个没有任何消费者**
 
-> 🆕 **2026-08-19 更新**：第 5 项 `security.tier3.block_user_explicit` 已随 W1 删除
+> 🆕 **2026-08-27 更新**：第 5 项 `security.tier3.block_user_explicit` 已随 W1 删除
 > （提交 `chore(config): delete the dead block_user_explicit switch, superseded by
 > quarantine_all_sources_at_write`，出处 `docs/superpowers/specs/2026-08-19-dead-key-disposition.md` §8）。
 > 本文件下方表格是 2026-08-14 的历史快照，**保留不改**；当前未处置的死键计数为 **7 个**。
@@ -21,7 +21,7 @@
 | 2 | `retrieval.like_fallback.max_terms` | 同级的 `enabled` / `trigger_when_fts_below` 都是活的（`retrieval.mjs:275-276, 411-412`），**只有它没接线** |
 | 3 | `llm.claude_p_timeout_per_task.l4_review` | 同表其余 6 个键全部活着（动态取键），**只有这一个没有对应的 `taskType`** |
 | 4 | `cron.dead_letter_alert` | ⚠️ **陷阱**：`dead_letters` 在四处出现，但那是 `llm_dead_letters` 这个**指标列**，与本配置键无关 |
-| 5 | `security.tier3.block_user_explicit` | **已知**，见 ⅩⅢ.3（声明了十一个版本、零消费者、零测试）。🆕 **已处置（删除），2026-08-19，随 W1，见 `2026-08-19-dead-key-disposition.md` §8** |
+| 5 | `security.tier3.block_user_explicit` | **已知**，见 ⅩⅢ.3（声明了十一个版本、零消费者、零测试）。🆕 **已处置（删除），2026-08-27，随 W1，见 `2026-08-19-dead-key-disposition.md` §8** |
 | 6 | `security.cross_scope.similarity_min` | 同级 `alert_retention_days` / `dedup_window_days` 都活着 |
 | 7 | `security.quarantine.hard_delete_days` | |
 | 8 | `consolidation.minBatchSize` | 邻居 `weeklyMaxBatch` 活着（`weekly-synthesis.mjs:368`） |

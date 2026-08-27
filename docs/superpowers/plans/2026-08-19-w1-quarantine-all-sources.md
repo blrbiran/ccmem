@@ -613,7 +613,7 @@ git commit -m "chore(config): delete the dead block_user_explicit switch, supers
 **Files:**
 - Modify: `docs/superpowers/plans/2026-08-19-w1-quarantine-all-sources.md`（本文件，勾掉这一项即可）
 
-- [x] **Step 1: 确认并留档**（2026-08-19，随 Task 6 一并完成，见提交 `10d4bbb`）
+- [x] **Step 1: 确认并留档**（2026-08-27，随 Task 6 一并完成，见提交 `10d4bbb`）
 
 用户自己的 `~/.claude/ccmem/config.json` 里若留着 `security.tier3.block_user_explicit`，
 删除后它只是变成一个**被忽略的多余键** —— `loadConfig()` 是把用户配置往默认值上合并，

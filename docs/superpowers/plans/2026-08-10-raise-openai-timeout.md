@@ -448,8 +448,11 @@ Task 5 读数已完成、主要结局已裁定 —— 本条记录**不是剔除
 | 起 | 止 | 位置 | 结果 |
 |---|---|---|---|
 | 09:28:29 | 09:28:58 | `main` checkout，分支 `w1-quarantine-all-sources` | 617 pass |
+| 21:30:45 | 21:31:12 | `main` checkout，分支 `w1-quarantine-all-sources` | 619 pass |
 
 沿用补遗 3 的窄义剔除口径：本行跑批窗口前后各留 ≥60s 余量（即便本条已不再是活的剔除输入，记录时仍照此口径留痕，纪律不因窗口关闭而放松）。
+
+第二行是**完整代码评审后的修复轮**跑批，不是新的测量输入（窗口早已于 08-26 关闭，读数与主要结局都已裁定，这里同样只是审计留痕）。计数从 617 → 619，**+2**：本轮新增两个 `test()` 块，均在 `tests/unit/v014-quarantine-all-sources.test.mjs`——钉住 `DEFAULT_CONFIG.security.quarantine_all_sources_at_write` 与 `config.default.json` 同键的出厂默认值必须为 `false`（评审 Important 1）。同轮另有一条断言加进了 `tests/integration/v014-quarantine-all-sources-write.test.mjs` 的既有 `test()` 里（审计行 `security_quarantine_in`，评审 Minor 5），不新增 `test()` 块，因此不计入这 +2。617 + 2 = 619，与观测到的通过数一致，无需对账偏差。
 
 ---
 

@@ -84,12 +84,12 @@ test('an object standing where the base has a scalar is reported at that path an
 
 test('underscore-prefixed documentation keys are skipped on both sides', () => {
   const base = { a: 1, _base_doc: 'ignored' };
-  const cfg = { a: 1, _comment: 'config.default.json carries two of these' };
+  const cfg = { a: 1, _comment: 'config.default.json carries three of these' };
 
   // config.default.json is the template operators copy, and JSON cannot carry
   // comments, so it documents itself with _comment keys that DEFAULT_CONFIG
   // does not have. Without this rule every config started from the template
-  // reports two unknown keys on day one.
+  // reports three unknown keys on day one.
   assert.deepEqual(collectConfigDeltas(cfg, base), { nonDefault: [], unknown: [] });
 });
 

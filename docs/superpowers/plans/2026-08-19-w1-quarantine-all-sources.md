@@ -699,12 +699,12 @@ git commit -m "docs(plan): record the W1 full-suite run window while it is still
 设计文档 §四 的验收判据 4 是「开关处于非默认值时，`diagnose` 必须报出来」。
 **那个通用机制属于 W0，不在本计划范围内**（`admin/diagnose.mjs` 目前没有任何"报告非默认配置"的机制）。
 
-~~```bash
-grep -rn "quarantine_all_sources_at_write" scripts/lib/admin/diagnose.mjs
+```bash
+~~grep -rn "quarantine_all_sources_at_write" scripts/lib/admin/diagnose.mjs~~
 ```
 
-- **有输出** ⇒ W0 已落地并覆盖了本键，**W1 验收完整**，勾掉本任务。
-- **无输出** ⇒ **W1 的功能已完成，但验收未完整**。
+- ~~**有输出** ⇒ W0 已落地并覆盖了本键，**W1 验收完整**，勾掉本任务。~~
+- ~~**无输出** ⇒ **W1 的功能已完成，但验收未完整**。
   **不要在本计划里顺手实现 diagnose 上报** —— 那是 W0 的活，在这里做会产生两份互不知情的实现。
   正确做法：**如实报告"W1 功能完成、验收判据 4 待 W0"**，并去做 W0。~~
 

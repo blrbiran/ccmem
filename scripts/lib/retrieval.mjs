@@ -117,10 +117,13 @@ function loadRowsByIds(db, ids) {
   ).all(...ids);
 }
 
-function ftsSearch(db, ftsQuery, projectKey, limit) {
+export function ftsSearch(db, ftsQuery, projectKey, limit, disableScopeIsolation = false) {
   if (!ftsQuery) {
     return [];
   }
+
+  const scopeClause = disableScopeIsolation ? '' : "AND (m.scope = 'global' OR m.project_key = ?)";
+  const scopeParams = disableScopeIsolation ? [] : [projectKey];
 
   return db.prepare(
     `SELECT m.id, m.type, m.content, m.scope, m.pinned, m.trust_score,
@@ -128,15 +131,15 @@ function ftsSearch(db, ftsQuery, projectKey, limit) {
      FROM memories_fts
      JOIN memories m ON m.id = memories_fts.rowid
      WHERE memories_fts MATCH ?
-       AND (m.scope = 'global' OR m.project_key = ?)
+       ${scopeClause}
        AND m.status = 'active'
        AND m.decay_status IN ('active', 'probation')
      ORDER BY m.pinned DESC, rank ASC
      LIMIT ?`
-  ).all(ftsQuery, projectKey, limit);
+  ).all(ftsQuery, ...scopeParams, limit);
 }
 
-export function likeSearch(db, prompt, projectKey, limit) {
+export function likeSearch(db, prompt, projectKey, limit, disableScopeIsolation = false) {
   const tokens = extractShortTokens(prompt, 10);
   if (!tokens.length || limit <= 0) {
     return [];
@@ -144,19 +147,22 @@ export function likeSearch(db, prompt, projectKey, limit) {
 
   const clauses = tokens.map(() => 'LOWER(content) LIKE ?').join(' OR ');
   const values = tokens.map((token) => `%${token}%`);
+  const scopeClause = disableScopeIsolation ? '' : "(scope = 'global' OR project_key = ?) AND";
+  const scopeParams = disableScopeIsolation ? [] : [projectKey];
+
   return db.prepare(
     `SELECT id, type, content, scope, pinned, trust_score, last_touched_at, 0 AS rank
      FROM memories
-     WHERE (scope = 'global' OR project_key = ?)
-       AND status = 'active'
+     WHERE ${scopeClause}
+       status = 'active'
        AND decay_status IN ('active', 'probation')
        AND (${clauses})
      ORDER BY pinned DESC, last_touched_at DESC
      LIMIT ?`
-  ).all(projectKey, ...values, limit);
+  ).all(...scopeParams, ...values, limit);
 }
 
-function legacySubstringSearch(db, prompt, projectKey, limit) {
+export function legacySubstringSearch(db, prompt, projectKey, limit, disableScopeIsolation = false) {
   const tokens = sanitizeFtsQuery(String(prompt ?? '').slice(0, 2000))
     .split(/\s+/)
     .filter(Boolean);
@@ -164,14 +170,17 @@ function legacySubstringSearch(db, prompt, projectKey, limit) {
     return [];
   }
 
+  const scopeClause = disableScopeIsolation ? '' : "(scope = 'global' OR project_key = ?) AND";
+  const scopeParams = disableScopeIsolation ? [] : [projectKey];
+
   const candidates = db.prepare(
     `SELECT id, type, content, scope, pinned, trust_score, last_touched_at
      FROM memories
-     WHERE (scope = 'global' OR project_key = ?)
-       AND status = 'active'
+     WHERE ${scopeClause}
+       status = 'active'
        AND decay_status IN ('active', 'probation')
      ORDER BY pinned DESC, last_touched_at DESC`
-  ).all(projectKey);
+  ).all(...scopeParams);
 
   return candidates
     .map((row) => {

@@ -119,4 +119,20 @@ test('开关打开时：user_explicit 真的被隔离，且三个副作用都发
   const tags = JSON.parse(row.tags ?? '[]');
   assert.ok(tags.includes('quarantine_at_write'),
     `tags 应包含 quarantine_at_write，实际为 ${row.tags}`);
+
+  // ⑤ 审计行 —— save.mjs:161-167 在 resolvedDecayStatus === 'quarantine' 时
+  //    额外写一条 security_quarantine_in 审计（audit_log 表，schema 见
+  //    scripts/migrations/001_initial.sql:56-61：id/ts/action/affected_ids/details）。
+  //    这是操作员发现"这个开关真的生效了"的观测面，前面 ①-④ 都只看 memories 表，
+  //    一次遗漏就会让这第四个可观测后果继续隐形。
+  const auditRow = db.prepare(
+    `SELECT action, affected_ids, details FROM audit_log WHERE action = 'security_quarantine_in' ORDER BY id DESC LIMIT 1`
+  ).get();
+  assert.ok(auditRow, '应写入一条 security_quarantine_in 审计行，实际没有找到');
+  const affectedIds = JSON.parse(auditRow.affected_ids ?? '[]');
+  assert.ok(affectedIds.includes(result.id),
+    `审计行的 affected_ids 应包含刚写入的记忆 id ${result.id}，实际为 ${auditRow.affected_ids}`);
+  const details = JSON.parse(auditRow.details ?? '{}');
+  assert.equal(details.reason, 'tier3_at_write',
+    `审计行 details.reason 应为 'tier3_at_write'，实际为 ${JSON.stringify(details)}`);
 });

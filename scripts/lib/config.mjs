@@ -6,6 +6,9 @@ export const DEFAULT_CONFIG = {
   inject: { max_chars: 4000, max_per_prompt: 6 },
   save: { max_chars_per_memory: 500 },
   injection: { file_based: true },
+  eval: {
+    disable_scope_isolation: false
+  },
   embedding: {
     enabled: false,
     provider: 'transformers-local',

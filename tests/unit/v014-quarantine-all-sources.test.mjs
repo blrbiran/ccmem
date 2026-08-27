@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { evaluateTier2, evaluateTier3 } from '../../scripts/lib/threat-scan.mjs';
+import { DEFAULT_CONFIG } from '../../scripts/lib/config.mjs';
 
 // 一条真的会命中 Tier-2 的内容：TIER2_PATTERNS 里 destructive_command 打 0.7 分，
 // 高于 force_demote 的 0.35 门槛。刻意避开 Tier-1 的 role-injection 与 hidden-unicode，
@@ -135,5 +136,41 @@ test('不变量：force_demote 蕴含 evidence 非空（W3 改扫描器时这条
     `${uncovered.join(', ')}\n` +
     '⇒ 新增/修改 Tier-2 模式时必须同步补一条能触发它的样本，否则这条防撞栏对新模式是盲的。' +
     '在继续之前先重审 W1 的开关语义。'
+  );
+});
+
+// ---- 钉住出厂默认值：两份配置源都必须是 false ----
+//
+// 上面的真值表只证明"函数对开关的反应对"，从没断言过开关**出厂值**本身。
+// 两个配置源（DEFAULT_CONFIG 与 config.default.json）里任何一个被悄悄改成
+// true，套件都照样全绿：单元测试传的是显式 options，集成测试写的是自己
+// 的配置文件，谁都不读这两份出厂默认值。
+//
+// config.default.json 是新用户直接拷贝的模板。一旦它的默认值变成 true，
+// 用户手写的 user_explicit 记忆会在写入时静默落到 trust 0.3、且永久没有
+// 向量 —— 全程没有任何报错、没有任何测试变红，只是"看起来正常"。
+
+test('出厂默认值钉子：DEFAULT_CONFIG.security.quarantine_all_sources_at_write 必须是 false', () => {
+  assert.equal(
+    DEFAULT_CONFIG.security.quarantine_all_sources_at_write,
+    false,
+    '危险：DEFAULT_CONFIG 里这个开关被改成了非 false 的出厂值。\n' +
+    '这个值一旦为 true，所有 user_explicit / cron_consolidated 记忆在写入时会' +
+    '默认被隔离 —— trust 从各自的初始值被压到 0.3，且永久不生成向量（除非日后' +
+    'vec-backfill 捞回），而这一切不会让任何现有测试变红，因为它们都传显式 options。'
+  );
+});
+
+test('出厂默认值钉子：config.default.json 的 security.quarantine_all_sources_at_write 必须是 false', () => {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoot = path.resolve(__dirname, '../..');
+  const fileConfig = JSON.parse(readFileSync(path.join(repoRoot, 'config.default.json'), 'utf8'));
+
+  assert.equal(
+    fileConfig.security.quarantine_all_sources_at_write,
+    false,
+    '危险：config.default.json —— 新用户直接拷贝的模板 —— 里这个开关的出厂值不是 false。\n' +
+    '同上：新用户会在毫无提示的情况下，让自己手写的记忆写入时就被隔离（trust 砍到 0.3、' +
+    '不生成向量），而套件不会因此变红，因为没有测试读这份文件里的实际值，只读键路径。'
   );
 });

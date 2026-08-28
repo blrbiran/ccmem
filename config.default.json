@@ -10,6 +10,10 @@
   "injection": {
     "file_based": true
   },
+  "eval": {
+    "_comment": "评测专用。true 会关掉跨项目 scope 隔离，让本机所有项目的记忆互相可见。默认 false，不要在真实数据目录上打开。",
+    "disable_scope_isolation": false
+  },
   "embedding": {
     "enabled": false,
     "provider": "transformers-local",

@@ -52,6 +52,7 @@ export async function handlePromptSubmit(hookData) {
     upsertSessionContext(db, hookData.session_id, projectKey);
 
     const retrieval = await retrieveMemories(db, hookData.prompt ?? '', projectKey, config);
+    const disableScopeIsolation = config?.eval?.disable_scope_isolation === true;
 
     if (hookData.session_id) {
       inferPrevTurnOutcome(db, hookData.session_id, hookData.prompt ?? '');
@@ -86,7 +87,7 @@ export async function handlePromptSubmit(hookData) {
       }
     }
 
-    if (hookData.session_id && rows.length) {
+    if (hookData.session_id && rows.length && !disableScopeIsolation) {
       const injectedIds = rows.map((row) => row.id);
       const promptIdx = getNextPromptIdx(db, hookData.session_id);
       writeRecentInjection(

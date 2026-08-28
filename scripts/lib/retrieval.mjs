@@ -117,10 +117,13 @@ function loadRowsByIds(db, ids) {
   ).all(...ids);
 }
 
-function ftsSearch(db, ftsQuery, projectKey, limit) {
+export function ftsSearch(db, ftsQuery, projectKey, limit, disableScopeIsolation = false) {
   if (!ftsQuery) {
     return [];
   }
+
+  const scopeClause = disableScopeIsolation ? '' : "AND (m.scope = 'global' OR m.project_key = ?)";
+  const scopeParams = disableScopeIsolation ? [] : [projectKey];
 
   return db.prepare(
     `SELECT m.id, m.type, m.content, m.scope, m.pinned, m.trust_score,
@@ -128,15 +131,15 @@ function ftsSearch(db, ftsQuery, projectKey, limit) {
      FROM memories_fts
      JOIN memories m ON m.id = memories_fts.rowid
      WHERE memories_fts MATCH ?
-       AND (m.scope = 'global' OR m.project_key = ?)
+       ${scopeClause}
        AND m.status = 'active'
        AND m.decay_status IN ('active', 'probation')
      ORDER BY m.pinned DESC, rank ASC
      LIMIT ?`
-  ).all(ftsQuery, projectKey, limit);
+  ).all(ftsQuery, ...scopeParams, limit);
 }
 
-export function likeSearch(db, prompt, projectKey, limit) {
+export function likeSearch(db, prompt, projectKey, limit, disableScopeIsolation = false) {
   const tokens = extractShortTokens(prompt, 10);
   if (!tokens.length || limit <= 0) {
     return [];
@@ -144,19 +147,22 @@ export function likeSearch(db, prompt, projectKey, limit) {
 
   const clauses = tokens.map(() => 'LOWER(content) LIKE ?').join(' OR ');
   const values = tokens.map((token) => `%${token}%`);
+  const scopeClause = disableScopeIsolation ? '' : "(scope = 'global' OR project_key = ?) AND";
+  const scopeParams = disableScopeIsolation ? [] : [projectKey];
+
   return db.prepare(
     `SELECT id, type, content, scope, pinned, trust_score, last_touched_at, 0 AS rank
      FROM memories
-     WHERE (scope = 'global' OR project_key = ?)
-       AND status = 'active'
+     WHERE ${scopeClause}
+       status = 'active'
        AND decay_status IN ('active', 'probation')
        AND (${clauses})
      ORDER BY pinned DESC, last_touched_at DESC
      LIMIT ?`
-  ).all(projectKey, ...values, limit);
+  ).all(...scopeParams, ...values, limit);
 }
 
-function legacySubstringSearch(db, prompt, projectKey, limit) {
+export function legacySubstringSearch(db, prompt, projectKey, limit, disableScopeIsolation = false) {
   const tokens = sanitizeFtsQuery(String(prompt ?? '').slice(0, 2000))
     .split(/\s+/)
     .filter(Boolean);
@@ -164,14 +170,17 @@ function legacySubstringSearch(db, prompt, projectKey, limit) {
     return [];
   }
 
+  const scopeClause = disableScopeIsolation ? '' : "(scope = 'global' OR project_key = ?) AND";
+  const scopeParams = disableScopeIsolation ? [] : [projectKey];
+
   const candidates = db.prepare(
     `SELECT id, type, content, scope, pinned, trust_score, last_touched_at
      FROM memories
-     WHERE (scope = 'global' OR project_key = ?)
-       AND status = 'active'
+     WHERE ${scopeClause}
+       status = 'active'
        AND decay_status IN ('active', 'probation')
      ORDER BY pinned DESC, last_touched_at DESC`
-  ).all(projectKey);
+  ).all(...scopeParams);
 
   return candidates
     .map((row) => {
@@ -270,7 +279,8 @@ function writeQueryEmbeddingCache(db, promptText, sig, queryVec) {
 }
 
 function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery) {
-  let ftsRows = useFts && ftsQuery ? ftsSearch(db, ftsQuery, projectKey, limit * 3) : [];
+  const disableScopeIsolation = config?.eval?.disable_scope_isolation === true;
+  let ftsRows = useFts && ftsQuery ? ftsSearch(db, ftsQuery, projectKey, limit * 3, disableScopeIsolation) : [];
   let candidateRows = ftsRows;
   const likeEnabled = config?.retrieval?.like_fallback?.enabled !== false;
   const likeTrigger = Number(config?.retrieval?.like_fallback?.trigger_when_fts_below ?? 3);
@@ -279,13 +289,14 @@ function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit
       db,
       promptText,
       projectKey,
-      useFts ? Math.max((limit * 3) - candidateRows.length, limit) : (limit * 3)
+      useFts ? Math.max((limit * 3) - candidateRows.length, limit) : (limit * 3),
+      disableScopeIsolation
     );
     candidateRows = dedupeMerge(candidateRows, likeRows);
   }
 
   if (!candidateRows.length) {
-    const fallbackRows = legacySubstringSearch(db, promptText, projectKey, limit);
+    const fallbackRows = legacySubstringSearch(db, promptText, projectKey, limit, disableScopeIsolation);
     return {
       rows: fallbackRows.map((row) => renderRow(row, {
         fused: Number(row.tokenHits ?? 0),
@@ -331,6 +342,11 @@ function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit
 }
 
 export async function retrieveMemories(db, prompt, projectKey, config) {
+  // Computed once and shared by every query below (including the copy of the
+  // lexical block further down and the vector-candidate query) — this is the
+  // path the eval harness actually runs, so lexicalRetrieve's own copy of
+  // this boolean does not reach it.
+  const disableScopeIsolation = config?.eval?.disable_scope_isolation === true;
   const limit = Number(config?.inject?.max_per_prompt ?? 6);
   const promptText = String(prompt ?? '').slice(0, 2000);
   const promptTokenList = tokenize(promptText);
@@ -406,7 +422,7 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
     }
     embedMs = Date.now() - tEmbed;
   }
-  let ftsRows = useFts && ftsQuery ? ftsSearch(db, ftsQuery, projectKey, limit * 3) : [];
+  let ftsRows = useFts && ftsQuery ? ftsSearch(db, ftsQuery, projectKey, limit * 3, disableScopeIsolation) : [];
   let candidateRows = ftsRows;
   const likeEnabled = config?.retrieval?.like_fallback?.enabled !== false;
   const likeTrigger = Number(config?.retrieval?.like_fallback?.trigger_when_fts_below ?? 3);
@@ -415,20 +431,23 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
       db,
       promptText,
       projectKey,
-      useFts ? Math.max((limit * 3) - candidateRows.length, limit) : (limit * 3)
+      useFts ? Math.max((limit * 3) - candidateRows.length, limit) : (limit * 3),
+      disableScopeIsolation
     );
     candidateRows = dedupeMerge(candidateRows, likeRows);
   }
 
   const tDbRead = Date.now();
+  const vecScopeClause = disableScopeIsolation ? '' : "AND (scope = 'global' OR project_key = ?)";
+  const vecScopeParams = disableScopeIsolation ? [] : [projectKey];
   const allVecs = db.prepare(
     `SELECT id, embedding
      FROM memories
      WHERE embedding IS NOT NULL AND embedding_sig = ?
        AND status = 'active'
        AND decay_status IN ('active', 'probation')
-       AND (scope = 'global' OR project_key = ?)`
-  ).all(sig, projectKey);
+       ${vecScopeClause}`
+  ).all(sig, ...vecScopeParams);
   // Same population vec_backfill will actually touch (status/decay_status
   // predicate matches its candidate query verbatim) — otherwise archived,
   // deleted, or quarantined rows inflate this count with vectors that will

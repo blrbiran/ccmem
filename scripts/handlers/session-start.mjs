@@ -7,6 +7,9 @@ import { runSessionStartMiniPrelude } from '../lib/tier15.mjs';
 import { cleanupStaleContextFiles, contextFileName } from '../lib/context-file.mjs';
 
 const SHADOW_NOTICE = 'ccmem: mode=shadow (read-only diagnostic — no writes, no inject)\n';
+const SCOPE_ISOLATION_NOTICE =
+  'ccmem: WARNING — eval.disable_scope_isolation is ON. Cross-project memory isolation is DISABLED;\n'
+  + 'ccmem: memories from every project on this machine are visible. Do not use on a real data root.\n';
 
 export function buildReadInstruction(sessionId) {
   const fileName = contextFileName(sessionId);
@@ -62,12 +65,32 @@ export async function handleSessionStart(hookData) {
     }
 
     const projectKey = resolveProjectKey(hookData.cwd);
+    // Hoisted from further down (was only reached on the active/non-shadow
+    // path) so the scope-isolation switch can gate the SELECT below. This
+    // crosses the `mode === 'shadow'` early return: shadow mode now calls
+    // loadConfig() too, and a malformed config.json will throw ConfigError
+    // here. That is accepted deliberately (design §4.4-1) — a config broken
+    // enough to throw already fails every non-shadow session, and shadow
+    // mode silently succeeding on a broken config is itself a silent
+    // failure. Do not wrap this in try/catch.
+    const config = loadConfig();
+    const disableScopeIsolation = config?.eval?.disable_scope_isolation === true;
+    const scopeClause = disableScopeIsolation ? '' : "WHERE scope = 'global' OR scope = ?";
+    const scopeParams = disableScopeIsolation ? [] : [`project:${projectKey}`];
     const rows = db.prepare(
       `SELECT rendered_text, member_ids
        FROM injection_cache
-       WHERE scope = 'global' OR scope = ?
-       ORDER BY CASE WHEN scope = 'global' THEN 0 ELSE 1 END`
-    ).all(`project:${projectKey}`);
+       ${scopeClause}
+       ORDER BY CASE WHEN scope = 'global' THEN 0 ELSE 1 END, scope`
+    ).all(...scopeParams);
+    if (disableScopeIsolation) {
+      // Fires iff the cross-project query above actually ran: `mode === 'off'`
+      // already returned before this point (silent, correctly), and
+      // `mode === 'shadow'` returns AFTER this point (below), so it still
+      // warns — the query really did read across projects even though
+      // shadow mode discards the result.
+      process.stderr.write(SCOPE_ISOLATION_NOTICE);
+    }
     const stableContext = rows.map((row) => row.rendered_text).filter(Boolean).join('\n\n');
 
     if (mode === 'shadow') {
@@ -77,7 +100,7 @@ export async function handleSessionStart(hookData) {
 
     upsertSessionContext(db, hookData.session_id, projectKey);
 
-    if (hookData.session_id && stableContext) {
+    if (hookData.session_id && stableContext && !disableScopeIsolation) {
       const injectedIds = [...new Set(rows.flatMap((row) => parseMemberIds(row.member_ids)))];
       writeRecentInjection(db, hookData.session_id, 0, 'session_start', injectedIds);
     }
@@ -86,7 +109,6 @@ export async function handleSessionStart(hookData) {
       runSessionStartMiniPrelude(db);
     } catch {}
 
-    const config = loadConfig();
     const useFileBased = config.injection?.file_based !== false;
     if (useFileBased) {
       cleanupStaleContextFiles(hookData.cwd, hookData.session_id);

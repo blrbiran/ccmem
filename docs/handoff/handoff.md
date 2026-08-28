@@ -4105,3 +4105,200 @@ W1 计划的 **Task 9** 是"W0 已落地"的闸门 —— **W0 已落地，那�
 | 死键真没了 | `git grep -nF -e 'block_user_explicit' -- scripts tests` | **零命中**（搜不到必须换第二种方法复核，见 §8） |
 | 验收判据 4 | 写个 fixture 把新键设成 `true`，跑 `admin diagnose --config` | `non-default:` 下列出该键 |
 | 领先 origin 几个 | `git status -sb` | **自己看** —— 提交本文档就会变，故不写死 |
+
+---
+
+# ⅩⅩⅥ. 2026-08-28：✅ **W2 已实现、过整分支 review、合入 `main`** —— 兼「W3 之前必读」
+
+> **本节是 W2 的终点，也是下一位的入口。剩余未落地的工作流只有 W3。**
+> **本轮零 push、未删任何分支或 worktree、未改电源设置、未重跑读数、未挂 cron。**
+> ⚠️ **本节不写 SHA、不写领先数** —— 提交本文档就会改掉它们。**按提交标题找。**
+
+## 1. 交付了什么
+
+新增配置键 **`eval.disable_scope_isolation`**（默认 `false`，顶层 `eval` 段）。
+打开后，**5 处 SQL scope 谓词**在 **7 个接线处**停止按项目隔离。
+
+| | 行为 |
+|---|---|
+| 默认 `false` | **行为零变化**（整分支 review 逐处比对：关闭分支生成的每一条 SQL 与改动前逐字相同，绑定顺序一致） |
+| 打开后 | 检索与注入两条通道都能看见本机其它项目的记忆 ⇒ `C-NAIVE` 才可能成为真控制组 |
+| 附带 | `session-start` 加了确定性次级排序 `, scope`（无条件）与一行 stderr 警告 |
+| 🔴 关键安全项 | **开关打开时两个 hook handler 都抑制 feedback 写入** |
+
+**为什么必须抑制 feedback（这条不抑制就是不可逆损害）**：开关打开后检索结果含**其它项目的记忆 id**，
+它们会流进 `recent_injections` / `memory_feedback`，结算时交给 `trust.mjs::adjustTrust` 执行
+`UPDATE memories SET trust_score…, helpful_count…, last_touched_at… WHERE id = ?` —— **没有任何 scope 校验**。
+`last_touched_at` 还喂给衰减与注入排序 ⇒ **跑一次评测就会持久改写别的项目的记忆，且把开关关回去也撤不回。**
+整分支 review 独立枚举确认：两张表在源头被掐断后，**没有剩余路径**能走到那个 UPDATE。
+
+## 2. 验证到什么程度
+
+- **全量套件 647 pass / 0 fail / 0 skipped**，**跑了四次**（Task 7 闸门、修复波后、合并前、合并结果上），
+  四个窗口都当场记进了 `plans/2026-08-10-raise-openai-timeout.md` 的四列批次表。
+- 🔴 **计数逐段对平，不是只报数字**：`619 → 641`（+22，三个新文件逐条列出）`→ 647`（+6，修复波）。
+  W1 那轮的教训是"对得上才算交叉验证"，本轮照做。
+- **每一条守卫都被亲眼看着红过一次**，且红落在被断言的行为上。
+- 🔴 **整分支 review 自己跑了一轮 11 项独立变异对照**（不是复述实现者的报告），
+  确认 7 个接线处中的 5 个 + 次级排序键 + 两个 feedback 守卫**各自只红掉自己那条测试，无交叉遮蔽**。
+
+## 3. 🔴🔴 计划里有 **12** 处错 —— 而预检只抓到 7 处
+
+**这是本节对下一位最有价值的一条，它继续更正 ⅩⅩⅣ.3 与 ⅩⅩⅤ.3.1 给的方法。**
+
+| # | 计划怎么写的 | 实际 | 谁抓到的 |
+|---|---|---|---|
+| 1 | Tech Stack 含 `better-sqlite3` | 仓库**零依赖**，用 `node:sqlite` 的 `DatabaseSync`；该目录不存在 | 预检 L1 |
+| 2 | fixture 调 `handleSessionStart(db, {...})` | **单参数**，自己 `openDb()` ⇒ 注入测试必须同时用 `CCMEM_DATA_ROOT` | 预检 L1 |
+| 3 | 断言 `additionalContext === 'G\n\nA'` | `injection.file_based` 默认 `true` ⇒ 尾部还有 `buildReadInstruction`，此断言必失败 | 预检 L1 |
+| 4 | Task 6 验收 = grep 旧措辞无输出 | 旧措辞**已被划线**、替换文字 W0 那轮就写好了；要"无输出"就得删本仓库惯例保留的历史 | 预检 L1 |
+| 5 | Task 5 覆盖"两个 handler 都抑制" | 守卫两个都写了，**测试只调 session-start**，而它根本不写 `memory_feedback` ⇒ 那条 `COUNT=0` **恒真恒绿**，prompt-submit 零覆盖 | **预检 L2 子句级** |
+| 6 | `runSessionStart` 一个 helper 两种调用约定 | Task 4 传 eval overrides、Task 5 传整份 config | 预检 L3 |
+| 7 | Task 3 标题"三处接线" | 锚点表四行 | 预检 L3 |
+| 8 | fixture 用字符串 id `'own'/'other'/'glob'` | `memories.id` 是 `INTEGER PRIMARY KEY AUTOINCREMENT`，**存不进去** | ❌ 实现时 |
+| 9 | Global Constraint 说危害是"静默绑错列" | 该 SQL 形状**做不出静默错绑**：`scopeParams` 是 0/1 元素且与子句 1:1 ⇒ 只会抛计数错 | ❌ 任务审阅 |
+| 10 | Task 3 Step 7"本计划的关键验证" | **按原样写是绿的** —— 三条 lane 里任意一条都能把被破坏的行救回来 | ❌ 实现时 |
+| 11 | Task 7 Step 4b：grep 三个测试文件名确认它们跑了 | Node 的 `--test` reporter **从不打印文件路径** ⇒ 必然 0 命中，读作"新测试没跑" | ❌ 实现时 |
+| 12 | Task 4 fixture 播 `'project:proj-a'` 字面量 | `resolveProjectKey` 只会返回 git remote URL 或 `path:<sha256前16>`，**永远不等于 `proj-a`** | 预检 L1 |
+
+### 3.1 🔴 预检这次补了 L2，**仍然漏了 4 处**。下一轮要补的是第四层。
+
+ⅩⅩⅤ.3.1 教的 L2（设计每个子句逐句对到 Task）**有效**——第 5 条正是它抓到的，L1 那套方法完全看不见。
+**但 L1/L2/L3 三层都不检查一样东西：计划写死的 fixture 数据，对不对得上它要插入的 schema，
+以及计划断言的工具行为，是不是那个工具真实的行为。**
+第 8 条（字符串 id vs `INTEGER PRIMARY KEY`）与第 11 条（reporter 不打印文件名）都属这一类。
+
+⇒ **必须补的第四层（L4）**：**计划里每一个 fixture，把它的列名与值类型对到 `CREATE TABLE`；
+计划里每一条"跑这个命令、看到这个输出"的验收，先确认那个命令真的会产出那种输出。**
+
+### 3.2 🔴 更重要的一条：**变异步骤本身也会撒谎**
+
+第 10 条是本轮最贵的发现。计划指定了一个变异并断言"它会红"，**而它是绿的** ——
+不是因为接线错了，是因为**另外两条 lane 各自都能满足同一条断言**。
+⇒ **一个非歧视性的变异测试，和一个真正的绿，长得一模一样。**
+**别信"我做了变异步骤"，要问"变异之后红的是哪一条、其余是不是都还绿"。**
+本轮之后每个任务的审阅都按这个问法追，整分支 review 更是直接自己跑了 11 项。
+
+## 4. 本轮做过的裁决（**会随 ledger 一起消失，所以记在这里**）
+
+`.superpowers/sdd/` 是 git-ignored 的。必须活下来的部分（编号即 ledger 里的 R1–R15）：
+
+1. **R1** —— Task 5 补 prompt-submit 真覆盖。依据：设计 §4.6 与判据 4 都写"**两个 handler 都是**"，计划只是它的论证。
+2. **R2** —— 注入测试同时用 `CCMEM_DATA_ROOT`（模块级，给 `openDb`）与 `CCMEM_CONFIG_PATH`（给 `loadConfig`），
+   并在临时配置里写 `injection.file_based:false`，**保住整串精确断言**而不是退化成子串查。
+3. **R3** —— 不删划线历史（`v0.14-spec` 自己 §W2 上方就有同样写法）；Task 6 改为更正**仍然活着且已成假**的两处。
+4. **R4** —— Tech stack 是 `node:sqlite`。
+5. **R5** —— `runSessionStart` 统一只收 eval overrides。
+6. **R6** —— Task 3 实际覆盖设计表 B 的 1–6 行（四个调用点）。
+7. **R7** —— **Task 3 不需要新造 provider stub**，仓内有两条现成先例：
+   `CCMEM_TEST_MODE=1` + `provider:'transformers-local'` 会装确定性桩（不碰网络）；
+   或直接播 `query_embedding_cache`（`promptHash = sha256(sig + "\n" + prompt)`）让 `useEmbedding` 短路成真。
+   ⇒ 计划里"做不到就停下来问人类"那条分支**不可达**。
+8. **R8** —— project key 必须**算**出来，期望顺序由算出的 key 推；"删 `, scope` 必须变红"那步是防它退化成自证的唯一闸门。
+9. **R9** —— wire site 3 的覆盖缺口**在范围内**（设计两处都把表 B 第 4、5 行**并列**称作"最要命的两处"），退回补测。
+10. **R10** —— Task 5 必须断言 `_metricFields.matched > 0`。**没有它，"零写入"在检索本来就没命中时恒真** —— 与第 5 条同型。
+11. **R11** —— 同文件行号自指针换成**文字锚点**。改对数字只是把同一缺陷推迟到下次编辑，而这份文档每轮都被就地改。
+12. **R12** —— Task 7 不单独派审阅（唯一产物是一行批次表，可机械核验），我自己核后并入整分支 review。**记录在案，不是静默跳过。**
+13. **R13** —— 一次修复波覆盖整分支 review 的两条 Important + 一条 Minor，不逐条派人。
+14. **R14 —— 搁置（明知未闭合）**：`legacySubstringSearch` **调用点**的变异仍抓不到。
+    它是兜底的兜底（要 FTS 与 LIKE 双双落空），而该文件共享的 "zebrafish" fixture 造不出这种状态。
+    **导出的函数本身有直调测试覆盖，缺的只是那一处第 5 参数的接线。**
+15. **R15 —— 搁置（明知未闭合）**：`prompt-submit.mjs` 那处读法没有专属的 `eval` 畸形值测试。
+    表达式与已被变异证明过的两处**逐字节相同**，为第三份副本再造一套跨项目 fixture 不划算。
+
+## 5. 🔴 整分支 review 抓到的两条，是任务级审阅结构上看不见的
+
+**这两条值得单独记，因为它们说明"每个任务都过审"不等于"分支没洞"。**
+
+1. **`lexicalRetrieve` 的三个调用点逐个变异全绿。** 我的 ledger 一度把它记成"接线处 1"（单数），**是错的**。
+   审阅还把严重性推进了一步：**要命的方向不是参数被删**（那 fail-safe，隔离仍在），
+   **而是第 5 个位置传进一个错误的真值** —— 5 参数位置 helper 上一次签名重构就够了 ——
+   那会在**出厂默认安装**上静默关掉隔离（`DEFAULT_CONFIG.embedding.enabled` 就是 `false` ⇒ 走 `B-off` ⇒ 走 `lexicalRetrieve`），
+   **而且这条路上没有 stderr 警告**（警告只在 session-start 发）。已补测。
+2. **`=== true` 这条规则全无测试。** 审阅把四处读法改成被禁的 `!== false`，**22 条测试全绿**。
+   触发路径是真的、且已实测：用户配置误写 `"eval": true`（这个键的一个 token 笔误）
+   ⇒ `mergeConfig` 的标量覆盖替换整棵子树 ⇒ `config.eval === true`、`?.disable_scope_isolation` 是 `undefined`
+   ⇒ `=== true` 保持隔离（对），**`!== false` 整机静默关闭隔离**。已补测。
+
+## 6. ⚠️ "只读降级"这个定位的两个边界（**写 `S-SCOPE-03` runner 的人必须知道**）
+
+1. **注入上下文文件不在抑制范围内。** 开关打开时 `prompt_submit` 仍会调 `writeContextFile`，
+   把**别的项目的记忆正文**写进本项目的 `.ccmem/<session>` 文件与 `context_snapshots` / `context_write_log`。
+   **这不是 §1 那类不可逆损害**（没改任何 memory 行、没动 trust / `last_touched_at`），
+   但它**确实活过把开关关回 `false`**。实现与 spec 一致，**缺口在措辞本身**。
+2. **抑制 feedback 让两臂多出第二个受控差异。** 开关打开时 feedback 回路**整个不跑**
+   ⇒ `C-NAIVE` 与 `C-FULL` 不只差在可见性。人类当初接受了这一点，
+   但**任何位于 trust / feedback 下游的指标都会被混淆** —— 不知道这条就会读出假结论。
+
+📌 两条都已写进 `docs/ccmem-v0.14-spec.md` §六 风险 2。
+
+## 7. ✅ 下一位从这里开始
+
+**只剩 W3。** 设计与实现计划都已落盘（`specs/2026-08-25-w3-…-design.md`、`plans/2026-08-25-w3-…md`，11 个任务），
+用 `superpowers:subagent-driven-development`，**不要再跑 `brainstorming` / `writing-plans`**。
+
+**动手前的预检要做四层**：ⅩⅩⅣ.3 的 L1（行号/符号/验收命令）+ ⅩⅩⅤ.3.1 的 L2（设计子句逐句对 Task）
++ L3（跨任务共享文件两两对照）+ **本轮新增的 L4（fixture 数据对 schema、验收命令对工具真实行为，见 §3.1）**。
+
+⚠️ **W3 特别注意（W1 留的主动绊线，仍然有效）**：往 `TIER2_PATTERNS` 加模式却不加对应样本时，
+`tests/unit/v014-quarantine-all-sources.test.mjs` 的覆盖断言会直接变红。**那是设计意图，加样本即可。**
+
+⚠️ **W3 还有一条自己的绊线（设计 §六.1）**：改强扫描器 = bump `scan_patterns_version`
+⇒ **revalidation 会追溯重扫整个已有记忆库**，而本仓库自己在 dogfood。计划里有一步"干跑 + 人类过目"再 bump，**别跳过**。
+
+## 8. 🔴 仍然有效的禁令（**一条都没变**）
+
+1. **`config-value-parity` 不合并**（分支还在，未动）。真正在跑的值级守卫是 `tests/unit/v013-config-sync.test.mjs`。
+2. **那 7 个死键不删。**
+3. **不许改本机电源设置。**
+4. **不许 push。**
+5. **Task 5 读数不许重跑。**
+6. **不要再挂 cron、不要再做巡检。**
+
+## 9. ⚠️ 三个会骗人的本机工具（与 ⅩⅩⅤ.8 同，本轮全部复现过）
+
+`grep`→`rg` 假报 0 命中；`git status` 被包装；`mv`/`cp` 被 alias 成 `-i`（`mv` 静默 no-op、`cp` 直接挂起且 `-f` 压不住）。
+用 `/usr/bin/grep`、`/usr/bin/git`、`\mv`、`/bin/cp`，**任何"没输出"都要换第二种方法复核**。
+
+🆕 **本轮新增一条同类陷阱（不是 alias，是工具真实行为）**：
+**Node 的 `--test` spec reporter 从不打印源文件路径**，只打印测试描述。
+⇒ 拿文件名去 grep 测试输出**必然 0 命中**，而它读起来正好像"新测试根本没跑"。
+本轮的做法是：读出三个文件里全部 22 条 `test()` 描述，逐条在输出里确认 `✔`。
+
+## 10. 建议使用的 skills
+
+与 ⅩⅩⅤ.9 同。补两条：
+- **任务级审阅看不见跨任务上下文，整分支 review 才看得见** —— §5 那两条都是这么出来的。**别把整分支 review 当橡皮图章。**
+- **给审阅点名具名风险，但只给事实、不给结论。** 本轮每次派审阅都附 3–5 条 "RISK A/B/C"，
+  且明写"我只给事实，不给你结论"。有效：审阅多次推翻了我暗含的判断（最典型的是它把我记的"接线处 1"更正成三个）。
+
+## 11. 成本与预算（照 CLAUDE.md Rule 6 如实报）
+
+**本轮约 $155**（W2 全程：预检 + 7 个任务 + 每任务 review + 2 次修复环 + 整分支 review + 修复波 + 缩范围复审 + 合并 + spec 回同步 + 收尾）。
+参照：W0 六个任务约 $136，W1 九个任务约 $207。
+🔴 **全程只报工具实测值，一次估算都没报** —— ⅩⅩⅤ.10 的教训（估算差了近一个数量级）本轮已执行。
+单会话 45 万 token 预算已超。**W3 必须另开会话。**
+
+## 12. 🔴 本轮未闭合（**都等人类点头，我一个没动**）
+
+1. **分支 `w2-scope-isolation-switch` 未删**（已合入 `main`，但本项目规矩是"删分支先问"）。
+2. **`.superpowers/sdd/2026-08-21-w2-scope-isolation-switch/` 未删**（git-ignored）。
+   `subagent-driven-development` 要求最终 review 干净后删掉它，**但删之前全部裁决已誊进本节 §4** ⇒ 删掉不丢东西。
+3. **未 push**（禁令）。合并与本文档都只在本地。
+4. **R14 / R15 两条搁置的覆盖缺口**（见 §4）——**明知未闭合而搁置，不是漏掉**。
+5. **一条已知不准确的代码注释**：`session-start.mjs` 里描述 `loadConfig()` 上移的注释（以及设计 §4.4-1）
+   把影响写成"只在 shadow 模式"，**实际它也把 `ConfigError` 抛出点提前到了非 shadow 路径上
+   `upsertSessionContext` / `recent_injections` 写入 / `runSessionStartMiniPrelude` 之前**。
+   `withHookSafety` 两种情况都 fail-open，会话降级方式相同 ⇒ **行为无差别，只是注释不准**。
+   **我刻意没改**：修复波与复审都已结束，此时动 production 代码就是一处未经审阅的改动。留给下一轮，一句从句即可。
+
+## 13. 状态怎么自己查（**别信本节写的位置，也别信任何写死的 SHA**）
+
+| 查什么 | 怎么查 | 预期 |
+|---|---|---|
+| W2 真的合进去了 | `git log --oneline --merges -5` | 有一条标题 `merge: scope-isolation degradation switch for evaluation (W2)` |
+| 套件 | `npm test` | **647 pass, 0 fail, 0 skipped** |
+| 新键在不在、默认对不对 | `git grep -nF -e 'disable_scope_isolation' -- config.default.json scripts/lib/config.mjs` | 两处，都是 `false` |
+| 七个接线处都在 | `git grep -n 'disableScopeIsolation' -- scripts/` | 读法处一律 `=== true`，**出现 `!== false` 就是有人改错了** |
+| 默认路径没被改坏 | 把四处读法改成 `!== false` 再跑套件 | **必须有 3 条测试变红**（改完记得改回来，并 `git diff` 复验） |
+| 领先 origin 几个 | `git status -sb` | **自己看** —— 提交本文档就会变，故不写死 |

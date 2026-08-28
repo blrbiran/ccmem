@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -10,7 +10,7 @@ process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-w2-'));
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { ftsSearch, likeSearch, legacySubstringSearch, retrieveMemories } = await import('../../scripts/lib/retrieval.mjs');
-const { DEFAULT_CONFIG } = await import('../../scripts/lib/config.mjs');
+const { DEFAULT_CONFIG, loadConfig } = await import('../../scripts/lib/config.mjs');
 const { getProvider } = await import('../../scripts/lib/embedding/provider.mjs');
 const { currentEmbeddingSig } = await import('../../scripts/lib/embedding/signature.mjs');
 const { vecToBlob } = await import('../../scripts/lib/embedding/cosine.mjs');
@@ -248,4 +248,143 @@ test('likeSearch fallback crosses projects when the switch is on', async () => {
     }
     db.close();
   }
+});
+
+// ============================================================
+// FIX 1: lexicalRetrieve's three internal call sites (ftsSearch, likeSearch,
+// legacySubstringSearch) had no regression net. Every test above reaches
+// retrievalPath 'A' (the embedding path), which never calls lexicalRetrieve
+// — and DEFAULT_CONFIG.embedding.enabled is false, so a factory-default
+// install takes retrievalPath 'B-off' and DOES call it. Pinning
+// retrievalPath === 'B-off' here is the same discipline as pinning 'A'
+// above: without it, a fixture that silently changed lane would make these
+// tests blind to exactly the call sites they exist to guard. Unlike the
+// direct-helper loop at the top of this file (which calls ftsSearch/
+// likeSearch/legacySubstringSearch directly and cannot see a broken CALL
+// SITE), these go through retrieveMemories() itself.
+// ============================================================
+
+test('retrieveMemories takes the lexical B-off path and isolates by project when the switch is off (default)', async () => {
+  const { db, labelById } = seed();
+  try {
+    // A prior test in this file (seedEmbeddings) writes config_kv
+    // 'embedding.enabled' = 'true' straight into the shared on-disk db, and
+    // resolveEnabled() in provider.mjs checks config_kv BEFORE the config
+    // object — that row outlives the test that wrote it. Without clearing it,
+    // this "B-off" test would silently take retrievalPath 'A' instead.
+    db.exec("DELETE FROM config_kv WHERE key = 'embedding.enabled'");
+    const config = configWith({ disable_scope_isolation: false });
+    const out = await retrieveMemories(db, 'zebrafish', 'proj-a', config);
+    assert.equal(out.retrievalPath, 'B-off', 'must exercise lexicalRetrieve, not the embedding path');
+    const labels = out.rows.map((r) => labelById.get(Number(r.id)));
+    assert.ok(!labels.includes('other'), 'proj-b memory must NOT be visible');
+  } finally {
+    db.close();
+  }
+});
+
+// WHY (masking guard): with the plain 3-row fixture (own/other/glob, all
+// matching "zebrafish"), an unisolated ftsSearch already returns all 3 rows —
+// exactly at, not below, like_fallback's default trigger_when_fts_below (3)
+// — so likeSearch's own call site never even executes here, and a dropped
+// argument on ftsSearch's call site would go unnoticed for the wrong reason
+// (likeSearch rescuing 'other' through a different lane, not ftsSearch being
+// correctly wired). seedFtsDistractor adds one more own-scope row so the
+// ISOLATED count (2 own + 1 glob = 3, exactly what a wrongly-isolated
+// ftsSearch would return if its 5th argument were dropped) still sits at the
+// trigger boundary and likeSearch still does not fire — so only ftsSearch's
+// own scope handling decides whether 'other' is visible here.
+test('retrieveMemories takes the lexical B-off path and crosses the FTS lane when the switch is on', async () => {
+  const { db, labelById } = seed();
+  try {
+    db.exec("DELETE FROM config_kv WHERE key = 'embedding.enabled'"); // see note above
+    seedFtsDistractor(db, 'proj-a');
+    const config = configWith({ disable_scope_isolation: true });
+    const out = await retrieveMemories(db, 'zebrafish', 'proj-a', config);
+    assert.equal(out.retrievalPath, 'B-off', 'must exercise lexicalRetrieve, not the embedding path');
+    const labels = out.rows.map((r) => labelById.get(Number(r.id)));
+    assert.ok(labels.includes('other'), 'proj-b memory must be visible via the ftsSearch lane');
+  } finally {
+    db.close();
+  }
+});
+
+// WHY (masking guard, likeSearch's own call site): forcing useFts = false
+// (CCMEM_DISABLE_FTS5, same technique as the likeSearch-fallback test above)
+// means lexicalRetrieve's `useFts && ftsQuery` guard skips calling ftsSearch
+// entirely, so likeSearch is the only lane that can produce candidateRows —
+// isolating exactly the likeSearch call site inside lexicalRetrieve, which
+// neither the direct-helper loop at the top of this file (calls likeSearch
+// directly, bypassing the call site) nor the previous test (ftsSearch
+// already satisfies the trigger there) can reach.
+test('retrieveMemories takes the lexical B-off path and crosses the likeSearch lane when the switch is on and FTS is disabled', async () => {
+  const { db, labelById } = seed();
+  const previousDisableFts = process.env.CCMEM_DISABLE_FTS5;
+  try {
+    db.exec("DELETE FROM config_kv WHERE key = 'embedding.enabled'"); // see note above
+    process.env.CCMEM_DISABLE_FTS5 = '1';
+    const config = configWith({ disable_scope_isolation: true });
+    const out = await retrieveMemories(db, 'zebrafish', 'proj-a', config);
+    assert.equal(out.retrievalPath, 'B-off', 'must exercise lexicalRetrieve, not the embedding path');
+    const labels = out.rows.map((r) => labelById.get(Number(r.id)));
+    assert.ok(labels.includes('other'), 'proj-b memory must be visible via the likeSearch lane');
+  } finally {
+    if (previousDisableFts == null) {
+      delete process.env.CCMEM_DISABLE_FTS5;
+    } else {
+      process.env.CCMEM_DISABLE_FTS5 = previousDisableFts;
+    }
+    db.close();
+  }
+});
+
+// ============================================================
+// FIX 2: nothing pinned the required `=== true` read form over the forbidden
+// `!== false` form. mergeConfig (scripts/lib/config.mjs) replaces the whole
+// subtree on a scalar override: a user config containing "eval": true (a
+// plausible one-token typo for this very key) makes config.eval a boolean,
+// so config.eval.disable_scope_isolation is undefined.
+//   `=== true`  -> false (isolation stays ON — correct, fail-safe)
+//   `!== false` -> true  (isolation silently OFF machine-wide)
+// Going through the real loadConfig()/CCMEM_CONFIG_PATH path (not a
+// hand-built object) proves the malformed value actually survives
+// mergeConfig rather than being rejected or normalised earlier.
+// ============================================================
+
+const malformedEvalCases = [
+  ['boolean typo', true],
+  ['string typo', 'true']
+];
+
+for (const [label, malformedEval] of malformedEvalCases) {
+  test(`retrieveMemories keeps isolation when config.eval is malformed (${label})`, async () => {
+    const { db, labelById } = seed();
+    const configPath = path.join(
+      process.env.CCMEM_DATA_ROOT,
+      `retrieval-malformed-eval-${label.replace(/\s+/g, '-')}.json`
+    );
+    writeFileSync(configPath, JSON.stringify({ eval: malformedEval }));
+    const previousConfigPath = process.env.CCMEM_CONFIG_PATH;
+    process.env.CCMEM_CONFIG_PATH = configPath;
+    try {
+      const config = loadConfig();
+      assert.equal(config.eval, malformedEval, 'malformed eval value must survive mergeConfig unmodified');
+      const out = await retrieveMemories(db, 'zebrafish', 'proj-a', config);
+      const labels = out.rows.map((r) => labelById.get(Number(r.id)));
+      assert.ok(!labels.includes('other'), 'proj-b memory must NOT be visible when eval is malformed');
+    } finally {
+      if (previousConfigPath === undefined) {
+        delete process.env.CCMEM_CONFIG_PATH;
+      } else {
+        process.env.CCMEM_CONFIG_PATH = previousConfigPath;
+      }
+      db.close();
+    }
+  });
+}
+
+// FIX 3 (Minor): the other 20 mkdtempSync test files in this repo clean up
+// their data root; this file imported rmSync and never called it.
+test.after(() => {
+  rmSync(process.env.CCMEM_DATA_ROOT, { recursive: true, force: true });
 });

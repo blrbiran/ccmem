@@ -198,6 +198,30 @@ test('does not warn in off mode', async () => {
   assert.doesNotMatch(cap.read(), /disable_scope_isolation is ON/);
 });
 
+// FIX 2 (Important): same fail-safe read form as the retrieval channel (see
+// v014-scope-isolation-retrieval.test.mjs) — session-start.mjs:77 reads
+// config?.eval?.disable_scope_isolation === true. mergeConfig replaces the
+// whole `eval` subtree on a scalar override, so a config file containing
+// "eval": true (a plausible one-token typo for this key) makes config.eval a
+// boolean and config.eval.disable_scope_isolation undefined. The required
+// `=== true` form treats that as OFF (isolation HOLDS, no stderr warning);
+// the forbidden `!== false` form would treat it as ON. Written straight to
+// CCMEM_CONFIG_PATH (bypassing writeConfig()'s boolean-only shape) so the
+// real loadConfig()/mergeConfig path is what's under test, not a simulation
+// of it.
+test('session_start keeps isolation and does not warn when config.eval is malformed', async () => {
+  seed();
+  writeFileSync(CONFIG_PATH, JSON.stringify({ injection: { file_based: false }, eval: true }));
+  const cap = captureStderr();
+  try {
+    const out = await handleSessionStart({ cwd: PROJ_A_CWD, session_id: 's-w2-malformed-eval' });
+    assert.equal(out.additionalContext, 'G\n\nA', 'own project + global only — the other project row must not leak');
+    assert.doesNotMatch(cap.read(), /disable_scope_isolation is ON/);
+  } finally {
+    cap.restore();
+  }
+});
+
 // ============================================================
 // Task 5: neither handler may leave a write behind while the switch is on.
 //

@@ -112,7 +112,12 @@ v0.13 spec §1.2 与 §十 backlog 已点名了自己的 v0.14 项：L2.5 真修
 
 - 新增 `eval.disable_scope_isolation`，**默认 `false`（行为零变化）**。
 - 目标：让 `C-NAIVE` 成为真控制组，解开 `S-SCOPE-03` 的结构性不可判别。
-- **四处站点分属不同函数，必须逐处判定，不许四处一起盲改：**
+- ~~**四处站点分属不同函数，必须逐处判定，不许四处一起盲改：**~~
+  🆕🔴 **2026-08-28 更正：实际改动比"四处"大——共移除 5 处 SQL scope 谓词，落在 7 个改动点上。**
+  下表列出的四处检索站点仍然真实、仍然是必须逐处判定的对象，但不是全貌：第 5 处谓词是
+  `session-start.mjs` 里 `injection_cache` 的 SELECT（见下方 :129 处的更正）；改动点数（7）多于
+  谓词数（5）的原因是 `retrieveMemories` 自己保留了一份词法检索逻辑的副本，并不经过
+  `lexicalRetrieve`，因此同一处谓词在 wiring 层面对应了不止一个调用点。
 
   | 站点 | 所在函数（已 grep 复核） |
   |---|---|
@@ -128,7 +133,16 @@ v0.13 spec §1.2 与 §十 backlog 已点名了自己的 v0.14 项：L2.5 真修
 
 - ⚠️ **这四处不是 scope 隔离的全部**：`handlers/session-start.mjs:68`（`WHERE scope = 'global' OR scope = ?`）与
   `lib/injection-cache.mjs:42`（`AND project_key = ?`）同样决定什么进模型。
-  **是否需要一并覆盖，取决于评测 harness 实际触发哪些 hook** —— 实现计划里必须显式回答，不许把"四处"当成穷举。
+  ~~**是否需要一并覆盖，取决于评测 harness 实际触发哪些 hook** —— 实现计划里必须显式回答，不许把"四处"当成穷举。~~
+  🆕🔴 **2026-08-28 更正：这个问题被替换掉了，不是被回答了。**
+  设计文档 `docs/superpowers/specs/2026-08-20-w2-scope-isolation-switch-design.md` §3.1 明确记录了
+  这一点，是为了让后来者不要误以为父 spec 的这条要求已被满足：`S-SCOPE-03` 至今没有 runner，
+  "评测 harness 实际触发哪些 hook"这件事没有事实可查——这是一个**不可回答**的问题，不是"没答完"。
+  覆盖范围改由架构理由裁决，并由人工拍板：**`session-start.mjs` 纳入覆盖**（它是 `injection_cache`
+  唯一的消费方，覆盖消费方是唯一说得通的点）；**`injection-cache.mjs` 的生产方刻意不覆盖**（它按
+  scope 存的是整块预渲染结果，"不隔离"意味着要发明新的 cache key，并教会 15 处
+  `rebuildInjectionCache` 调用点何时重建——代价过高）。
+  ⇒ 待快照刷新、`S-SCOPE-03` 有了真实 runner 之后，这个覆盖决定应当拿当天的事实重新审视。
 
 - **本开关必须在 `diagnose` 里显式可见**：处于非默认值时要报出来（见 §五 5.2 的测试要求）。
   ~~`admin/diagnose.mjs` 目前**没有**任何"报告非默认配置"的机制，⇒ **这是 W2 的一部分真实工作量，不是免费的**。~~

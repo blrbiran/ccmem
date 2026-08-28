@@ -100,7 +100,7 @@ export async function handleSessionStart(hookData) {
 
     upsertSessionContext(db, hookData.session_id, projectKey);
 
-    if (hookData.session_id && stableContext) {
+    if (hookData.session_id && stableContext && !disableScopeIsolation) {
       const injectedIds = [...new Set(rows.flatMap((row) => parseMemberIds(row.member_ids)))];
       writeRecentInjection(db, hookData.session_id, 0, 'session_start', injectedIds);
     }

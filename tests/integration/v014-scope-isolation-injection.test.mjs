@@ -19,6 +19,7 @@ const { openDb } = await import('../../scripts/lib/db.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { resolveProjectKey } = await import('../../scripts/lib/project-key.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
+const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submit.mjs');
 
 // Project keys are computed, never literals: resolveProjectKey(cwd) shells
 // out to `git config --get remote.origin.url` in that cwd and falls back to
@@ -195,6 +196,109 @@ test('does not warn in off mode', async () => {
     cap.restore();
   }
   assert.doesNotMatch(cap.read(), /disable_scope_isolation is ON/);
+});
+
+// ============================================================
+// Task 5: neither handler may leave a write behind while the switch is on.
+//
+// WHY this matters more than the read-path tests above: this switch is
+// documented as a READ-ONLY degradation for an eval harness. With it on,
+// retrieval returns OTHER PROJECTS' memory ids. Those ids flow into
+// recent_injections and memory_feedback, and settlement later hands them to
+// adjustTrust() (scripts/lib/trust.mjs), which runs
+// `UPDATE memories SET trust_score = ..., last_touched_at = ? WHERE id = ?`
+// with NO scope check. One eval run would permanently rewrite another
+// project's memories, and turning the switch back off does not undo it —
+// last_touched_at feeds decay and injection ordering. These tests are the
+// only thing standing between the switch and that irreversible damage.
+// ============================================================
+
+// session-start writes ONLY recent_injections (see writeRecentInjection at
+// session-start.mjs:105); it never touches memory_feedback — that INSERT
+// lives solely in prompt-submit.mjs:108-116. The memory_feedback assertion
+// below is therefore a guard against a future change to this handler, not
+// evidence that this task's fix does anything for that table — the real
+// proof for memory_feedback is in the prompt-submit tests further down.
+test('session-start writes recent_injections when the switch is off', async () => {
+  const db = seed();
+  await runSessionStart(false);
+  assert.ok(db.prepare('SELECT COUNT(*) AS n FROM recent_injections').get().n > 0);
+});
+
+test('session-start writes no recent_injections rows while the switch is on', async () => {
+  const db = seed();
+  await runSessionStart(true);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM recent_injections').get().n, 0);
+  // Guard against a future change, not proof about this one — see comment above.
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM memory_feedback').get().n, 0);
+});
+
+// prompt-submit is the handler the brief's own tests never exercised: it
+// writes BOTH recent_injections AND memory_feedback (memory_feedback INSERT
+// at prompt-submit.mjs:108-116), both inside the single
+// `if (hookData.session_id && rows.length && !disableScopeIsolation)` guard.
+// Task 4's seed() above only seeds injection_cache — a different table that
+// session-start reads directly and prompt-submit never touches — so
+// exercising this handler requires seeding `memories`, the table
+// retrieveMemories() actually queries.
+const PROMPT_SUBMIT_TEXT = 'tell me about the zebrafish research notes';
+
+// Seeds one project-scoped memory for PROJ_A/KEY_A whose content shares
+// tokens with PROMPT_SUBMIT_TEXT, so lexicalRetrieve's FTS/LIKE/legacy-
+// substring lanes (whichever is active in this environment) all have
+// something real to match — this is what lets the non-vacuity probe below
+// assert `matched > 0` instead of hoping.
+function seedMemories() {
+  const db = openDb();
+  db.exec('DELETE FROM memories');
+  db.exec('DELETE FROM recent_injections');
+  db.exec('DELETE FROM memory_feedback');
+  db.exec('DELETE FROM session_context');
+  db.exec("DELETE FROM config_kv WHERE key = 'mode'");
+
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO memories (scope, project_key, type, content, source, trust_score,
+                           status, decay_status, created_at, updated_at, last_touched_at)
+     VALUES ('project', ?, 'fact', ?, 'auto_inferred', 0.5, 'active', 'active', ?, ?, ?)`
+  ).run(KEY_A, 'zebrafish research notes for the prompt submit fixture', now, now, now);
+
+  return db;
+}
+
+// handlePromptSubmit(hookData) is single-argument like handleSessionStart —
+// it opens its own db via openDb() and closes it itself, so it reads
+// whatever seedMemories() just wrote to the same on-disk db under
+// CCMEM_DATA_ROOT. cwd is pinned to PROJ_A_CWD so the seeded row is always
+// "own project" — cross-project matching is Tasks 2/3's concern, not this
+// task's; this task only needs retrieval to match *something*.
+async function runPromptSubmit(disableScopeIsolation, sessionId = 's-w2-prompt-submit') {
+  writeConfig(disableScopeIsolation);
+  return handlePromptSubmit({ cwd: PROJ_A_CWD, session_id: sessionId, prompt: PROMPT_SUBMIT_TEXT });
+}
+
+// WHY (non-vacuity probe, mandatory): both writes below are guarded by
+// `rows.length`, so "zero rows written" is trivially true whenever retrieval
+// simply matched nothing — a test that only checked the two COUNT(*)s would
+// pass identically whether the guard exists or retrieval is just broken,
+// proving nothing. handlePromptSubmit returns _metricFields.matched =
+// rows.length (prompt-submit.mjs:128-130); asserting it is > 0 here is what
+// turns "zero rows written" into "retrieval DID return rows and the writes
+// were suppressed" instead of "nothing was retrieved".
+test('prompt-submit writes neither recent_injections nor memory_feedback while the switch is on, even though retrieval matched', async () => {
+  const db = seedMemories();
+  const out = await runPromptSubmit(true);
+  assert.ok(out._metricFields.matched > 0, 'fixture must actually match — otherwise this test is vacuous');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM recent_injections').get().n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM memory_feedback').get().n, 0);
+});
+
+test('prompt-submit writes both recent_injections and memory_feedback as usual while the switch is off', async () => {
+  const db = seedMemories();
+  const out = await runPromptSubmit(false);
+  assert.ok(out._metricFields.matched > 0, 'fixture must actually match — otherwise this test is vacuous');
+  assert.ok(db.prepare('SELECT COUNT(*) AS n FROM recent_injections').get().n > 0);
+  assert.ok(db.prepare('SELECT COUNT(*) AS n FROM memory_feedback').get().n > 0);
 });
 
 test.after(() => {

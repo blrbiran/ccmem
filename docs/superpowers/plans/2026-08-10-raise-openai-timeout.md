@@ -458,13 +458,14 @@ Task 5 读数已完成、主要结局已裁定 —— 本条记录**不是剔除
 
 第二行是**完整代码评审后的修复轮**跑批，不是新的测量输入（窗口早已于 08-26 关闭，读数与主要结局都已裁定，这里同样只是审计留痕）。计数从 617 → 619，**+2**：本轮新增两个 `test()` 块，均在 `tests/unit/v014-quarantine-all-sources.test.mjs`——钉住 `DEFAULT_CONFIG.security.quarantine_all_sources_at_write` 与 `config.default.json` 同键的出厂默认值必须为 `false`（评审 Important 1）。同轮另有一条断言加进了 `tests/integration/v014-quarantine-all-sources-write.test.mjs` 的既有 `test()` 里（审计行 `security_quarantine_in`，评审 Minor 5），不新增 `test()` 块，因此不计入这 +2。617 + 2 = 619，与观测到的通过数一致，无需对账偏差。
 
-**2026-08-28**（W2「按开关切换 scope 隔离」全量套件跑批，`npm test` 全量跑，**3 次**；🔴 预登记测量窗口已于 2026-08-26 关闭、Task 5 读数已完成、主要结局已裁定 —— 本条记录**不是剔除输入，只是审计留痕**，照纪律当场记一笔；📌 **窗口已闭，仅存档**）：
+**2026-08-28**（W2「按开关切换 scope 隔离」全量套件跑批，`npm test` 全量跑，**4 次**；🔴 预登记测量窗口已于 2026-08-26 关闭、Task 5 读数已完成、主要结局已裁定 —— 本条记录**不是剔除输入，只是审计留痕**，照纪律当场记一笔；📌 **窗口已闭，仅存档**）：
 
 | 起 | 止 | 位置 | 结果 |
 |---|---|---|---|
 | 22:26:06 | 22:26:32 | `main` checkout，分支 `w2-scope-isolation-switch` | 641 pass |
 | 22:55:59 | 22:56:17 | `main` checkout，分支 `w2-scope-isolation-switch` | 647 pass |
 | 23:00:07 | 23:00:24 | `main` checkout，分支 `w2-scope-isolation-switch` | 647 pass |
+| 23:27:34 | 23:27:51 | `main` checkout，**已合并到 `main` 之后** | 647 pass |
 
 沿用补遗 3 的窄义剔除口径：本行跑批窗口前后各留 ≥60s 余量（即便本条已不再是活的剔除输入，记录时仍照此口径留痕，纪律不因窗口关闭而放松）。
 
@@ -480,6 +481,10 @@ Task 5 读数已完成、主要结局已裁定 —— 本条记录**不是剔除
 `finishing-a-development-branch` 明确把「刚才跑过了」列为要警惕的自我合理化 ⇒ 照它重跑，计数不变。
 📌 **记录本行的提交本身是 docs-only 且发生在跑批之后**（与第 1 行同一处理方式）——
 否则「记录 ⇒ 改树 ⇒ 要重跑 ⇒ 又要记录」会无限递归。
+
+**第 4 次跑批（`23:27:34 → 23:27:51`，647 pass）**：`finishing-a-development-branch` 要求在**合并结果**上复跑。
+合并前已机械确认合并结果的树与第 3 次跑批那棵树**逐字节相同**（`git diff HEAD <branch>` 为空），
+所以这次跑批是流程要求的冗余确认，不是新证据。
 
 ---
 

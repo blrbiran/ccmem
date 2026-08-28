@@ -458,15 +458,21 @@ Task 5 读数已完成、主要结局已裁定 —— 本条记录**不是剔除
 
 第二行是**完整代码评审后的修复轮**跑批，不是新的测量输入（窗口早已于 08-26 关闭，读数与主要结局都已裁定，这里同样只是审计留痕）。计数从 617 → 619，**+2**：本轮新增两个 `test()` 块，均在 `tests/unit/v014-quarantine-all-sources.test.mjs`——钉住 `DEFAULT_CONFIG.security.quarantine_all_sources_at_write` 与 `config.default.json` 同键的出厂默认值必须为 `false`（评审 Important 1）。同轮另有一条断言加进了 `tests/integration/v014-quarantine-all-sources-write.test.mjs` 的既有 `test()` 里（审计行 `security_quarantine_in`，评审 Minor 5），不新增 `test()` 块，因此不计入这 +2。617 + 2 = 619，与观测到的通过数一致，无需对账偏差。
 
-**2026-08-28**（W2「按开关切换 scope 隔离」全量套件跑批，`npm test` 全量跑，**1 次**；🔴 预登记测量窗口已于 2026-08-26 关闭、Task 5 读数已完成、主要结局已裁定 —— 本条记录**不是剔除输入，只是审计留痕**，照纪律当场记一笔；📌 **窗口已闭，仅存档**）：
+**2026-08-28**（W2「按开关切换 scope 隔离」全量套件跑批，`npm test` 全量跑，**2 次**；🔴 预登记测量窗口已于 2026-08-26 关闭、Task 5 读数已完成、主要结局已裁定 —— 本条记录**不是剔除输入，只是审计留痕**，照纪律当场记一笔；📌 **窗口已闭，仅存档**）：
 
 | 起 | 止 | 位置 | 结果 |
 |---|---|---|---|
 | 22:26:06 | 22:26:32 | `main` checkout，分支 `w2-scope-isolation-switch` | 641 pass |
+| 22:55:59 | 22:56:17 | `main` checkout，分支 `w2-scope-isolation-switch` | 647 pass |
 
 沿用补遗 3 的窄义剔除口径：本行跑批窗口前后各留 ≥60s 余量（即便本条已不再是活的剔除输入，记录时仍照此口径留痕，纪律不因窗口关闭而放松）。
 
-本次是 Task 7 明文规定的全篇唯一一次全量跑批。计数从 619 → 641，**+22**：本轮新增三个测试文件 —— `tests/unit/v014-scope-isolation-defaults.test.mjs`（+2：`disable_scope_isolation defaults to false`、`config.default.json carries the same value`）、`tests/integration/v014-scope-isolation-retrieval.test.mjs`（+10：`ftsSearch`/`likeSearch`/`legacySubstringSearch` 各 2 条「开关关时隔离 / 开关开时跨项目」+ 4 条 embedding 路径直调）、`tests/integration/v014-scope-isolation-injection.test.mjs`（+10：session-start 读取范围 2 条、stderr 警告 4 条、`recent_injections` 写入 2 条、`prompt-submit` 抑制 2 条）。619 + 22 = 641，与观测到的通过数（`pass 641 / fail 0 / skipped 0 / todo 0`）一致，无需对账偏差。
+第 1 次跑批是 Task 7 明文规定的那一次（计划原写「全篇唯一一次」，因修复波改了测试文件而实际跑了两次，见下）。计数从 619 → 641，**+22**：本轮新增三个测试文件 —— `tests/unit/v014-scope-isolation-defaults.test.mjs`（+2：`disable_scope_isolation defaults to false`、`config.default.json carries the same value`）、`tests/integration/v014-scope-isolation-retrieval.test.mjs`（+10：`ftsSearch`/`likeSearch`/`legacySubstringSearch` 各 2 条「开关关时隔离 / 开关开时跨项目」+ 4 条 embedding 路径直调）、`tests/integration/v014-scope-isolation-injection.test.mjs`（+10：session-start 读取范围 2 条、stderr 警告 4 条、`recent_injections` 写入 2 条、`prompt-submit` 抑制 2 条）。619 + 22 = 641，与观测到的通过数（`pass 641 / fail 0 / skipped 0 / todo 0`）一致，无需对账偏差。
+
+🔴 **第 2 次跑批（`22:55:59 → 22:56:17`，647 pass）**：整分支 review 的修复波补了 6 条测试之后的复跑。
+原计划只跑 1 次，**修复波改了测试文件就必须复跑**，否则最后一次全量证据对应的不是最终代码。
+计数 641 → 647，**+6**：`v014-scope-isolation-retrieval.test.mjs` 10 → 15（+5：`lexicalRetrieve` 三个调用点所在的 `B-off` 默认路径 3 条、`eval` 非对象时读法必须 fail-safe 2 条）、
+`v014-scope-isolation-injection.test.mjs` 10 → 11（+1：session-start 侧同一条 fail-safe 读法）。641 + 6 = 647，与 `pass 647 / fail 0 / skipped 0 / todo 0` 一致。
 
 ---
 

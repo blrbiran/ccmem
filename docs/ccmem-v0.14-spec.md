@@ -5,7 +5,14 @@
   🆕🔴 **2026-08-26 更正**：**W0 的实现已落**（新增 `scripts/lib/config-delta.mjs`；接线 `scripts/lib/admin/diagnose.mjs` 与 `scripts/cli.mjs`；新增 `tests/unit/v014-config-delta.test.mjs` 与 `tests/integration/v014-diagnose-config.test.mjs`），但**仍在分支上，未合入 `main`**，~~**完整测试套件尚未跑**（见 §七）~~
   🆕🔴 **2026-08-26 更正**：**完整测试套件已跑**——`21:18:24 → 21:18:48`，**605 pass, 0 fail**，
   记录见 `docs/superpowers/plans/2026-08-10-raise-openai-timeout.md`（不是 §七，§七未提测试套件）。
-  这只说明套件跑过且全绿，**不代表 W0 已合入、已定论或已完成**。**W1–W4 仍无任何代码。**
+  ~~这只说明套件跑过且全绿，**不代表 W0 已合入、已定论或已完成**。**W1–W4 仍无任何代码。**~~
+  🆕🔴 **2026-08-28 更正（本条整段作废，别再照它判断状态）**：**五条工作流已落四条**——
+  **W4、W0、W1 都已合入 `main`**（按提交标题找 `merge: daemon cost metering (W4)`、
+  `merge: report non-default and unknown config keys (W0)`、
+  `merge: quarantine-all-sources-at-write switch ... (W1)`），**W2 于 2026-08-28 实现完成并合入**。
+  **只剩 W3 无代码**（设计与实现计划都已落盘）。
+  套件计数也早已不是 605：W1 之后 619，W2 之后 **647 pass / 0 fail / 0 skipped**。
+  ⚠️ **本文档的状态描述会持续过时，接手时以 `git log --oneline --merges` 与 `npm test` 的实测为准，不要信这几行。**
 - 🆕🔴 **2026-08-25 更新**：本文档写于 2026-08-11，此后范围与状态都变了，**下面逐处标了 🆕**。
   最重要的两条：**① 工作流已是五条，不是四条** —— 2026-08-20 人类从 W1/W2 的共同需求里抽出了
   **W0（通用"非默认配置上报"机制）**，~~本文档全文没有它~~；
@@ -119,12 +126,16 @@ v0.13 spec §1.2 与 §十 backlog 已点名了自己的 v0.14 项：L2.5 真修
   谓词数（5）的原因是 `retrieveMemories` 自己保留了一份词法检索逻辑的副本，并不经过
   `lexicalRetrieve`，因此同一处谓词在 wiring 层面对应了不止一个调用点。
 
-  | 站点 | 所在函数（已 grep 复核） |
+  ⚠️ **2026-08-28：下表的行号已被本轮改动全部推移**（W2 自己往这些函数里加了参数与分支）。
+  **按函数名找，不要按行号跳** —— 函数名那一列才是有效锚点。
+
+  | 站点 | 所在函数（**锚点在这一列**） |
   |---|---|
-  | `retrieval.mjs:131` | `ftsSearch`（`:120`），FTS 路 |
-  | `retrieval.mjs:150` | `likeSearch`（`:139`） |
-  | `retrieval.mjs:170` | `legacySubstringSearch`（`:159`），**兜底路**，仅在 `candidateRows.length === 0` 时到达（`:287-288`） |
-  | `retrieval.mjs:430` | 向量候选查询，喂 `cosineScores` → `candidateIds` |
+  | ~~`retrieval.mjs:131`~~ | `ftsSearch`，FTS 路 |
+  | ~~`retrieval.mjs:150`~~ | `likeSearch` |
+  | ~~`retrieval.mjs:170`~~ | `legacySubstringSearch`，**兜底路**，仅在 `candidateRows.length === 0` 时到达 |
+  | ~~`retrieval.mjs:430`~~ | `retrieveMemories` 内联的向量候选查询，喂 `cosineScores` → `candidateIds` |
+  | 🆕 第 5 处 | `session-start.mjs` 里 `injection_cache` 的 SELECT |
 
 - ✅ **一条原稿的错误更正（review 抓到，已复核确认）**：原稿说 `:430` 那处的注释表明它可能同时服务 `diagnose` 的 stale 计数，因此"开关不得改动它"。**这是误读，且照它做会让 W2 直接失效。**
   实际：`:432-435` 那段注释位于 `).all(sig, projectKey);` **之后**，描述的是紧随其后的 `staleVecs`（`:436-441`）那个 `COUNT(*)`；
@@ -144,7 +155,13 @@ v0.13 spec §1.2 与 §十 backlog 已点名了自己的 v0.14 项：L2.5 真修
   `rebuildInjectionCache` 调用点何时重建——代价过高）。
   ⇒ 待快照刷新、`S-SCOPE-03` 有了真实 runner 之后，这个覆盖决定应当拿当天的事实重新审视。
 
-- **本开关必须在 `diagnose` 里显式可见**：处于非默认值时要报出来（见 §五 5.2 的测试要求）。
+- ~~**本开关必须在 `diagnose` 里显式可见**：处于非默认值时要报出来（见 §五 5.2 的测试要求）。~~
+  🆕🔴 **2026-08-28 更正：这句话只对了一半，照它验收会验空。**
+  W0 接管上报之后，**默认 `diagnose` 输出只有计数**（形如 `config N non-default keys`），
+  **键名只在 `ccmem admin diagnose --config` 下才出现** ⇒ 跑普通 `diagnose` 的人只知道"有东西非默认"，
+  **不知道"跨项目隔离关着"**。
+  ⇒ 🔴 **按名字点出本开关的唯一信号，是 `session_start` 的那行 stderr 警告**（W2 实现，见 §五 5.2 更正后的测试表），
+  不是 `diagnose`。把 `diagnose` 当成主要可见性缓解会高估它。
   ~~`admin/diagnose.mjs` 目前**没有**任何"报告非默认配置"的机制，⇒ **这是 W2 的一部分真实工作量，不是免费的**。~~
   🆕🔴 **2026-08-20 更正：这部分工作量已不属于 W2 —— W0 接管了它**（handoff ⅩⅥ.3）。
   ⇒ **W2 的范围因此比本节写的小**；W2 只需保证开关值能被 W0 的机制看见，不必自己造上报机制。
@@ -235,7 +252,7 @@ contradiction-audit.mjs:164 · monthly-meta-synthesis.mjs:65
 |---|---|---|
 | **W4** | **可先行**，但见下面的义务 | 它写独立文件，与 `metrics.jsonl` 解耦。**这是设计选择带来的，不是预登记要求的** |
 | **W0** | ~~等**窗口关闭**~~ 🆕🔴 **2026-08-26：窗口已关闭**，条件已满足 | 它新增测试、改 `diagnose` 输出 ⇒ 会改套件时序。**与 W1/W2 同等对待** |
-| **W1 / W2** | 等**窗口关闭** | 只加默认关闭的开关，时序影响接近零，保守起见仍等 |
+| **W1 / W2** | ~~等**窗口关闭**~~ 🆕✅ **2026-08-28：窗口已关，W1 与 W2 均已落地并合入 `main`** | 只加默认关闭的开关，时序影响接近零，保守起见仍等 |
 | **W3 扫描器改强** | 等**窗口关闭** | 它改写入行为、会改套件时序 |
 
 🔴 **W4 先行的附带义务**：在本仓库里干活本身就会往 `metrics.jsonl` 追加 `prompt_submit` / `Stop` 行，
@@ -364,9 +381,31 @@ v0.13 spec 定义 backlog #1 为**数据库侧的速率不变量**（入口/出�
 |---|---|
 | W0 | 🆕 已有：`tests/unit/v014-config-delta.test.mjs`（12 条，纯 diff 逻辑）与 `tests/integration/v014-diagnose-config.test.mjs`（10 条，接线到 `diagnose` 输出，含真 spawn CLI） |
 | W1 | ~~① 不变量：默认 `quarantine_all_sources === false`；② 开关为真时 `user_explicit` 命中 TIER2 确实进隔离（**两个方向都要看着变红**）；③ 若裁决把两处 SQL 白名单纳入开关，则各自要有测试~~ 🆕🔴 **更正**：① 键名是 `quarantine_all_sources_at_write`，不变量不变；② 不变；③ **已裁决：不纳入**，两处 SQL 白名单不接入开关，此条测试不适用。见 `docs/superpowers/specs/2026-08-19-w1-quarantine-all-sources-design.md` §2.1 |
-| W2 | ① 不变量：默认 `disable_scope_isolation === false`；② **关掉后 `C-NAIVE` 与 `C-FULL` 真的能分开**，且**必须覆盖向量 lane**（`:430`）——这是本开关唯一的存在理由；③ `diagnose` 在非默认值时确实报出来 |
+| W2 | ~~① 不变量：默认 `disable_scope_isolation === false`；② **关掉后 `C-NAIVE` 与 `C-FULL` 真的能分开**，且**必须覆盖向量 lane**（`:430`）——这是本开关唯一的存在理由；③ `diagnose` 在非默认值时确实报出来~~ 🆕🔴 **2026-08-28 更正，见下方 W2 实测测试表** |
 | W3 | 误伤回归进 CI 且必须能失败；bypass 报告不进 CI |
 | W4 | ① 钉住"text 路径记 `null` 而不是 `0`"（**须用真 spawn 打桩，`mockOutput` 到不了 `runClaudeP`**）；② 钉住"`mockOutput` 调用不产生行"；③ 钉住 JSON 路径确实解析出 `usage` |
+
+🆕🔴 **2026-08-28：W2 那一行的三条要求，② 与 ③ 都写错了，这里按实际交付重列。**
+
+- **② 写过头了**：W2 的测试**只能证明 SQL scope 谓词确实被关掉**，
+  **证明不了 `C-NAIVE` 与 `C-FULL` 在评测里真的会分开** —— 后者要等快照刷新后在 paper 仓库验
+  （设计文档 §九 效力边界明写了这条）。把它写成 W2 的验收判据，等于给 W2 派了一个它做不到的活。
+- **③ 是空判据**：W2 **一行 `diagnose` 代码都没写**（归 W0），因此也没有、也不该有这样一条 W2 测试。
+  按名字点出本开关的信号是 stderr 警告，不是 `diagnose`（见 §二 W2 的 2026-08-28 更正）。
+
+**W2 实际交付的测试（647 pass 里的 28 条，三个文件）：**
+
+| # | 钉住什么 | 为什么它必须存在 |
+|---|---|---|
+| 1 | 不变量：`DEFAULT_CONFIG` 与 `config.default.json` 两份默认值都是 `false` | 默认值一旦漂成 `true`，每个装了 ccmem 的项目都开始互看记忆，且无任何报错 |
+| 2 | 三条 lexical lane **逐条直调 helper**，开/关各一条，用 `deepEqual` 比**全集** | 只查"包含"的话，一个把谓词连同 `status` 过滤一起删光的实现同样能过 |
+| 3 | 端到端**钉死 `retrievalPath === 'A'`** | `retrieveMemories` 在嵌入可用时**自己复制了一份 lexical 块**、不走 `lexicalRetrieve`；不钉死路径，漏接线的实现照样全绿 |
+| 4 | 向量 lane 单独一条 | 它不在那三个 helper 里，上面任何一条都覆盖不到 |
+| 5 | 🆕 **`retrievalPath === 'B-off'` 的默认路径**（出厂 `embedding.enabled` 就是 `false`） | 整分支 review 实测：`lexicalRetrieve` 的三个调用点原本**逐个单独变异都不红**，而那正是大多数真实安装走的路 |
+| 6 | 🆕 **`eval` 不是对象时（如用户配置误写 `"eval": true`）隔离必须仍然成立** | `mergeConfig` 的标量覆盖会替换整棵子树 ⇒ `config.eval === true` 时 `?.disable_scope_isolation` 是 `undefined`。**`=== true` 保持隔离（对），`!== false` 会整机静默关闭隔离**。这条是 `=== true` 那条规则唯一的执行力来源 |
+| 7 | 注入通道：**行集与顺序**两者，整串精确比对 | 多个 `project:*` 之间原本没有稳定排序 ⇒ 注入文本拼接顺序不确定 ⇒ 评测不可复现 |
+| 8 | stderr 警告**三态**：正常开→报 / 关→不报；`shadow` 开→**仍要报**；`off` 开→**不报** | 规则是"跨项目查询真跑了才报"。`shadow` 下查询已经跑过，此时沉默等于撒谎 |
+| 9 | feedback 抑制：**两个 handler 都要**，且开关打开那侧必须断言 `matched > 0` | 写入受 `rows.length` 门控 ⇒ 不断言"检索确实命中了"，"零写入"在什么都没检索到时**恒真** |
 
 **通用纪律（handoff Ⅴ，全部适用）**：定向变异红，红在被测断言自己命名的行为上，且对照测试保持绿；"崩溃红"与"函数不存在"都不算数。
 
@@ -377,8 +416,30 @@ v0.13 spec 定义 backlog #1 为**数据库侧的速率不变量**（入口/出�
 1. **W3 改强扫描器会改变写入行为与误报率，而本仓库自己在 dogfood。**
    缓解：误伤回归集 + 落地时机避开测量窗口。**这是本轮范围里风险最高的一条。**
 2. **W2 给产品加了一个能关掉安全机制的开关，本身是新的攻击面。**
-   缓解：默认关闭 + 不变量测试钉死默认值 + `diagnose` 显式报出非默认状态（**该缓解已写进 §二 W2 的范围与 §五 的测试，不是只写在风险栏里**）。
+   ~~缓解：默认关闭 + 不变量测试钉死默认值 + `diagnose` 显式报出非默认状态（**该缓解已写进 §二 W2 的范围与 §五 的测试，不是只写在风险栏里**）。~~
+   🆕🔴 **2026-08-28 更正：缓解措施要分成两类，混为一谈会高估其中一类、看不见另一类。**
+
+   - **可见性**（"操作员能不能知道它开着"）：默认 `false` + 两份配置各一条不变量测试 +
+     🔴 **`=== true` 的 fail-safe 读法**（任何拼写错误、`undefined`、类型意外都**保持隔离开着**）+
+     **`session_start` 的 stderr 警告** + W0 的 `--config` 上报。
+     ⚠️ **W0 的默认 `diagnose` 输出只有计数、不含键名** ⇒ **按名字点出本开关的唯一信号是那行 stderr 警告**（见 §二 W2 更正）。
+   - **持久性**（"它会不会留下撤不回的痕迹"）：**开关打开时抑制 feedback 写入**（两个 handler 都抑制）。
+     不抑制的话，其他项目的记忆 id 会流进 `recent_injections` / `memory_feedback`，
+     结算时 `trust.mjs::adjustTrust` 会 `UPDATE memories SET trust_score…, last_touched_at… WHERE id = ?`
+     ——**没有任何 scope 校验**，而 `last_touched_at` 还喂给衰减与注入排序。
+     ⇒ **跑一次评测就会持久改写别的项目的记忆，且把开关关回去也撤不回。**
+     整分支 review 已独立枚举确认：两张表在源头被掐断后，**没有剩余路径**能走到那个 UPDATE。
    （R3 已指出 `project_key` 由 repo 内容控制；配置面值得同样怀疑 —— 但那条属 §4.2，v0.15 处理。）
+
+   🆕⚠️ **"只读降级"这个定位有两个已知的边界，写 `S-SCOPE-03` runner 的人必须知道：**
+   - **注入上下文文件不在抑制范围内。** 开关打开时 `prompt_submit` 仍会调 `writeContextFile`，
+     把**别的项目的记忆正文**写进本项目的 `.ccmem/<session>` 文件以及 `context_snapshots` / `context_write_log`。
+     **这不是上面那一类不可逆损害**（没有改动任何 memory 行、没动 trust 或 `last_touched_at`），
+     但它**确实会活过把开关关回 `false`**。实现与本 spec 一致，**缺口在"只读降级"这个措辞本身**。
+   - **抑制 feedback 让两臂多出第二个受控差异。** 开关打开时 feedback 回路**整个不跑**，
+     所以 `C-NAIVE` 与 `C-FULL` 不只差在"可见性"，还差在"feedback 回路有没有跑"。
+     人类当初裁决时接受了这一点（"评测本身不需要 feedback 回路"），
+     但**任何位于 trust / feedback 下游的指标都会因此被混淆** —— 写 runner 的人不知道这条就会读出假结论。
 3. ~~**W1 的开关语义未定**（写入时 vs 含审计面），见 §二 W1。未裁决就实现会得到一个名字与行为不符的开关。~~
    🆕✅ **已裁决（handoff ⅩⅢ.6 ②）**：W1 **不接线** `security.tier3.block_user_explicit` 那个死开关，
    改为**新增新键**并把死键删掉。设计与实现计划见
@@ -389,6 +450,11 @@ v0.13 spec 定义 backlog #1 为**数据库侧的速率不变量**（入口/出�
 
 ## 七、下一步
 
+> 🆕🔴 **2026-08-28 更新：W2 已实现、过整分支 review、合入 `main`。剩余未落地的只有 W3**
+> （W3 的设计与实现计划都已落盘）。**W3 之前必读**：W1 留了一条主动绊线 —— 往 `TIER2_PATTERNS`
+> 加模式却不加对应样本时，`tests/unit/v014-quarantine-all-sources.test.mjs` 的覆盖断言会直接变红，
+> **那是设计意图，加样本即可**。
+>
 > 🆕✅ **2026-08-25：下面这三条已全部完成。** 四条工作流（外加 W0，共五条）的设计已齐：
 > W1（08-19）、W0（08-20）、W2（08-20/21）、**W3（08-25，补做）**；
 > W0/W1/W2 的实现计划已落盘，**W3 的实现计划随后**。W4 已实现并合进 `main`。

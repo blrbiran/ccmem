@@ -1109,9 +1109,9 @@ test('summarize-pending writes summary_meta into memories', async () => {
   }
 });
 
-test('config default version is 0.13', () => {
+test('config default version is 0.14', () => {
   const raw = readFileSync('/Users/biran/code/skills/ccmem/config.default.json', 'utf8');
-  assert.match(raw, /"version": "0\.13"/);
+  assert.match(raw, /"version": "0\.14"/);
 });
 
 

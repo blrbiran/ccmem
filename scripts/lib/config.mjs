@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { getConfigPath } from './paths.mjs';
 
 export const DEFAULT_CONFIG = {
-  version: '0.13',
+  version: '0.14',
   inject: { max_chars: 4000, max_per_prompt: 6 },
   save: { max_chars_per_memory: 500 },
   injection: { file_based: true },

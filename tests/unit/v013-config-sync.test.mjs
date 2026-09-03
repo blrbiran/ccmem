@@ -10,12 +10,12 @@ const repoRoot = path.resolve(__dirname, '../..');
 const { DEFAULT_CONFIG, loadConfig } = await import('../../scripts/lib/config.mjs');
 
 test('DEFAULT_CONFIG.version matches current release version', () => {
-  assert.equal(DEFAULT_CONFIG.version, '0.13');
+  assert.equal(DEFAULT_CONFIG.version, '0.14');
 });
 
-test('loadConfig() returns version === 0.13', () => {
+test('loadConfig() returns version === 0.14', () => {
   const config = loadConfig();
-  assert.equal(config.version, '0.13');
+  assert.equal(config.version, '0.14');
 });
 
 test('config.default.json version matches DEFAULT_CONFIG.version', () => {

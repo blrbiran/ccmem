@@ -1,10 +1,27 @@
 # ccmem —— Handoff
 
-> 🔴🔴 **最新一轮（2026-09-04，见 ⅩⅩⅨ）：v0.14 已收尾发布 —— 版本号 bump 到 `0.14.0` / `0.14`，
-> tag `v0.14.0` 已打，dogfood 文档已写，七个死分支已删，W3 的 sdd 目录已删。套件 `707/707`。**
-> 🔴🔴 **接手先读 ⅩⅩⅨ.2 那两条实测撞出来的生产问题** —— 都不在任何既有 backlog 上：
-> *** **① `summarize_pending` 有 31.8% 在超时（09-03 当天 47%）；② `credential_assignment` 正则自 v0.4 起就是死的。** ***
-> **零 push。** 仍未 bump `scan_patterns_version`（有意，见 ⅩⅩⅧ.2）。
+> ## 🟢 接手入口（2026-09-04，最新一轮见 ⅩⅩⅨ）
+>
+> *** **v0.14 已收尾发布，没有在飞的工作，没有半成品分支。** ***
+> **五条工作流 W0–W4 全部在 `main`；版本号 `0.14.0` / `0.14`；tag `v0.14.0`；套件 `707 pass / 0 fail / 0 skipped`。**
+> **分支只剩两个**：`main` 与 `config-value-parity`（后者被禁令锁着，**不合并也不删**）。**零 worktree。零 push。**
+>
+> 🔴🔴 **要动手之前，先读这三条：**
+> 1. **ⅩⅩⅨ.2 —— 两条实测撞出来的生产问题**，都不在任何既有 backlog 上：
+>    *** **① `summarize_pending` 有 31.8% 的调用在超时（09-03 当天 47%）；
+>    ② `credential_assignment` 正则自 v0.4 起就是死的（源码里是字面 `0x08` 字节）。** ***
+>    **两条都只有读数、没有处置**，是 v0.15 最靠前的输入。
+> 2. **ⅩⅩⅧ.1 —— 改代码不需要合并就已经上线**：`~/.claude/plugins/ccmem` 是符号链接指向本工作树，
+>    三个钩子每次都新起进程 ⇒ *** **你在这棵树里改 `scripts/**` 或 `hooks/**`，下一次会话就作用在真实库上。** ***
+>    常驻 daemon 是唯一例外（内存里是旧代码，要重启才换）。
+> 3. **ⅩⅩⅨ.4 的六条禁令一条都没解**（不 push、`config-value-parity` 不合并、7 个死键不删、
+>    不改电源设置、Task 5 读数不重跑、不挂 cron/巡检）。
+>
+> ⚠️ **`scan_patterns_version` 两处仍是 `2026.07` —— 这是裁决结果，不是漏做**（理由见 ⅩⅩⅧ.2）。
+> ⚠️ **套件不是稳定绿**，已知抖动见 §Ⅹ 与 ⅩⅩⅧ.4。
+> ⚠️ **本文档不写任何 SHA、不写 `HEAD`、不写领先远端几个** —— 提交本文档这个动作本身就会改掉它们。
+> **一律按提交标题找**（`git log --oneline --merges`），状态一律自己 `npm test` / `git branch --list` 现查。
+> 📌 **怎么逐项自查：ⅩⅩⅨ.6 有一张表。下一位该调哪些 skill：ⅩⅩⅨ.7。**
 >
 > 🔴 **上一轮（2026-09-03 续，见 ⅩⅩⅧ）：ⅩⅩⅦ.1 那两个开关都已裁决并执行。**
 > **W3 已合并进 `main`** —— 合并提交标题 `merge: threat-scan bypass corpus, report and hardening (W3)`。
@@ -4635,10 +4652,10 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
 | 查什么 | 怎么查 | 预期 |
 |---|---|---|
 | W3 在不在 `main` | `git log --oneline --merges -1 main` | 标题 `merge: threat-scan bypass corpus, report and hardening (W3)` |
-| 两个分支已删 | `git branch --list` | 两个都不在（`config-value-parity` **应当还在**，禁令 1） |
+| 两个分支已删 | `git branch --list` | ⚠️ **本表已被 ⅩⅩⅨ.6 取代** —— 那之后又删了七个，现在只剩 `main` 与 `config-value-parity` |
 | 版本号仍未 bump（**有意**） | `git grep -n scan_patterns_version -- config.default.json scripts/lib/config.mjs` | 两处都是 `2026.07` |
 | 新守卫在不在 | `git grep -n "identical in both config sources" -- tests/` | 命中 1 处 |
-| 套件 | `npm test` | `705 pass / 0 fail / 0 skipped` ⚠️ **可能红在 §4 那条抖动上** |
+| 套件 | `npm test` | ~~`705`~~ ⇒ **`707`** ⚠️ **可能红在 §4 那条抖动上** |
 | 插件是不是符号链接 | `ls -la ~/.claude/plugins/ \| grep ccmem` | 指向本工作树 ⇒ §1 成立 |
 | daemon 跑哪份代码 | `plutil -p ~/Library/LaunchAgents/com.ccmem.daemon.plist` | `ProgramArguments` 末项指向本工作树 |
 
@@ -4701,7 +4718,7 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
 🔴 **为什么三个月没人发现**：**终端、`grep`、`sed`、乃至 `python` 的 `print` 都会把 `0x08` 吃掉**，
 肉眼看它完全正确。**发现它的唯一方法是看字节** —— `JSON.stringify` 出来是 `\b`（控制字符），
 而真转义会是 `\\b`。取证用 `git show <sha>:<path>` 逐版本数 `0x08` 字节（**冒号参数走 argv 数组**，ⅩⅩⅦ.10），
-`0 → 2` 的跃变落在 `3400ba6 feat: implement v0.4 diagnostics and revalidation flows`（2026-06-06）。
+`0 → 2` 的跃变落在标题为 **`feat: implement v0.4 diagnostics and revalidation flows`** 的那笔（2026-06-06）。**按标题找，本文档不写 SHA。**
 
 ⚠️ *** **刻意没有照原样修，因为照原样修会造成误伤。** *** 在副本的 **3,251 条 global scope active 行**上干跑：
 修好后**新命中 5 条、5 条全落在自动隔离档**，而触发词是 `secret metadata` / `token cap` / `token accounting` /
@@ -4731,6 +4748,41 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
    ⇒ **本仓库当前只剩两个分支：`main` 与 `config-value-parity`**（后者被禁令 1 锁着，不合并、不删）。
 4. **`revalidation` 有 4,237 条从未扫过** —— 100 行/天的排水追不上写入，未处置。
 5. **未 push。**
+
+## 6. 怎么自己查状态（**别信本节写的任何数，现查**）
+
+⚠️ **本表刻意不给 SHA、不给 `HEAD`、不给领先远端几个** —— 提交本文档就会改掉它们。
+
+| 查什么 | 怎么查 | 预期 |
+|---|---|---|
+| 五条工作流都在 `main` | `git log --oneline --merges` | 能找到 `merge: … (W0)` / `(W1)` / `(W2)` / `(W3)` / `(W4)` 五条标题 |
+| 版本号 | `git grep -n '"version"' package.json .claude-plugin/plugin.json config.default.json` | `0.14.0` / `0.14.0` / `0.14` |
+| tag | `git tag --list \| grep 0.14` | `v0.14.0`（**轻量 tag**，与既有 tag 同形） |
+| 分支 | `git branch --list` | **只有 `main` 与 `config-value-parity`**；后者永远不该被合并或删除 |
+| worktree | `git worktree list` | **只有主工作树一行** |
+| 套件 | `npm test` | `707 pass / 0 fail / 0 skipped`（⚠️ 可能红在 ⅩⅩⅧ.4 那条抖动上） |
+| `scan_patterns_version` 仍未 bump（**有意**） | `git grep -n scan_patterns_version -- config.default.json scripts/lib/config.mjs` | 两处都是 `2026.07` |
+| 两个方向的错 | `npm run threat:report` | benign fp `0/18`；missed `7/19`；delta `SAME 37`。跑完 `git status --porcelain` 必须**无输出** |
+| 超时问题还在不在 | 读 `~/.claude/ccmem/daemon-cost.jsonl` 里 `timed_out` 的占比 | 上次读数 `83/261 = 31.8%`。**只读文件，别跑写命令** |
+| 死正则还在不在 | 数 `scripts/lib/threat-scan.mjs` 里的 `0x08` 字节 | 仍应是 **2**（未修）。⚠️ **必须看字节** —— 终端/`grep`/`sed` 都会把它吃掉 |
+| 插件是不是符号链接 | `ls -la ~/.claude/plugins/ \| grep ccmem` | 指向本工作树 ⇒ ⅩⅩⅧ.1 成立 |
+
+## 7. 下一位建议调用的 skill
+
+| 场景 | skill |
+|---|---|
+| **定 v0.15 范围**（本文档不替它定，输入见 `docs/ccmem-v0.14-dogfood.md` §八） | `superpowers:brainstorming` → `superpowers:writing-plans` |
+| **查 `summarize_pending` 31.8% 超时的根因**（ⅩⅩⅨ.2.1，只有计数没有归因） | `superpowers:systematic-debugging` |
+| **修 `credential_assignment`**（ⅩⅩⅨ.2.2，要先收窄词表，属设计变更） | `superpowers:brainstorming` 先定词表，再 `superpowers:test-driven-development` |
+| 任何改 `scripts/**` 的实现 | `superpowers:test-driven-development` + 本仓库的变异纪律（handoff Ⅴ：**每条守卫都要被亲眼看着红在它命名的行为上**） |
+| 多任务并行落地 | `superpowers:subagent-driven-development`（⚠️ ⅩⅩⅦ.6：**实现者在跑期间，控制器不许碰 index**） |
+| 收尾／合并／删分支 | `superpowers:finishing-a-development-branch` + `superpowers:verification-before-completion` |
+| 交付前 | `superpowers:requesting-code-review` → `superpowers:receiving-code-review`。⚠️ **ⅩⅩⅦ.4/.5 实证：整分支 review 能看见任务级审阅结构上看不见的东西，别省** |
+
+🔴 **本仓库特有的、skill 不会告诉你的三条**：
+1. **写生产库前先 `sqlite3 ".backup"`**，沿用旁边已有的 `global.db.bak.<epoch>` 命名（Rule 13）。
+2. **改 `scripts/daemon/**` 后旧 daemon 进程还在跑旧代码** —— 验证前先 restart，否则你验的是上一版。
+3. **改 `hooks/**` 影响用户的每一次会话**，不只是本仓库。
 
 
 ---

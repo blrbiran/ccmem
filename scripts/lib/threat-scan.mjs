@@ -43,8 +43,11 @@ const TIER2_PATTERNS = [
   { re: /ignore (all |the )?(previous|prior) instructions/i, score: 0.45, evidence: 'ignore_previous_instructions' },
   { re: /(?:rm\s+-rf\s+\/|sudo\s+rm\s+-rf|del\s+\/f\s+\/s\s+\/q)/i, score: 0.7, evidence: 'destructive_command' },
   { re: /curl\b[^\n|]{0,120}\|\s*(?:bash|sh)\b/i, score: 0.55, evidence: 'curl_pipe_shell' },
-  { re: /(?:api[_ -]?key|secret|token|password)\b.{0,80}\b(?:print|dump|exfiltrate|upload|send)/i, score: 0.45, evidence: 'credential_exfiltration' },
-  { re: /(?:exfiltrate|steal|leak|export)\b.{0,80}\b(?:secret|token|credential|password)/i, score: 0.45, evidence: 'secret_exfiltration' },
+  // 间隔从 .{0,80} 放到 .{0,200}：80 装不下一句真实的复合句，而"单条内拆分"的
+  // 距离那一条机制正是靠拉开锚点绕过的（W3 设计 §2.3 实测：181 字符即失配）。
+  // 上界仍然要有 —— 没有上界就等于把整条记忆里任意两个词连成"意图"。
+  { re: /(?:api[_ -]?key|secret|token|password)\b.{0,200}\b(?:print|dump|exfiltrate|upload|send)/i, score: 0.45, evidence: 'credential_exfiltration' },
+  { re: /(?:exfiltrate|steal|leak|export)\b.{0,200}\b(?:secret|token|credential|password)/i, score: 0.45, evidence: 'secret_exfiltration' },
   { re: /(?:bypass|disable)\b.{0,60}\b(?:sandbox|guardrail|security|safety)/i, score: 0.4, evidence: 'security_bypass' },
   // 中文形态。evidence 沿用英文同类的名字，让报告与 security_audit 里两路归一个证据名。
   // 间隔用 [^。！？!?]{0,N} 而不是 .{0,N}：不许跨句连锚点，跨句连出来的是巧合不是意图。

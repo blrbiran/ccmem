@@ -194,7 +194,21 @@ test('tier2 catches an exfiltration whose two anchors sit further than 80 chars 
 
 test('the widened window does not reach across a whole memory to invent an intent', () => {
   // 反向哨兵：锚点相距远超新窗口时仍应失配，否则窗口等于没有上界。
+  // 注意：这条文本里没有 print|dump|exfiltrate|upload|send，所以它只约束得到
+  // secret_exfiltration（export ... password）—— 约束不到 credential_exfiltration，
+  // 后者由下面那条哨兵单独覆盖。
   const content = `export the release notes ${'and the follow-up items '.repeat(12)}plus the database password`;
+  assert.ok(content.length > 300);
+  assert.equal(evaluateTier2(content, 'auto_inferred').action, 'allow');
+});
+
+test('a second reverse sentinel: credential_exfiltration also keeps a real upper bound', () => {
+  // 上一条哨兵的文本里从来没出现过 print|dump|exfiltrate|upload|send，所以它对
+  // credential_exfiltration 的右锚点永远碰不上 —— 不管窗口开多大，那条模式在
+  // 那段文本上都不会匹配，测不出它的上界。这一条专门补这个洞：用
+  // credential_exfiltration 自己的锚点形状（凭证名 ... print/dump/...）来撑，
+  // 锚点间距远超 200。
+  const content = `store the api key ${'and keep the deployment notes tidy '.repeat(12)}then print it later`;
   assert.ok(content.length > 300);
   assert.equal(evaluateTier2(content, 'auto_inferred').action, 'allow');
 });

@@ -572,7 +572,7 @@ const BASELINE = new URL('../tests/fixtures/threat-payloads/baseline.json', impo
 const DEFAULT_CONFIG = new URL('../config.default.json', import.meta.url);
 
 /**
- * save.mjs 的写入路径，逐步对齐：:59 evaluateTier1 → :71 evaluateTier2 → :72 evaluateTier3。
+ * save.mjs 的写入路径，逐步对齐：:59 evaluateTier1 → :71 evaluateTier2 → :75/:76 evaluateTier3（🔴 预检 #5：不是 :72，W1 在 :72-74 插了三行注释）。
  *
  * secretScan 刻意不调 —— 它只在 revalidation.mjs:94 出现，且仅对 scope==='global'，
  * 不在写入路径上。把它塞进来会让"最终写入行为"这个口径名不副实。

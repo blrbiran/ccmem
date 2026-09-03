@@ -180,6 +180,13 @@ export function main(argv) {
   lines.push('     question and its false-positive surface is unmeasured (design section 8.8).');
   lines.push('  3. the synonym and disguised classes have no matching hardening in this round;');
   lines.push('     whatever they score is a recorded gap, not a regression.');
+  lines.push('  4. the benign false-positive rate above is measured only over the 13 shapes this');
+  lines.push('     corpus contains. the chinese patterns added this round demote plausible,');
+  lines.push('     ordinary chinese engineering memories that the corpus does not contain; four');
+  lines.push('     such shapes were measured (force_demote at 0.45/0.45/0.45/0.40) and were');
+  lines.push('     deliberately not narrowed -- narrowing without measurement trades a false');
+  lines.push('     positive for a bypass. the dry-run over the real memory store before the');
+  lines.push('     version bump is the measurement that decides whether to narrow them.');
 
   process.stdout.write(`${lines.join('\n')}\n`);
 

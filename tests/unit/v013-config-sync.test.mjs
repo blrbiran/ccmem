@@ -85,3 +85,24 @@ test('loadConfig still returns a mutable copy despite the deep freeze', () => {
   assert.equal(config.metrics.decision_data.enabled, false);
   assert.equal(DEFAULT_CONFIG.metrics.decision_data.enabled, true, 'the frozen original must be unaffected');
 });
+
+// 这一个键必须两份配置源逐字相等，否则 bump 它就是 no-op：
+// config.default.json 是新用户拷贝的模板，而没有 config.json 的进程（包括每一次
+// npm test，它 env -u 掉 CCMEM_CONFIG_PATH 又指向空的 mktemp -d 数据根）读的是
+// DEFAULT_CONFIG。两者漂移时，重扫机制在一半的进程里静默不触发 —— 实测本机
+// ~/.claude/ccmem/config.json 只有 embedding 一段、没有 security，所以生效值来自
+// DEFAULT_CONFIG，而 scripts/threat-report.mjs:125 的抬头读的是 config.default.json：
+// 只改后者，报告会照印新版本号而 revalidation.mjs:28 仍读旧值。
+//
+// 🔴 刻意只钉这一个键，不做通用值级 parity —— 那份测试在 config-value-parity 分支上，
+// 人类裁决"不合并"（handoff ⅩⅩⅥ.8 禁令 1）。这里沿用的是 §ⅩⅩ 给 plugin.json
+// 加 `version === package.json.version` 断言的先例：一个键，一条断言，漂移当场变红。
+test('scan_patterns_version is identical in both config sources', () => {
+  const fileConfig = JSON.parse(readFileSync(path.join(repoRoot, 'config.default.json'), 'utf8'));
+  assert.equal(
+    fileConfig.security.scan_patterns_version,
+    DEFAULT_CONFIG.security.scan_patterns_version,
+    'bumping only one of the two makes the retroactive rescan a silent no-op for every ' +
+    'process that has no config.json of its own'
+  );
+});

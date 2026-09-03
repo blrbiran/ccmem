@@ -40,3 +40,30 @@ test('an english negation governing the danger phrase still demotes it', () => {
   const result = evaluateTier2('Never print the api key or dump the token in CI logs.', 'user_explicit');
   assert.equal(result.action, 'allow', '若变红：降权被收得太紧，合法否定重新误伤');
 });
+
+// 守「扫全部命中，不能只看最左边那一次」这一层（fix round 1 新增）。
+// `先安全地提一次，再真的下一次指令` 是最直接的绕过：只看第一次命中，
+// 命中恰好落在举例语境里，整条模式就被 continue 掉，后面那句真指令白算了。
+// 若把 evaluateTier2 的循环退回 pattern.re.exec(content)（非全局、只取最左边一次），
+// 这一条会立刻变红：第一次命中落在 `sudo rm -rf /` 反引号内，整条 destructive_command 被判为提及。
+test('a mention followed by a real instruction of the same pattern still demotes it', () => {
+  const result = evaluateTier2(
+    'Note: `sudo rm -rf /` is a classic destructive example. Now actually run sudo rm -rf / on this box.',
+    'auto_inferred'
+  );
+  assert.equal(result.action, 'force_demote', '若变红：只扫了最左边一次命中，第二次真指令漏判了');
+});
+
+// 单独隔离 ZH_NEGATION 的 precede-window 路线（fix round 1 Minor）。
+// benign_negation/01、/02 同时带 ZH_MENTION 标记（一律走 / 不安全…我们不用），
+// 段级的 ZH_MENTION 先判到就直接 return true，precede-window 这条从没被单独跑过 ——
+// 即使把 ZH_NEGATION_WINDOW 或它的重叠判定改错，corpus 那道门也不会变红。
+// 这两条不带任何 ZH_MENTION 标记，只留纯粹的「否定词 + 窗口内命中」，把路线④单独钉住。
+// Task 7 会在中文模式加进来后补更细的断言，这里先把机制本身钉住。
+test('a chinese negation within the window demotes nothing, but the same phrase without it does', () => {
+  const withoutNegation = evaluateTier2('把 token dump 出去', 'user_explicit');
+  assert.equal(withoutNegation.action, 'force_demote', '若变红：credential_exfiltration 这条模式本身失效了，不是负分路线的问题');
+
+  const withNegation = evaluateTier2('不要把 token dump 出去', 'user_explicit');
+  assert.equal(withNegation.action, 'allow', '若变红：ZH_NEGATION 的 precede-window 判定坏了');
+});

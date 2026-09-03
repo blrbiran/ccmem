@@ -4,7 +4,9 @@ const TIER1_PATTERNS = [
 ];
 
 const SECRET_PATTERNS = [
-  { re: /sk-[A-Za-z0-9_-]{10,}/g, name: 'openai_key' },
+  // \b 是必须的：没有它，`task-completion` 里的 `sk-completion` 会被判成 openai key ——
+  // W3 的干跑（9945 条真实记忆）实测命中一条。
+  { re: /\bsk-[A-Za-z0-9_-]{10,}/g, name: 'openai_key' },
   { re: /gh[pousr]_[A-Za-z0-9]{20,}/g, name: 'github_token' },
   { re: /AIza[0-9A-Za-z_-]{20,}/g, name: 'google_api_key' },
   { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g, name: 'private_key' },

@@ -4727,7 +4727,8 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
 
 1. **§2.1 超时**与**§2.2 死正则**都只有读数、没有处置 —— 已写进 dogfood §八，是 v0.15 的输入。
 2. **`stop_timeout` 抖动**（ⅩⅩⅧ.4）人裁决先不做。
-3. **`backup-810ef3a-cn-commit-msgs` 这个安全 ref 还在**（上一轮改英文 commit message 时建的），**等许可删除**。
+3. ✅ ~~**`backup-810ef3a-cn-commit-msgs` 这个安全 ref 还在，等许可删除**~~ —— **已按许可删除**（删前证明它的树与 `main` 上重写后的那笔逐位相同）。
+   ⇒ **本仓库当前只剩两个分支：`main` 与 `config-value-parity`**（后者被禁令 1 锁着，不合并、不删）。
 4. **`revalidation` 有 4,237 条从未扫过** —— 100 行/天的排水追不上写入，未处置。
 5. **未 push。**
 

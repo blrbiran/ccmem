@@ -49,7 +49,7 @@ L3（跨任务共享文件）、ⅩⅩⅥ.3.1（**L4** fixture 对 schema、验�
 的**副本**上模拟 T5–T8），**仓库当时一字未改**。它们是**观测**，不是预测 —— 与本计划末尾
 「效力边界」里那些**按源码推出来的预测**不是一回事，别混用。
 
-**共 19 处。B 开头的 4 条是拦路的，已按人类 2026-09-03 的裁决改掉。**
+**共 20 处。B 开头的 4 条是拦路的，已按人类 2026-09-03 的裁决改掉。**
 
 📌 **#18 与 #19 是执行中补上的**：#18 由 Task 2 的任务审阅带出，#19 由 Task 5 的任务审阅抓到 ——
 **#19 是全程最严重的一处，而预检的四层加 L5 都没看见它**，理由记在它自己那一行里。
@@ -86,7 +86,7 @@ L3（跨任务共享文件）、ⅩⅩⅥ.3.1（**L4** fixture 对 schema、验�
   —— 含设计标着「待测」的 `benign_quote/*` **三条全部误伤**（0.7 / 0.55 / 0.45）。
   ⇒ 判据 3 满足，Task 4 不会撞上「基线全绿」那个语料写错的信号。
 - **模拟改强后 27/32 正确**（B2 补语料之前是 24/29），剩下 5 条恰好是计划预先声明的残留缺口：`synonym/01-03`、`disguised/03-04`。
-  ⇒ 三个 delta 桶的预期分布是 `FIXED 17 / BROKEN 2 / SAME 13`，**`BROKEN` 那 2 条就是 `disguised/03-04`**（见 #17）。
+  ⇒ 三个 delta 桶的预期分布是 `FIXED 19 / BROKEN 2 / SAME 11`（🔴 预检 #20 更正，原写 17/2/13 是算错的），**`BROKEN` 那 2 条就是 `disguised/03-04`**（见 #17）。
 - **B2 的收紧不花任何语料代价**：收紧前后 32 条逐条动作**完全相同**，另堵掉 5 条现实绕过（`never mind…, sudo rm -rf /`、`avoid…: ignore…`、`instead of…, exfiltrate…`、`` `ok` then sudo rm -rf / ``、``see `README`…, ignore…``）。`` `sudo rm -rf /` run this now `` 仍是 `allow` —— 那是 `disguised/04` 声明过的已知代价，**不要再为它收紧引用规则**。
 - normalize 四条单元期望全中；tier1 零宽守卫成立；Task 8 的反向哨兵成立（`far.length = 339`）。
 - W1 的 `DANGEROUS`、`force_demote ⇒ evidence 非空` 不变量、`resurrect-command` 的 `sudo rm -rf /tmp/cache`
@@ -1507,9 +1507,16 @@ Run: `npm run threat:report`
 
 | 桶 | 条数 | 是哪些 |
 |---|---|---|
-| `FIXED` | **17** | `double_space/01-02`、`chinese/01-03`、`intra_split` 四条、`benign` 侧原先误伤的 9 条 —— 共 2+3+4+9 |
-| `BROKEN` | **2** | 🔴 见下 |
-| `SAME` | **13** | 仍错的 5 条（`synonym/01-03`、`disguised/03-04` ⚠️ 见下）+ 一直对的 8 条（`disguised/01`、`05-07`、`benign_plain/01-04`） |
+| `FIXED` | **19** | `double_space/01-02`(2) + `chinese/01-03`(3) + `intra_split` 四条(4) + `disguised/02`(1) + `benign` 侧原先误伤的 9 条(9) = **19** |
+| `BROKEN` | **2** | `disguised/03`、`disguised/04` —— 🔴 见下 |
+| `SAME` | **11** | 仍错的 3 条（`synonym/01-03`，本轮无对应改强）+ 一直对的 8 条（`disguised/01`、`05`、`06`、`07`、`benign_plain/01-04`） |
+
+🔴🔴 **预检 #20（2026-09-03，Task 6 之后自查发现，是我自己算错的）：上表原写 `FIXED 17 / SAME 13`，错了。**
+错因是把 `disguised/03`、`/04` 当成了「改强前后都错」。**它们改强前是【对】的**（当前实测已检出 0.7 / 0.45），
+改强后才变错 ⇒ 它们属于 `BROKEN`，**不能同时再从 `FIXED` 的分母里扣一次**。
+正确算法：基线错 22 条 −「前后都错」3 条（只有 `synonym`）= **`FIXED` 19**；`BROKEN` 2；`SAME` = 32 − 19 − 2 = **11**。
+**实测已交叉验证**：Task 6 结束时实际是 `FIXED 13 / BROKEN 2 / SAME 17`，
+而剩下待修的正好是 `chinese`×3 + `disguised/02` + `distance`×2 = 6 条 ⇒ 13 + 6 = **19**。✅
 
 🔴🔴 **预检 #17 更正上面第 3 点：`disguised/03` 与 `disguised/04` 不会落在 `SAME`，它们会落在 `BROKEN`。**
 

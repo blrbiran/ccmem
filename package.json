@@ -13,6 +13,8 @@
   "scripts": {
     "test": "env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT=\"$(mktemp -d)\" /usr/local/bin/node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
     "test:unit": "env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT=\"$(mktemp -d)\" /usr/local/bin/node --test tests/unit/*.test.mjs",
-    "test:integration": "env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT=\"$(mktemp -d)\" /usr/local/bin/node --test tests/integration/*.test.mjs"
+    "test:integration": "env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT=\"$(mktemp -d)\" /usr/local/bin/node --test tests/integration/*.test.mjs",
+    "threat:report": "/usr/local/bin/node scripts/threat-report.mjs",
+    "threat:baseline": "/usr/local/bin/node scripts/threat-report.mjs --baseline"
   }
 }

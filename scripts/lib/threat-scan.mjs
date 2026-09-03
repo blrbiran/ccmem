@@ -11,6 +11,34 @@ const SECRET_PATTERNS = [
   { re: /(?:api[_ -]?key|secret|token|password).{0,20}[:=].{0,40}/gi, name: 'credential_assignment' }
 ];
 
+// TIER1 的 hidden_unicode 判的就是这几个字符 —— 所以规范化绝不能跑在 tier1 前面。
+const ZERO_WIDTH = /[​‌‍﻿]/g;
+// 全角 ！ 到 ～ 与半角 ! 到 ~ 差 0xfee0，是一段连续映射。
+const FULLWIDTH = /[！-～]/g;
+
+/**
+ * 只给 tier2 用的规范化。
+ *
+ * 五类绕过里有两类根本不需要新模式，只需要把输入摆正：
+ *   - 双空格 / 全角空格：TIER2 那条 ignore…instructions 写的是字面单空格；
+ *   - 单条内拆分（换行那一条）：JS 正则的 . 无 s 标志时不匹配 \n，插一个换行即绕过。
+ * 距离那一条（.{0,80}）规范化治不了，见 Task 8。
+ *
+ * 🔴 tier1 必须看原文：hidden_unicode 的判定依据就是这里要去掉的零宽字符，
+ * 顺序颠倒会把 tier1 已有的检出直接抹掉（W3 设计 §4.6）。
+ */
+export function normalize(content) {
+  if (typeof content !== 'string') {
+    return '';
+  }
+
+  return content
+    .replace(ZERO_WIDTH, '')
+    .replace(FULLWIDTH, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const TIER2_PATTERNS = [
   { re: /ignore (all |the )?(previous|prior) instructions/i, score: 0.45, evidence: 'ignore_previous_instructions' },
   { re: /(?:rm\s+-rf\s+\/|sudo\s+rm\s+-rf|del\s+\/f\s+\/s\s+\/q)/i, score: 0.7, evidence: 'destructive_command' },
@@ -174,6 +202,7 @@ export function evaluateTier1(content) {
 export function evaluateTier2(content, source = 'user_explicit', type = 'fact') {
   let score = 0;
   const evidence = [];
+  const scanned = normalize(content);
 
   for (let i = 0; i < TIER2_PATTERNS.length; i += 1) {
     const pattern = TIER2_PATTERNS[i];
@@ -187,8 +216,8 @@ export function evaluateTier2(content, source = 'user_explicit', type = 'fact') 
     re.lastIndex = 0;
     let unguarded = false;
     let hit;
-    while ((hit = re.exec(content)) !== null) {
-      if (!isMentionContext(content, hit.index)) {
+    while ((hit = re.exec(scanned)) !== null) {
+      if (!isMentionContext(scanned, hit.index)) {
         unguarded = true;
         break;
       }

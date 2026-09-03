@@ -1,12 +1,21 @@
 # ccmem —— Handoff
 
-> 🔴🔴 **最新一轮（2026-09-03，见 ⅩⅩⅦ）：W3 已实现、过整分支 review、修复波已闭合 ——**
-> *** **但【分支未合并】、【`scan_patterns_version` 未 bump】。这两件都是人类决策，我刻意没做。** ***
-> **v0.14 四条工作流的代码到此全部写完（W0/W1/W2 已在 `main`，W3 在分支 `w3-threat-scan-bypass-suite`）。**
-> **套件 `704/704`**（起点 647）。**零 push、未删任何分支。**
-> 🔴 **接手先读 ⅩⅩⅦ.1（两个待裁决的开关）和 ⅩⅩⅦ.3（干跑推翻了改强本身 —— 本轮最值钱的一条）。**
-> ⚠️ **两个分支等许可删除**：`w3-threat-scan-bypass-suite`、`backup-18073e6-index-race`。
-> 🆕 **新增一条工具陷阱（ⅩⅩⅦ.10）**：`git` 会吃掉含 `:` 的参数，`git show <sha>:<path>`
+> 🔴🔴 **最新一轮（2026-09-03 续，见 ⅩⅩⅧ）：ⅩⅩⅦ.1 那两个开关都已裁决并执行。**
+> **W3 已合并进 `main`** —— 合并提交标题 `merge: threat-scan bypass corpus, report and hardening (W3)`。
+> *** **`scan_patterns_version` 经人裁决【不 bump】** *** —— 两处都仍是 `2026.07`。
+> **这不是漏做，是裁决结果**，理由（重扫 6152 行换 0 个判定变化）见 ⅩⅩⅧ.2。
+> **v0.14 四条工作流 W0–W3 到此全部在 `main` 上。套件 `705/705`**（起点 647；多的一条是本轮加的守卫）。
+> **两个分支已按许可删除**：`w3-threat-scan-bypass-suite`、`backup-18073e6-index-race`。**零 push。**
+> 🔴🔴 **接手先读 ⅩⅩⅧ.1** —— 一条比合并和 bump 都要紧的实测：
+> *** **`~/.claude/plugins/ccmem` 是符号链接指向本工作树，三个钩子每次都新起进程 ⇒
+> 你在这棵树里改 `scripts/**`，下一次会话就在真实库上生效，与合不合并无关。** ***
+> 常驻 daemon 是唯一例外（内存里是旧代码，要重启才换）。
+> ⚠️ **套件不是稳定绿**：本轮 4 次全量跑第 1 次红在 `admin-daemon-command.test.mjs:340`（`stop_timeout`），
+> 后 3 次全绿。那是 §Ⅹ 记录的头号抖动源文件，**但这个失败模式是首次观测到** —— 见 ⅩⅩⅧ.4。
+>
+> 🔴 **上一轮（2026-09-03，见 ⅩⅩⅦ）：W3 已实现、过整分支 review、修复波已闭合。**
+> 🔴 **ⅩⅩⅦ.3 仍是那一轮最值钱的一条（干跑推翻了改强本身），值得单独读。**
+> 🆕 **工具陷阱（ⅩⅩⅦ.10）**：`git` 会吃掉含 `:` 的参数，`git show <sha>:<path>`
 > 返回的是**那个 commit 而不是文件** —— 用 `execFileSync('/usr/bin/git', ['show', ref])` 传 argv 数组。
 > 🔴 **更正 ⅩⅩⅥ.8 的一句话**：`v013-config-sync` **不是**值级守卫，它只比 key path 与 `version`。
 >
@@ -4359,23 +4368,30 @@ Orca 会把「人推翻了 agent 的哪个决策」当作**对照样本**喂进�
 
 # ⅩⅩⅦ. 2026-09-03：🔴 **W3 已实现、过整分支 review、修复波已闭合 —— 但【没有合并】、【没有 bump 版本号】，两件事等人裁决**
 
+> ✅ *** **那两件已于同日裁决并执行（合并 = 做了；bump = 裁决不做）。本节保留当轮原始记录不删，
+> 凡与 ⅩⅩⅧ 冲突之处以 ⅩⅩⅧ 为准。** ***
+
 > **W3 是 v0.14 四条工作流的最后一条。代码全部写完并过审，但它与 W0/W1/W2 不同：**
-> *** **分支未合并、`scan_patterns_version` 未 bump。这两件都是人类决策，我刻意没做。** ***
+> ✅ ~~*** **分支未合并、`scan_patterns_version` 未 bump。这两件都是人类决策，我刻意没做。** ***~~
+> **已处置：分支已合并并删除；`scan_patterns_version` 裁决为【不 bump】。**
 > **本轮零 push、未删任何分支、未改电源设置、未挂 cron、未重跑读数。**
 > ⚠️ **本节不写 SHA、不写领先远端几个** —— 提交本文档就会改掉这两个数。**按提交标题找。**
 > 📌 **计划、设计、以及每个任务的完整记录都在别处，本节只写它们不包含的东西**：
 > `docs/superpowers/plans/2026-08-25-w3-threat-scan-bypass-suite.md`（已含 **20 处预检更正**）、
 > `docs/superpowers/specs/2026-08-25-w3-threat-scan-bypass-suite-design.md`。
 
-## 1. 🔴🔴 接手第一件事：两个待裁决的开关
+## 1. ✅ 两个开关（当轮待裁决，**已于同日全部裁决并执行** —— 见 ⅩⅩⅧ.1／.2）
 
-**① 要不要合并分支 `w3-threat-scan-bypass-suite`。** 全部实现完成、整分支 review 判「修完可合」、修复波已闭合并复验。
-**② 要不要 bump `security.scan_patterns_version`（计划的 Task 11，唯一未执行的任务）。**
-`config.default.json` 与 `scripts/lib/config.mjs` **两处都仍是 `2026.07`，且一致**。
+**① ~~要不要~~ 合并分支 `w3-threat-scan-bypass-suite`。** ✅ **裁决：合并。已执行，分支已删。**
+全部实现完成、整分支 review 判「修完可合」、修复波已闭合并复验。
+**② ~~要不要~~ bump `security.scan_patterns_version`（计划的 Task 11）。** ✅ **裁决：不 bump。**
+只执行了 Task 11 的 Step 1b（单键相等守卫），Step 1／2 有意跳过 —— 理由见 ⅩⅩⅧ.2。
+`config.default.json` 与 `scripts/lib/config.mjs` **两处都仍是 `2026.07`，且一致** —— **裁决后依然如此，别当漏做**。
 bump 它 = 让全库按新模式重判一遍。**干跑已经做过，结论见 §3 —— 先读那一节再决定。**
 
-⚠️ 另有两个分支等许可删除（本仓库规矩：删分支先问）：
-`w3-threat-scan-bypass-suite` 本身，以及 **`backup-18073e6-index-race`**（见 §6 的 index race）。
+✅ ~~另有两个分支等许可删除~~ —— **两个都已获许可并删除**：
+`w3-threat-scan-bypass-suite`（已合并）与 **`backup-18073e6-index-race`**（见 §6 的 index race；
+删前已验它的树与分支上 `fix(w3): score a tier2 pattern on any unguarded match…` 那个提交逐位相同 ⇒ 不丢内容）。
 
 ## 2. 交付了什么
 
@@ -4388,7 +4404,7 @@ bump 它 = 让全库按新模式重判一遍。**干跑已经做过，结论见 
 | `scripts/lib/threat-scan.mjs` | 三手改强全在这里：提及/指示区分、`normalize()`、中文模式。**消费者一个都没动** |
 | `tests/unit/threat-scan-benign.test.mjs` | 🔴 **进 CI 的那一半**：benign 每条断言最终动作 = `allow` |
 
-**套件 704 pass / 0 fail / 0 skipped**（起点 647）。
+**套件 704 pass / 0 fail / 0 skipped**（起点 647）。⚠️ **本轮之后是 705**（加了一条守卫）。
 
 ## 3. 🔴🔴 本轮最值钱的一条：**干跑推翻了改强本身**
 
@@ -4476,20 +4492,157 @@ Task 10 在 `~/.claude/ccmem` 的**一致性快照副本**上，用改强后的�
 
 | 查什么 | 怎么查 | 预期 |
 |---|---|---|
-| W3 在哪 | `git branch -a` | 分支 `w3-threat-scan-bypass-suite`，**未合并** |
-| 套件 | `npm test` | **704 pass / 0 fail / 0 skipped** |
-| 版本号**没有**被 bump | `git grep -n scan_patterns_version -- config.default.json scripts/lib/config.mjs` | **两处都是 `2026.07`** |
+| W3 在哪 | `git branch -a` | ~~分支，未合并~~ ⇒ **已在 `main`**，分支已删（按合并提交标题找） |
+| 套件 | `npm test` | ~~704~~ ⇒ **705 pass / 0 fail / 0 skipped**（⚠️ 不稳定，见 ⅩⅩⅧ.4） |
+| 版本号**没有**被 bump | `git grep -n scan_patterns_version -- config.default.json scripts/lib/config.mjs` | **两处都是 `2026.07`** —— **裁决结果，不是待办** |
 | 两个方向的错各是多少 | `npm run threat:report` | benign fp **0/18**；missed attacks **7/19**（逐条列出 id） |
 | 报告不写回 | 跑一次 `threat:report` 后 `git status --porcelain` | 无输出 |
 | 领先远端几个 | `git status -sb` | **自己看** —— 提交本文档就会变 |
 
 ## 12. 本轮未闭合
 
-1. **分支未合并、版本号未 bump** —— 见 §1，两件都等人。
+1. ✅ ~~**分支未合并、版本号未 bump**~~ —— **已裁决并执行**：合并了；不 bump。见 ⅩⅩⅧ。
 2. **`.superpowers/sdd/2026-08-25-w3-threat-scan-bypass-suite/` 未删**（git-ignored）。里面有全部裁决、每个任务的报告、干跑清单。
    ⚠️ **干跑报告含真实记忆正文摘录，那个目录 git-ignored ⇒ 不会进仓库。删之前先确认本节已经把要留的都誊出来了。**
 3. **§7 那六条已知口子**，其中第 3 条（81–119 窗口无守卫）与第 4 条（M1）是**明知未闭合而搁置**，不是漏掉。
 4. **未 push。**
+
+
+---
+
+# ⅩⅩⅧ. 2026-09-03 续：✅ **ⅩⅩⅦ 那两个开关都已裁决并执行** —— W3 合并进 `main`、`scan_patterns_version` 裁决【不 bump】
+
+> **本轮零新功能。做的是：把 ⅩⅩⅦ 留给人的两个决定跑完，外加一次 Task 11 预检 —— 预检查出了五件计划里没有的事，其中第 1 条重要到应当改变你对本仓库风险面的默认认知。**
+> **零 push。删了两个分支（都拿到许可）。未碰生产库的任何写操作。** ⚠️ 本节不写 SHA、不写领先远端几个。
+
+## 1. 🔴🔴 最要紧的一条：**改 `scripts/**` 不需要合并就已经在真实库上生效了**
+
+实测三件事，串起来才看得见：
+
+| 实测 | 结果 |
+|---|---|
+| `~/.claude/plugins/ccmem` 是什么 | *** **符号链接 → `/Users/biran/code/skills/ccmem`（本工作树本身）** *** |
+| 三个钩子怎么跑 | `hooks/hooks.json`：`node …"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs" <phase>`，SessionStart/UserPromptSubmit/Stop **各自都是新进程** |
+| launchd daemon 跑哪份代码 | plist `ProgramArguments` 末项 = **`/Users/biran/code/skills/ccmem/scripts/daemon/main.mjs`**，同一棵树 |
+
+⇒ *** **钩子每次调用都重新 `import` 这棵树当前 checkout 的代码。所以本仓库的「合并」不是一道生效闸门 ——
+checkout 才是。** *** W3 的改强扫描器在合并之前就已经在写入路径上对真实库生效了。
+
+⇒ **唯一的例外是常驻 daemon**：它在进程启动时把模块读进内存。现测那个进程起于 **2026-09-01 20:53:35**，
+而改强后的 `scripts/lib/threat-scan.mjs` mtime 是 **2026-09-03 11:34** ⇒ **后台排水路径当时仍在跑改强前的扫描器**，
+`KeepAlive=true`，**下一次重启（登录／崩溃／`admin daemon restart`）自动换成新的**。这正是 Rule 13 第 4 条的另一面。
+
+🔴 **对接手人的实际含义**：在这棵树里改 `scripts/**` 或 `hooks/**`，**不存在「还没合并所以还没生效」这回事**。
+唯一的缓冲是 daemon 那点滞后，而它随时会被一次重启抹掉。
+
+## 2. 为什么裁决**不 bump**（论证是干跑喂出来的，不是省事）
+
+`bump scan_patterns_version` = 让 `revalidation.mjs` 把全库重判一遍。预检把它的三个量都测出来了：
+
+**① 排水速率是 100 行/天，不是一次性。** 读 `audit_log` 的 `revalidation_audit_run`：共 **90** 次，
+窗口 **`2026-06-07 02:17` → `2026-09-03 02:19`**；`daily` **87 次 × 100 行**（`batch_size` 默认 100），
+`lazy` 三个月里**总共只跑过 3 次**（286 行 —— 它有天级 lease）。每次耗时 **24–144ms**。
+
+**② 库的当前形状**（在干跑那份备份 `global.db.bak.1788402925938` 上只读查询，没碰活库）：
+
+| | 行数 |
+|---|---|
+| 总数 / active+probation / 已隔离 | `10389` / **`9945`** / `3` |
+| 已盖 `2026.07` | **`6152`** |
+| **从没扫过（`last_scanned_patterns_version IS NULL`）** | **`4237`** |
+| 待扫集合里落在「可直接隔离」侧（`trust<0.6` 且未 pin） | **`9666`**（另 `279` 条只会被 flag） |
+
+**③ 于是增量收益为零**：那 `4237` 条 NULL **不 bump 也会被新扫描器扫**（NULL ≠ 任何版本）。
+bump 的**全部增量工作** = 把已盖 `2026.07` 的 **6152** 行再扫一遍 —— 而 ⅩⅩⅦ.3 的干跑已经证明
+**新旧扫描器在这 9945 条上判定完全相同（新增 0、丢失 0）** ⇒ *** **6152 行换 0 个判定变化。** ***
+代价是按实测速率**多排约 61 天**、外加一次**必须的** daemon restart（见下），而这 6152 行绝大多数处在自动隔离档。
+
+⇒ **裁决：不 bump。** W3 的价值主张本来就是前瞻性的（ⅩⅩⅦ.3 自己写着「对当下这个库可测效果为零」），
+**前瞻性价值不需要追溯重扫**。留待扫描器**下一次真的有判定变化**时再 bump。
+
+🔴 **若将来要 bump，这三条必须一起做，缺一条就是静默无效或不可回退：**
+
+1. **两处一起改**（`config.default.json` 与 `scripts/lib/config.mjs`）——本轮加的守卫现在会当场把漏改一处判红。
+2. *** **restart daemon。** *** 生效值来自 `config.mjs` 的**模块常量** `DEFAULT_CONFIG`（本机 `~/.claude/ccmem/config.json`
+   实测**只有 `embedding` 一段、没有 `security`**），而 daemon 是常驻进程 ⇒ 不重启就继续盖旧版本号，**且悄无声息**。
+   🔴 **Task 11 全文一个字没提 restart** —— 逐字 grep 过。
+3. **写下回退步骤再跑**（Rule 13 第 3 条）：
+   - 跑前 `sqlite3 ".backup"` 出 `global.db.bak.<epoch>`（旁边已有 6 个，沿用命名）。
+   - 回退配置 = 两处改回旧值 **+ restart daemon**。⚠️ 副作用：已盖新版本号的行会**再次变成待扫**，用旧模式重排约 100 天。无数据损失，非零成本。
+   - 回退误伤：`audit_log` 里 `action='revalidation_quarantine_in'` 且 `details.pattern_version=<新版本号>` 精确定位，
+     走 `ccmem resurrect --quarantined` 逐条 keep/forget，**不许直接 UPDATE/DELETE**（Rule 13 第 6 条）。
+     已核实那个列表的 `WHERE` 只看 `decay_status='quarantine'`（`resurrect.mjs:494`）⇒ revalidation 隔离的行**会**出现；
+     只是 `reason` 列为空，因为那个子查询只认 `security_quarantine_in` 这一个 action 串，而 revalidation 写的是 `revalidation_quarantine_in`。
+   - 还原备份会丢掉备份之后写入的记忆 ⇒ **不作为默认回退**。
+
+📌 历史对照，说明风险不是理论的也不是常发的：**88 天旧模式排水期间，`revalidation_quarantine_in` 总共只发生过 2 次。**
+
+## 3. 本轮实际改了什么代码：**一条守卫，仅此而已**
+
+Task 11 只执行 **Step 1b**：`tests/unit/v013-config-sync.test.mjs` 末尾加一条**单键相等断言**
+（`config.default.json` 的 `security.scan_patterns_version` 必须与 `DEFAULT_CONFIG` 的逐字相等）。
+
+**变异证明**（handoff Ⅴ：每条守卫都要被亲眼看着红在它命名的行为上）：把 `config.default.json` **单独**改成 `2026.08`，
+跑那一个测试文件 ⇒ **`7 tests / 6 pass / 1 fail`，红的只有新增这条**。
+🔴 **同文件里那条 `share the same key paths at every depth` 在值已经漂移时照样绿** —— 它比的是 key path，
+**结构上就看不见值漂移**。这正是 ⅩⅩⅦ.8 禁令 1 那句更正（`v013-config-sync` 不是值级守卫）的可执行版本。
+恢复后全量套件 **705 pass / 0 fail / 0 skipped**。
+
+**刻意只钉这一个键**，不做通用值级 parity —— 那份测试在 `config-value-parity` 分支上，禁令 1「不合并」**仍然有效**。
+沿用 §ⅩⅩ 给 `plugin.json` 加单键断言的先例。
+
+## 4. ⚠️ **套件不是稳定绿：观测到一个 §Ⅹ 两张表里都没有的失败模式**
+
+本轮 4 次全量跑：**第 1 次 `703 pass / 1 fail`，后 3 次 `704`**（加守卫后 `705`）。红的是
+`tests/integration/admin-daemon-command.test.mjs:340` —— `stop` 返回 **`stop_timeout`** 而期望 `stopped`。
+
+- **不是 W3 造成的**（实测而非推断）：`git diff --name-only main...<W3 分支>` 共 13 个文件，**没有一个碰 daemon／cli／admin**。
+- 该文件正是 §Ⅹ 点名的**头号抖动源**（`:686` 12/112、`:621` 2/112）。
+- 🔴 **但 `stop_timeout` 这个失败模式不在 §Ⅹ 的任何一张冻结快照表里**（表里是 `pid=null`、`waitForDaemonLock` 超时、
+  `database is locked`、`install falls back`）。而 §Ⅳ 早就写着「`stop_timeout` 那半个 CLI 条件零覆盖」—— **同一道 seam，
+  第一次被观测到红**。
+- **1/4 不构成频率，本节不外推。** 要立频率就得照 §Ⅹ 的做法取冻结快照批量跑，并**逐条分类失败模式再计数**（§Ⅹ 的教训）。
+
+## 5. Task 11 预检查出、而计划里没有的五件事（②③已在上面展开）
+
+1. 「bump = 全库重判一遍」**字面成立但时间尺度误导** —— 是 100 行/天的慢排水，不是一次性（§2①）。
+2. **bump 后必须 restart daemon**，计划全文未提（§2）。
+3. 🔴 **改代码不经合并就生效**（§1）—— 这条与 Task 11 无关，是查 daemon 取的代码路径时撞见的。
+4. **不 bump 也已积压 4237 条从没扫过的行**（§2②）。
+5. **`security_audit`（周任务，`maxPerBatch=30`）也会盖 `last_scanned_patterns_version`**（`security-audit.mjs:211`），
+   但它走 LLM 池审计、**不跑 tier2 扫描器** ⇒ 被它盖章的行会从 revalidation 的待扫集合里消失**而没被新模式看过**。
+   每周 ≤30 行的漏，**既有设计、非 W3 引入**，但它让「bump = 全库重判」不严格成立。
+
+📌 计划自己的预检我重测过，**全部成立**：真实 `config.json` 无 `security` 段（B3 真，只改 json = no-op）；
+4 处消费者行号全对（`save.mjs:166`／`tier15.mjs:194`／`revalidation.mjs:28`／`security-audit.mjs:231`）；
+Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在作用域里，可原样粘；
+`npm run threat:baseline -- --accept` 参数解析成立；报告抬头读的是 `config.default.json`（`threat-report.mjs:125`）。
+
+## 6. 仍然有效的禁令（**这一轮同样一条都没变**）
+
+1. **`config-value-parity` 不合并。** 2. **那 7 个死键不删。** 3. **不许改本机电源设置。**
+4. **不许 push。** 5. **Task 5 读数不许重跑。** 6. **不要再挂 cron、不要再做巡检。**
+📌 ⅩⅩⅦ.7 那**六条开着的口子仍然开着，都是有意的**（本轮一条都没动，也别当漏做去修）。
+
+## 7. 怎么自己查状态
+
+| 查什么 | 怎么查 | 预期 |
+|---|---|---|
+| W3 在不在 `main` | `git log --oneline --merges -1 main` | 标题 `merge: threat-scan bypass corpus, report and hardening (W3)` |
+| 两个分支已删 | `git branch --list` | 两个都不在（`config-value-parity` **应当还在**，禁令 1） |
+| 版本号仍未 bump（**有意**） | `git grep -n scan_patterns_version -- config.default.json scripts/lib/config.mjs` | 两处都是 `2026.07` |
+| 新守卫在不在 | `git grep -n "identical in both config sources" -- tests/` | 命中 1 处 |
+| 套件 | `npm test` | `705 pass / 0 fail / 0 skipped` ⚠️ **可能红在 §4 那条抖动上** |
+| 插件是不是符号链接 | `ls -la ~/.claude/plugins/ \| grep ccmem` | 指向本工作树 ⇒ §1 成立 |
+| daemon 跑哪份代码 | `plutil -p ~/Library/LaunchAgents/com.ccmem.daemon.plist` | `ProgramArguments` 末项指向本工作树 |
+
+## 8. 本轮未闭合
+
+1. **§4 那条抖动没有频率**，也没查根因 —— 只有 1/4 一个读数。要立频率必须走 §Ⅹ 的冻结快照流程。
+2. **`.superpowers/sdd/2026-08-25-w3-threat-scan-bypass-suite/` 仍未删**（git-ignored，含真实记忆正文摘录）。
+3. **ⅩⅩⅦ.7 那六条口子仍开着**，其中 81–119 窗口无守卫与 M1 位置无关性是**明知未闭合而搁置**。
+4. **`secretScan` 的 `/sk-[A-Za-z0-9_-]{10,}/` 缺词边界**（干跑实测误伤一条真实记忆）**仍未修**，仍在范围外。
+5. **未 push。**
 
 
 ---

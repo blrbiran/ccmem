@@ -9,7 +9,7 @@ const BASELINE = new URL('../tests/fixtures/threat-payloads/baseline.json', impo
 const DEFAULT_CONFIG = new URL('../config.default.json', import.meta.url);
 
 /**
- * save.mjs 的写入路径，逐步对齐：:59 evaluateTier1 → :71 evaluateTier2 → :72 evaluateTier3。
+ * save.mjs 的写入路径，逐步对齐：:59 evaluateTier1 → :71 evaluateTier2 → :75 evaluateTier3。
  *
  * secretScan 刻意不调 —— 它只在 revalidation.mjs:94 出现，且仅对 scope==='global'，
  * 不在写入路径上。把它塞进来会让"最终写入行为"这个口径名不副实。
@@ -160,6 +160,17 @@ export function main(argv) {
   }
   lines.push('');
 
+  // T4: mirror the false-positive loop above. detection-by-class only gives a rate per
+  // class, so a reviewer could not see WHICH attack rows are missed without hand-parsing
+  // baseline.json -- this became load-bearing once intra_split dropped from 4/4 to 2/4.
+  const attacks = results.filter((r) => r.expect !== 'allow');
+  const missed = attacks.filter((r) => r.action === 'allow');
+  lines.push(`--- missed attacks ---  n=${attacks.length}  missed=${missed.length}`);
+  for (const result of missed) {
+    lines.push(`  MISS ${result.id.padEnd(22)} -> ${result.action}`);
+  }
+  lines.push('');
+
   if (baseline === null) {
     lines.push('--- delta vs baseline ---  no baseline.json yet');
   } else {
@@ -172,24 +183,38 @@ export function main(argv) {
   }
 
   lines.push('');
-  lines.push('--- known residual gaps (do not read the five classes above as complete) ---');
+  lines.push('--- known residual gaps (do not read the ten classes above as complete) ---');
   lines.push('  1. cross-save splitting is out of scope: evaluateTier2 is stateless, so that class');
   lines.push('     scores 0 by definition no matter how many patterns are added (design section 8.1).');
   lines.push('  2. secretScan is not normalized: SECRET_PATTERNS.credential_assignment carries');
   lines.push('     .{0,20} and eats the same newline/distance bypass, but it answers a different');
-  lines.push('     question and its false-positive surface is unmeasured (design section 8.8).');
-  lines.push('  3. the synonym and disguised classes have no matching hardening in this round;');
-  lines.push('     whatever they score is a recorded gap, not a regression.');
-  lines.push('  4. [resolved by Task 10b] the benign false-positive rate above is measured only');
+  lines.push('     question. its false-positive surface is not unmeasured: the Task 10 dry-run');
+  lines.push('     over the real store found one -- openai_key /sk-[A-Za-z0-9_-]{10,}/ has no word');
+  lines.push('     boundary and matched "sk-completion" inside "task-completion". fixing that bug');
+  lines.push('     is out of scope for this round (design section 8.8); leaving it unmeasured is not.');
+  lines.push('  3. the synonym class has no matching hardening in this round; whatever it scores');
+  lines.push('     is a recorded gap, not a regression.');
+  lines.push('  4. the disguised class DOES have matching hardening -- the mention/quote/negation');
+  lines.push('     gate targets exactly this class -- and it cost rows. measured against the');
+  lines.push('     pre-branch scanner, disguised went 6/7 -> 5/7 detected: gained disguised/02,');
+  lines.push('     lost disguised/03 and disguised/04 (both named, accepted costs -- see their');
+  lines.push('     notes in tests/fixtures/threat-payloads/attacks.jsonl). read these two as a');
+  lines.push('     regression this round accepted on purpose, not as an absence of hardening.');
+  lines.push('  5. [resolved by Task 10b] the benign false-positive rate above is measured only');
   lines.push('     over the 17 shapes this corpus contains, which could not see what the chinese');
   lines.push('     patterns cost against real memories. the Task 10 dry-run over a copy of the');
   lines.push('     real store (9945 memories) found 10 W3-attributable false positives, all');
   lines.push('     legitimate security-convention memories: 7 from the Task 8 window widening,');
   lines.push('     3 from the chinese `token`/`校验` nouns added in Task 7. Task 10b narrowed');
   lines.push('     the window back to .{0,80} and dropped those two nouns; the corpus benign_policy');
-  lines.push('     class (4 rows) now guards the shapes that were caught. the anchor-distance');
-  lines.push('     bypass this trades away is a known, accepted open gap -- see the sentinel test');
-  lines.push('     named for it in tests/unit/threat-scan.test.mjs.');
+  lines.push('     class (5 rows) now guards the shapes that were caught -- 4 from the real-store');
+  lines.push('     dry-run, plus 1 (I1) that guards the unguarded 80..136 window band itself so a');
+  lines.push('     future re-widening turns it into a false positive instead of passing silently.');
+  lines.push('     the anchor-distance bypass this trades away is a known, accepted open gap -- see');
+  lines.push('     the sentinel test named for it in tests/unit/threat-scan.test.mjs.');
+  lines.push('  6. after the Task 10b narrowing, the scanner\'s measured effect on the real store');
+  lines.push('     is exactly neutral: over 9945 live memories it quarantines the same 4 rows the');
+  lines.push('     pre-branch scanner did -- 0 newly caught, 0 lost.');
 
   process.stdout.write(`${lines.join('\n')}\n`);
 

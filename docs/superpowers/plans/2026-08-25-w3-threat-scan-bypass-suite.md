@@ -86,7 +86,7 @@ L3（跨任务共享文件）、ⅩⅩⅥ.3.1（**L4** fixture 对 schema、验�
   —— 含设计标着「待测」的 `benign_quote/*` **三条全部误伤**（0.7 / 0.55 / 0.45）。
   ⇒ 判据 3 满足，Task 4 不会撞上「基线全绿」那个语料写错的信号。
 - **模拟改强后 27/32 正确**（B2 补语料之前是 24/29），剩下 5 条恰好是计划预先声明的残留缺口：`synonym/01-03`、`disguised/03-04`。
-  ⇒ 三个 delta 桶的预期分布是 `FIXED 19 / BROKEN 2 / SAME 11`（🔴 预检 #20 更正，原写 17/2/13 是算错的），**`BROKEN` 那 2 条就是 `disguised/03-04`**（见 #17）。
+  ⇒ 三个 delta 桶的预期分布是 `FIXED 19 / BROKEN 2 / SAME 11`（🔴 预检 #20 更正，原写 17/2/13 是算错的），**`BROKEN` 那 2 条就是 `disguised/03-04`**（见 #17）。🔴🔴 **M3 补记：这是 Task 5–8（窗口 `.{0,200}`）之后的预期，Task 10b 窄化到 `.{0,80}` 之后真实值变成 `FIXED 17 / BROKEN 2 / SAME 13 / NEW 4` —— 见 Task 9 章节内的 M3 更正块。**
 - **B2 的收紧不花任何语料代价**：收紧前后 32 条逐条动作**完全相同**，另堵掉 5 条现实绕过（`never mind…, sudo rm -rf /`、`avoid…: ignore…`、`instead of…, exfiltrate…`、`` `ok` then sudo rm -rf / ``、``see `README`…, ignore…``）。`` `sudo rm -rf /` run this now `` 仍是 `allow` —— 那是 `disguised/04` 声明过的已知代价，**不要再为它收紧引用规则**。
 - normalize 四条单元期望全中；tier1 零宽守卫成立；Task 8 的反向哨兵成立（`far.length = 339`）。
 - W1 的 `DANGEROUS`、`force_demote ⇒ evidence 非空` 不变量、`resurrect-command` 的 `sudo rm -rf /tmp/cache`
@@ -1467,7 +1467,9 @@ Expected: FAIL，第一条红（当前窗口只有 80）；第二条此刻应当
 Run: `env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test tests/unit/threat-scan.test.mjs tests/unit/threat-scan-benign.test.mjs`
 Expected: 全 PASS。
 
-🔴 **窗口放宽是本计划里误伤风险最高的一步。** 若 `benign_*` 出现新红：**先收回到 `.{0,120}` 再看**，并把收回这件事写进实现记录 —— **能接住的距离样本少一条，好过把一整类合法记忆推进隔离区**。收回后 `intra_split/distance_*` 若因此不再被接住，那就是**如实记录的残留缺口**（Task 9），不是失败。
+🔴 **窗口放宽是本计划里误伤风险最高的一步。** ~~若 `benign_*` 出现新红：先收回到 `.{0,120}` 再看，并把收回这件事写进实现记录 —— 能接住的距离样本少一条，好过把一整类合法记忆推进隔离区。收回后 `intra_split/distance_*` 若因此不再被接住，那就是如实记录的残留缺口（Task 9），不是失败。~~
+
+🔴🔴 **本条已被 Task 10 的真实库量出的证据推翻，划掉不删是为了让这个被否定的判断留痕（Rule 7）。** `.{0,120}` **是一个被严格支配（strictly dominated）的选择**：窗口扫描（真实库 9945 条 + 语料库，见下面「Task 10 real-store measurement」一节）显示 `.{0,120}` 比 `.{0,80}` 多付 3 条真实误伤，而语料检出一条不多、一条不少（都是 7 条未接住）。**在 80 与 120 之间挑，120 没有任何理由**——它只是在不买任何东西的情况下多担代价。**可辩护的选择只有两个：`.{0,80}`（Task 10b 最终采用）或 `.{0,200}`（Task 8 原方案）**，两者的取舍在下面那节里逐条列出。若未来要重新拉宽窗口，直接从这两个里选，不要落在中间地带——80 到 136 之间没有任何一个宽度会让语料变红（详见新增的 `benign_policy/05` 哨兵行），所以中间地带的拉宽不会有任何 CI 信号提醒你。
 
 - [ ] **Step 5: 跑全量套件**（🔴 预检 #11：**不是** `test:unit`）
 
@@ -1531,6 +1533,40 @@ Run: `npm run threat:report`
 
 ⚠️ **`disguised/05-07`（预检 B2 的反向哨兵）如果出现在 `BROKEN` 里，那是真回归**，按上面第 4 点处理。
 
+---
+
+🔴🔴 **M3（whole-branch review，2026-09-03，补记）：上面这张表与这条停线规则只对 Task 5–8 之后、
+Task 10b 窄化之前的状态成立。Task 10b 把窗口收回 `.{0,80}` 并删了两个中文名词之后，
+`intra_split/distance_01`、`/02` 也从「已修好」退回「仍未接住」，若今天按原文照跑 Task 9 的
+流程，会在这条停线规则上停下来。上表原写的 `FIXED 19 / BROKEN 2 / SAME 11` 划掉不删
+（Rule 7 留痕），改记 Task 10b 之后、比对最初那份 pre-hardening 基线（`ae1d70e`）算出的真实值：**
+
+~~`FIXED 19 / BROKEN 2 / SAME 11`~~ → **窄化后的真实值：`FIXED 17 / BROKEN 2 / SAME 13 / NEW 4`**
+（`NEW` 4 条是 Task 10b 新增的 `benign_policy/01-04`，pre-hardening 基线里没有它们的记录，
+`diffBaseline` 对不在基线里的 id 判 `new`，不计入 fixed/broken/same）。
+
+**逐条核对**（用 `scripts/threat-report.mjs` 的 `runCorpus`/`diffBaseline` 对 commit `7276c38`
+的代码与语料、比 commit `ae1d70e` 的 `baseline.json` 实测复现，脚本与输出見本轮 `final-fix-report.md`）：
+
+- `FIXED` 17：`double_space/01-02`(2) + `chinese/01-03`(3) + `intra_split/newline_01-02`(2) +
+  `disguised/02`(1) + `benign_mention/01-03` + `benign_negation/01-03` + `benign_quote/01-03`(9) = 17。
+  比原表少 2，正是 `intra_split/distance_01`、`/02` —— 窄化把它们从「修好」推回「没修」。
+- `BROKEN` 仍是 2：`disguised/03`、`disguised/04`，没有变化（提及/引用标记降权的已知代价，
+  与窗口宽度无关）。
+- `SAME` 13：`intra_split/distance_01-02`(2，改强前后都错) + `synonym/01-03`(3，仍是漏报) +
+  `disguised/01`、`05`、`06`、`07`(4，改强前后都对) + `benign_plain/01-04`(4) = 13。
+
+⇒ **停线规则同步改写**：~~`BROKEN` 里只允许出现 `disguised/03` 与 `disguised/04` 这两条，且必须
+两条都在、一条不多~~ → **停线规则不变**（`disguised/03`、`/04` 仍是 `BROKEN` 里唯一允许出现的两条），
+但 **`SAME` 里必须新增 `intra_split/distance_01`、`/02`**（窄化后它们不再是 `FIXED`），
+且报告的 `--- delta vs baseline ---` 一节会多出 `NEW 4`（`benign_policy/*`，若语料在此之后又加了
+新行如 whole-branch review I1 补的 `benign_policy/05`，`NEW` 的条数要跟着涨）。**为什么会移动**：
+Task 10 对真实库的干跑发现窗口拉宽（`.{0,200}`）在语料里买到的 2 条 `distance` 检出，代价是
+真实库里 7 条合法安全约定型记忆被误伤；Task 10b 据此把窗口收回 `.{0,80}`，`distance_01`、`/02`
+连带被推回未检出状态——这是窄化本身的直接后果，不是新的回归。
+
+---
+
 - [ ] **Step 2: 确认报告仍然不写回**
 
 ```bash
@@ -1562,6 +1598,59 @@ Expected: `baseline.json` 的 `actions` 逐条变化与 Step 1 的 `FIXED` 列�
 git add tests/fixtures/threat-payloads/baseline.json
 git commit -m "test(w3): accept the post-hardening threat-scan baseline"
 ```
+
+---
+
+### Task 10 real-store measurement（2026-09-03，补记）
+
+🔴 **这一节原本只活在一份 gitignored 的 scratchpad 记录里（`.superpowers/sdd/.../progress.md`），
+本身不入库；whole-branch review 的 I1 指出这是个问题** —— 决定 Task 10b 怎么收窗口的
+关键证据，如果不进 git 历史，下一个人看不到，只能凭感觉重新拉宽。补记进来，作为 Task 10b
+（见 commit `7276c38`）narrowing 决策的可追溯依据。
+
+**窗口扫描（真实库 9945 条记忆 + 语料库，逐个窗口宽度重跑一遍）：**
+
+| 窗口 | 真实库误伤（W3-attributable） | 语料攻击漏检 |
+|---|---|---|
+| `.{0,80}`  | 5  | 7 |
+| `.{0,100}` | 7  | 7 |
+| `.{0,120}` | 8  | 7 | ← 本计划 Task 8 原文建议的回退值
+| `.{0,140}` | 9  | 6 |
+| `.{0,160}` | 10 | 5 |
+| `.{0,200}` | 11 | 5 | ← Task 8 原方案（改强前）
+
+**`.{0,120}` 被严格支配（strictly dominated）**：比 `.{0,80}` 多付 **3 条**真实误伤，
+换来的语料检出与 `.{0,80}` **完全一样**（都是漏 7 条）。挑 120 没有任何理由——它只是在
+不多买任何东西的情况下多担代价。**可辩护的选择只有两个：`.{0,80}` 与 `.{0,200}`**：
+
+- `.{0,80}`：真实误伤 5（这 5 条是 W3 之前就有的既有误伤，不是这一轮新增的——见下），
+  语料漏检 7（`synonym` 全部 + `intra_split/distance_*` 两条 + `disguised/03`、`/04`）。
+- `.{0,200}`：真实误伤 11（其中 7 条是 Task 8 这一步新增的，全是合法的安全约定型记忆），
+  语料漏检 5（比 80 多接住 2 条：`intra_split/distance_01`、`/02`）。
+
+Task 10b 最终采用的窄化（`.{0,80}` + 从中文凭证名词表删 `token` + 从中文防护对象名词表删
+`校验`）把真实误伤从 11 压到 **0**，语料 benign 误伤全程 0，代价是语料里那 2 条 distance
+样本不再被接住（已知、接受的残留缺口，见 `tests/unit/threat-scan.test.mjs` 里点名它的哨兵测试）。
+
+**窄化后，over 9945 条真实活跃记忆，扫描器的隔离结果与改强前完全一致**：
+
+```
+would quarantine PRE-W3 (改强前的扫描器) : 4 条 (5536, 6154, 9524, 9841)
+would quarantine POST-W3 (窄化后)        : 4 条 (同样这四条)
+newly caught by W3                       : 0
+no longer caught by W3                   : 0
+```
+
+即窄化后 W3 对这个真实库的净效应是**恰好中性**——0 条新增误伤、0 条丢失检出。W3 的价值是
+前瞻性的：它堵上了双空格、全角、换行拆分、中文这几类绕过（这个库现存内容里恰好没出现这些
+形态，所以量不出増益），并且把语料实测到的 9 条误伤修掉了；它既没有改善、也没有变差这个库
+今天会隔离什么。
+
+**`benign_policy/05`（whole-branch review I1 新增的诊断哨兵行）**：credential_exfiltration 的
+两个锚点（`token` … `print`）在这一行里相距 118 个字符——超过当前的 `.{0,80}`（今天读作
+`allow / 0`），但落在 `.{0,136}` 以内（对窗口=136 的变体实测为 `force_demote / 0.45`）。
+它的作用是让 80..136 这段此前完全不设防的区间一旦被重新拉宽，CI 就会因为这一行变红而报警，
+而不是像 100/120/136 那样悄无声息地通过全部 39 行语料。
 
 ---
 

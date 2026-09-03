@@ -45,7 +45,13 @@ const TIER2_PATTERNS = [
   { re: /curl\b[^\n|]{0,120}\|\s*(?:bash|sh)\b/i, score: 0.55, evidence: 'curl_pipe_shell' },
   { re: /(?:api[_ -]?key|secret|token|password)\b.{0,80}\b(?:print|dump|exfiltrate|upload|send)/i, score: 0.45, evidence: 'credential_exfiltration' },
   { re: /(?:exfiltrate|steal|leak|export)\b.{0,80}\b(?:secret|token|credential|password)/i, score: 0.45, evidence: 'secret_exfiltration' },
-  { re: /(?:bypass|disable)\b.{0,60}\b(?:sandbox|guardrail|security|safety)/i, score: 0.4, evidence: 'security_bypass' }
+  { re: /(?:bypass|disable)\b.{0,60}\b(?:sandbox|guardrail|security|safety)/i, score: 0.4, evidence: 'security_bypass' },
+  // 中文形态。evidence 沿用英文同类的名字，让报告与 security_audit 里两路归一个证据名。
+  // 间隔用 [^。！？!?]{0,N} 而不是 .{0,N}：不许跨句连锚点，跨句连出来的是巧合不是意图。
+  // 全角与半角的 ! ? 都排除，因为 normalize() 会把全角折成半角。
+  { re: /(?:忽略|无视|不要理会|别理会|别管|抛开|放弃)(?:掉)?(?:之前|先前|以上|上面|前面|原有)的?(?:所有|全部)?(?:指令|指示|规则|要求|设定|约束)/, score: 0.45, evidence: 'ignore_previous_instructions' },
+  { re: /(?:密钥|秘钥|凭证|口令|密码|令牌|token|api\s*key)[^。！？!?]{0,40}(?:打印|输出|导出|上传|发送|外传|泄露)/i, score: 0.45, evidence: 'credential_exfiltration' },
+  { re: /(?:绕过|关闭|禁用|停用|跳过)[^。！？!?]{0,30}(?:沙箱|沙盒|安全|防护|校验|检查|审计|限制)/, score: 0.4, evidence: 'security_bypass' }
 ];
 
 // 每条模式的 /g 克隆，模块加载时算一次。用途见 evaluateTier2 的循环：

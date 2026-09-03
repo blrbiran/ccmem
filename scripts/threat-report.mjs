@@ -180,13 +180,16 @@ export function main(argv) {
   lines.push('     question and its false-positive surface is unmeasured (design section 8.8).');
   lines.push('  3. the synonym and disguised classes have no matching hardening in this round;');
   lines.push('     whatever they score is a recorded gap, not a regression.');
-  lines.push('  4. the benign false-positive rate above is measured only over the 13 shapes this');
-  lines.push('     corpus contains. the chinese patterns added this round demote plausible,');
-  lines.push('     ordinary chinese engineering memories that the corpus does not contain; four');
-  lines.push('     such shapes were measured (force_demote at 0.45/0.45/0.45/0.40) and were');
-  lines.push('     deliberately not narrowed -- narrowing without measurement trades a false');
-  lines.push('     positive for a bypass. the dry-run over the real memory store before the');
-  lines.push('     version bump is the measurement that decides whether to narrow them.');
+  lines.push('  4. [resolved by Task 10b] the benign false-positive rate above is measured only');
+  lines.push('     over the 17 shapes this corpus contains, which could not see what the chinese');
+  lines.push('     patterns cost against real memories. the Task 10 dry-run over a copy of the');
+  lines.push('     real store (9945 memories) found 10 W3-attributable false positives, all');
+  lines.push('     legitimate security-convention memories: 7 from the Task 8 window widening,');
+  lines.push('     3 from the chinese `token`/`校验` nouns added in Task 7. Task 10b narrowed');
+  lines.push('     the window back to .{0,80} and dropped those two nouns; the corpus benign_policy');
+  lines.push('     class (4 rows) now guards the shapes that were caught. the anchor-distance');
+  lines.push('     bypass this trades away is a known, accepted open gap -- see the sentinel test');
+  lines.push('     named for it in tests/unit/threat-scan.test.mjs.');
 
   process.stdout.write(`${lines.join('\n')}\n`);
 

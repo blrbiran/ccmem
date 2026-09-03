@@ -1,6 +1,6 @@
 {
   "scan_patterns_version": "2026.07",
-  "generated_at": "2026-09-03T02:27:13.001Z",
+  "generated_at": "2026-09-03T03:04:14.697Z",
   "tier3_enabled_assumed": true,
   "actions": {
     "double_space/01": "quarantine",
@@ -13,8 +13,8 @@
     "chinese/03": "quarantine",
     "intra_split/newline_01": "quarantine",
     "intra_split/newline_02": "quarantine",
-    "intra_split/distance_01": "quarantine",
-    "intra_split/distance_02": "quarantine",
+    "intra_split/distance_01": "allow",
+    "intra_split/distance_02": "allow",
     "disguised/01": "quarantine",
     "disguised/02": "quarantine",
     "disguised/03": "allow",
@@ -34,6 +34,10 @@
     "benign_plain/01": "allow",
     "benign_plain/02": "allow",
     "benign_plain/03": "allow",
-    "benign_plain/04": "allow"
+    "benign_plain/04": "allow",
+    "benign_policy/01": "allow",
+    "benign_policy/02": "allow",
+    "benign_policy/03": "allow",
+    "benign_policy/04": "allow"
   }
 }

@@ -43,18 +43,30 @@ const TIER2_PATTERNS = [
   { re: /ignore (all |the )?(previous|prior) instructions/i, score: 0.45, evidence: 'ignore_previous_instructions' },
   { re: /(?:rm\s+-rf\s+\/|sudo\s+rm\s+-rf|del\s+\/f\s+\/s\s+\/q)/i, score: 0.7, evidence: 'destructive_command' },
   { re: /curl\b[^\n|]{0,120}\|\s*(?:bash|sh)\b/i, score: 0.55, evidence: 'curl_pipe_shell' },
-  // 间隔从 .{0,80} 放到 .{0,200}：80 装不下一句真实的复合句，而"单条内拆分"的
-  // 距离那一条机制正是靠拉开锚点绕过的（W3 设计 §2.3 实测：181 字符即失配）。
+  // Task 8 把间隔从 .{0,80} 拉到 .{0,200}：80 装不下一句真实的复合句，且"单条内拆分"
+  // 的距离那一条机制正是靠拉开锚点绕过的（W3 设计 §2.3 实测：181 字符即失配）。
+  // Task 10 对真实记忆库（9945 条，非语料库）跑的 dry-run 量出了 .{0,200} 的真实代价：
+  // 10 条 W3 相关误伤里有 7 条是合法的安全约定型记忆（例如"密钥只进 fragment 文件，
+  // 绝不进 transcript"），全是被这道拉宽的窗口误伤的，而它换来的只是语料库里
+  // 两条 distance 攻击样本（intra_split/distance_01、distance_02）。
+  // Task 10b 据此把窗口收回 .{0,80}。收回之后，靠拉开锚点距离绕过的攻击就是一个
+  // 已知的、刻意接受的残留缺口 —— 见 tests/unit/threat-scan.test.mjs 里点名它的哨兵测试。
   // 上界仍然要有 —— 没有上界就等于把整条记忆里任意两个词连成"意图"。
-  { re: /(?:api[_ -]?key|secret|token|password)\b.{0,200}\b(?:print|dump|exfiltrate|upload|send)/i, score: 0.45, evidence: 'credential_exfiltration' },
-  { re: /(?:exfiltrate|steal|leak|export)\b.{0,200}\b(?:secret|token|credential|password)/i, score: 0.45, evidence: 'secret_exfiltration' },
+  { re: /(?:api[_ -]?key|secret|token|password)\b.{0,80}\b(?:print|dump|exfiltrate|upload|send)/i, score: 0.45, evidence: 'credential_exfiltration' },
+  { re: /(?:exfiltrate|steal|leak|export)\b.{0,80}\b(?:secret|token|credential|password)/i, score: 0.45, evidence: 'secret_exfiltration' },
   { re: /(?:bypass|disable)\b.{0,60}\b(?:sandbox|guardrail|security|safety)/i, score: 0.4, evidence: 'security_bypass' },
   // 中文形态。evidence 沿用英文同类的名字，让报告与 security_audit 里两路归一个证据名。
   // 间隔用 [^。！？!?]{0,N} 而不是 .{0,N}：不许跨句连锚点，跨句连出来的是巧合不是意图。
   // 全角与半角的 ! ? 都排除，因为 normalize() 会把全角折成半角。
   { re: /(?:忽略|无视|不要理会|别理会|别管|抛开|放弃)(?:掉)?(?:之前|先前|以上|上面|前面|原有)的?(?:所有|全部)?(?:指令|指示|规则|要求|设定|约束)/, score: 0.45, evidence: 'ignore_previous_instructions' },
-  { re: /(?:密钥|秘钥|凭证|口令|密码|令牌|token|api\s*key)[^。！？!?]{0,40}(?:打印|输出|导出|上传|发送|外传|泄露)/i, score: 0.45, evidence: 'credential_exfiltration' },
-  { re: /(?:绕过|关闭|禁用|停用|跳过)[^。！？!?]{0,30}(?:沙箱|沙盒|安全|防护|校验|检查|审计|限制)/, score: 0.4, evidence: 'security_bypass' }
+  // Task 10b：从凭证名词里移除 token —— 真实记忆库里中文语境的 token 绝大多数指的是
+  // LLM token，不是凭证（实测例："仅有 token 记录或 executor 测试输出不足以通过…"、
+  // "日常省 token 用默认改写"）。这是词表误判，不是调参；英文 token 仍由上面的
+  // 英文 credential_exfiltration 模式覆盖。
+  { re: /(?:密钥|秘钥|凭证|口令|密码|令牌|api\s*key)[^。！？!?]{0,40}(?:打印|输出|导出|上传|发送|外传|泄露)/i, score: 0.45, evidence: 'credential_exfiltration' },
+  // Task 10b：从防护对象名词里移除 校验 —— 与普通评审流程写法冲突（实测例："对任何
+  // 绕过常规校验的「例外通道」…"，说的是评审偏好，不是绕过安全防护）。
+  { re: /(?:绕过|关闭|禁用|停用|跳过)[^。！？!?]{0,30}(?:沙箱|沙盒|安全|防护|检查|审计|限制)/, score: 0.4, evidence: 'security_bypass' }
 ];
 
 // 每条模式的 /g 克隆，模块加载时算一次。用途见 evaluateTier2 的循环：

@@ -42,7 +42,7 @@
 > 与 🆕 `plist-drift.test.mjs:580` T13（ⅩⅩⅩ.5，隔离跑 3/3 绿，只在全量并发下红）。
 > ⚠️ **本文档不写任何 SHA、不写 `HEAD`、不写领先远端几个** —— 提交本文档这个动作本身就会改掉它们。
 > **一律按提交标题找**（`git log --oneline --merges`），状态一律自己 `npm test` / `git branch --list` 现查。
-> 📌 **怎么逐项自查：ⅩⅩⅩ.10 有一张表。下一位该调哪些 skill：ⅩⅩⅩ.11。**
+> 📌 **怎么逐项自查：ⅩⅩⅩⅠ.11 有一张表**（ⅩⅩⅩ.10 是上一轮的版本）。**下一位该调哪些 skill：ⅩⅩⅩⅠ.13。**
 >
 > 🔴 **上一轮（2026-09-03 续，见 ⅩⅩⅧ）：ⅩⅩⅦ.1 那两个开关都已裁决并执行。**
 > **W3 已合并进 `main`** —— 合并提交标题 `merge: threat-scan bypass corpus, report and hardening (W3)`。
@@ -5193,6 +5193,40 @@ A(11) 与 B(11) 覆盖面基本一致，B 还把 A 拆成两条的「handoff 约
 - **debounce 仍未实现**（§6.3）。
 - **未 push**（禁令 4）。**未重启 daemon** —— ⚠️ 常驻 daemon 内存里仍是旧代码，
   但 `summarize_pending` 由钩子路径每次新起进程，**下一次会话即生效**。
+
+## 13. 下一位怎么接手
+
+### 本轮那两个提交怎么找（**按标题，不按 SHA**）
+
+```
+git log --oneline --grep="drop unused tool definitions"    # 代码 + 5 条守卫
+git log --oneline --grep="record round XXXI"               # 本节文档
+```
+
+⚠️ **本节刻意不写 SHA、不写 `HEAD` 停在哪、不写领先远端几个** —— 提交本文档这个动作本身就会改掉后两个。
+**状态一律现查**（§11 那张表）。
+
+### 建议调用的 skill
+
+| 场景 | skill |
+|---|---|
+| **做 debounce**（§6.3，本轮留下最值钱的一件事） | `superpowers:brainstorming` → `superpowers:writing-plans` → `superpowers:test-driven-development` |
+| **补 `--tools "" + --effort low` 那一臂**（§5 的缺口，纯对照实验、不写产品代码） | `superpowers:brainstorming` 先定对照设计（**别跳过：本轮 n 的分配就是设计定的**） |
+| **查 T13 抖动根因**（ⅩⅩⅩ.5，只有性质没有归因） | `superpowers:systematic-debugging` |
+| **修 `credential_assignment` 死正则**（要先收窄词表，属设计变更） | `superpowers:brainstorming` → `superpowers:test-driven-development` |
+| 任何改 `scripts/**` 的实现 | `superpowers:test-driven-development` ＋ 变异纪律（Ⅴ） |
+| 收尾／合并／删分支 | `superpowers:finishing-a-development-branch` ＋ `superpowers:verification-before-completion` |
+
+### 🔴 本仓库特有、skill 不会告诉你的（与 ⅩⅩⅨ.7／ⅩⅩⅩ.11 同，另加本轮两条）
+
+1. **写生产库前先 `sqlite3 ".backup"`**；改 `scripts/daemon/**` 后旧 daemon 仍跑旧代码，验证前先 restart；
+   改 `hooks/**` 影响用户每一次会话。
+2. 🆕 **要隔离 config 必须 `env -u CCMEM_CONFIG_PATH`** —— 本机 shell 里它被设成真实 config，
+   只设 `CCMEM_DATA_ROOT` 会被它盖掉（§12 记了这次踩坑的全过程）。
+3. 🆕 **`cp` / `rm` / `mv` 全是 `-i` 别名**（§8）—— 脚本里静默不执行，用 `/bin/*` 并事后复核。
+4. **跑任何 `claude -p` 实验前先堵两道闸**：`CCMEM_INTERNAL=1`（`hook.mjs:54` 短路，开库之前）
+   ＋ `CCMEM_DATA_ROOT` 改道；**且别用 `callClaudeP`**，它会写正在被分析的 `daemon-cost.jsonl`。
+   ⚠️ **不要拿"生产 `daemon-cost.jsonl` 行数不变"当证据** —— 生产 daemon 一直在并发写它（§1）。
 
 ---
 

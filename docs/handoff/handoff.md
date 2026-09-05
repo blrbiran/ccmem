@@ -1,27 +1,34 @@
 # ccmem —— Handoff
 
-> ## 🟢 接手入口（2026-09-04，最新一轮见 ⅩⅩⅨ）
+> ## 🟢 接手入口（2026-09-05，最新一轮见 ⅩⅩⅩ）
 >
-> *** **v0.14 已收尾发布，没有在飞的工作，没有半成品分支。** ***
+> *** **v0.14 已收尾发布，没有在飞的工作，没有半成品分支。ⅩⅩⅩ 那一轮零净代码变更。** ***
 > **五条工作流 W0–W4 全部在 `main`；版本号 `0.14.0` / `0.14`；tag `v0.14.0`；套件 `707 pass / 0 fail / 0 skipped`。**
 > **分支只剩两个**：`main` 与 `config-value-parity`（后者被禁令锁着，**不合并也不删**）。**零 worktree。零 push。**
 >
-> 🔴🔴 **要动手之前，先读这三条：**
-> 1. **ⅩⅩⅨ.2 —— 两条实测撞出来的生产问题**，都不在任何既有 backlog 上：
->    *** **① `summarize_pending` 有 31.8% 的调用在超时（09-03 当天 47%）；
->    ② `credential_assignment` 正则自 v0.4 起就是死的（源码里是字面 `0x08` 字节）。** ***
->    **两条都只有读数、没有处置**，是 v0.15 最靠前的输入。
-> 2. **ⅩⅩⅧ.1 —— 改代码不需要合并就已经上线**：`~/.claude/plugins/ccmem` 是符号链接指向本工作树，
+> 🔴🔴 **要动手之前，先读这四条：**
+> 1. **ⅩⅩⅩ.3 —— 两条看着显然的修法，各自被自己的实测推翻**（这是全文最省时间的一节）：
+>    *** **① 给 schema 加 `maxItems`/`maxLength`：3 个输入里成 1 个、反而变慢 1 个；
+>    ② pin `--model sonnet`：抽取条数从 9/8/7/9 掉到 0/0/2/2/2/0，6 次里 4 次仍超 60s。** ***
+>    **两条的代码都已整个撤回。** 🔴 **并新增一条人的裁决：不要在代码里 pin 任何模型 ID／别名**
+>    （理由是可移植性，不是那组数：别人的环境没有这套别名，模型还会更新／过期）。
+> 2. **ⅩⅩⅩ.1 —— `summarize_pending` 超时的根因已定**（ⅩⅩⅨ.2.1 那条"只有计数没有归因"到此闭合）：
+>    墙钟由输出 token 单独决定（两次独立拟合 `r=0.94`/`0.97`），60s ≈ 3830 token 的硬天花板；
+>    *** **真实输入 4–8 万 token，其中 99% 是 harness，而指标只读 `input_tokens` 所以报 `2`。** ***
+>    *** **它跑在 `claude-opus-5[1m]` 上，全仓库无任何 model pin ⇒ 后台任务继承交互会话的模型。** ***
+>    ⇒ **还没试过的杠杆见 ⅩⅩⅩ.4，都不是模型身份。**
+> 3. **ⅩⅩⅧ.1 —— 改代码不需要合并就已经上线**：`~/.claude/plugins/ccmem` 是符号链接指向本工作树，
 >    三个钩子每次都新起进程 ⇒ *** **你在这棵树里改 `scripts/**` 或 `hooks/**`，下一次会话就作用在真实库上。** ***
 >    常驻 daemon 是唯一例外（内存里是旧代码，要重启才换）。
-> 3. **ⅩⅩⅨ.4 的六条禁令一条都没解**（不 push、`config-value-parity` 不合并、7 个死键不删、
->    不改电源设置、Task 5 读数不重跑、不挂 cron/巡检）。
+> 4. **禁令共 7 条，一条都没解** —— 原六条见 ⅩⅩⅨ.4，第 7 条是上面 1 里那条模型 pin 禁令（ⅩⅩⅩ.8）。
 >
+> ⚠️ **`credential_assignment` 死正则（ⅩⅩⅨ.2.2）仍原样未修**，`0x08` 字节仍应是 2 —— **ⅩⅩⅩ 那轮完全没碰它**。
 > ⚠️ **`scan_patterns_version` 两处仍是 `2026.07` —— 这是裁决结果，不是漏做**（理由见 ⅩⅩⅧ.2）。
-> ⚠️ **套件不是稳定绿**，已知抖动见 §Ⅹ 与 ⅩⅩⅧ.4。
+> ⚠️ **套件不是稳定绿，现在有【两个】抖动源文件**：`admin-daemon-command.test.mjs:340`（§Ⅹ／ⅩⅩⅧ.4）
+> 与 🆕 `plist-drift.test.mjs:580` T13（ⅩⅩⅩ.5，隔离跑 3/3 绿，只在全量并发下红）。
 > ⚠️ **本文档不写任何 SHA、不写 `HEAD`、不写领先远端几个** —— 提交本文档这个动作本身就会改掉它们。
 > **一律按提交标题找**（`git log --oneline --merges`），状态一律自己 `npm test` / `git branch --list` 现查。
-> 📌 **怎么逐项自查：ⅩⅩⅨ.6 有一张表。下一位该调哪些 skill：ⅩⅩⅨ.7。**
+> 📌 **怎么逐项自查：ⅩⅩⅩ.10 有一张表。下一位该调哪些 skill：ⅩⅩⅩ.11。**
 >
 > 🔴 **上一轮（2026-09-03 续，见 ⅩⅩⅧ）：ⅩⅩⅦ.1 那两个开关都已裁决并执行。**
 > **W3 已合并进 `main`** —— 合并提交标题 `merge: threat-scan bypass corpus, report and hardening (W3)`。
@@ -4742,7 +4749,8 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
 
 ## 5. 本轮未闭合
 
-1. **§2.1 超时**与**§2.2 死正则**都只有读数、没有处置 —— 已写进 dogfood §八，是 v0.15 的输入。
+1. ~~**§2.1 超时**与~~**§2.2 死正则**都只有读数、没有处置 —— 已写进 dogfood §八，是 v0.15 的输入。
+   ⬆️ **§2.1 已被 ⅩⅩⅩ 取代**：根因已定（ⅩⅩⅩ.1），且两条修法已被实测推翻（ⅩⅩⅩ.3）。**§2.2 死正则仍原样未修。**
 2. **`stop_timeout` 抖动**（ⅩⅩⅧ.4）人裁决先不做。
 3. ✅ ~~**`backup-810ef3a-cn-commit-msgs` 这个安全 ref 还在，等许可删除**~~ —— **已按许可删除**（删前证明它的树与 `main` 上重写后的那笔逐位相同）。
    ⇒ **本仓库当前只剩两个分支：`main` 与 `config-value-parity`**（后者被禁令 1 锁着，不合并、不删）。
@@ -4760,10 +4768,10 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
 | tag | `git tag --list \| grep 0.14` | `v0.14.0`（**轻量 tag**，与既有 tag 同形） |
 | 分支 | `git branch --list` | **只有 `main` 与 `config-value-parity`**；后者永远不该被合并或删除 |
 | worktree | `git worktree list` | **只有主工作树一行** |
-| 套件 | `npm test` | `707 pass / 0 fail / 0 skipped`（⚠️ 可能红在 ⅩⅩⅧ.4 那条抖动上） |
+| 套件 | `npm test` | `707 pass / 0 fail / 0 skipped`（⚠️ 可能红在 ⅩⅩⅧ.4 那条抖动上；🆕 **还有第二个抖动源，见 ⅩⅩⅩ.5**） |
 | `scan_patterns_version` 仍未 bump（**有意**） | `git grep -n scan_patterns_version -- config.default.json scripts/lib/config.mjs` | 两处都是 `2026.07` |
 | 两个方向的错 | `npm run threat:report` | benign fp `0/18`；missed `7/19`；delta `SAME 37`。跑完 `git status --porcelain` 必须**无输出** |
-| 超时问题还在不在 | 读 `~/.claude/ccmem/daemon-cost.jsonl` 里 `timed_out` 的占比 | 上次读数 `83/261 = 31.8%`。**只读文件，别跑写命令** |
+| 超时问题还在不在 | 读 `~/.claude/ccmem/daemon-cost.jsonl` 里 `timed_out` 的占比 | ~~`83/261 = 31.8%`~~ ⇒ **ⅩⅩⅩ 重读为 `84/375 = 22.4%`**（分母在涨、分子几乎不涨）。**只读文件，别跑写命令** |
 | 死正则还在不在 | 数 `scripts/lib/threat-scan.mjs` 里的 `0x08` 字节 | 仍应是 **2**（未修）。⚠️ **必须看字节** —— 终端/`grep`/`sed` 都会把它吃掉 |
 | 插件是不是符号链接 | `ls -la ~/.claude/plugins/ \| grep ccmem` | 指向本工作树 ⇒ ⅩⅩⅧ.1 成立 |
 
@@ -4772,7 +4780,7 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
 | 场景 | skill |
 |---|---|
 | **定 v0.15 范围**（本文档不替它定，输入见 `docs/ccmem-v0.14-dogfood.md` §八） | `superpowers:brainstorming` → `superpowers:writing-plans` |
-| **查 `summarize_pending` 31.8% 超时的根因**（ⅩⅩⅨ.2.1，只有计数没有归因） | `superpowers:systematic-debugging` |
+| ~~**查 `summarize_pending` 超时的根因**~~ **已完成，见 ⅩⅩⅩ.1；下一步是测 ⅩⅩⅩ.4 那几个杠杆** | `superpowers:brainstorming` → `superpowers:test-driven-development` |
 | **修 `credential_assignment`**（ⅩⅩⅨ.2.2，要先收窄词表，属设计变更） | `superpowers:brainstorming` 先定词表，再 `superpowers:test-driven-development` |
 | 任何改 `scripts/**` 的实现 | `superpowers:test-driven-development` + 本仓库的变异纪律（handoff Ⅴ：**每条守卫都要被亲眼看着红在它命名的行为上**） |
 | 多任务并行落地 | `superpowers:subagent-driven-development`（⚠️ ⅩⅩⅦ.6：**实现者在跑期间，控制器不许碰 index**） |
@@ -4783,6 +4791,177 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
 1. **写生产库前先 `sqlite3 ".backup"`**，沿用旁边已有的 `global.db.bak.<epoch>` 命名（Rule 13）。
 2. **改 `scripts/daemon/**` 后旧 daemon 进程还在跑旧代码** —— 验证前先 restart，否则你验的是上一版。
 3. **改 `hooks/**` 影响用户的每一次会话**，不只是本仓库。
+
+
+---
+
+# ⅩⅩⅩ. 2026-09-05：🔬 **`summarize_pending` 超时已定根因** —— 顺带**两条修法各自被自己的实测推翻**，代码全部撤回
+
+> **本轮零净代码变更**（写过一版、验过、按人裁决整个撤掉，工作区回到与 `main` 逐位相同）。
+> **产出是证据，不是代码。** 零 push。未删任何分支。未重启 daemon。未写生产库。
+> ⚠️ 本节不写 SHA、不写 `HEAD`、不写领先远端几个 —— 提交本文档就会改掉它们。
+
+## 1. 根因（ⅩⅩⅨ.2.1 那条"只有计数没有归因"到此闭合）
+
+*** **`summarize_pending` 的墙钟时间几乎全部是「生成输出」的时间，而输出没有任何上限。** ***
+
+**① 两次独立拟合，结论一致**
+
+| 数据源 | 斜率 | 截距 | Pearson r |
+|---|---|---|---|
+| 生产 `daemon-cost.jsonl`（n=291 成功调用） | `13.28` ms/tok | `9125` ms | **`0.9407`** |
+| 本轮对照实验（n=6，独立数据） | `12.20` ms/tok | `11917` ms | **`0.9743`** |
+
+⇒ 60s 预算 = 一个 **≈3,830 output token** 的硬天花板；成功那群的输出分布正顶在墙上（p50 `1643`／p90 `2929`／max `4164`）。
+**排队不是原因**（`queue_wait_ms` p50 `0`／max `13`），**输入更不是**（`TRANSCRIPT_EXCERPT_MAX = 1000` 字符）。
+
+**② 🔴 真实输入是 4–8 万 token，其中 99% 是 harness，不是转录**
+
+实测单次调用（`claude -p --output-format json` 的完整信封）：
+
+| | A 臂 | B 臂 |
+|---|---|---|
+| 真实 prompt | **2,333 字符**（1000 转录 + 1333 指令）≈ 600 token | 同 |
+| `input_tokens`（**指标只读这个**） | **`2`** | `4` |
+| `cache_creation_input_tokens` | `27,272` | `30,135` |
+| `cache_read_input_tokens` | `13,399` | `54,178` |
+| ⇒ **实际处理输入** | *** `40,671` *** | *** `84,313` *** |
+| `output_tokens` | `2,421` | `2,850` |
+
+⇒ *** **`extractUsage` 只读 `input_tokens`，它排除两个 cache 字段。** *** ⅩⅩⅨ.2.1 那句「`input` 合计 `454`」
+**不能当输入规模或成本信号**，真实 prompt 走了缓存。**这条是既有读数的更正。**
+
+**③ 🔴 它跑在 `claude-opus-5[1m]` 上（`contextWindow: 1000000`），且全仓库无任何 model pin**
+（`--model` / `ANTHROPIC_MODEL` / `CLAUDE_MODEL` grep 全空）⇒ **后台任务继承交互会话的模型**。
+`stop_reason` 实测是 **`tool_use`**、`num_turns` `2–3`、`thinking_tokens` 占输出 **26–38%**
+⇒ **它是个 agent，不是一次补全**。给一段 1000 字符的转录做定长抽取，付的是完整 coding agent 的启动与工具轮次。
+
+**④ 时间切分**：`wall 39,835` − `duration_ms 32,755` = **`7,080ms` CLI 进程启停**（就是那个截距）；
+`ttft_ms 15,859`；`duration_api_ms/duration_ms = 98%`。
+
+**⑤ 为什么它一直静默**：超时路径记 `exit_code: null` / `total_cost_usd: null`，
+且 `daemon.err.log` 里**关于超时一行都没有**（按行归类数过，全是 `vec_backfill`）。
+
+## 2. 日志里每一个数都有归属（原先猜的"重试放大"被证伪）
+
+我先假设是重试退避放大，**预测被数据证伪**：间隔不是 `120/180/300`，簇大小不是 4。跟着真实间隔走才对上代码：
+
+| 观测 | 归属 |
+|---|---|
+| 间隔尖峰 **60–61s**（20 次） | `loop.mjs` 的 `for (const task of due)` 批量连排，每条烧满 60s |
+| 间隔尖峰 **~361s**（26 次） | `loop.mjs:409` 空转 `setTimeout(300000)` **+ 60s 注定超时的调用** |
+| 44 行落 `59.9–60.1s` | 定时器准点开火 |
+| 38 行落 `60.9–62.0s` | 事件循环被排水占住约 1s |
+| ok 组 2 行 `>60000`（`60238`/`60609`） | 子进程与定时器同刻收敛，`settled` 先到先赢 |
+| 🔴 2 行 `171,868` / **`1,008,354`**（16.8 分钟） | **未解释**。本机会休眠（ⅩⅩⅡ）是现成假说，**但没有为这两行验证过，不得写成结论** |
+
+**重试确实存在但不是放大器**（`tasks` 表实测漏斗 `232 → 53 → 25 → 14`）。
+**真正的放大器是 Stop 钩子按回合入队**（`stop.mjs:51` 每个回合一条）：单 session 最多超时 **23** 次，
+全历史 **282 次超时散在 117 个 session**，重尾。
+
+## 3. 🔴🔴 两条修法各自被实测推翻 —— 这是本节最值钱的部分
+
+**① 给 schema 加约束（`maxItems` + `maxLength`）：3 个输入里成 1 个、反而变慢 1 个**
+
+| 输入 | A(现状) wall / out_tok / items | B(加约束) |
+|---|---|---|
+| ex0 | `57818` / `3431` / **8** | `57741` / **`3994`** / 5 ⇒ 条数砍了 **token 反涨 16%** |
+| ex1 | `54334` / `3435` / 7 | `30977` / `1606` / 5 ⇒ ✅ 快 43% |
+| ex2 | `44734` / `2814` / 9 | `44155` / `2617` / 5 ⇒ −1% |
+
+`maxItems: 5` 确实生效（三次都恰好 5 条），**但条数不控制 token 数** —— 加约束反而让它多走了一轮（`num_turns` 2→3）。
+*** **JSON schema 管不到 thinking 和工具轮次。** ***
+
+**② pin `--model sonnet`：两个轴同时变差，人裁决整个撤掉**
+
+| 输入 | Opus wall / items | sonnet（2 次）wall / items |
+|---|---|---|
+| ex0 | `39.8s`/**9**、`57.8s`/**8** | `25.4s`/**0**、`23.3s`/**0** |
+| ex1 | `54.3s`/**7** | **`67.1s`**/2、**`116.9s`**/2 |
+| ex2 | `44.7s`/**9** | **`95.1s`**/2、`68.1s`/**0** |
+
+- **抽取质量塌了**：items `0,0,2,2,2,0`（生产上这三条 excerpt 当时真入库 9/10/10 条）。
+- **超时没修好反而更糟**：6 次里 **4 次超过 60s**；唯一快的两次正是抽出 0 条那两次。
+- **成本没有 10×**：`$0.137–$0.302` vs Opus `$0.34–0.49`，只便宜 1.5–2.5 倍。
+  ⚠️ 中途出现过一个 `$0.045` 的读数，那是 `cacheCreate=0` 蹭到热缓存的**异常值**，**别拿它当代表**。
+- 机制层面 sonnet `thinking` 占输出 **87–96%**、`num_turns` 涨到 **6/7/9**。
+
+🔴 **人的裁决与理由（不是按上面的数否决的，是按可移植性）**：
+*** **「选具体模型的方式非常受限。别人的模型可能就不是这一套。而且模型会更新/过期。还是直接用默认模型比较靠谱。」** ***
+⇒ **不要在代码里 pin 任何模型 ID／别名**，`--model` 这个方向整体作废，不只是 `sonnet` 这个值。
+
+## 4. ⇒ 还没试过的杠杆（**都不是模型身份**，正好绕开上面那条裁决）
+
+`claude --help` 实测存在、本轮**未测**：`--effort <level>`、`--tools` / `--disallowedTools` /
+`--restricted` / `--disable-slash-commands`。数据直指的大头是 **thinking（26–96%）与工具轮次（2–9）**，
+外加 **降低调用频次**（Stop 钩子每回合入队）。**抬超时是纯加成本，别做。**
+
+## 5. ⚠️ 新的套件抖动：`plist-drift.test.mjs:580` T13
+
+**§Ⅹ 与 ⅩⅩⅧ.4 两张表里都没有这一条**，是新的第二个抖动源文件。
+
+- 失败断言：`T13: rewrite must land before bootstrap reads the plist off disk` ⇒ `a PATH refresh must reach the installed plist`。
+- 出现时 `git diff HEAD` 已为空 ⇒ **与当轮改动无关**，代码与当天跑绿那次逐位相同。
+- **单文件隔离连跑 3 次全绿（39 pass）**，随后全量再跑一次 `707/707` 绿 ⇒ **判定为并发下的抖动**。
+- 该测试是密封的（`CCMEM_LAUNCHAGENT_DIR` → 临时目录 + 假 launchctl，文件内有防回落注释）⇒ **真实 `~/Library/LaunchAgents` 未被碰**。
+- 本轮 4 次全量：`707绿 / 709绿 / 706+1红(T13) / 707绿`。
+
+## 6. 本轮的工具／流程教训
+
+1. *** **`rm` 在本机被别名成交互式**：脚本里 `rm <file>` 会停下来提问，看着像执行了、其实没删。
+   非交互场合用 `/bin/rm -f`，并且**删完必须用 `git status` 复核**，别信 `rm` 没报错。 ***
+2. **打印配置文件前先想清楚里面有什么**：本轮为看 `llm` 段整段打印了 `~/.claude/ccmem/config.json`，
+   把用户的 `openai_api_key` 带进了会话记录。**用 `node -e` 只取需要的键，别整段 dump。**
+3. **验证性实验必须先堵住"写回生产"的路**：`callClaudeP` 会写 `daemon-cost.jsonl`（正是被分析的那个文件），
+   `claude -p` 会触发本插件自己的钩子。两道现成闸门：**`CCMEM_INTERNAL=1`**（`hook.mjs:54` 直接 `exit(0)`，短路不开库）
+   与 **`CCMEM_DATA_ROOT`**（`paths.mjs:17`，改道整个数据根）。本轮全程 `daemon-cost.jsonl` 行数逐次核对未变。
+4. **单次读数不能当判据**：同一输入同一模型，`57,818ms/3,431tok` 与 `39,835ms/2,421tok` 都出现过。
+   **60s 悬崖有一半是运气。**
+
+## 7. 花费（工具报的数，不自估）
+
+**本轮实测调用合计 `$4.5250`（16 次）。** ⚠️ 其中 1 次超时调用的成本记为 `null`，**真实总额高于此数**。
+📌 **对 v0.15 更有用的一个量**：生产上每次 `summarize_pending` 就是 `$0.34–0.57` 这个价位，
+而它一天跑几十次、其中约 22% 直接烧掉扔了。
+
+## 8. 仍然有效的禁令（**一条都没变，共 6 条**）
+
+1. **`config-value-parity` 不合并。** 2. **那 7 个死键不删。** 3. **不许改本机电源设置。**
+4. **不许 push。** 5. **Task 5 读数不许重跑。** 6. **不要再挂 cron、不要再做巡检。**
+🆕 **本轮新增一条人的裁决**：**不要在代码里 pin 具体模型 ID／别名**（理由见 §3②）。
+
+## 9. 本轮未闭合
+
+1. **`summarize_pending` 超时有根因、无处置** —— §4 那几条杠杆一条都没测。
+2. **`credential_assignment` 死正则**（ⅩⅩⅨ.2.2）**本轮完全没碰**，仍是原样（`0x08` 字节仍应是 2）。
+3. **T13 抖动**只判了性质，**无根因**。
+4. `revalidation` 4,237 条从未扫过（ⅩⅩⅨ.5.4），未处置。
+5. **未 push。**
+
+## 10. 怎么自己查状态（**别信本节写的任何数，现查**）
+
+| 查什么 | 怎么查 | 预期 |
+|---|---|---|
+| 工作区干净、本轮确实零净变更 | `git status --porcelain -uall` 与 `git diff HEAD` | **两者都无输出** |
+| 分支 | `git branch --list` | 仍只有 `main` 与 `config-value-parity` |
+| 套件 | `npm test` | `707 pass / 0 fail / 0 skipped`（⚠️ **两个已知抖动**：`admin-daemon-command.test.mjs:340`、`plist-drift.test.mjs:580`）|
+| model pin 确实撤干净 | `grep -n model scripts/daemon/claude-p.mjs` | **0 matches** |
+| 超时还在不在 | 只读 `~/.claude/ccmem/daemon-cost.jsonl` 里 `timed_out` 占比 | 本轮读数 `84/375 = 22.4%`（ⅩⅩⅨ 读数时是 `83/261 = 31.8%`，**分母在涨、分子几乎不涨**）|
+| 死正则还在不在 | **数字节**（终端/`grep`/`sed` 都会吃掉它） | `threat-scan.mjs` 里 `0x08` 仍应是 **2** |
+
+## 11. 下一位建议调用的 skill
+
+| 场景 | skill |
+|---|---|
+| **定 v0.15 范围**（§4 的杠杆要先排序） | `superpowers:brainstorming` → `superpowers:writing-plans` |
+| **测 `--effort` / 限制工具**（唯一还没试的方向） | `superpowers:brainstorming` 先定对照设计，再 `superpowers:test-driven-development` |
+| **查 T13 抖动根因**（§5，只有性质没有归因） | `superpowers:systematic-debugging` |
+| **修 `credential_assignment`**（要先收窄词表，属设计变更） | `superpowers:brainstorming` → `superpowers:test-driven-development` |
+| 任何改 `scripts/**` 的实现 | `superpowers:test-driven-development` ＋ 变异纪律（Ⅴ：**每条守卫都要被亲眼看着红在它命名的那一条断言上**）|
+| 收尾／合并／删分支 | `superpowers:finishing-a-development-branch` ＋ `superpowers:verification-before-completion` |
+
+🔴 **本仓库特有、skill 不会告诉你的**（与 ⅩⅩⅨ.7 同，未变）：写生产库前先 `sqlite3 ".backup"`；
+改 `scripts/daemon/**` 后旧 daemon 仍跑旧代码，验证前先 restart；改 `hooks/**` 影响用户每一次会话。
 
 
 ---

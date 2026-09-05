@@ -1,13 +1,27 @@
 # ccmem —— Handoff
 
-> ## 🟢 接手入口（2026-09-05，最新一轮见 ⅩⅩⅩ）
+> ## 🟢 接手入口（2026-09-05，最新一轮见 ⅩⅩⅩⅠ）
 >
-> *** **v0.14 已收尾发布，没有在飞的工作，没有半成品分支。ⅩⅩⅩ 那一轮零净代码变更。** ***
+> *** **v0.14 已收尾发布，没有在飞的工作，没有半成品分支。ⅩⅩⅩ 与 ⅩⅩⅩⅠ 两轮都是零产品代码变更。** ***
+>
+> 🔵🔵 **ⅩⅩⅩⅠ（最新）：§ⅩⅩⅩ.4 那三个 CLI 开关已全部实测完**（40 次真实调用，`$9.5836`）。**结论一句话：**
+> *** **① `--tools ""` 是净赚 —— 成本 −58%、prompt −79%、条数不降反升，但【它不修超时】；
+> ② `--effort low` 能把超时压没（n=11 最大 27.9s），但按【有效条数/次】算是亏的（5.13 < 基线 6.25）；
+> ③ `--disable-slash-commands` 建议弃用（单独用时是唯一把情况弄更糟的：41.8s → 92.5s）。** ***
+> 🔴 *** **由此得出的框架更正：「把超时消灭掉」这个目标本身是错的。** *** 墙钟 ∝ 输出 token，
+> 而**输出 token 就是记忆本身** ⇒ 任何稳定压到 60s 以下的做法都是靠少抽做到的。**详见 ⅩⅩⅩⅠ.4。**
+> ✅ **该项已裁决并落地**（ⅩⅩⅩⅠ.12）：`--tools ""` **已接入 `summarize_pending`**，走新 config 键
+> `llm.claude_p_extra_args_per_task`。**套件 `712/712`**（707 + 5 条新守卫），连跑两次全绿。
+> ⚠️ *** **改的是 `scripts/**` ⇒ 不需要合并，【下一次会话】就作用在真实库上。** *** 回退办法见 ⅩⅩⅩⅠ.12。
+> ⚠️ 注入点 `claude-p.mjs:44-52` 是 **8 个调用方共用的，必须按 `taskType` 走，不能改默认值。**
+> ⚠️ **ⅩⅩⅩ.4 有一处更正见 ⅩⅩⅩⅠ.7**：supersede 机制**已存在且在 LLM 调用之前跑**，缺的是 **debounce** 不是去重。
+> 🆕 **ⅩⅩⅩⅠ.8：`cp` / `mv` 也被别名成 `-i`**（ⅩⅩⅩ.6.1 只记了 `rm`）——
+> 脚本里静默不执行而命令看着成功，**一律用 `/bin/cp` `/bin/rm` `/bin/mv` 并事后 `ls`／`shasum` 复核**。
 > **五条工作流 W0–W4 全部在 `main`；版本号 `0.14.0` / `0.14`；tag `v0.14.0`；套件 `707 pass / 0 fail / 0 skipped`。**
 > **分支只剩两个**：`main` 与 `config-value-parity`（后者被禁令锁着，**不合并也不删**）。**零 worktree。零 push。**
 >
 > 🔴🔴 **要动手之前，先读这四条：**
-> 1. **ⅩⅩⅩ.3 —— 两条看着显然的修法，各自被自己的实测推翻**（这是全文最省时间的一节）：
+> 1. **ⅩⅩⅩ.3 —— 两条看着显然的修法，各自被自己的实测推翻**（连同 **ⅩⅩⅩⅠ.4** 是全文最省时间的两节）：
 >    *** **① 给 schema 加 `maxItems`/`maxLength`：3 个输入里成 1 个、反而变慢 1 个；
 >    ② pin `--model sonnet`：抽取条数从 9/8/7/9 掉到 0/0/2/2/2/0，6 次里 4 次仍超 60s。** ***
 >    **两条的代码都已整个撤回。** 🔴 **并新增一条人的裁决：不要在代码里 pin 任何模型 ID／别名**
@@ -16,7 +30,7 @@
 >    墙钟由输出 token 单独决定（两次独立拟合 `r=0.94`/`0.97`），60s ≈ 3830 token 的硬天花板；
 >    *** **真实输入 4–8 万 token，其中 99% 是 harness，而指标只读 `input_tokens` 所以报 `2`。** ***
 >    *** **它跑在 `claude-opus-5[1m]` 上，全仓库无任何 model pin ⇒ 后台任务继承交互会话的模型。** ***
->    ⇒ **还没试过的杠杆见 ⅩⅩⅩ.4，都不是模型身份。**
+>    ⬆️ **已由 ⅩⅩⅩⅠ 闭合**：ⅩⅩⅩ.4 那三个开关全部实测完，**只剩 debounce 没试**（ⅩⅩⅩⅠ.6.3）。
 > 3. **ⅩⅩⅧ.1 —— 改代码不需要合并就已经上线**：`~/.claude/plugins/ccmem` 是符号链接指向本工作树，
 >    三个钩子每次都新起进程 ⇒ *** **你在这棵树里改 `scripts/**` 或 `hooks/**`，下一次会话就作用在真实库上。** ***
 >    常驻 daemon 是唯一例外（内存里是旧代码，要重启才换）。
@@ -4892,6 +4906,11 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
 
 ## 4. ⇒ 还没试过的杠杆（**都不是模型身份**，正好绕开上面那条裁决）
 
+> ⬆️ *** **本节已被 ⅩⅩⅩⅠ 取代。** *** 三个 CLI 开关**已全部实测**（ⅩⅩⅩⅠ.3）：
+> `--tools ""` 净赚但不修超时；`--effort low` 修超时但按有效条数算是亏的；`--disable-slash-commands` 建议弃用。
+> ⚠️ **下面那句「降低调用频次（Stop 钩子每回合入队）」有一处更正，见 ⅩⅩⅩⅠ.7** ——
+> supersede **已存在且在 LLM 调用之前跑**，缺的是 **debounce**，不是去重。**照本节字面做会重复实现已有机制。**
+
 `claude --help` 实测存在、本轮**未测**：`--effort <level>`、`--tools` / `--disallowedTools` /
 `--restricted` / `--disable-slash-commands`。数据直指的大头是 **thinking（26–96%）与工具轮次（2–9）**，
 外加 **降低调用频次**（Stop 钩子每回合入队）。**抬超时是纯加成本，别做。**
@@ -4908,7 +4927,7 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
 
 ## 6. 本轮的工具／流程教训
 
-1. *** **`rm` 在本机被别名成交互式**：脚本里 `rm <file>` 会停下来提问，看着像执行了、其实没删。
+1. *** **`rm` 在本机被别名成交互式**（🆕 **`cp` 与 `mv` 同样是 `-i`，见 ⅩⅩⅩⅠ.8**）：脚本里 `rm <file>` 会停下来提问，看着像执行了、其实没删。
    非交互场合用 `/bin/rm -f`，并且**删完必须用 `git status` 复核**，别信 `rm` 没报错。 ***
 2. **打印配置文件前先想清楚里面有什么**：本轮为看 `llm` 段整段打印了 `~/.claude/ccmem/config.json`，
    把用户的 `openai_api_key` 带进了会话记录。**用 `node -e` 只取需要的键，别整段 dump。**
@@ -4932,7 +4951,8 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
 
 ## 9. 本轮未闭合
 
-1. **`summarize_pending` 超时有根因、无处置** —— §4 那几条杠杆一条都没测。
+1. ~~**`summarize_pending` 超时有根因、无处置** —— §4 那几条杠杆一条都没测。~~
+   ⬆️ **ⅩⅩⅩⅠ 已整条闭合**：三个开关都测了（ⅩⅩⅩⅠ.3），且 `--tools ""` **已落地**（ⅩⅩⅩⅠ.12）。
 2. **`credential_assignment` 死正则**（ⅩⅩⅨ.2.2）**本轮完全没碰**，仍是原样（`0x08` 字节仍应是 2）。
 3. **T13 抖动**只判了性质，**无根因**。
 4. `revalidation` 4,237 条从未扫过（ⅩⅩⅨ.5.4），未处置。
@@ -4954,7 +4974,7 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
 | 场景 | skill |
 |---|---|
 | **定 v0.15 范围**（§4 的杠杆要先排序） | `superpowers:brainstorming` → `superpowers:writing-plans` |
-| **测 `--effort` / 限制工具**（唯一还没试的方向） | `superpowers:brainstorming` 先定对照设计，再 `superpowers:test-driven-development` |
+| ~~**测 `--effort` / 限制工具**（唯一还没试的方向）~~ **已由 ⅩⅩⅩⅠ 做完** | `superpowers:brainstorming` 先定对照设计，再 `superpowers:test-driven-development` |
 | **查 T13 抖动根因**（§5，只有性质没有归因） | `superpowers:systematic-debugging` |
 | **修 `credential_assignment`**（要先收窄词表，属设计变更） | `superpowers:brainstorming` → `superpowers:test-driven-development` |
 | 任何改 `scripts/**` 的实现 | `superpowers:test-driven-development` ＋ 变异纪律（Ⅴ：**每条守卫都要被亲眼看着红在它命名的那一条断言上**）|
@@ -4963,6 +4983,216 @@ Step 1b 片段的 `readFileSync`／`path`／`repoRoot`／`DEFAULT_CONFIG` 都在
 🔴 **本仓库特有、skill 不会告诉你的**（与 ⅩⅩⅨ.7 同，未变）：写生产库前先 `sqlite3 ".backup"`；
 改 `scripts/daemon/**` 后旧 daemon 仍跑旧代码，验证前先 restart；改 `hooks/**` 影响用户每一次会话。
 
+---
+
+# ⅩⅩⅩⅠ. 2026-09-05（续）：🔬 **§ⅩⅩⅩ.4 那三个开关全部实测完** —— 一条净赚、一条是拿记忆换时间、一条建议弃用
+
+> **本轮零产品代码变更**（工作区始终与 `main` 逐位相同，探针全部在 scratchpad）。
+> **产出是证据（§1–§11）＋ 一处已落地的代码改动（§12）。** 零 push。未删分支。未重启 daemon。**未写生产库**。
+> ⚠️ 本节不写 SHA、不写 `HEAD`、不写领先远端几个。
+
+## 1. 实验设计（两段式，n 按"要判什么"分配）
+
+**40 次真实 `claude -p` 调用，合计 `$9.5836`**（工具报的数）。
+- **第 1 段（筛，15 次 / `$4.1182`）**：5 臂 × 3 输入 × n=1。**只用来判"质量有没有塌"**（`items=0` 是确定性信号，n=1 就看得见），**不下任何时间结论**。
+- **第 2 段（验，24 次 / `$5.0694`）**：存活的 A/B/E 三臂 × 2 输入 × n=4。时间结论只出自这一段。
+- 另有 1 次冒烟（`$0.396`，冷缓存，单独留档不并表）。
+
+**五个臂**：`A` 基线（生产原样）／`B` `--tools ""`／`C` `--effort low`／`D` `--disable-slash-commands`／`E` 三个全开。
+
+**输入**：3 段真实转录，取自**三个不同项目**（32／59／117 条目），用仓库自己的 `readTranscriptExcerpt` + `cleanTranscript` 取，
+prompt 用 `buildSummarizePrompt`、schema 用 `SUMMARIZE_PENDING_JSON_SCHEMA` 原样 ⇒ **与生产逐字同形**。
+⚠️ **`ex0` 偏容易**（基线 23.9s，够不着 60s 悬崖），第 2 段已剔除，只用 `ex1`／`ex2`。
+
+**闸门（跑前立、跑后核，全部通过）**：
+- 探针**不 import `metrics.mjs`、不走 `callClaudeP`** ⇒ 代码层面写不到 `daemon-cost.jsonl`（跑完 grep 复核：那两个名字**只出现在第 1 行注释里**）；
+- `CCMEM_INTERNAL=1` + `CCMEM_DATA_ROOT` 改道 ⇒ 跑完那个 dataroot **全空**，这本身就是"40 次子进程的钩子确实在开库前被短路了"的证据；
+- 🔴 **原设计里"生产 `daemon-cost.jsonl` 行数不变"这条断言是错的，已废弃** ——
+  *** **生产 daemon 一直在并发写它**（本轮 411 → 427，全部 `task_type: summarize_pending`，
+  是本会话自己的 Stop 钩子排的队）。40 次探针若真写了会是 +40。 *** **行数只当异常探测，不当证据。**
+
+## 2. 🔴 `--tools ""` 确实生效 —— 证据是 prompt 尺寸，不是行为
+
+**先记一个差点下错的判断**：所有臂的 `num_turns` 都是 2、`stop_reason` 都是 `tool_use`，**包括禁用了工具的 B 臂**，
+看上去像"flag 没生效"。**真相在 `cache_creation` 上**：
+
+| | `cache_creation` 中位 |
+|---|---|
+| A 基线 | **27,379** |
+| B `--tools ""` | **5,775** |
+| E 三个全开 | **5,775**（与 B 相同）|
+
+⇒ *** **prompt 前缀少了约 21,600 token（−79%），那就是被摘掉的工具定义。** ***
+`stop_reason` 仍是 `tool_use`，是因为 **`--json-schema` 的结构化输出本身就走一个工具**，不被 `--tools` 移除。
+🔴 **教训**：判一个 flag 生没生效，**看它该改变的那个量**（prompt token），别看表面的 `num_turns`／`stop_reason`。
+
+## 3. 三臂读数（第 2 段，n=8/臂，ex1/ex2 各 4）
+
+| 臂 | wall 中位 | wall **最大** | out_tok 中位 | `cacheCr` 中位 | items 合计 | >60s | $/次 |
+|---|---|---|---|---|---|---|---|
+| A 基线 | 52.3s | 70.1s | 3263 | 27,379 | 59 | 1/8 | `$0.378` |
+| B `--tools ""` | 46.1s | **91.0s** | 2808 | 5,775 | **68** | **2/8** | **`$0.157`** |
+| E 三个全开 | **18.0s** | **27.9s** | 667 | 5,775 | **41** | **0/8** | **`$0.098`** |
+
+逐输入（每格 n=4）：
+
+| | A wall / items | B wall / items | E wall / items |
+|---|---|---|---|
+| ex1 | 中位 56.2s ／ 38 | 中位 50.0s ／ **44** | 中位 18.4s ／ 23 |
+| ex2 | 中位 44.0s ／ 21 | 中位 39.1s ／ **24** | 中位 17.6s ／ 18 |
+
+- **B：成本 −58%、条数 +15%、中位 −12%，但尾巴没修好**（最大 91.0s；超 60s 从 1/8 变 2/8）。
+- **E：尾巴被压平**（n=8 全落 14.5–27.9s；算上第 1 段 n=11，最大仍 27.9s），**代价是少抽 31%**。
+- *** **E 的 `cacheCr` 与 B 完全相同 ⇒ E 比 B 快的部分【全部】来自 `--effort low` 压输出**（out_tok 3263→667），
+  **不是来自 prompt 变小。** ***
+
+**质量不能只看条数，正文也比过了**（ex1，A/B/E 三份逐条读）：
+A(11) 与 B(11) 覆盖面基本一致，B 还把 A 拆成两条的「handoff 约定」合并了，并多抽到三条具体事实
+（`npm run verify` 是验证入口、ccloop 仓库冻结、子系统 B 的唯一阻塞项）。
+**E(7) 丢掉的恰好是那些具体事实，只留下通用教训。** ⇒ **质量序 `A ≈ B > E`。**
+
+## 4. 🔴🔴 本节最值钱的一条：按生产口径算，E 是亏的
+
+生产上超时 = 那次调用**产出 0 条**。所以该比的不是"快不快"，是"**每次尝试的有效条数**"：
+
+| 臂 | 每次抽取 | 超时损失 | **有效条数/次** |
+|---|---|---|---|
+| A 基线 | 7.38 | 1 次 × 9 条 | **6.25** |
+| B | 8.50 | 2 次 × 17 条 | **6.38** |
+| E | 5.13 | 0 | **5.13** |
+
+拿生产实测的 21.3% 超时率重算基线也一样（`7.38 × 0.79 = 5.83 > 5.13`）⇒ **结论对超时率不敏感。**
+
+⇒ *** **「把超时消灭掉」这个目标本身是错的框。** ***
+墙钟 ∝ 输出 token（ⅩⅩⅩ.1），而**输出 token 就是记忆本身** ——
+**任何能稳定压到 60s 以下的做法，都是靠少抽做到的。E 丢掉的记忆比超时丢掉的还多。**
+
+## 5. `--disable-slash-commands` 建议弃用
+
+- **单独用（D 臂）是唯一一个把情况弄得更糟的**：ex2 上 41.8s → **92.5s**、输出 4896 token、`num_turns` 2→3。
+- **放进 E 里也没带来额外的 prompt 缩减**（E 的 `cacheCr` 与 B 相同）。
+- ⚠️ **诚实的缺口**：**没有单独测 `--tools "" + --effort low`（不含第三个 flag）那一臂** ⇒ 无法在 E 内部把它的贡献完全分离。
+  要下"E 里它毫无作用"的结论，得补这一臂。
+
+`C`（`--effort low` 单独）在第 1 段被 E 全面支配（E 更快且多抽 4 条），第 2 段未再测。
+
+## 6. 🔴 待拍板（写稿当时）—— **第 1 条已于同轮裁决并落地，见 §12**
+
+1. ✅ **已采纳并落地（见 §12）** —— 原文留档：*** **建议采纳：给 `summarize_pending` 加 `--tools ""`。** *** 这是**净赚**：成本 −58%、prompt −79%、
+   条数不降反升、中位略快、**质量正文核对过没有损失**。**它不修超时，但它不需要拿质量换。**
+   ⚠️ 注入点 `claude-p.mjs:44-52` 是 **8 个 `callClaudeP` 调用方共用的**，
+   **必须按 `taskType` 走，不能改默认值** —— 别的任务（weekly-synthesis / security-audit 等）没有被测过。
+2. ⛔ **不建议为修超时上 `--effort low`** —— 按有效条数算是亏的。要不要接受"少 31% 记忆换零超时"是**产品判断**。
+3. **唯一不在这条 tradeoff 曲线上的方向仍是 debounce**（减少调用次数）：降总花费而**不降单次产出**。
+
+## 7. ⚠️ 对 ⅩⅩⅩ.4 的一处更正
+
+ⅩⅩⅩ.4 把"降低调用频次"写成"Stop 钩子每回合入队"。**入队确实是每回合一条**（`stop.mjs:51`），
+**但 `supersede` 机制已经存在，而且是在 LLM 调用【之前】跑的**（`summarize-pending.mjs:104`、`runSummarizePending` 开头两处）。
+⇒ *** **缺的不是去重，是 debounce。** *** supersede 只吃得掉"同一个排空窗口内堆起来的"任务；
+回合之间隔了几分钟的吃不掉 —— 那才是单 session 超时 23 次的来源。**照 ⅩⅩⅩ.4 字面做会重复实现一个已有的机制。**
+
+## 8. 🆕 工具坑：`cp` / `mv` **也**被别名成交互式（ⅩⅩⅩ.6.1 只记了 `rm`）
+
+本机 `alias` 实测：`cp='cp -i'`、`rm='rm -i'`、`mv='mv -i'`。
+非交互脚本里提示被答成 `n` ⇒ *** **操作静默不执行，而命令看着成功。** ***
+本轮实际中招：想把探针输入临时换成假数据，**没换成**（`overwrite ex0.txt? … not overwritten`），
+差点把一次读数记到错的输入上；且随后的 `rm -f` **也没删掉文件**。
+⇒ **脚本里一律用 `/bin/cp`、`/bin/rm`、`/bin/mv`，并且删完／拷完必须 `ls`／`shasum` 复核，别信退出码。**
+
+## 9. 仍然有效的禁令（**共 7 条，一条都没变**）
+
+1. `config-value-parity` 不合并。 2. 那 7 个死键不删。 3. 不许改本机电源设置。 4. **不许 push。**
+5. Task 5 读数不许重跑。 6. 不要再挂 cron、不要再做巡检。 7. **不要在代码里 pin 任何模型 ID／别名**（ⅩⅩⅩ.3②）。
+
+⚠️ 本轮**没有违反第 7 条**：测的三个都是行为开关，不是模型身份。
+
+## 10. 本轮未闭合
+
+1. ~~*** **`--tools ""` 只有实测，没有落地** ***~~ ⬆️ **已落地，见 §12。**
+2. **缺 `--tools "" + --effort low` 那一臂**（见 §5），所以 `--disable-slash-commands` 在 E 内部的贡献未分离。
+3. **debounce 从未实现也从未实测**（§6.3）。
+4. `credential_assignment` 死正则**本轮仍未碰**，现查仍是 `0x08` 字节 = **2**。
+5. **T13 抖动**（ⅩⅩⅩ.5）本轮未碰，无根因。
+6. `revalidation` 4,237 条从未扫过。
+7. **未 push。**
+
+## 11. 怎么自己查状态（**别信本节的数，现查**）
+
+| 查什么 | 怎么查 | 本轮写稿时的读数 |
+|---|---|---|
+| 工作区／分支 | `git status --porcelain -uall`、`git branch --list` | 干净；仍只有 `main` 与 `config-value-parity` |
+| 代码改了哪些 | `git diff --name-only` | `config.default.json`、`scripts/lib/config.mjs`、`scripts/daemon/claude-p.mjs`、`tests/unit/v015-claude-p-extra-args.test.mjs`、本文档（**共 5 个，见 §12**）|
+| 注入真的生效了吗 | `node --input-type=module -e "import{resolveCommand}from'./scripts/daemon/claude-p.mjs';console.log(resolveCommand({taskType:'summarize_pending'}).args)"` | argv 含 `--tools` 与紧跟的空串 |
+| 套件 | `npm test` | `712/712`（⚠️ 两个已知抖动源仍在：`admin-daemon-command.test.mjs:340`、`plist-drift.test.mjs:580`）|
+| 超时占比 | 只读 `~/.claude/ccmem/daemon-cost.jsonl` 的 `timed_out` 占比 | `87/408 = 21.3%`（ⅩⅩⅩ 时 `84/375 = 22.4%`）**分母在涨、分子几乎不涨** |
+| 死正则 | **数字节**（`grep`／终端会吃掉它） | `scripts/lib/threat-scan.mjs` 里 `0x08` = **2** |
+| 那几个 flag 还在不在 | `claude --help` | `--effort` / `--tools` / `--disallowedTools` / `--restricted` / `--disable-slash-commands` 均在 |
+
+## 12. ✅ **已落地：`--tools ""` 接入 `summarize_pending`**（同轮裁决，人的原话「采纳 --tools ""，按 taskType 走」）
+
+**改了三个文件，套件 `712/712`（707 + 5 条新守卫），连跑两次全绿、零 skipped。**
+
+| 文件 | 改了什么 |
+|---|---|
+| `config.default.json` / `scripts/lib/config.mjs` | 新增 `llm.claude_p_extra_args_per_task = { summarize_pending: ["--tools", ""] }` |
+| `scripts/daemon/claude-p.mjs` | 新增 `resolveExtraArgs(taskType)`；`resolveCommand` **改为导出**（测试 seam）并注入 |
+| `tests/unit/v015-claude-p-extra-args.test.mjs` | 5 条守卫（新文件）|
+
+**生产 argv 实测变成**：`-p --tools '' --output-format json --json-schema <schema>`；
+`weekly_synthesis` 等其余 7 个 taskType **argv 逐位未变**。
+
+### 形状为什么选 config 键而不是硬编码
+
+沿用旁边 `llm.claude_p_timeout_per_task` 的同一形状（Rule 11）。**决定性理由是安全**：
+改 `scripts/**` **不需要合并、下一次会话就在真实库上生效**（ⅩⅩⅧ.1），所以必须留一条**不改代码的回退路**。
+🔴 **这条回退路已实测证明，不是声称**：在 `~/.claude/ccmem/config.json` 里写
+
+```json
+{ "llm": { "claude_p_extra_args_per_task": { "summarize_pending": [] } } }
+```
+
+⇒ 注入消失，argv 回到原样，**且相邻的 `claude_p_timeout_per_task` 不受影响**（`mergeConfig` 是递归深合并，数组整体替换）。
+
+### 注入的两道边界（都是承重的，别"顺手"放宽）
+
+1. **按 `taskType`** —— 只给 `summarize_pending`。**另外 7 个 taskType 一次都没测过**，别顺手加。
+2. **只在【未显式提供 argv】时注入** —— `opts.args` 或 `CCMEM_CLAUDE_P_ARGS_JSON` 一旦给了，就完全不动。
+   *** **这不是保守，是必需**：全部集成测试都是成对设 `CCMEM_CLAUDE_P_COMMAND` + `CCMEM_CLAUDE_P_ARGS_JSON`
+   拿 `node <脚本>` 假扮 claude 的，往它们的 argv 里注入会改掉它们断言的东西。 ***
+
+### 🔴 变异纪律的执行记录（Ⅴ）—— 含**一条没通过**的
+
+| 变异 | 期望 | 结果 |
+|---|---|---|
+| 忽略 `taskType`，对所有任务注入 | test2 红 | ✅ 红在 `only summarize_pending was measured` |
+| 对显式提供的 argv 也注入 | test3+test4 红 | ✅ 各自红在自己的断言上 |
+| `withStructuredOutputArgs` 把 `--tools` 也剥掉 | test5 红 | ✅ 红在 `--tools must coexist with --json-schema` |
+| 把 extra args 从 `-p` 之后挪到末尾 | test5 顺序断言红 | 🔴 **仍然绿** |
+
+*** **最后一条是本次 TDD 最有价值的产出。** *** 原因：`withStructuredOutputArgs` 会**先剥离再追加**
+`--output-format` / `--json-schema` 对，所以 extra args 放前放后**最终 argv 逐位相同** —— 那根本不是一个改变行为的变异，
+而「`--tools` 排在 `--json-schema` 之前」是**代码结构保证的同义反复**，不是行为选择。
+⇒ **该断言已删除，并把原因写进测试注释**（Rule 9：不会因业务逻辑变化而失败的断言不是覆盖，是覆盖的样子）。
+
+📌 **另记一次两步红**：`resolveCommand` 原本没导出，第一次跑测试红在 `resolveCommand is not a function`——
+**那是错误的红**。先只加 `export`（零行为变化）再跑，才看到红在 `summarize_pending argv must carry --tools` 上。
+**"看到红"不等于"红对了"，中间那一步不能省。**
+
+### ⚠️ 一个把我自己骗了一次的环境事实
+
+*** **本机 shell 里 `CCMEM_CONFIG_PATH` 是被设成 `~/.claude/ccmem/config.json` 的**，而 `loadConfig()`
+优先用它、其次才用 `CCMEM_DATA_ROOT` 推出来的路径（`config.mjs:328-329`）。 ***
+⇒ 我第一次验回退时只设了 `CCMEM_DATA_ROOT`，**改动被真实 config 盖掉，看上去像"回退路径失效"**，
+差点写成结论。**要隔离 config 必须 `env -u CCMEM_CONFIG_PATH`。**
+这与 §ⅩⅩⅩⅠ.8 的 `cp`/`rm` 别名是同一类坑：**先确认自己看的是不是那个 artifact。**
+
+### 仍然没做
+
+- **`--effort low` 没有落地**（那是拿记忆换时间，按有效条数算是亏的，§4）—— **未采纳，代码里没有它。**
+- **debounce 仍未实现**（§6.3）。
+- **未 push**（禁令 4）。**未重启 daemon** —— ⚠️ 常驻 daemon 内存里仍是旧代码，
+  但 `summarize_pending` 由钩子路径每次新起进程，**下一次会话即生效**。
 
 ---
 

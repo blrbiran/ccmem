@@ -132,6 +132,9 @@ export const DEFAULT_CONFIG = {
       contradiction_audit: 180000,
       monthly_meta_synthesis: 180000,
       contradiction_merge: 60000
+    },
+    claude_p_extra_args_per_task: {
+      summarize_pending: ['--tools', '']
     }
   },
   hook_budget_ms: {

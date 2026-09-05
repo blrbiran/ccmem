@@ -42,9 +42,24 @@ function withStructuredOutputArgs(args, jsonSchema) {
   return nextArgs;
 }
 
-function resolveCommand(opts) {
+function resolveExtraArgs(taskType) {
+  if (!taskType) {
+    return [];
+  }
+
+  const extra = loadConfig().llm?.claude_p_extra_args_per_task?.[taskType];
+  return Array.isArray(extra) ? extra.map((arg) => String(arg)) : [];
+}
+
+export function resolveCommand(opts) {
   const envArgs = parseArgsEnv(process.env.CCMEM_CLAUDE_P_ARGS_JSON);
-  const baseArgs = Array.isArray(opts.args) ? opts.args : (envArgs ?? ['-p', '--output-format', 'text']);
+  const suppliedArgs = Array.isArray(opts.args) ? opts.args : envArgs;
+
+  // Extra args ride on the built-in argv only. A caller that spells out argv --
+  // including every integration test, which substitutes a fake binary through
+  // CCMEM_CLAUDE_P_ARGS_JSON -- owns it completely and gets nothing added.
+  const baseArgs = suppliedArgs
+    ?? ['-p', ...resolveExtraArgs(opts.taskType), '--output-format', 'text'];
 
   return {
     command: opts.command ?? process.env.CCMEM_CLAUDE_P_COMMAND ?? 'claude',

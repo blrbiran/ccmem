@@ -11,7 +11,7 @@ import { extractEntryText, parseTranscript } from '../../lib/transcript.mjs';
 import { loadConfig } from '../../lib/config.mjs';
 import { refineContentToLimit } from '../../lib/content-refiner.mjs';
 
-const TRANSCRIPT_EXCERPT_MAX = 1000;
+const TRANSCRIPT_EXCERPT_MAX_FALLBACK = 4000;
 const SUMMARIZE_PENDING_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -42,7 +42,8 @@ const SUMMARIZE_PENDING_JSON_SCHEMA = {
   }
 };
 
-function readTranscriptExcerpt(transcriptPath, lastMessageSeq) {
+function readTranscriptExcerpt(transcriptPath, lastMessageSeq, maxChars) {
+  const limit = Number.isFinite(maxChars) && maxChars > 0 ? maxChars : TRANSCRIPT_EXCERPT_MAX_FALLBACK;
   const entries = parseTranscript(transcriptPath).slice(0, lastMessageSeq);
   const lines = entries
     .map((entry) => {
@@ -57,7 +58,7 @@ function readTranscriptExcerpt(transcriptPath, lastMessageSeq) {
   const joined = lines.join('\n');
   return {
     entryCount: entries.length,
-    excerpt: joined.length <= TRANSCRIPT_EXCERPT_MAX ? joined : joined.slice(-TRANSCRIPT_EXCERPT_MAX)
+    excerpt: joined.length <= limit ? joined : joined.slice(-limit)
   };
 }
 
@@ -193,7 +194,11 @@ export async function runSummarizePending(db, task) {
     return;
   }
 
-  const transcript = readTranscriptExcerpt(transcriptPath, lastMessageSeq);
+  const transcript = readTranscriptExcerpt(
+    transcriptPath,
+    lastMessageSeq,
+    Number(cfg.summarize?.transcript_excerpt_max)
+  );
   if (!transcript.excerpt) {
     writeAudit(db, 'summarize_pending_skipped', null, {
       task_id: task.id,

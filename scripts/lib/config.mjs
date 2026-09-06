@@ -75,6 +75,7 @@ export const DEFAULT_CONFIG = {
   },
   recent_injections: { retention_days: 14, max_per_session: 20 },
   summarize: {
+    transcript_excerpt_max: 4000,
     min_transcript_after_clean: 200,
     transcript_cleaner: {
       enabled: true,

@@ -125,7 +125,7 @@ export const DEFAULT_CONFIG = {
   },
   llm: {
     claude_p_timeout_per_task: {
-      summarize_pending: 60000,
+      summarize_pending: 120000,
       l4_review: 90000,
       weekly_synthesis: 180000,
       security_audit: 180000,

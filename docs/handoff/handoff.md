@@ -1,8 +1,34 @@
 # ccmem —— Handoff
 
-> ## 🟢 接手入口（2026-09-07 晨，最新一轮见 ⅩⅩⅩⅣ）
+> ## 🟢 接手入口（2026-09-08 晨，最新一轮见 ⅩⅩⅩⅤ）
 >
 > *** **v0.14 已收尾发布，没有在飞的工作，没有半成品分支。** ***
+>
+> 🔴🔴🔴 **ⅩⅩⅩⅤ（最新，2026-09-07/08）：先读 §0 —— 上一轮的我为了复现测试抖动，
+> 留下 92 个忙循环在这台 10 核机器上跑了近 8 小时（load 到 `318`），把生产打瘫了：
+> `summarize_pending` 10 次调用 10 次超时 0 次完成、`daily_maintenance` 跑了 59 分钟、
+> `daemon restart` 报 `start_timeout`、`daemon status` 给出"没在运行"的假阴性（daemon 其实活着）。
+> 杀干净后 load `318 → 30`，同一条 restart 一次成功，并落下 23:10 之后第一条成功调用。**
+> 🔴 *** **由此三条铁规：① 不要在这台机器上造 CPU 负载（生产 daemon 常驻本机跑付费调用）；
+> ② `jobs -p` + `kill` 清理不干净，必须用 `ps` 谓词确认为零 ——「我杀过了」不是证据；
+> ③ 单一读数不足以宣布状态，我因此连续下了三个错误结论。** ***
+> ✅ **ⅩⅩⅩⅤ.1 修掉一个会【杀死整个 daemon】的产品缺陷**：`claude-p.mjs` 的 `child.stdin.end()`
+> 没有 error 处理，而全仓库没有 `uncaughtException` 处理 ⇒ 子进程早退 = daemon 当场死。
+> **它解释了生产里 6 条此前无人归因的 `daemon exited while this task was running`。**
+> ✅ **ⅩⅩⅩⅤ.2 cost 行新增 `monotonic_ms`（macOS/Linux 通用）**，三态判别真撞顶／挂起／事件循环饿死。
+> **已重启 daemon 并【行为复验通过】**（新行带 `monotonic_ms`，两个时钟差 1ms）。
+> 🔴🔴 **ⅩⅩⅩⅤ.3 推翻 ⅩⅩⅩⅣ.5**：`stdout_chars` 在 **json 路径上恒为 0**，
+> **不是"被砍调用烧掉多少的唯一证据"** —— `--output-format json` 最后一刻才一次性打出整个信封。
+> 那条守卫用的桩立刻打印，所以测试绿而生产语义不同。**别再拿它估 json 任务烧掉的输出。**
+> 🔴🔴 **ⅩⅩⅩⅤ.5：`revalidation` 那 4,237 条（现 4,641）不是"没扫"，是【扫描器永远追不上】** ——
+> 产能 100/天 vs 流入 181/天，覆盖率 55%，队列以 81/天 无界增长；09 月新建的记忆 **92.1% 从未扫过**。
+> *** **推论：`scan_patterns_version` 一旦 bump 会让 10,691 条重新待扫、要 107 天、永远跑不完
+> ⇒ 「修 credential_assignment 死正则」被这条堵死，两件事必须一起设计（ⅩⅩⅩⅤ.5.2）。** ***
+> ⚠️ **但 ⅩⅩⅩⅤ.5.1 把反面也摆了**：6,446 次扫描累计只命中 2 条，排序饥饿的那 313 条即使扫到也不会被隔离。
+> 🔴 **ⅩⅩⅩⅤ.6：本轮生产出现的 3 条"真撞顶"是我的负载造出来的，【不许】拿去重开 cap 话题** ——
+> 统计 ⅩⅩⅩⅣ.6 的重开条件时必须剔除 `2026-09-07 23:12 → 09-08 07:05`（本地）这个污染窗口。
+> ⚠️ **T13 抖动仍未闭合**（11 次跑不出来）；⚠️ 复现抖动前先确认命令与 `npm test` 一致（ⅩⅩⅩⅤ.8.2）。
+> **套件 `724/724`，连跑两次、零 skipped。零 push。**
 >
 > 🔴🔴 **ⅩⅩⅩⅣ（最新，2026-09-07）：ⅩⅩⅩⅢ.9.2 那块板已拍 —— 【不抬 120s cap】，因为实测它现在不 binding。**
 > **自 cap 变成 120s 以来，生产 60 次调用【真撞顶 0 次】；当前配置（`W=4000`）下完成调用最大墙钟 `79.3s`，
@@ -5904,6 +5930,247 @@ git log --oneline --grep="close XXXIV.9.2"                           # 重启的
 3. （沿用）改 `scripts/daemon/**` 或 config 默认值后**不重启 = 没生效，重启不算验证**；隔离 config 必须
    `env -u CCMEM_CONFIG_PATH`；`cp/rm/mv` 用 `/bin/*` 并事后复核；`sed` 的插入形式会静默失败；
    `parseLlmJson()` 只认记忆 schema、对别的形状静默返回 `[]`；花钱的批量跑先验一次再放量、原始输出解析前落盘。
+
+---
+
+# ⅩⅩⅩⅤ. 2026-09-07/08：🔴 **我自己把生产打瘫了 8 小时**（92 个忘了杀的忙循环）；修掉一个会**杀死 daemon** 的产品缺陷；给 cost 行装上单调时钟；并**推翻 ⅩⅩⅩⅣ.5 关于 `stdout_chars` 的那句话**
+
+> **本轮改了 2 个产品/测试文件（1 处 stdin 处理 + 1 处遥测字段）+ 1 个新测试文件。套件 `724/724`，连跑两次、零 skipped。**
+> **动了生产两次**（重启 daemon；杀掉 92 个我自己遗留的进程），**都是人当轮明确授权的方向**。
+> **已备份** `global.db` 与 `global.db-wal` 到 `.bak.1788821416000`（逐位校验）。**零 push。未删分支。**
+> ⚠️ 本节不写 SHA、不写 `HEAD`、不写领先远端几个。
+
+## 0. 🔴🔴 **先读这条：本轮最大的事件是我造成的一次 8 小时生产事故**
+
+为了复现 T13 抖动，我跑了四批 `(while :; do :; done) &` 忙循环，每批 20–24 个。
+`kill $LOADPIDS` 用的是 `jobs -p`，**它抓不到已经被 orphan 掉的子 shell** ⇒
+*** **92 个忙循环在一台 10 核机器上活了将近 8 小时，load average 一度到 `318`。** ***
+
+后果（全部实测，不是推断）：
+
+| 现象 | 读数 |
+|---|---|
+| `summarize_pending` | **23:19 → 07:05 之间 10 次调用 10 次超时，0 次完成** |
+| `daily_maintenance` | 02:20 → 03:19，**跑了 59 分钟** |
+| `ccmem admin daemon restart` | 报 `start_timeout`（`daemon.mjs:21` 那个 5s 硬等待被负载撑爆）|
+| `ccmem admin daemon status` | 一度报 `daemon not running`，**而 daemon 其实活着**（`daemon_lock.alive=1`、有 running 任务）—— 心跳被拖陈旧导致的**假阴性** |
+| trivial prompt 的 `claude -p` | `--output-format json` 要 **60.8s**（正常应在 15s 量级）|
+
+**杀干净之后**：load 由 `318 → 30`，同一条 restart 命令一次成功，
+**并且落下了 23:10 之后的第一条成功 `summarize_pending`**（`wall=57.4s`、`out_tok=3463`）。⇒ 归因闭合。
+
+### 0.1 该抄走的三条
+
+1. *** **`jobs -p` + `kill` 不是清理后台进程的可靠办法。** *** 用进程组（`setsid` / `kill -- -PGID`），
+   或者事后按 `ps -eo pid,ppid,pcpu,tty,comm` 谓词（`ppid==1 && tty=="??" && 高 CPU`）**复核并确认为零**。
+   *** **"我杀过了"不是证据，`ps` 输出为空才是。** ***
+2. *** **在这台机器上造 CPU 负载 = 攻击生产。** *** ccmem daemon 常驻本机、在跑**付费**调用，
+   它不在任何测试输出里，**坏了也不会有人告诉你**。
+3. 🔴 *** **我因此在本轮里连续下了三个错误结论，每一个都是"证据不足就下判断"**：***
+   ① 先说"这 6 条超时是我负载造成的"；② 又说"7 小时后还在，所以不全是我"（其实我的负载从没停）；
+   ③ 还凭**一次** `status` 读数宣布"daemon 已死"（它活着）。
+   **每次纠正靠的都是多取一个数据源。**⇒ **单一读数不足以宣布状态，尤其在已知有假阴性的命令上。**
+
+## 1. ✅ 已修：`claude-p.mjs` 的 stdin EPIPE **会杀死整个 daemon**
+
+`scripts/daemon/claude-p.mjs` 里 `child.stdin.end(prompt)` **没有 `stdin.on('error')`**，
+而 *** **整个 `scripts/` 没有任何 `process.on('uncaughtException')`** ***。
+⇒ 子进程若在 prompt 写完前退出，无人监听的 `'error'` 事件抛出 ⇒ **daemon 当场死在任务中间**。
+
+**它不是假想的**：生产 `tasks` 表里有 **6 条** `daemon exited while this task was running`
+（5 条 summarize_pending + 1 条 vec_backfill），此前全文无人归因。
+触发条件也全都真实发生过：**22 条 `spawn … EACCES`、5 条 `unknown option '--json-schema'`、
+7 条 stderr 为空的 `claude -p exit N`** —— 全是快速退出。
+
+**怎么发现的**：`admin-cron-command.test.mjs` 在负载下 2/10 文件级红，报 `write EPIPE`，
+栈指到产品代码。**⚠️ 注意这是那 92 个忙循环唯一的正面产出**。
+
+守卫：`tests/integration/v015-claude-p-stdin-epipe.test.mjs`，**确定性红/绿，不依赖负载**
+（4 MiB prompt 越过管道缓冲区 + 立即退出的桩）。
+变异纪律（每次取前后 `shasum -a 256`，不等才算落上去）：
+- **M1** 把 `EPIPE` 判断改成别的 code ⇒ **补强判据前是绿的**（漏洞），补强后红在新断言；
+- **M2** 整段删掉 ⇒ 红在第一条断言（`escaped: EPIPE/write`）。
+🔴 **M1 那次"绿"是本轮第二值钱的教训**：判据只断言"没崩"，就会被"崩改成了 reject EPIPE"骗过去 ——
+**必须断言失败原因是子进程的真实退出原因，而不是管道症状。**
+
+## 2. ✅ 已落地：cost 行新增 `monotonic_ms`（跨平台，macOS + Linux）
+
+`wall_clock_ms` 是 `Date.now()` 差值 ⇒ 它把**本进程根本没在跑**的那段时间也算进去。
+新增 `monotonic_ms = Math.round(performance.now() - tStartMono)`。
+
+**为什么这个选择是跨平台的**（这是设计要点，不是实现细节）：
+*** **`performance.now()` 走的就是 libuv 用来调度 `setTimeout` 的那个单调时钟，macOS 与 Linux 都是。** ***
+⇒ 记下来的耗时是**按预算自己所依据的时钟**量的，**不需要知道各平台挑了哪个 POSIX 时钟**：
+
+| 判据 | 含义 |
+|---|---|
+| `monotonic_ms ≈ timeout_ms` 且 `wall ≈ monotonic` | **真撞顶**，机器健康 |
+| `monotonic_ms ≈ timeout_ms` 且 `wall >> monotonic` | **时钟自己停了**（机器挂起）—— 子进程其实拿到了完整预算 |
+| `monotonic_ms >> timeout_ms` | **事件循环没轮到**（机器被压满）—— 就是本轮 §0 那种 |
+
+变异：**M3 写死 0 / M4 写成预算值 / M5 单位错成秒 ⇒ 全部红 2 条**；
+🔴 **M6 把它抄成 `wall_clock_ms` ⇒ 绿，这是【预先在测试文件头部登记过的存活变异】**。
+理由：两个时钟只有在机器挂起（或系统时钟被步进）时才分叉，**测试进程造不出这两种情况**。
+**"没有判据能看见它"和"不该修它"是两件事，本条按前者登记，不假装有守卫。**
+
+**生产行为复验已拿到**（不是"进程起来了"）：重启后第一条落盘的生产 cost 行
+`wall_clock_ms=57418  monotonic_ms=57417  timeout_ms=120000  out_tok=3463  cost=0.505975`
+—— 旧码没有 `monotonic_ms` 这个键。**两个时钟在健康机器上差 1ms，与测试预测一致。**
+📌 **能在同一会话里验到，是因为队列里有积压任务**；⚠️ **ⅩⅩⅩⅣ.11.3 那条（`summarize_pending` 只由
+Stop 钩子入队 ⇒ 同会话等不到）在【队列为空】时仍然成立，别把本轮的运气当常态。**
+
+## 3. 🔴🔴 推翻 ⅩⅩⅩⅣ.5：`stdout_chars` 在 **json 路径上恒为 0**，不是"烧掉多少的唯一证据"
+
+ⅩⅩⅩⅣ.5 写的是「`stdout_chars` 是被砍调用烧掉的钱的唯一幸存度量」。**实测：在 `--output-format json` 下不成立。**
+
+探针（`$0.25` 量级，3 次真实调用）：`claude -p --output-format json` 对一个 trivial prompt
+**在最后一刻才把整个信封一次性打出来** —— 27 秒里 `stdout_chars` 一直是 0，然后一次变成 1806。
+
+⇒ *** **`summarize_pending` 正是 json 路径。它被砍时 `stdout_chars` 结构性地恒为 0，不携带任何信息。** ***
+生产数据吻合：本轮 10 条被砍的行，`stdout_chars` **全部是 0**；而完成的行是 2716–14908。
+
+⚠️ **ⅩⅩⅩⅣ.5 那条守卫为什么没抓到**：它用的桩**立刻打印**，所以测试绿，**但生产语义不同**。
+🔴 **这是"桩的行为和真实被测对象的行为不一样"的一个干净例子** —— 守卫验的是记录管线，不是 `claude -p` 的输出时序。
+⇒ **别再用 `stdout_chars` 给 json 任务估算烧掉的输出。** 我昨晚据此说过"这几条烧掉 ≈ 0"，**那句作废**。
+⇒ 要真拿到这个数，得改成 `--output-format stream-json` 之类的流式输出，**本轮没做，也没评估**。
+
+## 4. 🆕 `tasks` 表的 `failed` 归因已做完（ⅩⅩⅩⅣ.9.7 的一半）
+
+**377 条 `failed`，`error_excerpt` 无一为空，收敛到 14 个签名**：
+
+| n | type | 签名 |
+|---|---|---|
+| **291** | summarize_pending | `claude -p timeout after <N>ms` |
+| **22** | 多种 | `spawn …/bin/claude EACCES` / `ENOENT`（**全文从未命名过的失败模式**，08-23/24 两天爆发）|
+| 16 | vec_backfill | `Request timed out.`（08-01 的 29 分钟内爆发）|
+| 12 / 9 | security_audit / contradiction_audit | `claude -p timeout` |
+| 8 | summarize_pending | `entry?.message?.content?.filter is not a function`（仅 06-04）|
+| 7 | summarize_pending | `claude -p exit <N>:`（**stderr 为空**，06-04 → 09-06 仍在发生）|
+| 6 | 多种 | **`daemon exited while this task was running`** ⇒ 见 §1 |
+
+### 4.1 🔴 更正 ⅩⅩⅩⅣ.11 第 1 条：历史行**是**可以机械判别的
+
+ⅩⅩⅩⅣ 说「09-07 之前的行没有 `timeout_ms`，只能用启发式」。**对 `daemon-cost.jsonl` 成立，对 `tasks` 表不成立** ——
+`error_excerpt` 一直把预算原样印在里面（`timeout after 60000`），配 `finished_at - started_at` 就是同一个判别式，
+**从 06-12 起一直可用**。按它拆开 312 条：**真撞顶 261 / 定时器晚放炮 51**，
+且 **1.3 这个阈值没在干活**（比值分布双峰、中间有空隙：`[1.05,1.3)` 只有 3 条）。
+
+⚠️ **但 §0 之后必须补一句**：那 51 条此前被读成"机器睡眠"，**现在知道 CPU 饱和会产生一模一样的签名**。
+⇒ *** **`wall >> budget` 只能证明"墙钟远超预算"，证明不了是睡眠。** *** 有了 `monotonic_ms` 之后才分得开（§2）。
+
+## 5. 🔴🔴 `revalidation` 那 4,237 条：不是"没扫"，是**扫描器结构性追不上，且永远追不上**
+
+那个数就是 `memories.last_scanned_patterns_version IS NULL`。**ⅩⅩⅩⅣ 记的 4,237，现在 4,641。**
+机制在 `scripts/lib/revalidation.mjs:60`：每次最多扫 `batch_size`，**实测配置值 100**。
+
+```
+94 次 run（06-06 → 09-06，约每天 1 次），累计扫过 6,446 条
+其中 53 次 scanned 恰好 =100 ⇒ 批上限 binding，扫描器是饱和的
+```
+
+| 月 | 扫过 | 新建 | 积压净变化 |
+|---|---|---|---|
+| 2026-06 | 420 | 420 | **0**（当时跟得上）|
+| 2026-07 | 2426 | 4115 | **+1689** |
+| 2026-08 | 2900 | 5432 | **+2532** |
+| 2026-09（7 天）| 700 | 1271 | **+571** |
+
+⇒ 产能 ≈ **100/天**，流入 ≈ **181/天** ⇒ *** **覆盖率 55%，缺口 1.8×，队列以约 81/天 无界增长。** ***
+按创建月看，**从未扫过的占比：06 月 0% → 07 月 3.5% → 08 月 61.2% → 09 月 92.1%。**
+这 4,641 条里 **4,113 条是活的**（`status=active` 且 `decay_status=active`），即**可被注入**。
+
+**另有排序饥饿**：`ORDER BY trust_score ASC` ⇒ 待扫集合里 `trust ≥ 0.6` 的 **313 条**排在 4,033 条低信任之后，
+而低信任那支在持续补充。最老的待扫行建于 **2026-07-18（已等 51 天）、trust=0.85**，
+下一批实际会挑走的却是 08-06 至 09-03 建的 trust 0.4–0.5。⇒ 那 313 条**不是延迟，是不可达**。
+
+### 5.1 ⚠️ 把反面也摆出来，否则这条会被高估
+
+- 那 313 条**即使扫到也只会 `flagged` 不会 `quarantine`**（`revalidation.mjs:105`：`trust < 0.6 && !pinned` 才隔离）
+  ⇒ 排序饥饿的安全后果基本为零，**它更像是设计意图**。
+- **实测命中率极低**：6,446 次扫描累计 `quarantine_in` **2 条**、`flagged` **0 条**。两条都是 `secret:openai_key`。
+- 真正有意义的敞口是 **global scope 的 1,625 条待扫**（`secretScan` 只对 global 跑，而它是唯一开过火的探测器）。
+  按 2/≈1973 的 global 命中率外推 ⇒ **期望约 1.6 条未被发现的密钥躺在可注入记忆里**。⚠️ **这是外推，不是实测。**
+
+### 5.2 🔴🔴 最要紧的推论：它把 ⅩⅩⅩⅣ.9.5 那件事堵死了
+
+`scan_patterns_version` 一旦 bump，`WHERE last_scanned_patterns_version != '2026.07'`
+会让 *** **10,691 条**全部重新变成待扫。按 100/天要 **107 天**，期间还会新增约 19,000 条
+⇒ **一次 pattern 版本 bump 在当前 `batch_size` 下【永远跑不完】。** ***
+
+⇒ **「修 `credential_assignment` 死正则」不是一件孤立的事**：修了正则不 bump 版本，存量一条都不会重扫；
+bump 了版本，扫描器完不成。*** **两件事必须一起设计** *** —— 与 ⅩⅩⅩⅣ.6 第 3 条说「cap 与窗口必须一起设计」是同一形状。
+⚠️ 另有 **295 条从未扫过、且永远不会被扫**（`decay_status` 是 `archived`/`candidate_expire`/`quarantine`，被 WHERE 排除）。
+这大概是对的（它们不注入），但**没人写下来过**。
+
+## 6. cap 裁决：**ⅩⅩⅩⅣ 的结论不变，但本轮的数据【不许】拿去重开它**
+
+本轮生产出现了 3 条 `wall ≈ 120.3–120.7s` 的行，机械判据上就是"真撞顶"。
+*** **它们是 §0 那 92 个忙循环造出来的，不是自然生产。** ***
+
+🔴 **给下一位的硬性口径**：**§ⅩⅩⅩⅣ.6 的重开条件（n≥100 且真撞顶 ≥2%；或 p90 > 90s）
+在统计时必须剔除 `2026-09-07 23:12 → 2026-09-08 07:05`（本地）这个污染窗口。**
+本轮清理之后的第一条自然生产行是 `wall=57.4s`，**离 120s 还有一半余量**。
+
+## 7. 仍然有效的禁令（**共 7 条，一条都没变**）
+
+1. `config-value-parity` 不合并。 2. 那 7 个死键不删。 3. 不许改本机电源设置。 4. **不许 push。**
+5. Task 5 读数不许重跑。 6. 不要再挂 cron、不要再做巡检。 7. **不要在代码里 pin 任何模型 ID／别名。**
+
+## 8. 本轮未闭合
+
+1. **未 push**（禁令 4）。
+2. 🔴 **T13 抖动仍未闭合** —— 11 次全量跑（7 次常规 + 4 次高负载）**一次都没红**。抓不到就没修。
+   ⚠️ 中途我用**裸 `node --test`** 跑出过两条"稳定红"，那是我 shell 里的 `CCMEM_CONFIG_PATH` 泄漏进了测试；
+   换成 `npm test` 的真实 env（`env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)"`）立刻 56/56 绿。
+   *** **复现抖动之前，先确认你复现用的命令和 `npm test` 是同一条。** ***
+3. **`8000` 档仍然从未实测**（同 ⅩⅩⅩⅣ.9.3）。要试请先读 ⅩⅩⅩⅣ.6 第 3 条。
+4. **被砍的 json 调用烧掉多少输出，仍然测不到**（§3 推翻了原来以为的办法，没给新办法）。
+5. `credential_assignment` 死正则**仍未碰**，且现在知道它**被 §5.2 堵着**。
+6. **机器睡眠饿死定时器仍未修**，但 `monotonic_ms` 现在能把它和 CPU 饱和分开（§2）。
+7. `ccmem admin daemon status` / `restart` 的**负载敏感假阴性**（§0 表）**未修，也未开单**。
+8. **`revalidation` 的 `batch_size=100` 未动** —— 改它是配置默认值，属于要重启 daemon 的改动，本轮没做。
+
+## 9. 怎么自己查状态（**别信本节的数，现查**）
+
+| 查什么 | 怎么查 |
+|---|---|
+| 工作区／分支 | `git status --porcelain -uall`、`git branch --list` |
+| 远端真实位置 | **裸** `/usr/bin/git ls-remote origin refs/heads/main`，与 `git rev-parse HEAD` 比。⚠️ **本轮口头交底又说"有若干笔未 push"，而裸 `ls-remote` 显示远端与本地逐位相同、0 笔未 push** —— 这是**连续第二轮**出现同一个假交底（ⅩⅩⅩⅣ.10 记过一次）。**一律现查。** |
+| 套件 | `npm test`（本轮 `724/724`，连跑两次全绿、零 skipped）|
+| **daemon 跑的是哪份代码** | **看新 cost 行里有没有 `monotonic_ms`**：`tail -1 ~/.claude/ccmem/daemon-cost.jsonl`。旧码没有这个键（这比 `timeout_ms` 更新，也比 pid/uptime 锐利）|
+| **机器有没有被谁压着** | `uptime`；`ps -eo pid,ppid,pcpu,tty,comm \| awk '$2==1 && $3>1.0 && $4=="??"'`。⚠️ **动手前先看一眼**，§0 就是没看 |
+| 真撞顶 vs 晚放炮 vs 挂起 | 见 §2 那张三行表 |
+
+## 10. 下一位怎么接手
+
+### 本轮提交怎么找（**按标题，不按 SHA**）
+```
+git log --oneline --grep="stdin EPIPE"        # §1 产品修复 + 守卫
+git log --oneline --grep="monotonic"          # §2 遥测字段 + 2 条守卫
+git log --oneline --grep="record round XXXV"  # 本节文档
+```
+
+### 建议调用的 skill
+
+| 场景 | skill |
+|---|---|
+| 动 `revalidation` 的 `batch_size` / pattern 版本（§5.2 那对耦合）| `superpowers:brainstorming` 先定设计，**读 §5.2 再开工** |
+| 任何改 `scripts/**` 的实现 | `superpowers:test-driven-development` ＋ 变异纪律，**且必须断言"真正落盘的那一行"** |
+| 查 T13 / status 假阴性 | `superpowers:systematic-debugging`，**但先读 §8 第 2 条那个坑** |
+| 收尾／合并 | `superpowers:finishing-a-development-branch` ＋ `superpowers:verification-before-completion` |
+
+### 🔴 本仓库特有、skill 不会告诉你的（ⅩⅩⅩⅣ.11 那几条**全部仍然有效**，另加本轮四条）
+
+1. 🆕 *** **不要在这台机器上造 CPU 负载。** *** 生产 daemon 常驻本机跑付费调用（§0）。
+   非造不可就用进程组清理，并**用 `ps` 谓词确认为零**——"我杀过了"不是证据。
+2. 🆕 *** **`stdout_chars` 对 json 输出格式恒为 0**（§3）。 *** 别拿它估烧掉的输出。
+3. 🆕 *** **`admin daemon status` / `restart` 在高负载下会给假阴性**（§0）。 ***
+   判 daemon 死活以 `daemon_lock` 的 `alive` + `heartbeat_at` 为准，**别只看一次 CLI 输出**。
+4. 🆕 **复现测试抖动前，先确认命令与 `package.json` 的 `test` 脚本一致**（§8 第 2 条）。
+5. （沿用）改 `scripts/daemon/**` 或 config 默认值后**不重启 = 没生效，重启不算验证**；
+   `cp/rm/mv` 用 `/bin/*` 并事后复核；`parseLlmJson()` 只认记忆 schema；
+   `~/.claude/ccmem/config.json` 有明文第三方凭据，**只取你要的键**；
+   `StrategicCompact` 钩子按 200k 报警，在 1M 会话里百分比是错的。
 
 ---
 

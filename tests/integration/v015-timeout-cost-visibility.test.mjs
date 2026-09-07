@@ -47,6 +47,15 @@ process.stdout.write('x'.repeat(${PRINTED_CHARS}));
 setTimeout(() => {}, 60000);
 `);
 
+// A stub that finishes promptly, for the rows that must describe a healthy
+// call rather than a killed one.
+const FAST_STUB = path.join(STUB_DIR, 'stub-print-then-exit.mjs');
+writeFileSync(FAST_STUB, `
+process.stdin.resume();
+process.stdout.write('ok');
+process.stdin.on('end', () => process.exit(0));
+`);
+
 const { callClaudeP } = await import('../../scripts/daemon/claude-p.mjs');
 const { daemonCostFile } = await import('../../scripts/lib/metrics.mjs');
 const { DEFAULT_CONFIG } = await import('../../scripts/lib/config.mjs');
@@ -130,6 +139,96 @@ test('a killed call records the output it had already generated', async () => {
   assert.equal(row.total_cost_usd, null);
   assert.equal(row.output_tokens, null);
   assert.equal(row.stdout_chars, PRINTED_CHARS);
+});
+
+/**
+ * WHY `monotonic_ms` exists beside `wall_clock_ms` (Rule 9).
+ *
+ * `wall_clock_ms` is a `Date.now()` difference, so it counts every second that
+ * passed in the world -- including seconds in which this process was not
+ * running at all. Production carries 51 killed calls whose wall clock is more
+ * than 1.3x the budget that killed them (p50 18 minutes, max 122 minutes), and
+ * from `wall_clock_ms` alone there is no way to tell which of three unrelated
+ * things happened:
+ *
+ *   1. the call really did use its whole budget          -> the cap is binding
+ *   2. the machine suspended mid-call, so the timer's own
+ *      clock stopped while the wall clock kept going     -> nothing was wrong
+ *   3. the machine was awake but saturated, so the timer
+ *      fired late because the event loop could not run   -> the box is
+ *                                                           overloaded
+ *
+ * Case 3 is not hypothetical: on 2026-09-07 an on-machine load experiment
+ * (24 busy loops on 10 cores) turned 23 consecutive clean calls into 6
+ * consecutive kills in under 40 minutes, three of them landing at
+ * wall ~= 120.3-120.7s against a 120s budget -- mechanically indistinguishable
+ * from a genuine cap hit.
+ *
+ * `performance.now()` is driven by the same monotonic clock libuv uses to
+ * schedule `setTimeout`, on both macOS and Linux. That is what makes the pair
+ * portable: whatever each platform's clock does or does not count, the recorded
+ * elapsed is measured against the very clock the budget was armed on. So
+ * `monotonic_ms ~= timeout_ms` is case 1 or 2 and `monotonic_ms >> timeout_ms`
+ * is case 3, on either platform, without anyone having to know which POSIX
+ * clock the runtime picked. Cases 1 and 2 are then split by the gap between the
+ * two numbers: `wall_clock_ms - monotonic_ms` is time the timer's clock did not
+ * count.
+ *
+ * REGISTERED LIMIT, so the next reader does not mistake this for full cover:
+ * no test here can make the two clocks diverge. Divergence needs the machine
+ * suspended (or the system clock stepped), and neither is producible from a
+ * test process. A mutation that sets `monotonic_ms` to a copy of
+ * `wall_clock_ms` therefore survives every criterion below. What the tests do
+ * pin is that the field is a real elapsed measurement (not a constant, not the
+ * budget, not mis-scaled) and that it separates case 3.
+ */
+
+test('a completed call records a monotonic elapsed beside the wall clock', async () => {
+  withStub(FAST_STUB);
+
+  await callClaudeP('prompt', { taskType: 'weekly_synthesis', timeoutMs: 15000 });
+
+  const row = rows().at(-1);
+  assert.equal(typeof row.monotonic_ms, 'number');
+  assert.ok(row.monotonic_ms > 0, `monotonic_ms must be a measurement, got ${row.monotonic_ms}`);
+  // On a machine that is neither suspended nor starved the two clocks agree.
+  // This is what catches a constant, the budget, or a seconds/ms scale error --
+  // all of which would leave the field looking plausible in isolation.
+  assert.ok(
+    Math.abs(row.monotonic_ms - row.wall_clock_ms) < 250,
+    `the two clocks must agree on an idle machine: monotonic_ms=${row.monotonic_ms} wall_clock_ms=${row.wall_clock_ms}`
+  );
+});
+
+test('a timer that fired late is separable from a call that used its whole budget', async () => {
+  const BUDGET_MS = 300;
+  const BLOCK_MS = 1500;
+
+  withStub(HANG_STUB);
+  const pending = callClaudeP('prompt', { taskType: 'weekly_synthesis', timeoutMs: BUDGET_MS });
+
+  // Let the spawn happen and the timer get armed before the loop is taken away;
+  // callClaudeP queues behind `tail`, so the work does not start synchronously.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  // Starve the event loop the way a saturated machine does. The budget expires
+  // during this spin, but the callback cannot run until the spin ends -- which
+  // is precisely the production signature this field exists to name.
+  const blockUntil = performance.now() + BLOCK_MS;
+  while (performance.now() < blockUntil) { /* deliberate: this is the defect under test */ }
+
+  await assert.rejects(() => pending);
+
+  const row = rows().at(-1);
+  assert.equal(row.timed_out, true);
+  assert.equal(row.timeout_ms, BUDGET_MS);
+  // A call that genuinely used its budget lands at monotonic_ms ~= timeout_ms.
+  // This one is several times over on the timer's OWN clock, which no amount of
+  // wall-clock reading could have told apart from a real cap hit.
+  assert.ok(
+    row.monotonic_ms > 3 * BUDGET_MS,
+    `a starved timer must be visible on the monotonic clock: monotonic_ms=${row.monotonic_ms} budget=${BUDGET_MS}`
+  );
 });
 
 test.after(() => {

@@ -131,6 +131,12 @@ function runClaudeP(prompt, opts, queuedAt) {
   const { command, args } = resolveCommand(opts);
   const timeoutMs = resolveTimeoutMs(opts);
   const tStart = Date.now();
+  // Same clock libuv schedules the timeout on, on both macOS and Linux, so the
+  // recorded elapsed is measured against the budget's own clock rather than
+  // against the world. See the header of
+  // tests/integration/v015-timeout-cost-visibility.test.mjs for what the pair
+  // of numbers is able to tell apart.
+  const tStartMono = performance.now();
   const outputFormat = argsSelectJson(args) ? 'json' : 'text';
   const childSessionId = opts.env?.CLAUDE_CODE_SESSION_ID ?? randomUUID();
   const childEnv = {
@@ -168,6 +174,12 @@ function runClaudeP(prompt, opts, queuedAt) {
         output_format: outputFormat,
         queue_wait_ms: tStart - queuedAt,
         wall_clock_ms: Date.now() - tStart,
+        // wall_clock_ms counts seconds the world spent; this counts seconds the
+        // timer's clock spent. monotonic_ms ~= timeout_ms means the call used
+        // its budget; monotonic_ms >> timeout_ms means the callback could not
+        // run on time (a saturated machine); a large wall_clock_ms with a small
+        // gap-free monotonic_ms means the clock itself stopped (suspend).
+        monotonic_ms: Math.round(performance.now() - tStartMono),
         // The budget the timer was actually armed with, so a consumer can tell
         // a call the cap cut off (wall_clock_ms ~= timeout_ms) from one whose
         // timer was starved while the machine slept (wall_clock_ms >>

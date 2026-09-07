@@ -216,6 +216,24 @@ function runClaudeP(prompt, opts, queuedAt) {
       finish(reject, error, { exitCode: code, timedOut: false });
     });
 
+    // A child that exits before the prompt is fully written takes the read end
+    // of this pipe with it, and the in-flight write fails EPIPE. A stream that
+    // emits 'error' with no listener throws, and nothing under scripts/ installs
+    // a process.on('uncaughtException') -- so that throw would kill the daemon
+    // in the middle of whatever task it was running. The production tasks table
+    // carries six rows reading "daemon exited while this task was running".
+    //
+    // EPIPE is dropped rather than reported because it is the symptom, not the
+    // cause: the child's own 'error'/'close' handler above settles this call
+    // with the real exit reason. Any other stdin failure is genuinely unknown
+    // and still has to settle the call rather than escape as a crash.
+    child.stdin.on('error', (error) => {
+      if (error?.code === 'EPIPE') {
+        return;
+      }
+      finish(reject, error, { exitCode: null, timedOut: false });
+    });
+
     child.stdin.end(String(prompt ?? ''));
   });
 }

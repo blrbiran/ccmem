@@ -168,6 +168,15 @@ function runClaudeP(prompt, opts, queuedAt) {
         output_format: outputFormat,
         queue_wait_ms: tStart - queuedAt,
         wall_clock_ms: Date.now() - tStart,
+        // The budget the timer was actually armed with, so a consumer can tell
+        // a call the cap cut off (wall_clock_ms ~= timeout_ms) from one whose
+        // timer was starved while the machine slept (wall_clock_ms >>
+        // timeout_ms). timed_out alone conflates the two.
+        timeout_ms: timeoutMs,
+        // A killed call keeps no usage -- that lives in a result envelope it
+        // never finished printing -- but it was still billed for what it
+        // generated. This is the only surviving measure of that.
+        stdout_chars: stdout.length,
         exit_code: outcome.exitCode,
         timed_out: outcome.timedOut,
         ...(outputFormat === 'json'

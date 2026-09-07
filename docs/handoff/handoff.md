@@ -5851,7 +5851,7 @@ $0 就买到了本来预算 ≤$10 的答案。
 | 查什么 | 怎么查 | 本轮写稿时的读数 |
 |---|---|---|
 | 工作区／分支 | `git status --porcelain -uall`、`git branch --list` | 干净；仍只有 `main` 与 `config-value-parity` |
-| 远端真实位置 | **裸** `/usr/bin/git ls-remote origin refs/heads/main` | ⚠️ 接手时**与本地 HEAD 相同、0 笔未 push**，而上一轮交底说「有三笔未 push」——**以 `ls-remote` 为准**（ⅩⅩⅩⅢ.7.2 同款坑，这次骗的是交底）|
+| 远端真实位置 | **裸** `/usr/bin/git ls-remote origin refs/heads/main`，与 `git rev-parse HEAD` 比 | **不写数**（本节落盘这个动作本身就会改它）。⚠️ 只留一条教训：**接手本轮时，口头交底说「有三笔未 push」，而裸 `ls-remote` 显示远端与本地相同、0 笔未 push** ⇒ ⅩⅩⅩⅢ.7.2 那个坑会**两头骗人**，包括骗交底。**一律现查，别信任何一段文字里的数。** |
 | 套件 | `npm test` | `721/721`（718 + 本轮 3 条），连跑两次全绿、零 skipped |
 | **daemon 跑的是哪份代码** | **看新 cost 行里有没有 `timeout_ms` 字段**：`tail -1 ~/.claude/ccmem/daemon-cost.jsonl` | 旧码**没有这个键**；新码必有（**这比 pid 和 uptime 锐利**）|
 | 窗口真的改了吗 | 审计行正文长度（ⅩⅩⅩⅢ.10 那条 SQL） | 复查过：`3997 / 3999 / 3997 / 2958`，紧邻旧码恒为 998–1000 ⇒ **ⅩⅩⅩⅢ 的加宽确实在生产里跑着** |
@@ -5859,12 +5859,25 @@ $0 就买到了本来预算 ≤$10 的答案。
 
 ## 11. 下一位怎么接手
 
-### 本轮那两个提交怎么找（**按标题，不按 SHA**）
+### 本轮那三个提交怎么找（**按标题，不按 SHA**）
 
 ```
 git log --oneline --grep="record the budget and the burned output"   # 代码 + 3 条守卫
 git log --oneline --grep="record round XXXIV"                        # 本节文档
+git log --oneline --grep="close XXXIV.9.2"                           # 重启的行为复验
 ```
+
+### 本轮那些零成本分析脚本在哪（**下一轮重算时别重写**）
+
+```
+/private/tmp/claude-501/-Users-biran-code-skills-ccmem/1d6bed85-.../scratchpad/
+  stage0c.mjs   # 按配置时代切开 daemon-cost.jsonl，出 §1 那张表
+  stage0d.mjs   # 真撞顶 vs 定时器饿死的分类，出 §2
+```
+
+⚠️ *** **`stage0d.mjs` 里那个按时代猜预算的 `cap()` 函数，在有了 `timeout_ms` 之后应当删掉**，
+改成直接读行里的字段。 *** 留着它等于把一个只该用一次的启发式变成基础设施。
+⚠️ scratchpad 会被清理，**跑之前先确认目录还在**（ⅩⅩⅩⅢ.7.1：上一轮的探针幸存过一次，不保证每次都幸存）。
 
 ### 建议调用的 skill
 
@@ -5875,12 +5888,19 @@ git log --oneline --grep="record round XXXIV"                        # 本节文
 | 查 T13 抖动 / `failed` 归因 / 睡眠饿死要不要修 | `superpowers:systematic-debugging` |
 | 收尾／合并／删分支 | `superpowers:finishing-a-development-branch` ＋ `superpowers:verification-before-completion` |
 
-### 🔴 本仓库特有、skill 不会告诉你的（ⅩⅩⅩⅢ.11 那几条**全部仍然有效**，另加本轮两条）
+### 🔴 本仓库特有、skill 不会告诉你的（ⅩⅩⅩⅢ.11 那几条**全部仍然有效**，另加本轮五条）
 
 1. 🆕 *** **生产的 `timed_out` 曾经把「撞顶」和「机器睡着」记成同一件事**（§2）。 *** 现在有 `timeout_ms` 可以分开，
    但 **`2026-09-07` 之前的历史行没有这个字段** —— 读旧数据必须用 §2 那个启发式，别直接数 `timed_out`。
 2. 🆕 *** **花钱造对照前，先查这个变量在生产里变过没有**（§7）。 *** 变过 ⇒ 自然实验免费；
    **但要显式点名同时变了什么，否则你拿到的是一个脏对照还以为是干净的。**
+3. 🆕 *** **`summarize_pending` 只由 `scripts/handlers/stop.mjs` 的 Stop 钩子入队。** ***
+   ⇒ 重启 daemon 之后，**在同一个会话里等不到新的 cost 行**（要等下一次会话结束），
+   而 cost 行是验证 daemon 换没换代码的唯一行为判别式。**排验证顺序时把这条算进去。**
+4. 🆕 ⚠️ *** **`~/.claude/ccmem/config.json` 里有明文第三方凭据。** *** 排查配置时**只取你要的那个键**
+   （`node -e` 读 `loadConfig()`，或 `jq` 取子树），**不要整份 `cat` 到会话／日志里**。本轮我 `cat` 过一次。
+5. 🆕 **`StrategicCompact` 钩子按 200k 窗口报警**，在 1M 窗口的会话里它的百分比是错的（ⅩⅩⅩⅢ.7.3 同款，本轮复现）。
+   **按 Rule 6 把不一致摆出来，别照着它去 compact。**
 3. （沿用）改 `scripts/daemon/**` 或 config 默认值后**不重启 = 没生效，重启不算验证**；隔离 config 必须
    `env -u CCMEM_CONFIG_PATH`；`cp/rm/mv` 用 `/bin/*` 并事后复核；`sed` 的插入形式会静默失败；
    `parseLlmJson()` 只认记忆 schema、对别的形状静默返回 `[]`；花钱的批量跑先验一次再放量、原始输出解析前落盘。

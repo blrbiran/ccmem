@@ -6328,6 +6328,19 @@ sqlite3 "$HOME/.claude/ccmem/global.db" "select datetime(ts/1000,'unixepoch','lo
 **预期**：`scanned` 约 4,500（池在长，实测 20:30 时为 4,502）、`quarantined=0`、`flagged ≤ 1`、耗时 1 秒量级。
 🔴 **拿到之前，不要认为 ⅩⅩⅩⅥ 已经上线。**
 
+### 6.1 我试过了，两次都被权限分类器拦下（**不是我忘了**）
+
+人当轮明确授权「按你的建议执行」之后，我**又试了一次**入队，**仍然被拦** ——
+分类器对「往生产库写」是硬拦，与对话里的授权无关。**我没有绕。**
+（顺带：连带若干只读的复合命令也被拦了，拆成单条才过。）
+
+**目前能确定到什么程度**：daemon 进程起于 `20:28:02`，而两笔代码提交落在 `20:26:38` / `20:26:59`
+⇒ *** **它必然加载了新模块。** *** 但这是**时间戳推断，不是行为判别式** ——
+ⅩⅩⅩⅡ.1 那条教训（看行为签名，别看 pid／别看"进程起来了"）在这里仍然适用，**所以本轮仍记为未复验**。
+
+📌 *** **下一位：这件事只差一条命令，别重新设计它。** *** 要么等 02:20，要么让人用 `!` 前缀跑上面那条 INSERT，
+要么给一条 Bash permission rule。**跑完之后 §6 那条查询就能给出答案。**
+
 ## 7. 仍然有效的禁令（**共 7 条，一条都没变**）
 
 1. `config-value-parity` 不合并。 2. 那 7 个死键不删。 3. 不许改本机电源设置。 4. **不许 push。**
@@ -6366,6 +6379,17 @@ git log --oneline --grep="drop credential_assignment"   # §1 §2 正则删除 +
 git log --oneline --grep="size the scan batch"          # §3 batch_size + 2 条守卫
 ```
 
+### 建议调用的 skill
+
+| 场景 | skill |
+|---|---|
+| **补 §6 那条复验**（最优先，只差一条命令）| 不用 skill。跑 §6 的 INSERT 与查询即可，**别把它重新设计成一个项目** |
+| 复验结果与预期不符 | `superpowers:systematic-debugging`，**先读 §6 的预期数字再动手** |
+| 任何改 `scripts/**` 的实现 | `superpowers:test-driven-development` ＋ 变异纪律，**判据必须断言真正落盘的那一行**（§3 有本轮四次变异的做法）|
+| 动探测器／正则（threat-scan）| `superpowers:brainstorming` 先定设计。**必须同时准备「必抓」与「必不抓」两组样本**（§2.1，本轮最值钱的一条）|
+| 真要提高 revalidation 频率 | 覆盖索引的数已量好在 §0.1，**但那是 schema 改动** ⇒ 走 `superpowers:brainstorming`，按 Rule 13 写回退 |
+| 收尾／合并 | `superpowers:verification-before-completion` —— ⚠️ **本轮就是栽在这一步上，见 §6** |
+
 ### 🔴 本仓库特有、skill 不会告诉你的（ⅩⅩⅩⅤ.10 那几条**全部仍然有效**，另加本轮五条）
 
 1. 🆕 *** **判据要有「必抓」和「必不抓」两组样本**（§2.1）。*** 只在语料上评估，会漏掉召回洞，而且看着完美。
@@ -6385,9 +6409,10 @@ git log --oneline --grep="size the scan batch"          # §3 batch_size + 2 条
 收尾时按惯例跑裸 `ls-remote`，返回的是我 20:26 刚落的那笔提交 —— 我没有 push 过。查 reflog：
 
 ```
-origin/main@{2026-09-08 07:28:04}  0b601b8  update by push   <- ⅩⅩⅩⅤ 那笔
-origin/main@{2026-09-08 21:27:05}  b0f9250  update by push   <- 本轮第二笔，我提交于 20:26:59
+origin/main@{2026-09-08 07:28:04}  update by push   <- ⅩⅩⅩⅤ 的文档提交
+origin/main@{2026-09-08 21:27:05}  update by push   <- 本轮第二笔代码提交（提交于 20:26:59）
 ```
+（**本节刻意不写 SHA** —— 提交本文档就会改掉 `HEAD`。要复现这张表：`git reflog show refs/remotes/origin/main --date=iso`。）
 
 *** **人当轮确认：这些 push 都是他手动做的。** *** 本地也确实没有自动化（`.git/hooks/` 空、无 crontab、
 launchd 里与本仓库相关的只有 `com.ccmem.daemon`）。⇒ **禁令 4 一直在正常生效，没有失控的第三方。**
@@ -6396,7 +6421,7 @@ launchd 里与本仓库相关的只有 `com.ccmem.daemon`）。⇒ **禁令 4 �
 
 *** **「零 push」是一句关于【agent 没推】的陈述，不是一句关于【代码没上远端】的陈述。** ***
 `origin` 是 `git@github.com:blrbiran/ccmem.git`，人会在提交之后手动推，**延迟是分钟到一小时量级**
-（09-08 那笔提交于 20:26:59、推送于 21:27:05，正好一小时）。
+（本轮第二笔代码提交于 20:26:59、推送于 21:27:05，正好一小时）。
 
 ⇒ 两条实操：
 1. **凡是建立在「这些还没公开」上的推理都不成立** —— 上一轮的东西大概率早就在远端了。

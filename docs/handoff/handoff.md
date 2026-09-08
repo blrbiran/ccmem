@@ -6205,7 +6205,8 @@ git log --oneline --grep="record round XXXV"  # 本节文档
 > **我没有执行任何 push；未删分支。全轮 0 次 API 调用** —— 所有结论出自本地正则、只读查询与对生产库副本的离线跑。
 > ⚠️ **但别把「零 push」读成「这些还在本地」，见 §11** —— 人会在提交后手动推，
 > **本轮两笔代码提交在我收尾时已经在 origin 上了。**
-> 🔴 *** **但本轮以【未复验】收尾，见 §6。重启不算验证，这一条我没能闭合。** ***
+> 🔴 ~~*** **但本轮以【未复验】收尾，见 §6。重启不算验证，这一条我没能闭合。** ***~~
+> ✅ **已闭合于 ⅩⅩⅩⅦ.0**（2026-09-08 23:30，`scanned=4555` 的审计行，daemon 落的）。**§6 保持原样存档，但它的结论已过时 —— 读 ⅩⅩⅩⅦ。**
 > ⚠️ 本节不写 SHA、不写 `HEAD`、不写领先远端几个。
 
 ## 0. 🔴🔴 先读这条：**ⅩⅩⅩⅤ.5 把优先级排反了**
@@ -6305,7 +6306,11 @@ tier1_hits 0 | secret_hits 0 | tier2 force_demote 1（credential_exfiltration）
 ⚠️ **我一开始漏了 tier2 这个探测器**（`revalidation.mjs:95`），只量了 tier1 和 secret 就准备上生产。
 *** **爆炸半径要按【代码里实际跑的每一个分支】量，不是按你记得的那几个。** ***
 
-## 6. 🔴🔴 **本轮以「未复验」收尾** —— 这是本节最重要的一条
+## 6. ~~🔴🔴 **本轮以「未复验」收尾**~~ ✅ **已于 ⅩⅩⅩⅦ.0 闭合**
+
+> ⚠️ **本节整节保留作存档，但结论已过时。** 复验已在 2026-09-08 23:30 拿到
+> （`trigger=manual`、`scanned=4555`、`quarantined=0`、`flagged=1`、`581 ms`，由 daemon `pid 33120` 落下）。
+> *** **下面那条裸 `INSERT INTO tasks` 已作废** —— 用 `ccmem admin cron run revalidation_audit`，理由见 ⅩⅩⅩⅦ.1。***
 
 已做：daemon 已重启，`daemon_lock` 从 pid `47531 → 33120`、`alive=1`、`acquired_at` 是新的。
 *** **但新 pid 只证明进程是新的，不证明它跑的是哪份代码（ⅩⅩⅩⅡ.1：看行为签名，别看 pid）。** ***
@@ -6349,7 +6354,7 @@ sqlite3 "$HOME/.claude/ccmem/global.db" "select datetime(ts/1000,'unixepoch','lo
 ## 8. 本轮未闭合
 
 1. **未 push**（禁令 4）。
-2. 🔴 **§6 的生产复验未拿到** —— 本轮唯一真正的缺口。
+2. ~~🔴 **§6 的生产复验未拿到** —— 本轮唯一真正的缺口。~~ ✅ **已闭合于 ⅩⅩⅩⅦ.0。**
 3. **T13 抖动仍未闭合**（本轮没碰；两次全量跑都是全绿，抓不到）。
 4. `scan_patterns_version` 仍是 `2026.07` —— **这是裁决结果**（§4），不是漏做。
 5. **覆盖索引没加**（§0.1），数已量好，将来提频再说。
@@ -6383,7 +6388,7 @@ git log --oneline --grep="size the scan batch"          # §3 batch_size + 2 条
 
 | 场景 | skill |
 |---|---|
-| **补 §6 那条复验**（最优先，只差一条命令）| 不用 skill。跑 §6 的 INSERT 与查询即可，**别把它重新设计成一个项目** |
+| ~~**补 §6 那条复验**（最优先，只差一条命令）~~ ✅ **已闭合于 ⅩⅩⅩⅦ.0** | — |
 | 复验结果与预期不符 | `superpowers:systematic-debugging`，**先读 §6 的预期数字再动手** |
 | 任何改 `scripts/**` 的实现 | `superpowers:test-driven-development` ＋ 变异纪律，**判据必须断言真正落盘的那一行**（§3 有本轮四次变异的做法）|
 | 动探测器／正则（threat-scan）| `superpowers:brainstorming` 先定设计。**必须同时准备「必抓」与「必不抓」两组样本**（§2.1，本轮最值钱的一条）|
@@ -6430,6 +6435,105 @@ launchd 里与本仓库相关的只有 `com.ccmem.daemon`）。⇒ **禁令 4 �
 
 📌 ⅩⅩⅩⅣ.10 与 ⅩⅩⅩⅤ.9 记的是反方向的偏差（交底说有若干笔未推、实测已同步）。
 **两个方向都出现过 ⇒ 这一栏一律现查，别读任何一轮的结论 —— 包括本轮的。**
+
+---
+
+# ⅩⅩⅩⅦ. 2026-09-08 夜：✅ **ⅩⅩⅩⅥ.6 那条复验已闭合** —— 拿到 `scanned=4555` 的审计行，**且是 daemon 落的**；顺带把交底里那条裸 `INSERT` 换成产品自己的入队路径
+
+> **本轮零代码改动、零测试改动、零 API 调用、未 push。**
+> **动生产一次**：入队一条 `revalidation_audit` 任务 —— **命令由人用 `!` 前缀手动执行**（我仍被权限分类器硬拦，没绕）。其余全是只读查询。
+> **没有重跑套件**（无代码改动），沿用上一轮的 `737/737`。
+
+## 0. ✅ 判别式拿到了 —— ⅩⅩⅩⅥ 至此才算上线
+
+| 检验 | 结果 |
+|---|---|
+| **A 判别式** `revalidation_audit_run` | `23:30:06`｜`trigger=manual`｜*** **`scanned=4555`** ***（历史四次全是 `100`）｜`quarantined=0`｜`flagged=1`｜`duration_ms=581`｜`fast_skip=0`｜`pattern_version=2026.07` |
+| **B** `tasks#20756` 终态 | `completed` |
+| **C** `task_runs` | **无行** —— *** **不是失败，是结构性的**，见 §3 *** |
+| **D** 那条 flagged | `mem 10958`｜`tier2:credential_exfiltration`｜`reason=high_trust`｜`prev_trust=0.6` |
+| **E** `revalidation_quarantine_in` | `0` 条 |
+| **F** mem 10958 事后状态 | 仍 `decay_status=active`、`quarantined_at` 为 NULL ⇒ **只写审计行，记忆没被改状态** |
+| **G** 待扫池 | `4527 → 0`（跑前 22:36 查得 4527，落行时 4555，池在长） |
+| **H** daemon | 仍是 `pid 33120`、`alive=1`、心跳 10s ⇒ **没崩**；无 `revalidation_manual_error` |
+
+*** **这是 daemon 进程落下的行为签名，不是 ⅩⅩⅩⅥ.6.1 那种时间戳推断。** ***
+ⅩⅩⅩⅥ.5「上生产前量的预测」**逐条对上**：`tier1 0 / secret 0 / tier2 force_demote 1 (credential_exfiltration) ⇒ WOULD_QUARANTINE 0、WOULD_FLAG 1`。
+
+### 0.1 两条独立复现
+
+1. **`0.128 ms/行`**（4555 行 / 581 ms）。ⅩⅩⅩⅥ.3 用来定 `batch_size=5000` 的实测最坏值是 `0.131 ms/行`。
+   ⇒ **上限的依据在生产上被独立复现了一次，没定错。**
+2. **ⅩⅩⅩⅥ.8.7 那条付费路径警告在这里不咬。** stamp（`revalidation.mjs:71`）把 4,555 行的 `updated_at` 刷成 now，
+   而 `security_audit` poolC 的 WHERE 含 `updated_at > now-7d`（`daemon/tasks/security-audit.mjs:106`，`LIMIT 50`）。
+   跑前预测「33 → ≤35」，**实测跑后仍是 33**（那 2 条本来就在窗内）。⇒ **不构成额外 LLM 批。**
+   ⚠️ 但 ⅩⅩⅩⅥ.8.7 关于「将来真 bump 10,759 行」的那条**仍然成立**，本轮只覆盖了 4,555 行这一档。
+
+## 1. 🔴 别用交底 ⅩⅩⅩⅥ.6 里那条裸 `INSERT INTO tasks` —— 用产品自己的路径
+
+```
+ccmem admin cron run revalidation_audit      # -> ccmem: enqueued revalidation_audit as task#NNNNN
+```
+
+理由（都在代码里核过）：
+
+- `admin/cron.mjs:17` 的 `MANUAL_RUN_TYPES` 本来就含 `revalidation_audit`；`runCronTask()`（`cron.mjs:245`）
+  干的事和那条裸 INSERT 等价，**但走产品代码而不是绕过它**；
+- `manualLeaseKey()`（`cron.mjs:224`）对 `revalidation_audit` 返回 `null` ⇒ *** **没有日租约，当天 02:20 已经跑过也不会被 skip。** ***
+- `dispatch.mjs:21 → runRevalidationAudit()` 用 `trigger:'manual'`，**绕开** `lazy_disabled` / `daily_disabled` 两个门（`revalidation.mjs:31,35`）；
+- **最要紧的**：它是**入队**、由 daemon 取走执行（轮询 30s–5min，`loop.mjs:396`）
+  ⇒ 落下的审计行证明的是 **daemon 那份代码**，正好是 ⅩⅩⅩⅡ.1 要的行为判别式。裸 INSERT 也能做到，但没理由绕过产品代码。
+
+⇒ **ⅩⅩⅩⅥ.6 那条 SQL 就地作废，用上面这条。**
+
+## 2. ⚠️ 下一次 daily（02:20）会是 `scanned=0 / fast_skip=1` —— **这是对的，不是坏了**
+
+本轮把池扫到了 **0**。`revalidation.mjs:47` 的 fast-skip 分支在 `pending=0` 时会写一条
+`scanned=0, fast_skip=true` 的审计行。**别把它读成回归。**
+池要重新长起来，得有新记忆写入，或者 `scan_patterns_version` 被 bump（ⅩⅩⅩⅥ.4：**不 bump 是裁决**）。
+
+## 3. `task_runs` 里**永远**没有 `revalidation_audit` 的行
+
+`task_runs` 只由 `tryClaimLease()` 写（`task-runs.mjs:10`），而它只在有租约的类型上被调用
+（`loop.mjs` 里 5 处 + `cron.mjs` 的手动路径）。`revalidation_audit` 无租约 ⇒ 一行都不会有。
+
+实测：`select count(*) from task_runs where type='revalidation_audit'` = **0**；
+整张表只有 `daily_maintenance / tier1_5_mini_prelude / security_audit / weekly_synthesis / contradiction_audit / cross_project_patterns` 六种。
+
+⇒ *** **`ccmem admin cron list` 看不到它的「上次跑」。它的状态只在 `audit_log` 里。** ***
+⇒ 一般化的一条：**"某张状态表里没有你的行" 先确认那张表由谁写、写的条件是什么，再判断是不是失败。**
+
+## 4. 怎么自己复现本节（**别信本节的数，现查**）
+
+```
+sqlite3 "file:$HOME/.claude/ccmem/global.db?mode=ro" \
+  "select datetime(ts/1000,'unixepoch','localtime'), json_extract(details,'\$.trigger'), \
+          json_extract(details,'\$.scanned'), json_extract(details,'\$.quarantined'), \
+          json_extract(details,'\$.flagged'), json_extract(details,'\$.duration_ms'), \
+          json_extract(details,'\$.fast_skip') \
+   from audit_log where action='revalidation_audit_run' order by ts desc limit 5;"
+```
+⚠️ `audit_log` 的主键列是 `affected_ids`（JSON 数组），**不是** `memory_id` / `mem_id` —— 我在本轮试错过两次。
+
+## 5. 本轮未闭合（ⅩⅩⅩⅥ.8 逐条过了一遍）
+
+1. **未 push**（禁令 4）。
+2. ✅ ~~ⅩⅩⅩⅥ.6 的生产复验~~ —— **本节 §0 已闭合。**
+3. **T13 抖动仍未闭合**（本轮没碰，也没跑套件）。
+4. `scan_patterns_version` 仍是 `2026.07` —— **裁决结果**（ⅩⅩⅩⅥ.4），不是漏做。
+5. **覆盖索引没加**（ⅩⅩⅩⅥ.0.1），数已量好。
+6. `last_scanned_patterns_version` 双写入方（ⅩⅩⅩⅥ.8.6）**登记不修**，本轮没有新证据推翻它。
+7. ⅩⅩⅩⅥ.8.7 的 bump 成本**仍未验证在 10,759 行那一档**（本轮只覆盖 4,555 行，见 §0.1.2）。
+
+## 6. 仍然有效的禁令（**共 7 条，一条都没变**）
+
+1. `config-value-parity` 不合并。 2. 那 7 个死键不删。 3. 不许改本机电源设置。 4. **不许 push。**
+5. Task 5 读数不许重跑。 6. 不要再挂 cron、不要再做巡检。 7. 不要在代码里 pin 任何模型 ID／别名。
+
+## 7. 🔴 本仓库特有、skill 不会告诉你的（本轮新增两条，ⅩⅩⅩⅥ.10 那六条**全部仍然有效**）
+
+1. 🆕 *** **要手工触发一个后台任务，先查 `admin/cron.mjs` 的 `MANUAL_RUN_TYPES`**，别自己写 SQL 入队。*** 产品已经有这条路径，而且它顺带处理租约（§1）。
+2. 🆕 *** **爆炸半径要在跑之前量、跑之后复量。**（§0.1.2）*** 我预测 poolC「33 → ≤35」，实测跑后仍是 33 —— **预测偏保守是好事，但只有复量才知道。**
 
 ---
 

@@ -214,7 +214,7 @@ export const DEFAULT_CONFIG = {
     revalidation: {
       lazy_enabled: true,
       daily_enabled: true,
-      batch_size: 100,
+      batch_size: 5000,
       flag_trust_threshold: 0.6
     }
   },

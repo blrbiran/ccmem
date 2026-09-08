@@ -9,8 +9,16 @@ const SECRET_PATTERNS = [
   { re: /\bsk-[A-Za-z0-9_-]{10,}/g, name: 'openai_key' },
   { re: /gh[pousr]_[A-Za-z0-9]{20,}/g, name: 'github_token' },
   { re: /AIza[0-9A-Za-z_-]{20,}/g, name: 'google_api_key' },
-  { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g, name: 'private_key' },
-  { re: /(?:api[_ -]?key|secret|token|password).{0,20}[:=].{0,40}/gi, name: 'credential_assignment' }
+  { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g, name: 'private_key' }
+  // credential_assignment（「关键字 + 分隔符 + 值」）已删除，理由是实测而非风格：
+  // 它原文写的是 \b(?:…)\b，但源码里落的是两个字面 0x08 退格符，所以从落地起就没
+  // 命中过任何东西（§ⅩⅩⅨ.2.2 那条「死正则」）。在 3,540 条 global 记忆上实测三档：
+  // 补成 \b ⇒ 6 命中 6 假阳性；再收紧到「关键字紧邻分隔符 + 值为 ≥8 可打印 ASCII」
+  // ⇒ 1 命中，仍是假阳性（一条讲怎么生成密码的规则）。这个形状在本语料里与技术
+  // 散文不可区分 —— `token cap:`、`token budgets:` 这类词组就是本仓库自己的语汇。
+  // 上面四条具名规则相反：生产里 revalidation 累计隔离 2 条，两条都是 openai_key。
+  // ⚠️ 接受的代价：真写进记忆的 `password: hunter2xyz` 这种形状不再被拦。
+  // 守卫见 tests/unit/v015-credential-assignment-removed.test.mjs。
 ];
 
 // TIER1 的 hidden_unicode 判的就是 U+200B/200C/200D/FEFF 这四个字符 —— 所以规范化

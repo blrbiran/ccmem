@@ -592,13 +592,18 @@ export function ensureSchema(db) {
   reconcileFtsArtifacts(db);
 }
 
+// 每个连接撞写锁时最多等这么久。导出是为了让"等这个库放锁"的调用方能按它定预算 ——
+// 等待方的预算低于这个数，等的就是一个必然等不到的东西：daemon 删锁行本身可以合法地
+// 占满这里的 5000ms，而 stop 曾经只等 2000ms（见 admin/daemon.mjs 的 STOP_WAIT_TIMEOUT_MS）。
+export const DB_BUSY_TIMEOUT_MS = 5000;
+
 export function openDb() {
   mkdirSync(getDataRoot(), { recursive: true });
   const db = new DatabaseSync(getDbPath());
   // busy_timeout 必须先装：打开/恢复 WAL 要拿排它锁，而 `PRAGMA journal_mode = WAL`
   // 在 busy handler 装上之前执行的话，任何并发开库都会让它 0ms 抛 `database is locked`
   // （实测 errcode 5 与 261 SQLITE_BUSY_RECOVERY），配置好的 5 秒容忍度形同虚设。
-  db.exec('PRAGMA busy_timeout = 5000;');
+  db.exec(`PRAGMA busy_timeout = ${DB_BUSY_TIMEOUT_MS};`);
   db.exec('PRAGMA journal_mode = WAL;');
   ensureSchema(db);
   return db;

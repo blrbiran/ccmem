@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isLockRowAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
-import { getDataRoot } from '../db.mjs';
+import { DB_BUSY_TIMEOUT_MS, getDataRoot } from '../db.mjs';
 import { comparePlist, EMPTY_LISTS, evaluateGates, parseEnvDict, splitPlist } from './plist-drift.mjs';
 
 const DAEMON_MAIN = fileURLToPath(new URL('../../daemon/main.mjs', import.meta.url));
@@ -19,6 +19,14 @@ const WAIT_TIMEOUT_MS = 2000;
 // 冷启动无法按需复现（当前 uptime 是热的），所以这个数是判断，不是测量出来的 ——
 // 真正的安全网是 restart_failed 的可读消息，不是这个数字。
 const START_WAIT_TIMEOUT_MS = 5000;
+// 停止等待的被等方是 daemon 的 releaseDaemonLock —— 一条 DELETE，撞写锁时按开库时设的
+// busy_timeout 等。等待方的预算必须**大于**它，否则 daemon 只是被别的写入方挡了一下，
+// stop 就会在它删掉锁行之前放弃，把一次成功的 stop 报成 stop_timeout（形状同 bug-063
+// 缺陷 1，当时只修了 start 一侧）。所以这个数从 DB_BUSY_TIMEOUT_MS 导出，而不是自己写一个
+// —— 两个数各写各的正是上一次出问题的方式。
+// ⚠️ 已知残余：SIGTERM 到达时 daemon 若正好卡在另一条同样被挡住的语句上（比如心跳 UPDATE），
+// 两段 busy 等待会串起来，超过这个预算 —— 那种情况仍会报 stop_timeout，本测试不覆盖。
+const STOP_WAIT_TIMEOUT_MS = DB_BUSY_TIMEOUT_MS + 1000;
 const DEFAULT_PATH = '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin';
 export const DAEMON_ENV_PASSTHROUGH = [
   'ANTHROPIC_API_KEY',
@@ -698,7 +706,7 @@ async function stopDaemon(db) {
   const stopped = await waitFor(() => {
     const lock = db.prepare(`SELECT 1 FROM daemon_lock WHERE id = 1`).get();
     return lock ? null : true;
-  });
+  }, STOP_WAIT_TIMEOUT_MS);
 
   return stopped ? { status: 'stopped', ...current } : { status: 'stop_timeout', ...current };
 }

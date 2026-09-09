@@ -6710,6 +6710,54 @@ stamp 留下的那个 `updated_at` 根本进不了这条路径的计算。⇒ **
    而它解析到的是 `$TMPDIR` 里的一个 shim（实测同目录下**堆了 54 个**过期 shim 目录）。**登记为观察，未证。**
 
 
+## 11. 下一位怎么接手
+
+### 本轮提交怎么找（**按标题，不按 SHA** —— 提交本文档就会改掉 `HEAD`）
+
+```
+git log --oneline --grep="a probe that could not run"       # §10.3 产品修复 + T16/T17
+git log --oneline --grep="bump cost read-only"              # §9  bump 成本与裁决
+git log --oneline --grep="the overnight daily scanned 18"   # §2  被推翻的那条预测
+git log --oneline --grep="close XXXVI.6"                    # §0  生产复验闭合
+```
+
+### 🔴 唯一一个等人拍板的问题
+
+*** **T13 要不要继续买？** *** §10.2 已排除单文件路径；剩下的路是**全量 × N**。
+按记录的 ~1% 频率，**90% 把握需要 ~230 次全量跑**（每次 739 用例）。
+**很贵，且 daemon 在同一台机器上跑付费调用** ⇒ **先跟人确认预算再开跑，不要自己起。**
+⚠️ 真要跑，仪器打 `reason`（§10.4 第 1 条）、限并发别用 `wait -n`（§7.4）。
+
+### 建议调用的 skill
+
+| 场景 | skill |
+|---|---|
+| **接着查 T13** | `superpowers:systematic-debugging`。**先读 §10.1 那七条与 §10.4**，那七条是读码/测量得来的，别重查 |
+| 任何改 `scripts/**` 的实现 | `superpowers:test-driven-development` ＋ 变异纪律。*** **跨桩边界的改动必须配一条走真实现的判据**（§7.5，本轮实测过）*** |
+| 动探测器／正则（threat-scan）| `superpowers:brainstorming`。**必须同时准备「必抓」与「必不抓」两组样本**（ⅩⅩⅩⅥ.2.1）|
+| 真要 bump `scan_patterns_version` | **成本已量好在 §9，不必重测。** 但那是不可逆写 ⇒ 走 `superpowers:brainstorming`，按 Rule 13 写回退 |
+| 真要提高 revalidation 频率 | 覆盖索引的数已量好在 ⅩⅩⅩⅥ.0.1，**是 schema 改动** ⇒ 同上 |
+| 收尾／合并 | `superpowers:verification-before-completion` |
+
+### 怎么自己查状态（**别信本节的数，现查**）
+
+| 查什么 | 怎么查 |
+|---|---|
+| 工作区／分支 | `git status --porcelain -uall`、`git branch --list` |
+| 远端真实位置 | **裸** `/usr/bin/git ls-remote origin refs/heads/main`，与 `git rev-parse HEAD` 比。⚠️ 读法见 ⅩⅩⅩⅥ.11：**「零 push」是说 agent 没推，不是说代码没上远端** |
+| 套件 | `npm test`（本轮 `739/739`，连跑两次全绿、零 skipped、`EXIT=0`）|
+| daemon 活没活 | 看 `daemon_lock` 的 `alive` **＋** `heartbeat_at` 年龄，**别信 CLI 单次读数**（ⅩⅩⅩⅤ.0 有假阴性）|
+| daemon 跑的是哪份代码 | 行为判别式。ⅩⅩⅩⅥ 那条（`scanned > 100`）**已用掉且池已排空**；`monotonic_ms`（ⅩⅩⅩⅤ.9）仍有效 |
+| 机器忙不忙 | `uptime` **加** `top -l 1 \| grep "CPU usage"` —— **load average 残留极久，别只看它**（ⅩⅩⅩⅥ.9）|
+| 手工触发后台任务 | `ccmem admin cron run <type>`，先查 `admin/cron.mjs` 的 `MANUAL_RUN_TYPES`（§7.1）。**别自己写 SQL 入队** |
+
+### ⚠️ 三条最容易被下一位读错的
+
+1. *** **§10 没有闭合 T13。** *** 那个修复能造出 T13 的签名，**但不是它的根因** —— 48 次零命中从没观测到 G4 拦过。
+2. *** **§9 的裁决是「不 bump」，人已授权但我没用掉。** *** 授权还在，成本表也在，**将来要用直接读 §9，别重测**。
+3. *** **§2 是我写错又自己推翻的一条预测。** *** 它留在文档里是为了那条教训（§7.3），**不是当前状态**。
+
+
 
 ---
 

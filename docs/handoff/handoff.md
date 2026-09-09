@@ -1,16 +1,20 @@
 # ccmem —— Handoff
 
-> ## 🟢 接手入口（2026-09-09，最新一轮见 **ⅩⅩⅩⅨ**）
+> ## 🟢 接手入口（2026-09-09，最新一轮见 **ⅩⅬ**）
 >
 > *** **v0.14 已收尾发布，没有在飞的工作，没有半成品分支。** ***
 >
-> 🔴🔴🔴 *** **先读 ⅩⅩⅩⅨ.0 和 ⅩⅩⅩⅨ.5，再读别的。** *** T13 现在有**三条**作废路线，
-> 照任何一条做都会白花一轮：①「把仪器改打 `reason`」（ⅩⅩⅩⅧ.0）②「并发／fork 压力」（ⅩⅩⅩⅧ.5.4）
-> ③ *** **「cmux 替换窗口」（ⅩⅩⅩⅨ —— 本轮按实测排除）** ***。
-> ⚠️ *** **ⅩⅩⅩⅨ 没有留下新靶子。** *** T13 是一个**没有候选机制的低频抖动**
-> ⇒ 接手第一件事是问「值不值得继续查」，不是默认继续（理由与更便宜的替代见 ⅩⅩⅩⅨ.5）。
+> 🔴🔴🔴 *** **先读 ⅩⅬ.0、ⅩⅬ.4、ⅩⅬ.6，再读别的。** ***
+> *** **T13 已让位** *** —— 它仍未闭合（ⅩⅩⅩⅨ.5），但已经没有候选机制了；
+> ⅩⅬ 找到**两条能确定性复现的真缺陷**，先做那两条。
+> 🔴 **ⅩⅬ.4 是一条观察者效应**：在 `openDb()` 之前多花一个宏任务 tick，被查的现象就消失。
+> **装仪器之前先读它**，否则会像我一样把现象抹掉再归错因。
+> ⚠️ **ⅩⅬ.6.3：别先动常数、别先给 T18 加 `stop`** —— 后者本轮实测无效，原因写在那里。
+> ⚠️ T13 的**三条**作废路线（未变）：①仪器改打 `reason`（ⅩⅩⅩⅧ.0）②并发／fork 压力（ⅩⅩⅩⅧ.5.4）
+> ③cmux 替换窗口（ⅩⅩⅩⅨ）。照任何一条做都会白花一轮。
+> 📌 ⅩⅬ.4.1 排除的是「机器负载」对 **ⅩⅬ 那个 openDb 现象**的解释，**与 T13 无关**，别混。
 > ⚠️ *** **本入口块【下方】那一大段仍停在 ⅩⅩⅩⅥ，滚动更新没跟上 —— 它不是当前状态。** ***
-> 当前状态以 **ⅩⅩⅩⅨ** 为准，且**一律现查**（怎么查见 ⅩⅩⅩⅧ.8，那张表未变）。
+> 当前状态以 **ⅩⅬ** 为准，且**一律现查**（怎么查见 ⅩⅩⅩⅧ.8，那张表未变；再加一条：**数 daemon 进程数**，ⅩⅬ.8.5）。
 >
 > 🔴🔴🔴 **ⅩⅩⅩⅥ（最新，2026-09-08 晚）：先读 §6 —— 本轮以【未复验】收尾，判别式和怎么补都写在那儿。**
 > 🔴🔴 **§0 推翻 ⅩⅩⅩⅤ.5 的优先级排序。**「revalidation 追不上」那个 107 天是真的，
@@ -7178,6 +7182,219 @@ Sparkle 写的，**从 2026-06-24 起连续写到今天**，13039 行，每小�
 - 禁令 7 条一条没变，*** **仍未 push**（本地领先远端，别把它当成已同步）。***
 - 本轮脚本在 `scratchpad/`（会话目录，会被清）：`wrapper-window.mjs`（六状态注入器）。
   ⅩⅩⅩⅧ 那三份（`apply-instrument.mjs` / `probe-sampler.mjs` / `hunt.sh`）**已拷进本会话目录**，别重写。
+
+---
+
+
+# ⅩⅬ. 2026-09-09 深夜：🔴 **T13 让位** —— 找到两条**可复现**的真缺陷（`stop_timeout` 的预算矛盾、T18 的 restart 从来没成功过），并清掉机器上 **248 个残留 daemon 进程**
+
+> **零 API 调用、零产品代码改动入库、未 push、生产库全程只读**（`sqlite3 -readonly`）。
+> 收尾套件 **`741/741`**，零 skipped、`EXIT=0`（实测 `duration_ms 17994`）。
+> 临时仪器（测试文件、`daemon.mjs` 各一处）**已逐位还原**，`shasum -a 256` 前后一致，工作区干净。
+> 🔴 **本节把优先级从 T13 挪开了。** T13 仍未闭合（ⅩⅩⅩⅨ.5），但本节这两条**都能确定性复现**，
+> 值钱得多。⚠️ 其中第二条**没有修好**，只把根因收窄到一个单变量判别式。
+
+## 0. 🔴🔴 先读这条
+
+上一轮（ⅩⅩⅩⅨ）建议"先问 T13 值不值得继续查"。**答案是：先别查 T13。** 本轮顺着
+ⅩⅩⅩⅧ.5.2 那条 `0.87%` 的抖动往下走，撞出三件事，每一件都比 T13 现在的状态更值钱：
+
+1. `stop_timeout` 的根因**已确认并做出确定性复现**（§2）——是一对互相矛盾的常数。
+2. **T18 的 `restart` 从来就没成功过**，而且它**每跑一次全量套件就漏一个常驻 daemon 进程**（§3）。
+3. 机器上当时堆着 **249 个 ccmem daemon 进程**，其中 230 个是 ⅩⅩⅩⅧ 那 230 次跑批留下的（§1）。
+   ⇒ *** **ⅩⅩⅩⅧ 那 230 次是在一个进程数单调增长的机器上跑的，不是稳态。** ***
+   ⚠️ 但**别把它当成那两次红的解释**：§ⅩⅩⅩⅧ.5.2 记的红在 run 8 和 run 39，都很早，
+   若是累积负载驱动，红应该聚在后段。**这是反向证据，本节不下这个结论。**
+
+## 1. 已执行：清掉 248 个残留 daemon（人已授权，判据是"data root 指向临时目录"）
+
+- 分类后 **248 个待杀 / 1 个排除**；排除的那个是生产 daemon（data root `~/.claude/ccmem`）。
+- 待杀的 **248 个全部**是 `$TMPDIR/ccmem-t3-wiring-*` 前缀 —— 即 `plist-drift.test.mjs` 那个接线用
+  data root（**按前缀就能认出泄漏源**）。
+- 先 SIGTERM：**248/248 全部退出，无一需要 SIGKILL**。
+- 清理后复核：生产 daemon 的 `holder_pid` / `acquired_at` / 进程 etime 全部未变。
+- 📌 **本轮排查过程中我自己又漏了约 20 个**（每跑一次套件或单跑一次 T18 就 +1），已一并清掉。
+  ⚠️ **收尾时机器上是 2 个**：生产 1 个 ＋ 最后那次验证套件刚漏的 1 个 —— **这个 1 就是 §3 的缺陷本身**。
+
+## 2. ✅ `stop_timeout`（ⅩⅩⅩⅧ.5.2 那条 `2/230`）的根因：**一对互相矛盾的常数**
+
+`admin-daemon-command.test.mjs:340`（`cmdAdminDaemon start, restart, and stop manage the daemon lifecycle`），
+断言红在 `:360` 的 `stopped.status`，即 **`cmdAdminDaemon(verb:'stop')` 自己返回了 `stop_timeout`**
+—— *** **不是** `:364` 那个 `waitForDaemonLock(false)`，也**不是** §Ⅹ 的 `:686` 家族（那是另一条测试）。***
+
+| 一侧 | 值 | 出处 |
+|---|---|---|
+| **等待方**：`stopDaemon` 的 `waitFor` **没传第二个参数** | `WAIT_TIMEOUT_MS = 2000` | `daemon.mjs` 的 stop 分支 |
+| **被等方**：daemon 的 `releaseDaemonLock` 是一条 `DELETE`，撞写锁时按 busy handler 等 | `busy_timeout = 5000` | `db.mjs` 的 `openDb()` |
+
+⇒ *** **等待方的预算不到被等方自身最坏情况的一半。** ***
+
+**确定性复现**（外部握住写锁 N 毫秒，隔离 data root，零 API）：
+
+| hold_ms | `stop_status` | stop 耗时 | 锁行最终消失于 |
+|---:|---|---:|---:|
+| 0 | stopped | 51ms | 51ms |
+| 0 | stopped | 51ms | 51ms |
+| 1000 | stopped | 1126ms | 1126ms |
+| 3000 | **stop_timeout** | **2003ms** | 3135ms |
+| 3000 | **stop_timeout** | **2009ms** | 3092ms |
+| 4000 | **stop_timeout** | **2003ms** | 4071ms |
+
+放弃时刻 `2003/2009/2003` ＝ `2000 + 一个轮询间隔`，边界正好在预测处。
+🔴 **最后一列才是要点：stop 其实成功了** —— 锁行在写锁一放开就消失。
+⇒ *** **`stop_timeout` 是个假阴性：一次成功的 stop 被报成失败。** ***
+
+📌 **这与 bug-063 缺陷 1 是同一个形状。** `START_WAIT_TIMEOUT_MS = 5000` 旁边那段注释
+（"2000ms 不够一次冷启动，代价是把一次成功的重启报成失败"）**对 stop 逐字成立**，当时只改了 start。
+
+### 2.1 顺带更正 ⅩⅩⅩⅧ.5.2
+
+那里写 `5225ms`「贴着一个 5 秒预算」。**`5225ms` 是整条用例的耗时**（含 start＋restart＋两次等待），
+**真正被打爆的预算是 2000ms**。别再拿 5000 去解释它。
+
+### 2.2 ⚠️ 没做的一步（别当成已证）
+
+"这个机制可达" ≠ "run 8／run 39 就是这么红的"。要证那一步，得测**套件里自然的写锁争用**能不能到 2 秒。
+**本轮没测。**
+
+## 3. 🔴 T18 的 `restart` **从来就没成功过**，而且它是那个进程泄漏源
+
+`plist-drift.test.mjs` 的 T18（`a missing plist is reported as not installed...`）实测每次返回：
+
+```
+{"status":"restart_failed","via":"spawn","failed_status":"start_timeout","phase":"start",
+ "plist_rewrite":{"written":false,"blocked_by":null,"reason":"daemon is not installed under launchd"}}
+```
+
+- 它没有 plist ⇒ 既不是 launchd 分支也不是 fallback 分支 ⇒ 走 `spawnDetachedDaemon` **真的起一个 daemon**。
+- `startDaemon` 等满 `START_WAIT_TIMEOUT_MS = 5000` 也没看到锁行 ⇒ `start_timeout` ⇒ `restart_failed`。
+- **没有任何人停那个 daemon** ⇒ 每跑一次全量套件漏一个常驻 node 进程（实测 247 → 248，delta 恒为 1）。
+- 按测试名定位：**T18 delta=1；T19／T2-rewrite／T13 都是 0。**
+
+🔴 *** **它一直是绿的，是因为它只断言 `plist_rewrite`** *** —— 那个字段在 `startDaemon`
+**之前**就算好了（`restartDaemon` 里 `rewritePlistIfAllowed()` 在 `startDaemon()` 上面），
+所以 **start 阶段失败它完全看不见**。
+⇒ 🆕 **一条只断言"早于失败点算出来的字段"的测试，对失败点是瞎的。**
+
+### 3.1 daemon 其实起来了 —— 看不见它的是等待方那条连接
+
+同一时刻，用**一条新连接**读同一个库：
+
+```
+old_handle(测试持有的、waitFor 轮询的那条) = ABSENT
+fresh_handle(当场新开的)                  = holder_pid=42604   ← daemon 立刻就拿到锁了
+```
+
+而且是**双向**不可见：旧连接写的标记新连接读不到，新连接写的标记旧连接也读不到
+（`fresh_sees_old_marker:"NO"` 且 `old_sees_fresh_marker:"NO"`）。
+⇒ **不是"读快照过期"**（那会是单向的），两条连接**不在同一份数据上**。
+⚠️ 路径上那个 `global.db` 的 inode 在探针前后稳定，但**失败态下开库当时的 inode 我测不到**（见 §4）。
+
+## 4. 🔴 单变量判别式：**在 `openDb()` 之前让出一个【宏任务】，现象就消失**
+
+三臂，同一台机器、同一份基线，各 3 次：
+
+| 在 `openDb()` 之前插入 | 结果 |
+|---|---|
+| 什么都不插（对照） | **3/3 `restart_failed`**，两条连接互不可见 |
+| `await null;`（纯微任务让步） | **3/3 `restart_failed`** —— 微任务**不够** |
+| `existsSync(<dbPath>)`（只 stat，不 await） | **3/3 `restart_failed`** —— stat **不是**成因 |
+| `await new Promise((r) => setImmediate(r));`（只让一个宏任务） | *** **3/3 `restarted`，互相可见** *** |
+
+⇒ *** **成因是一次完整的事件循环让步，不是 stat、不是微任务。** ***
+
+🔴🆕 *** **这构成观察者效应：任何"在 `openDb()` 之前先 stat 一下 db 文件"的仪器，都会因为多花的那一个
+tick 把现象消掉。** *** 我第一次装 inode 仪器时就被它骗过一次（6/6 全绿，差点归因为"机器负载低了"）。
+**下一位装仪器前先读这条。**
+
+### 4.1 机器负载**不是**成因（曾经是我的假设，已被单变量推翻）
+
+在同一台已清干净的机器（2 个 daemon）上：带 §4 那段仪器 **6/6 成功**、撤掉它 **6/6 失败**。
+⇒ 负载解释不了，**是代码里那一个 tick**。
+
+## 5. 本轮按实测排除的（都是量的，不是论证）
+
+| 假设 | 怎么排的 | 结果 |
+|---|---|---|
+| 测试与 daemon 的 data root 不一致 | 从 `ps eww` 读 daemon 进程的 `CCMEM_DATA_ROOT`，与测试进程比 | **同一个目录** ⇒ 排除 |
+| daemon 启动就崩 | 临时把 `spawnDetachedDaemon` 的 `stdio:'ignore'` 改成写文件（env 门控，用完还原） | **stderr 全空** ⇒ 排除 |
+| `CCMEM_TEST_MODE` 是那个变量 | 独立脚本单变量两臂 | 两臂锁行都正常出现 ⇒ 排除 |
+| WAL 读快照过期 | 在旧连接上跑 `BEGIN IMMEDIATE; COMMIT;` 再读 | **仍然看不见** ⇒ 排除 |
+| 机器负载（残留进程） | 清干净后单变量三臂（§4.1） | ⇒ 排除 |
+| 那次 `stat` 本身 | §4 变体 A | ⇒ 排除 |
+
+🆕 ⚠️ **这六条里有四条是我"先猜后测"的**，其中三条只要先把 `openDb()` 和 `startDaemon()`
+读一遍就能免掉。**本轮偏贵主要贵在这里** —— 下一位：**先读实现，再列假设。**
+
+## 6. 还没钉住的，以及下一步
+
+**没钉住**：同一路径下两条连接为什么互不可见；那一个宏任务到底让什么完成了。
+
+**下一步（建议按此顺序）**：
+
+1. 在**失败态**下拿到旧连接真正挂着的文件身份。⚠️ 不能用"开库前 stat"（§4 观察者效应）——
+   可行的方向是**开库之后**去问那条连接自己（`PRAGMA database_list`／node:sqlite 的 location），
+   或者比对 `-wal` / `-shm` 的 inode。
+2. 分清这是 **node:sqlite（v24.13.0）的行为**还是 **`openDb()` 的时序问题**：
+   用一个不经过 `openDb()` 的裸 `DatabaseSync` 台架复现同一现象。
+3. 只有 1、2 有答案之后再谈修法。**别先动 `WAIT_TIMEOUT_MS`／别先给 T18 加 `stop`** ——
+   本轮实测过：给 T18 加 `finally { stop }` **不起作用**，因为 stop 读的还是那条看不见东西的连接
+   （返回 `not_running`，SIGTERM 压根没发出去）。
+
+📌 **§2 那条 `stop_timeout` 与本节相互独立**，可以单独修，不必等这条查清。
+⚠️ 但 **别在同一笔里一起修** —— 两条的判据不同源。
+
+## 7. ⚠️ 本轮的一次擦边（没造成后果，但必须写下来）
+
+我第一版复现装置**没设 `CCMEM_LAUNCHAGENT_DIR`**。`daemon.mjs` 里取 LaunchAgent 目录的函数在该变量
+未设时**回落到 `~/Library/LaunchAgents`** —— 生产 plist 就在那儿。于是 6 次都走了 launchd 分支，
+用**真的** `launchctl` 对 `com.ccmem.daemon` 跑了 `kickstart`。
+
+**生产 daemon 未受影响，已实测确认**（`holder_pid`／`acquired_at`／进程 etime 全未变）：
+原因是 `kickstart` **不带 `-k`**，对已运行的服务是 no-op。*** **这是运气，不是设计。** ***
+
+📌 `plist-drift.test.mjs` 里早有一段注释记着这个坑（真 `launchctl` 被观测到 bootout 并重建过开发者
+装着的服务），护栏机制（`CCMEM_LAUNCHCTL_BIN` / `CCMEM_LAUNCHCTL_LOG` ＋ 独立 `CCMEM_LAUNCHAGENT_DIR`）
+本来就在，是我没用。
+⇒ 🆕 *** **任何要调 `cmdAdminDaemon` 的一次性脚本，开头必须有硬护栏**：缺 `CCMEM_DATA_ROOT`／
+`CCMEM_LAUNCHAGENT_DIR`／`CCMEM_LAUNCHCTL_BIN` 任一，或它们指向真实位置，就 `exit 2`。*** ***
+本轮那份护栏（含自测：故意不设变量时确实 `exit 2`）在 scratchpad 的 `stop-timeout-repro.mjs` 里。
+
+## 8. 🔴 本仓库特有、skill 不会告诉你的（本轮新增 5 条）
+
+1. 🆕 *** **`npm test` 跑的是 `/usr/local/bin/node`（v24.13.0），不是 shell 里的 nvm node（v22.13.1）。** ***
+   一次性复现脚本用错 node，测的就不是同一个运行时（Ⅳ.20 栽过一次，本轮差点再栽）。
+2. 🆕 *** **观察者效应是真的**（§4）：在 `openDb()` 前多花一个 tick，被查的现象就消失。***
+3. 🆕 *** **只断言"早于失败点算出来的字段"的测试，对失败点是瞎的**（§3）。*** T18 因此绿了整整一轮。
+4. 🆕 *** **`--test-name-pattern` 单跑一条会踩顺序依赖。** *** 实测 T13 单跑是红的，但红在
+   `restart_failed !== restarted`，**和它那个抖动不是同一处** —— 别把它当成复现了 T13。
+5. 🆕 *** **跑批之后要数进程，不只是看 load。** *** ⅩⅩⅩⅧ 记的"load 稳在 6–9"是真的，
+   但同期进程数从 ~19 涨到 249，**load 平稳掩盖了单调漂移**。
+
+## 9. 建议调用的 skill
+
+| 场景 | skill |
+|---|---|
+| 接着查 §6 那两步 | `superpowers:systematic-debugging`。**先读 §4 的观察者效应**，否则仪器会把现象抹掉 |
+| 真要修 §2 的常数 | `superpowers:test-driven-development` ＋ 变异纪律（跨桩边界必配走真实现的判据，ⅩⅩⅩⅦ.7.5）|
+| 修 T18 | 同上；⚠️ **先读 §6.3**：加 `finally { stop }` 本轮实测无效 |
+| 收尾／合并 | `superpowers:verification-before-completion` |
+
+## 10. 状态与还原
+
+- **产品代码零改动入库**；`daemon.mjs` 与 `plist-drift.test.mjs` 各装过一次临时仪器，
+  **均已逐位还原**（`shasum -a 256` 与动手前一致），收尾 `git status --porcelain -uall` 为空。
+- 套件 **`741/741`**，零 skipped、`EXIT=0`。
+- 生产 daemon 全程同一个 `holder_pid`、`acquired_at` 未变、心跳 7–12s，**未重启**。
+- 禁令 7 条一条没变，*** **仍未 push**（本地领先远端若干笔）。***
+- **本轮提交按标题找，不要引用 SHA**（提交本文档就会移动 `HEAD`）：
+  ```
+  git log --oneline --grep="rule out the cmux replacement window"   # ⅩⅩⅩⅨ（仅文档）
+  git log --oneline --grep="XL"                                     # 本节（仅文档）
+  ```
+- 本轮脚本在 `scratchpad/`（会话目录，会被清）：`stop-timeout-repro.mjs`（§2 确定性复现，**自带硬护栏**）、
+  `t18-timeline.mjs`（锁行／进程时间线）、`probe-snippet.js` ＋ `splice.js`（§3.1／§4 三臂实验的拼接器）、
+  `wrapper-window.mjs`（ⅩⅩⅩⅨ 的六状态注入器）。**要长期保留请自己拷出会话目录。**
 
 ---
 

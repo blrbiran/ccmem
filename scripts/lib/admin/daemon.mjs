@@ -278,10 +278,14 @@ function probeClaudeJsonSchemaSupport(command, daemonEnv, timeoutMs) {
     }
   });
 
+  // 探针没能跑起来（spawn 失败、超时）跟探针跑完了、答案是"不支持"是两件事：
+  // 前者对能力一无所知。合成同一个否定，一次瞬时失败就伪装成永久的能力缺失，
+  // 而重写被静默拦下 —— CLI 只打印 blocked_by/reason（cli.mjs:578）。
   if (result.error) {
     return {
       ok: false,
-      reason: `resolved Claude Code binary at ${command} but could not inspect \`claude -p --help\` (${result.error.message})`
+      indeterminate: true,
+      reason: `resolved Claude Code binary at ${command} but could not inspect \`claude -p --help\` (${result.error.message}); this says nothing about whether it supports --json-schema`
     };
   }
 

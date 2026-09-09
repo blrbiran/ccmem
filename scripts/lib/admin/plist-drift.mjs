@@ -161,7 +161,13 @@ export function evaluateGates(oldEnv, newEnv, { defaultDataRoot, probe }) {
   if (command) {
     const probed = probe(command, newEnv);
     if (!probed.ok) {
-      return { ok: false, blocked_by: 'G4', reason: probed.reason ?? 'claude capability probe failed' };
+      // 探针没能问成 ≠ 答案是"没有"。两者都拦（安全门失败关闭是对的），但报不同的码，
+      // 否则一次瞬时 spawn 失败看起来就跟"装了个旧 claude"一模一样。
+      return {
+        ok: false,
+        blocked_by: probed.indeterminate ? 'G4_INDETERMINATE' : 'G4',
+        reason: probed.reason ?? 'claude capability probe failed'
+      };
     }
   }
 

@@ -414,6 +414,26 @@ test('T7: G4 refuses when the probe fails', () => {
   assert.equal(verdict.blocked_by, 'G4');
 });
 
+// T16 —— G4 的两种失败必须可区分。探针"没能问成"（spawn 失败／超时）与探针
+// "问过了、答案是没有"是两件不同的事：前者对能力一无所知，后者是确定的否定。
+// 两者都返回同一个 blocked_by 时，一次瞬时的 spawn 失败会伪装成永久的能力缺失，
+// 而 CLI 只打印 blocked_by/reason（cli.mjs:578），运维看到的就是同一句话。
+// 必抓：indeterminate 必须换一个 blocked_by。必不抓：T7 那条（真的缺能力）仍是 'G4'。
+test('T16: a probe that could not run is not reported as a missing capability', () => {
+  const verdict = gates(
+    { CCMEM_CLAUDE_P_COMMAND: '/usr/bin/claude' },
+    { CCMEM_CLAUDE_P_COMMAND: '/usr/bin/claude' },
+    () => ({ ok: false, indeterminate: true, reason: 'spawnSync /usr/bin/claude EAGAIN' })
+  );
+  assert.equal(verdict.ok, false);
+  assert.notEqual(
+    verdict.blocked_by,
+    'G4',
+    'an unrunnable probe must not be reported with the same code as a genuine capability gap'
+  );
+  assert.equal(verdict.blocked_by, 'G4_INDETERMINATE');
+});
+
 // T8 —— 正面对照。没有这条，上面所有"被拦下"都可能只是因为压根不会放行。
 test('T8: a free-key addition passes every gate', () => {
   const verdict = gates(
@@ -603,6 +623,45 @@ test('T13: rewrite must land before bootstrap reads the plist off disk', () => w
   const bootstrapSaw = readFileSync(snapshotPath, 'utf8');
   assert.doesNotMatch(bootstrapSaw, /\/stale\/bin/, 'bootstrap must not have been handed the stale, pre-rewrite plist');
   assert.equal(bootstrapSaw, expected, 'bootstrap must have been handed the freshly rewritten plist');
+}));
+
+// T17 —— T16 的另一半，也是唯一能证明 daemon.mjs 那一侧真的置了标志的判据。
+// T16 把 probe 打了桩，所以它只证明 evaluateGates 会转译标志，**证明不了探针会置标志**；
+// 只有这条走真的 spawnSync。构造法同 T2：先把 CCMEM_CLAUDE_P_COMMAND 指到一个不存在的
+// 路径再取 renderPlist()，于是新旧 env 在这个 key 上一致（G1/G3 不动，它也不在
+// POINTING_LITERAL_KEYS 里所以 G2 不动），唯一差异仍是 PATH —— 唯一能拦下来的只有 G4。
+test('T17: a real spawn failure reaches the caller as indeterminate, not as a capability gap', () => withFakeLaunchctl(async () => {
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+
+  const previousCommand = process.env.CCMEM_CLAUDE_P_COMMAND;
+  process.env.CCMEM_CLAUDE_P_COMMAND = join(agentDir, 'claude-that-does-not-exist');
+
+  let result;
+  try {
+    const expected = (await import('../../scripts/lib/admin/daemon.mjs')).renderPlist();
+    writeFileSync(plistPath, expected.replace(/<key>PATH<\/key><string>[^<]*<\/string>/, '<key>PATH</key><string>/stale/bin</string>'));
+
+    const db = openDb();
+    result = await cmdAdminDaemon(db, { verb: 'restart' });
+  } finally {
+    if (previousCommand === undefined) {
+      delete process.env.CCMEM_CLAUDE_P_COMMAND;
+    } else {
+      process.env.CCMEM_CLAUDE_P_COMMAND = previousCommand;
+    }
+  }
+
+  assert.equal(result.plist_rewrite.written, false, 'the gate must still fail closed');
+  assert.equal(
+    result.plist_rewrite.blocked_by,
+    'G4_INDETERMINATE',
+    'a probe that could not be spawned must not be reported as a missing capability'
+  );
+  // 光看 blocked_by 不够：reason 必须说出它对能力一无所知，否则运维读到的还是
+  // "这个 claude 不支持 --json-schema"，跟修之前一样会去重装一个没问题的二进制。
+  assert.match(result.plist_rewrite.reason, /says nothing about whether it supports --json-schema/);
 }));
 
 // 报警轴到此为止都只对 JS 调用方可见——一个真人跑 `ccmem admin daemon restart`

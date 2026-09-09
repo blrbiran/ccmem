@@ -171,7 +171,12 @@ process.env.CCMEM_DATA_ROOT = wiringDataRoot;
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { cmdAdminDaemon } = await import('../../scripts/lib/admin/daemon.mjs');
 
-test.after(() => rmSync(wiringDataRoot, { recursive: true, force: true }));
+// 用 process.on('exit') 而不是 test.after：**根级 after 钩子在 `--test-name-pattern`
+// 过滤跑时会抢在匹配的测试前面触发**（实测：模块求值结束后 3ms 就跑了，那时 T18 还没进
+// body），于是清理会把正在跑的那条测试的 data root 整个删掉 —— 测试那条连接从此挂在一个
+// 已被 unlink 的 inode 上，看不到 daemon 写的锁行，restart 必然 start_timeout。
+// 退出钩子与测试调度无关，两种跑法下都只在最后跑一次。
+process.on('exit', () => rmSync(wiringDataRoot, { recursive: true, force: true }));
 
 // restart/stop/start reach launchd through a FIXED label (com.ccmem.daemon),
 // so pointing CCMEM_LAUNCHAGENT_DIR at a temp dir isolates the plist *file*
@@ -256,7 +261,8 @@ async function withFakeLaunchctl(run) {
   return run();
 }
 
-test.after(() => rmSync(fakeLaunchctlDir, { recursive: true, force: true }));
+// 同上：过滤跑时这个目录会在测试还在用假 launchctl 的时候就被删掉。
+process.on('exit', () => rmSync(fakeLaunchctlDir, { recursive: true, force: true }));
 
 // Some of these dirs hold a REAL `renderPlist()` output (T2-rewrite-side, the
 // two CLI tests), which on a real machine contains the plaintext
@@ -270,7 +276,8 @@ function trackedMkdtemp(prefix) {
   tempDirsToClean.push(dir);
   return dir;
 }
-test.after(() => {
+// 同上。
+process.on('exit', () => {
   for (const dir of tempDirsToClean) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -302,7 +309,7 @@ function isProcessAlive(pid) {
   }
 }
 
-async function stopSpawnedDaemon(pid) {
+function killSpawnedDaemon(pid) {
   if (!isProcessAlive(pid)) {
     return;
   }
@@ -314,6 +321,10 @@ async function stopSpawnedDaemon(pid) {
       throw error;
     }
   }
+}
+
+async function stopSpawnedDaemon(pid) {
+  killSpawnedDaemon(pid);
 
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline && isProcessAlive(pid)) {
@@ -322,8 +333,10 @@ async function stopSpawnedDaemon(pid) {
 }
 
 // 兜底：断言先红时上面那次显式停止不会执行到，而残留进程恰恰在那时最该被清掉。
-test.after(async () => {
-  for (const pid of spawnedDaemonPids) await stopSpawnedDaemon(pid);
+// 同样不能用 test.after（理由见 wiringDataRoot 那条）；退出钩子只能同步，所以这里只发
+// SIGTERM 不等待 —— 等待留在测试体里，那才是判据所在。
+process.on('exit', () => {
+  for (const pid of spawnedDaemonPids) killSpawnedDaemon(pid);
 });
 
 // 接线测试。纯函数有测试 ≠ 接线有测试 —— 这里要证明 verb 分发真的调到了检测。
@@ -686,6 +699,10 @@ test('T18: a missing plist is reported as not installed, never as a blocked gate
   const result = await cmdAdminDaemon(db, { verb: 'restart' });
   spawnedDaemonPids.push(result.pid);
 
+  // plist_rewrite 是在 startDaemon() **之前**算好的（restartDaemon 里 rewritePlistIfAllowed()
+  // 排在 startDaemon() 上面），所以只断言它的话，start 阶段怎么失败这条都看不见 —— 本条曾经
+  // 因此绿着漏了一整轮。先钉住整体结局，再钉那三个字段。
+  assert.equal(result.status, 'restarted', 'a missing plist must not stop the restart from succeeding');
   assert.equal(result.plist_rewrite.written, false);
   assert.equal(result.plist_rewrite.blocked_by, null, 'nothing blocked the rewrite — there was nothing to rewrite');
   assert.equal(result.plist_rewrite.reason, 'daemon is not installed under launchd');

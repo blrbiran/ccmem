@@ -625,6 +625,43 @@ test('T13: rewrite must land before bootstrap reads the plist off disk', () => w
   assert.equal(bootstrapSaw, expected, 'bootstrap must have been handed the freshly rewritten plist');
 }));
 
+// T18/T19 —— the two written:false returns that carry blocked_by === null.
+// Nothing else in this suite reaches them, so until now the only evidence that they
+// report themselves correctly was reading the source. That matters because the CLI
+// prints blocked_by and reason and nothing else (cli.mjs:578): if either of these
+// two ever started reporting a gate code, an operator would go hunting for a gate
+// that never ran. These pin the distinction, not the wording of a happy path.
+test('T18: a missing plist is reported as not installed, never as a blocked gate', () => withFakeLaunchctl(async () => {
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+  // Deliberately nothing written: this is the "daemon was never installed" shape.
+
+  const db = openDb();
+  const result = await cmdAdminDaemon(db, { verb: 'restart' });
+
+  assert.equal(result.plist_rewrite.written, false);
+  assert.equal(result.plist_rewrite.blocked_by, null, 'nothing blocked the rewrite — there was nothing to rewrite');
+  assert.equal(result.plist_rewrite.reason, 'daemon is not installed under launchd');
+  assert.equal(existsSync(plistPath), false, 'the rewrite must not install a plist that was never there');
+}));
+
+test('T19: an already-matching plist is left byte-identical and says why', () => withFakeLaunchctl(async () => {
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+  const expected = (await import('../../scripts/lib/admin/daemon.mjs')).renderPlist();
+  writeFileSync(plistPath, expected);
+
+  const db = openDb();
+  const result = await cmdAdminDaemon(db, { verb: 'restart' });
+
+  assert.equal(result.plist_rewrite.written, false);
+  assert.equal(result.plist_rewrite.blocked_by, null, 'an in-sync plist is not a blocked gate');
+  assert.equal(result.plist_rewrite.reason, 'plist already matches the current environment');
+  assert.equal(readFileSync(plistPath, 'utf8'), expected);
+}));
+
 // T17 —— T16 的另一半，也是唯一能证明 daemon.mjs 那一侧真的置了标志的判据。
 // T16 把 probe 打了桩，所以它只证明 evaluateGates 会转译标志，**证明不了探针会置标志**；
 // 只有这条走真的 spawnSync。构造法同 T2：先把 CCMEM_CLAUDE_P_COMMAND 指到一个不存在的

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, chmodSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, chmodSync, mkdirSync, existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -26,6 +26,20 @@ const { openDb, getDbPath } = await import('../../scripts/lib/db.mjs');
 const { cmdAdminDaemon } = await import('../../scripts/lib/admin/daemon.mjs');
 
 const HOLD_MS = 3000;
+
+function killIfAlive(pid, signal = 'SIGKILL') {
+  if (!pid) {
+    return;
+  }
+
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if (error?.code !== 'ESRCH') {
+      throw error;
+    }
+  }
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -123,6 +137,74 @@ test('stop reports stopped when a write-lock holder delays the daemon past the o
     `stop must not report a timeout for a stop that succeeded (lock row gone at ${lockGoneMs}ms)`
   );
   assert.equal(stopped.pid, started.pid);
+});
+
+// 同一条不变式的另一半：container-fallback 装法下，stop 等的仍然是 daemon 删锁行那条
+// DELETE，被等方的最坏情况一模一样。两条分支各写各的预算，就是同一个缺陷留一半。
+test('the container-fallback stop honours the same budget as the spawned one', async (t) => {
+  const db = openDb();
+  t.after(() => db.close());
+
+  // 直接写安装状态，而不是跑一遍 install：被测的是 stop 的等待预算，不是安装流程。
+  writeFileSync(
+    path.join(dataRoot, 'daemon-install-state.json'),
+    JSON.stringify({ variant: 'container-fallback', node_path: process.execPath })
+  );
+  t.after(() => rmSync(path.join(dataRoot, 'daemon-install-state.json'), { force: true }));
+
+  const started = await cmdAdminDaemon(db, { verb: 'start' });
+  assert.equal(started.status, 'started', 'the fallback branch must actually bring a wrapper up');
+  assert.equal(started.via, 'wrapper');
+  t.after(() => {
+    // wrapper 是 detached 的进程组长（sh + 它起的 node），按组收尾；再补一发按 daemon pid。
+    killIfAlive(started.wrapper_pid ? -started.wrapper_pid : null);
+    killIfAlive(started.pid);
+  });
+
+  const liveRow = await waitForLock(db, true);
+  assert.notEqual(liveRow, null, 'the wrapper-started daemon must take the lock before we stop it');
+
+  const holder = new DatabaseSync(getDbPath());
+  holder.exec('PRAGMA busy_timeout = 5000;');
+  holder.exec('BEGIN IMMEDIATE;');
+  holder.exec(
+    `INSERT INTO config_kv (key, value, set_at) VALUES ('ccmem_stop_budget_probe_wrapper', '1', 1)
+     ON CONFLICT(key) DO UPDATE SET value = value || '1'`
+  );
+
+  let released = false;
+  const releaseTimer = setTimeout(() => {
+    holder.exec('COMMIT;');
+    holder.close();
+    released = true;
+  }, HOLD_MS);
+  t.after(() => {
+    clearTimeout(releaseTimer);
+    if (!released) {
+      holder.exec('ROLLBACK;');
+      holder.close();
+    }
+  });
+
+  const beganAt = Date.now();
+  const lockGonePromise = waitForLock(db, false);
+  const stopped = await cmdAdminDaemon(db, { verb: 'stop' });
+  const lockGoneAt = await lockGonePromise;
+
+  assert.notEqual(lockGoneAt, null, 'the daemon must have released the lock once the holder committed');
+  const lockGoneMs = lockGoneAt - beganAt;
+  assert.equal(
+    lockGoneMs > 2000,
+    true,
+    `the write-lock holder must delay the release past the old 2000ms budget, but it took ${lockGoneMs}ms`
+  );
+
+  assert.equal(
+    stopped.status,
+    'stopped',
+    `the fallback stop must not report a timeout for a stop that succeeded (lock row gone at ${lockGoneMs}ms)`
+  );
+  assert.equal(stopped.via, 'wrapper');
 });
 
 test.after(() => {

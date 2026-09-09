@@ -25,7 +25,7 @@ const START_WAIT_TIMEOUT_MS = 5000;
 // 缺陷 1，当时只修了 start 一侧）。所以这个数从 DB_BUSY_TIMEOUT_MS 导出，而不是自己写一个
 // —— 两个数各写各的正是上一次出问题的方式。
 // ⚠️ 已知残余：SIGTERM 到达时 daemon 若正好卡在另一条同样被挡住的语句上（比如心跳 UPDATE），
-// 两段 busy 等待会串起来，超过这个预算 —— 那种情况仍会报 stop_timeout，本测试不覆盖。
+// 两段 busy 等待会串起来，超过这个预算 —— 那种情况仍会报 stop_timeout，两条 stop 测试都不覆盖。
 const STOP_WAIT_TIMEOUT_MS = DB_BUSY_TIMEOUT_MS + 1000;
 const DEFAULT_PATH = '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin';
 export const DAEMON_ENV_PASSTHROUGH = [
@@ -669,7 +669,7 @@ async function stopDaemon(db) {
     const stopped = await waitFor(() => {
       const lock = db.prepare(`SELECT 1 FROM daemon_lock WHERE id = 1`).get();
       return lock ? null : true;
-    });
+    }, STOP_WAIT_TIMEOUT_MS);
 
     clearFallbackWrapperFiles();
     if (stopped) {

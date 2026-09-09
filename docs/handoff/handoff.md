@@ -7403,10 +7403,13 @@ tick 把现象消掉。** *** 我第一次装 inode 仪器时就被它骗过一�
 ---
 
 
-# ⅩⅬⅠ. 2026-09-10 凌晨：🔴 **推翻 ⅩⅬ.3／ⅩⅬ.4 的归因** —— T18 的 `restart_failed`、双向不可见、宏任务观察者效应**全部是 `--test-name-pattern` 单跑模式的产物**；两条缺陷都已修并入库
+# ⅩⅬⅠ. 2026-09-10 凌晨：🔴 **推翻 ⅩⅬ.3／ⅩⅬ.4 的归因** —— T18 的 `restart_failed`、双向不可见、宏任务观察者效应**全部是 `--test-name-pattern` 单跑模式的产物**；四笔修复全部入库（两条产品代码、两条测试）
 
-> **零 API 调用、生产库全程只读**（`sqlite3 -readonly`）、**未 push**（本地领先远端 2 笔）。
-> 收尾套件 **`742/742`**（新增 1 条），零 skipped、`EXIT=0`，实测 `duration_ms 18433.9`。
+> **零 API 调用、生产库全程只读**（`sqlite3 -readonly`）。
+> ⚠️ **本节不写 HEAD、不写"领先远端几笔"** —— 提交本文这个动作就会改掉这两个数；**要就现查**
+> （`git status` ＋ `git ls-remote origin refs/heads/main`）。本轮**四笔代码／测试改动 ＋ 文档**，
+> 按标题找见 §1。
+> 收尾套件 **`743/743`**（本轮新增 3 条），零 skipped、`EXIT=0`，实测 `duration_ms 19844.8`。
 > 🔴 *** **跑批前后 daemon 进程 delta 第一次是 0** *** —— ⅩⅬ.3 那个"每跑一次全量漏一个"已经不漏了。
 > 临时仪器（`plist-drift.test.mjs` 三版探针）**已逐位还原**，`shasum -a 256` 与动手前一致。
 
@@ -7417,7 +7420,7 @@ tick 把现象消掉。** *** 我第一次装 inode 仪器时就被它骗过一�
 | 跑法 | T18 耗时 | `result.status` | 次数 |
 |---|---:|---|---:|
 | 整文件跑（`node --test <file>`） | 53–105ms | **`restarted`** | 6/6 |
-| 整文件跑，**在 ⅩⅬ 之前的那个提交上**（worktree, `641c978`） | 53–105ms | 绿，非超时 | 3/3 |
+| 整文件跑，**在本轮任何改动之前的那个提交上**（`git worktree` 挂 ⅩⅬ 收尾时的 HEAD——**历史锚点，不是当前状态**） | 53–105ms | 绿，非超时 | 3/3 |
 | `--test-name-pattern "T18"` 单跑 | **5021 / 5033ms** | **`restart_failed` / `start_timeout`** | 2/2 |
 
 ⇒ *** **`5021ms` ＝ `START_WAIT_TIMEOUT_MS` 打满。现象由跑法决定，不由代码决定。** ***
@@ -7452,13 +7455,15 @@ P0_after_openDb = {"db":"ENOENT","wal":"ENOENT","dir":"ENOENT","dirExists":false
 ⇒ ⅩⅬ.6 那两步（`PRAGMA database_list`／裸 `DatabaseSync` 台架）**不用做了**：第 1 步用
 `database_list` 会得到"路径相同"这个假阴性，真正的判据是 `lsof` 的 inode。
 
-## 1. ✅ 已修并入库（两笔，判据不同源，分开提交）
+## 1. ✅ 已修并入库（**四笔，判据各自不同源，一笔一件事**）
 
-**按标题找，不要引 SHA**：
+**按标题找，不要引 SHA**（提交本文档就会移动 `HEAD`）：
 
 ```
-git log --oneline --grep="let stop wait out the lock release"      # 缺陷 1
-git log --oneline --grep="stop the daemon T18 starts"              # 缺陷 2
+git log --oneline --grep="let stop wait out the lock release"      # §1.1 缺陷 1（产品代码）
+git log --oneline --grep="stop the daemon T18 starts"              # §1.2 缺陷 2（测试）
+git log --oneline --grep="the same wait budget"                    # §1.3 缺陷 1 的另一半（产品代码）
+git log --oneline --grep="sabotaging a filtered run"               # §1.4 清理钩子竞争（测试）
 ```
 
 ### 1.1 缺陷 1：`stop_timeout` 的预算矛盾（ⅩⅬ.2 那条，根因不变）
@@ -7533,17 +7538,27 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 4. 📌 §1.4 只修了 `plist-drift.test.mjs`。**别的测试文件里的根级 `test.after` 没查过** ——
    `grep -rn "^test.after" tests/` 是下一位的起点，判据是"这个钩子清的东西，测试体还在不在用"。
 
-## 4. 状态与还原
+## 4. 建议调用的 skill
+
+| 场景 | skill |
+|---|---|
+| 接 §3 任何一条 | `superpowers:systematic-debugging`。**先读 §0.1 和 §2** —— 本轮省下的成本全在"先读实现再列假设"和"选对仪器"上 |
+| 改产品代码或测试 | `superpowers:test-driven-development` ＋ 变异纪律：**红要红在指定那一行**，绿之后把缺陷注回去确认重新红，再 `shasum` 验证还原 |
+| 收尾／宣布完成 | `superpowers:verification-before-completion`。本仓库的加码：**跑批前后 `pgrep` 数 daemon**，并复核生产 daemon 的 `holder_pid`／`acquired_at` 未变 |
+| 要动 `~/.claude/ccmem/**` | 先读 `CLAUDE.md` 规则 13。**本轮全程没写过生产库**，全部 `sqlite3 -readonly` |
+
+## 5. 状态与还原
 
 - 套件 **`743/743`**（新增 2 条），零 skipped、`EXIT=0`、`19844.8ms`；**跑批前后 daemon delta = 0**。
   📌 新测试各握锁 3 秒、合计 6.4s，但**墙钟只涨了约 1.4s** —— 测试文件是并行跑的，它藏在最长的那个文件下面。
-- 生产 daemon 全程 `holder_pid=33120`、`acquired_at` 未变、`etime` 连续（`01-04:28`），**未重启**。
+- 生产 daemon 全程同一个 `holder_pid`、`acquired_at` 未变、`etime` 连续（收尾时观测到 `01-09:50`,
+  **那是观测锚点，不是当前值**），**未重启**。
 - 开工时机器上有 **1 个 T18 残留 daemon ＋ 59 个 `$TMPDIR/ccmem-t3-wiring-*` 残留目录**，已清；
   排查过程中自己又漏了 18 个，已按"data root 指向临时目录"判据清掉，**收尾时只剩生产那 1 个**。
-- 禁令 7 条一条没变，*** **仍未 push** ***。
-- ⚠️ **本轮有并发会话**：开工时 `origin/main == HEAD`（上一轮的东西已被人推上去了），
-  跑到一半远端又多了一笔 `docs(handoff): roll §15 forward`（**不是我提的**）。
-  *** **会话开头的 git 快照在这个仓库不能当基准，现查。** ***
+- 禁令 7 条一条没变。**push 由人执行**（本轮人明确接手了 push，中途也确实推过一次）。
+- ⚠️ **本轮有并发会话**：开工时远端已经跟上了上一轮的东西（与上一版 handoff 里"未 push"的说法不符），
+  跑到一半远端又多出一笔 `docs(handoff): roll §15 forward`（**不是我提的**）。
+  *** **会话开头的 git 快照在这个仓库不能当基准，一律现查。** ***
 
 ---
 

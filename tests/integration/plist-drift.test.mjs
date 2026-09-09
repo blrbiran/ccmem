@@ -281,6 +281,51 @@ test.after(() => {
 // safe floor for any test that doesn't.
 process.env.CCMEM_LAUNCHAGENT_DIR = trackedMkdtemp('ccmem-launchagent-default-');
 
+// 本文件里唯一会真起一个 daemon 的是 T18（没有 plist ⇒ restart 走 spawn 分支，不是
+// launchctl 假二进制），而 node 进程不会因为测试结束就退出：没人停它，每跑一次全量套件
+// 机器上就永久多一个常驻 daemon（实测过 248 个残留，全部来自本文件的 data root 前缀）。
+// 按 pid 收尾而不是走 cmdAdminDaemon stop：单跑本条时（--test-name-pattern）本文件末尾
+// 的 data root 清理钩子会与本条竞争，测试这条连接会挂在一个已被 unlink 的 inode 上、
+// 看不到锁行，stop 于是返回 not_running 而根本不发 SIGTERM —— 那正是留下残留的路径。
+const spawnedDaemonPids = [];
+
+function isProcessAlive(pid) {
+  if (!pid) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== 'ESRCH';
+  }
+}
+
+async function stopSpawnedDaemon(pid) {
+  if (!isProcessAlive(pid)) {
+    return;
+  }
+
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch (error) {
+    if (error?.code !== 'ESRCH') {
+      throw error;
+    }
+  }
+
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && isProcessAlive(pid)) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+// 兜底：断言先红时上面那次显式停止不会执行到，而残留进程恰恰在那时最该被清掉。
+test.after(async () => {
+  for (const pid of spawnedDaemonPids) await stopSpawnedDaemon(pid);
+});
+
 // 接线测试。纯函数有测试 ≠ 接线有测试 —— 这里要证明 verb 分发真的调到了检测。
 test('T1 wiring: daemon status reports plist_drift', async () => {
   const agentDir = trackedMkdtemp('ccmem-la-');
@@ -639,11 +684,15 @@ test('T18: a missing plist is reported as not installed, never as a blocked gate
 
   const db = openDb();
   const result = await cmdAdminDaemon(db, { verb: 'restart' });
+  spawnedDaemonPids.push(result.pid);
 
   assert.equal(result.plist_rewrite.written, false);
   assert.equal(result.plist_rewrite.blocked_by, null, 'nothing blocked the rewrite — there was nothing to rewrite');
   assert.equal(result.plist_rewrite.reason, 'daemon is not installed under launchd');
   assert.equal(existsSync(plistPath), false, 'the rewrite must not install a plist that was never there');
+
+  await stopSpawnedDaemon(result.pid);
+  assert.equal(isProcessAlive(result.pid), false, 'T18 must not leave the daemon it started running');
 }));
 
 test('T19: an already-matching plist is left byte-identical and says why', () => withFakeLaunchctl(async () => {

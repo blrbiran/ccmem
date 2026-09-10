@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-cost-'));
+const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-cost-'));
+process.env.CCMEM_DATA_ROOT = dataRoot;
+test.after(() => rmSync(dataRoot, { recursive: true, force: true }));
 
 const { daemonCostFile, recordDaemonCost, recordMetric, metricsFile, MAX_METRICS_BYTES } =
   await import('../../scripts/lib/metrics.mjs');
@@ -64,6 +66,7 @@ test('a write failure never throws at the caller', () => {
     assert.doesNotThrow(() => recordDaemonCost({ task_type: 't', wall_clock_ms: 1 }));
   } finally {
     chmodSync(dir, 0o700);
+    rmSync(dir, { recursive: true, force: true });
     process.env.CCMEM_DATA_ROOT = prevRoot;
   }
 });

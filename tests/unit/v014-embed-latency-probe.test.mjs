@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 // 模块级隔离：本文件永远不碰真实数据根。
 const ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-probe-'));
 process.env.CCMEM_DATA_ROOT = ROOT;
+test.after(() => rmSync(ROOT, { recursive: true, force: true }));
 delete process.env.CCMEM_CONFIG_PATH;
 
 const { runEmbedLatencyProbe, probeFile } = await import('../../scripts/daemon/tasks/embed-latency-probe.mjs');

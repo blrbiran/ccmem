@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 process.env.CCMEM_TEST_MODE = '1';
 const DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-reval-batch-'));
 process.env.CCMEM_DATA_ROOT = DATA_ROOT;
+test.after(() => rmSync(DATA_ROOT, { recursive: true, force: true }));
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { DEFAULT_CONFIG } = await import('../../scripts/lib/config.mjs');

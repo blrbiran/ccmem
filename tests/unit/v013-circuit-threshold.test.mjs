@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-circuit-threshold-'));
+test.after(() => rmSync(process.env.CCMEM_DATA_ROOT, { recursive: true, force: true }));
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { getProviderWithCircuit, recordEmbedFailure, _resetProviderCache } =

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-w0-config-'));
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = dataRoot;
+test.after(() => rmSync(dataRoot, { recursive: true, force: true }));
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { cmdAdminDiagnose } = await import('../../scripts/lib/admin/diagnose.mjs');
@@ -92,9 +93,21 @@ const NODE = '/usr/local/bin/node';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const CLI = path.join(ROOT, 'scripts/cli.mjs');
 
+// runDiagnose is called once per CLI test and each call makes two directories,
+// so they are tracked rather than removed inline: execFileSync throws on a
+// non-zero exit, and an inline removal would be skipped exactly when a failing
+// run is what left them behind.
+const cliTempDirs = [];
+test.after(() => {
+  for (const dir of cliTempDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function runDiagnose(configJson, extraArgs = []) {
   const root = mkdtempSync(path.join(tmpdir(), 'ccmem-w0-cli-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-w0-cwd-'));
+  cliTempDirs.push(root, cwd);
 
   if (configJson !== null) {
     writeFileSync(path.join(root, 'config.json'), JSON.stringify(configJson), 'utf8');

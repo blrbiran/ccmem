@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -8,6 +8,9 @@ process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-stdin-epipe-'));
 
 const STUB_DIR = mkdtempSync(path.join(tmpdir(), 'ccmem-stdin-epipe-stub-'));
+
+test.after(() => rmSync(process.env.CCMEM_DATA_ROOT, { recursive: true, force: true }));
+test.after(() => rmSync(STUB_DIR, { recursive: true, force: true }));
 
 /**
  * WHY this guard exists (Rule 9).

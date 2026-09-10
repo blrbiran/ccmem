@@ -49,9 +49,15 @@ test('diagnose --tuning breaks quality_gate_reject down by reason over the tunin
 // it is also when the tuning command bails for lack of rollup data.
 test('the rejection breakdown is reported even when there is too little data to suggest thresholds', () => {
   const db = openDb();
+  // Owns its fixture rather than reading the rows the sibling test wrote: a test
+  // that only passes when a sibling ran first reports a false red under
+  // --test-name-pattern, which is exactly how a debugger reaches for it.
+  const before = getTuningDiagnostics(db).quality_gate_rejects?.total ?? 0;
+  writeAudit(db, 'quality_gate_reject', null, { reason: 'negative_assertion', content_excerpt: 'd' });
+
   const diagnostics = getTuningDiagnostics(db);
 
   assert.equal(diagnostics.insufficient, true, 'fixture sanity: this store has no rollup days');
   assert.ok(diagnostics.quality_gate_rejects, 'the breakdown must survive the insufficient-data early return');
-  assert.equal(diagnostics.quality_gate_rejects.total, 3);
+  assert.equal(diagnostics.quality_gate_rejects.total, before + 1);
 });

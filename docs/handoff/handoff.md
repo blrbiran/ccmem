@@ -7745,7 +7745,8 @@ ccmem 是 Orca 的**记忆层**：Orca 会把「人推翻了 agent 的哪个决�
   🆕 **又一轮（2026-09-17，Orca run `orca-dev-18c77f3e`）**：`reviews.jsonl` 里一行 `null` 曾让 Orca 面板起不来 ⇒ 读取方现在**丢弃一切不是「非空对象、四个键字段都是字符串」的行**，
   与 `orca compact-reviews` 的「读不出」同一个定义。⇒ 本仓库若将来读它，**照这个定义判「是不是一行」**，别只 `JSON.parse` 成功就收下。
 - 🆕 **子系统 D（检查点交接）的 D1＋D2 已落地并由人推上 Orca 远端（2026-09-17，Orca run `orca-dev-d5688105`）**：水位钩子、`orca checkpoint write`、`orca resume`；活体验收已做。
-  **I3 已修（2026-09-17，Orca run `orca-dev-c30670af`）**：subagent 的工具调用不再收到父会话的水位与写检查点指令；Orca 的下一件事是 Tier 0 机械闸门。**对本仓库仍然零任务。**
+  I3（subagent 的调用收到父会话的水位与写检查点指令）已修并经判别性活体验收。
+  🆕 **Tier 0 机械闸门已落地（2026-09-18，Orca run `orca-dev-c30670af`）**：PreToolUse 钩子 ＋ 仓库级 deny，拦 **Orca 仓库** agent 会话的 push／合并进 main／删分支／删 worktree；`orca resume`／`checkpoint write` 执行检查点里记录的 shell 命令前也过同一套判定。Orca 的下一件事是 D-launch。**对本仓库仍然零任务**（只装在 Orca 自己的仓库里）。
   *** **与本仓库有关的只有一行：检查点住在被干活的仓库自己的 `.orca/checkpoints/<run-id>.json`（随提交走），不写任何用户全局数据，不读写本仓库的 DB；handoff 的读者被人明确为下一个 agent，不是人（Orca 主 spec ERRATUM 6）。** ***
   ⇒ 检查点与记忆层的边界（什么进检查点、什么进记忆层）**尚未设计**。
   ⚠️ 🔴 本节早先那句「Orca 台账里 `React` 现测仍是零命中」是假的（2026-09-10 已更正）。记法保留：
@@ -7957,7 +7958,7 @@ ccmem 是 Orca 的**记忆层**：Orca 会把「人推翻了 agent 的哪个决�
 
 ## 归属
 
-本节最近一次由 Orca 那条线的 run `orca-dev-c30670af` 于 **2026-09-17** 就地更新（只改「Orca 那边到哪了」D 那一条：I3 已修；**一个编号项都没有新增**）。
+本节最近一次由 Orca 那条线的 run `orca-dev-c30670af` 于 **2026-09-18** 就地更新（只改「Orca 那边到哪了」D 那一条：I3 已修 ＋ Tier 0 闸门已落地；**一个编号项都没有新增**）。
 更早各轮的就地更新由 `git log -- docs/handoff/handoff.md` 取回。
 写入前现测本仓库：在 `main`、**工作树 `git status --porcelain` 为空**、*** **本地领先远端 1 笔、落后 0（上一轮 `docs(handoff): trim the Orca section in place …` 那笔未推；run `orca-dev-c30670af` 写入前现测，`/usr/bin/git ls-remote origin refs/heads/main` ＋ `rev-list --left-right --count origin/main...HEAD`）。** ***
 ⚠️ 这一句只在写下的那一秒为真，**要判发布状态就现跑 `ls-remote`。**

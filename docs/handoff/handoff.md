@@ -7744,13 +7744,10 @@ ccmem 是 Orca 的**记忆层**：Orca 会把「人推翻了 agent 的哪个决�
   ⇒ *** **本仓库若将来按「谁看过哪条决策」关联，和 correction 一样用 `projectKey ＋ decisionId` 联合键。** ***
   🆕 **又一轮（2026-09-17，Orca run `orca-dev-18c77f3e`）**：`reviews.jsonl` 里一行 `null` 曾让 Orca 面板起不来 ⇒ 读取方现在**丢弃一切不是「非空对象、四个键字段都是字符串」的行**，
   与 `orca compact-reviews` 的「读不出」同一个定义。⇒ 本仓库若将来读它，**照这个定义判「是不是一行」**，别只 `JSON.parse` 成功就收下。
-- 🆕 **子系统 D（检查点交接）有了设计草稿（2026-09-17，Orca run `orca-dev-bd5f202b`，Orca 主题行 `docs(spec): draft subsystem D checkpoint handoff…`）**：
-  先服务开发会话，按**上下文窗口水位**触发，目标是交接链本身不需要人；D1＋D2 实施计划（Orca run `orca-dev-8df1943a`，Orca 主题行 `docs(plan): turn D1 and D2 into seven tasks…`）🆕 **已执行完毕（2026-09-17，Orca run `orca-dev-d5688105`，Orca 主题行 `docs(handoff): record the D1+D2 execution round…`）**：水位钩子、`orca checkpoint write`、`orca resume` 已落地；🆕 活体验收也已做（同一 run，Orca 主题行 `docs(handoff): add the live check result, the Haiku window…`）：无头 `claude -p` 下钩子投递成立；subagent 的钩子输入带的是**父会话**的 `session_id`／`transcript_path`，只能靠 `agent_id`／`agent_type` 区分 —— 修它是 **Orca 自己的下一件事**，对本仓库仍然零任务。
-  *** **与本仓库有关的只有一行：检查点住在被干活的仓库自己的 `.orca/checkpoints/<run-id>.json`（随提交走），不写任何用户全局数据，不读写本仓库的 DB，执行全程一个字节没碰本仓库。** ***
-  *** **对本仓库有关系的一点（知情，不是任务）**：D 的检查点把实测值存成 `{命令, 值, commit}`、把「下一件事」存成机器可读形态，
-  并且 **handoff 的读者被人明确为下一个 agent，不是人**（Orca 主 spec ERRATUM 6）。 ***
-  ⇒ 本仓库若将来为 Orca 提供「跨会话记忆」，交接件是**给 agent 机械读的**，不是给人读的散文；两者的边界（什么进检查点、什么进记忆层）**尚未设计**，D spec §7 也没列它。
-  ⚠️ 本机的 ecc 插件 `suggest-compact.js` 已在读 Claude Code transcript 算上下文，但**失败时静默失效** —— Orca 把它登记为先例兼反例。
+- 🆕 **子系统 D（检查点交接）的 D1＋D2 已落地并由人推上 Orca 远端（2026-09-17，Orca run `orca-dev-d5688105`）**：水位钩子、`orca checkpoint write`、`orca resume`；活体验收已做。
+  Orca 的下一件事是修 I3（subagent 的钩子输入带父会话的 `session_id`／`transcript_path`）。**对本仓库仍然零任务。**
+  *** **与本仓库有关的只有一行：检查点住在被干活的仓库自己的 `.orca/checkpoints/<run-id>.json`（随提交走），不写任何用户全局数据，不读写本仓库的 DB；handoff 的读者被人明确为下一个 agent，不是人（Orca 主 spec ERRATUM 6）。** ***
+  ⇒ 检查点与记忆层的边界（什么进检查点、什么进记忆层）**尚未设计**。
   ⚠️ 🔴 本节早先那句「Orca 台账里 `React` 现测仍是零命中」是假的（2026-09-10 已更正）。记法保留：
   *** **一条「现测 X 为零／不存在」的断言，一旦被写进【那件让它不再为零的产物】里，就会永久自证。引用前现跑。** ***
   **对本仓库有一点关系**（与今天的代码无关，是将来构造 correction 行时的形状）：
@@ -7960,30 +7957,9 @@ ccmem 是 Orca 的**记忆层**：Orca 会把「人推翻了 agent 的哪个决�
 
 ## 归属
 
-本节最近一次由 Orca 那条线的 run `orca-dev-d5688105` 于 **2026-09-17** 第二次就地更新
-（「Orca 那边到哪了」D 那一条「活体验收待人」改成「活体验收已做、subagent 钩子输入的修法是 Orca 的下一件事」；「归属」发布状态那句按现测改写；**一个编号项都没有新增**）。
-上一次是同一 run `orca-dev-d5688105` 于 **2026-09-17** 就地更新
-（「Orca 那边到哪了」D 那一条改成「计划已执行完毕、活体验收待人」；「归属」发布状态那句按现测改写；**一个编号项都没有新增**）。
-上一次是 run `orca-dev-8df1943a` 于 **2026-09-17** 就地更新
-（「Orca 那边到哪了」D 那一条补上「计划已落盘、未执行」；「归属」发布状态那句按现测改写；**一个编号项都没有新增**）。
-上一次是 run `orca-dev-bd5f202b` 于 **2026-09-17** 就地更新
-（「Orca 那边到哪了」补上「子系统 D 有了设计草稿」及对本仓库有关系的一点；两条新实测折进已有的第 7 条与第 13 条；**一个编号项都没有新增**）。
-上一次是 run `orca-dev-18c77f3e` 于 **2026-09-17** 就地更新
-（「Orca 那边到哪了」补上 reviews 读取方对「一行」的定义；一条新实测折进已有的第 13 条；归属里过期的领先笔数改掉；**一个编号项都没有新增**）。
-上一次是 run `orca-dev-5e5985bc` 于 **2026-09-17** 就地更新
-（「Orca 那边到哪了」补上 reviews 压实对本仓库有关系的形状；两条新实测折进已有的第 10 条与第 13 条；标题与小节日期改成 2026-09-17；**一个编号项都没有新增**）。
-上一次是 run `orca-dev-4ccc0a0b` 于 **2026-09-16** 就地更新
-（§「Orca 那边到哪了」的 E3 一条补上「又一轮清掉三条登记挂账」；两条新实测折进已有的第 10 条，
-**一个编号项都没有新增**）。上一次是 run `orca-dev-cbe8dda3` 于 **2026-09-16** 就地更新
-（E3 一条改写成「parked N-1 已修，另一半经实测判为冗余」；一条新实测折进已有的**第 10 条**；
-「对本仓库的影响」里那句已过期的「与远端同点」改成不再为发布状态背书；**一个编号项都没有新增**）。
-上一次是 run `orca-dev-5d5c8055` 于 **2026-09-16** 就地更新
-（E3 一条改写成「计划全部执行完、留一条 parked」，**更正 reviews 去重键**；「对本仓库的影响」里过期的领先笔数改成现测的「同点」；
-三条新实测**折进已有的第 4 条（变异对产物无作用）、第 6 条（「没发生」只能有界观测）、第 12 条（裸 NUL 第三次）**；
-**一个编号项都没有新增** —— 规矩是人 2026-09-02 定的「关于 Orca 的章节不能无限增加下去」；标题与小节日期同步改成 2026-09-16）。
-上一次是 run `orca-dev-bad904b1` 于 2026-09-15 更新（E3 改写成「Task 0–5 已实施过审」，三条实测折进第 4、7、12 条）；
-再上一次是 run `orca-dev-5d7759dc` 于 2026-09-15 更新（E3 改写成「Task 0–3 已实施过审」）。
-写入前现测本仓库：在 `main`、**工作树 `git status --porcelain` 为空**、*** **本地领先远端 1 笔、落后 0（run `orca-dev-d5688105` 第二次写入前现测，2026-09-17T14:29Z，`git ls-remote origin refs/heads/main` ＋ `rev-list --left-right --count`；领先的是同一 run 上一次那笔本节更新 `docs(handoff): update the Orca section in place -- D1 and D2 executed, live check awaits the person`，未推）。** ***
+本节最近一次由 Orca 那条线的 run `orca-dev-d5688105` 于 **2026-09-17** 收尾时就地更新（「Orca 那边到哪了」D 那一条压到要点；本段归属链收成这一句；**一个编号项都没有新增**）。
+更早各轮的就地更新由 `git log -- docs/handoff/handoff.md` 取回。
+写入前现测本仓库：在 `main`、**工作树 `git status --porcelain` 为空**、*** **本地领先远端 0 笔、落后 0（run `orca-dev-d5688105` 收尾写入前现测，2026-09-17T14:40Z，`git ls-remote origin refs/heads/main` ＋ `rev-list --left-right --count`）。** ***
 ⚠️ 这一句只在写下的那一秒为真，**要判发布状态就现跑 `ls-remote`。**
 *** **本次只改本文档一个文件，且只改本节。** ***
 **节外内容（本节标题行之前的全部字节）的 sha256 在改写前后逐字相同**，这是「没碰到别人的东西」的证明。

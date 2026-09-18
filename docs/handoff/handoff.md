@@ -7687,7 +7687,7 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，最后更新 2026-09-17**）
+# 📌 §15 Orca 那条线（**单节滚动更新，最后更新 2026-09-18**）
 
 > ⚠️ *** **本节合并并取代了原 §15 与原 §16 两节。§1–§14 一字未动，本节不碰它们。** ***
 > **合并的授权来自人**（2026-09-02，理由：Orca 的章节不能在本仓库无限增加下去）。
@@ -7714,7 +7714,7 @@ ccmem 是 Orca 的**记忆层**：Orca 会把「人推翻了 agent 的哪个决�
 **走本仓库的 CLI／DB 接口，一个字都不 vendor**（Orca spec §9.1）。
 设计与进度的真相源在 `…/loop/Orca/docs/superpowers/specs/`、`…/plans/`、`…/docs/handoff/handoff.md`。**本节不复述。**
 
-## 🔴 Orca 那边到哪了（2026-09-17 更新）
+## 🔴 Orca 那边到哪了（2026-09-18 更新）
 
 - **A′（决策台账校验器）、子系统 C（调度层）已落地。子系统 B 的入口条件已做完。**
 - **子系统 E 的第一刀（`orca correct`）已实施完毕并通过验收** —— 第一条真的 `overturned` 落过盘。
@@ -7746,7 +7746,8 @@ ccmem 是 Orca 的**记忆层**：Orca 会把「人推翻了 agent 的哪个决�
   与 `orca compact-reviews` 的「读不出」同一个定义。⇒ 本仓库若将来读它，**照这个定义判「是不是一行」**，别只 `JSON.parse` 成功就收下。
 - 🆕 **子系统 D（检查点交接）的 D1＋D2 已落地并由人推上 Orca 远端（2026-09-17，Orca run `orca-dev-d5688105`）**：水位钩子、`orca checkpoint write`、`orca resume`；活体验收已做。
   I3（subagent 的调用收到父会话的水位与写检查点指令）已修并经判别性活体验收。
-  🆕 **Tier 0 机械闸门已落地（2026-09-18，Orca run `orca-dev-c30670af`）**：PreToolUse 钩子 ＋ 仓库级 deny，拦 **Orca 仓库** agent 会话的 push／合并进 main／删分支／删 worktree；`orca resume`／`checkpoint write` 执行检查点里记录的 shell 命令前也过同一套判定。Orca 的下一件事是 D-launch。**对本仓库仍然零任务**（只装在 Orca 自己的仓库里）。
+  🆕 **Tier 0 机械闸门已落地（2026-09-18，Orca run `orca-dev-c30670af`）**：PreToolUse 钩子 ＋ 仓库级 deny，拦 **Orca 仓库** agent 会话的 push／合并进 main／删分支／删 worktree；`orca resume`／`checkpoint write` 执行检查点里记录的 shell 命令前也过同一套判定。**对本仓库仍然零任务**（只装在 Orca 自己的仓库里）。
+  🆕 **D-launch 已实施（2026-09-18，Orca run `orca-dev-6662000e`）**：`orca chain` 外部监督进程串行以无头 `claude -p` 拉起会话、由代码判续停，链记录提交在被干活仓库的 `.orca/chains/<chain-id>.json`。**不写任何用户全局数据、不读写本仓库的 DB ⇒ 对本仓库仍然零任务。** 真钱活体验收未跑。
   *** **与本仓库有关的只有一行：检查点住在被干活的仓库自己的 `.orca/checkpoints/<run-id>.json`（随提交走），不写任何用户全局数据，不读写本仓库的 DB；handoff 的读者被人明确为下一个 agent，不是人（Orca 主 spec ERRATUM 6）。** ***
   ⇒ 检查点与记忆层的边界（什么进检查点、什么进记忆层）**尚未设计**。
   ⚠️ 🔴 本节早先那句「Orca 台账里 `React` 现测仍是零命中」是假的（2026-09-10 已更正）。记法保留：

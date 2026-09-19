@@ -7690,13 +7690,13 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 # 📌 §15 Orca 那条线（单节滚动更新，2026-09-19）
 
 按用户要求只更新本节，不再扩展 Orca 会话日志；原生 ccmem 章节和任务不变，历版由 `git log -- docs/handoff/handoff.md` 取回。
-归属：Codex task `01a0b792-9ebb-79d0-ba91-604825a9f974`。本次只改 handoff，不改产品、hooks、配置、daemon，不访问真实 `~/.claude/ccmem/**`。
+状态同步至 Codex task `01a0b8f9-cbae-7f82-a20b-2c43251d5492`。本次只收敛既有 §15，不新增 Orca 会话章节；不改 ccmem 产品、hooks、配置或 daemon，不访问真实 `~/.claude/ccmem/**`。提交定位用主题、分支和开发树，不把 handoff 提交前后的 HEAD、ahead 数或历史 SHA 当作接手条件。
 
 ## 角色、现状与入口
 
 ccmem 是 Orca 的决策记忆系统：保存人工纠正的语境，使后续决策能检索、引用和审计；通过公开 CLI／DB 接口使用，不 vendor。本轮尚未实施此闭环，不能把架构批准当成现有集成已运行。
 本仓库原生进度仍从本文开头及 ⅩⅬⅡ／ⅩⅬⅠ 接手；T13、存量临时目录和原有待授权事项不因 Orca 进展而关闭。本次没有重新测量 ccmem 测试基线、生产记忆数或 daemon 状态，旧快照不得冒充当前读数。
-Orca 设计入口：`/Users/biran/code/skills/loop/Orca/docs/superpowers/specs/2026-09-19-task-control-design.md`，§13 优先于旧正文；用户已批准书面规格。当前状态看同仓 `docs/handoff/handoff.md` 最后更新；不固定任何“当前 HEAD”或领先笔数，发布状态用 `rtk proxy /usr/bin/git ls-remote origin refs/heads/main` 现查。
+Orca 设计入口：`/Users/biran/code/skills/loop/Orca/docs/superpowers/specs/2026-09-19-task-control-design.md`，§13 优先于旧正文；用户已批准书面规格。当前状态先读 Orca 同仓 `docs/handoff/handoff.md` 最新入口，再现查三仓 status/worktree/remote；不固定任何“当前 HEAD”、领先笔数或发布状态。
 
 ## 已确定的记忆接口语义
 
@@ -7708,13 +7708,14 @@ Orca 设计入口：`/Users/biran/code/skills/loop/Orca/docs/superpowers/specs/2
 
 ## Orca 进度与交付顺序
 
-Orca 的决策台账、调度、correct、metrics、面板及 D-launch 已落地；D-launch E7 与 settle 进程组残留已修，原 chain 真钱验收仍待人。
-紧急 ccloop Codex 窄适配已在 `/tmp/ccloop-codex-0919`、`codex/codex-adapter-0919` 完成并留待整合，不在 ccloop 主目录。末轮离线验证历史结果 45 文件／706 测试，来源为审查修复提交主题 `fix(codex): harden output reads and watchdog cleanup` 对应树上的 `npm test`；完整证据在该树 SDD 目录。
-一次真钱三阶段功能通过，但验收 wrapper 的软余额误判导致原退出 1，已离线修复、未重跑模型；不要转述成修正版活体验收全绿。ccloop 的 Codex 适配器目前仅 soft 预算，这不是严格额度或新交接协议的证明。
-按 task-control §13.6：控制底座（统一 work item／预算／所有权／归档）→ ccloop 交接与 D3 → Web 手工任务图及可恢复停止／续接 → 自动拆分、ccmem 纠正闭环、组 goal 验收。Web > CLI 是人的操作优先级；Orca 不自行加入复杂 agent 控制逻辑。
+Orca 的决策台账、调度、correct、metrics、面板及 D-launch 已落地；D-launch E7 与 settle 进程组残留已修，原 chain 真钱验收仍待人。控制底座八任务、Codex 五任务、公共控制协议／handoff／D3 八任务均已完成，勿重复实施。
+ccloop 开发树 `/tmp/ccloop-codex-0919`、分支 `codex/codex-adapter-0919` 提供 `control` v1：持久 accepted、严格幂等、累计 usage、work/handoff 两桶、具名 handoff、两次进程组静止证明、证据读取、结果仓库和完整脏快照 continuation。Orca 开发树 `/Users/biran/.codex/worktrees/control-foundation-0919/Orca`、分支 `codex/control-foundation-0919` 提供显式生产 port、独立归档与 checkpoint、跨 run 预算继承和 task/group D3。两开发分支都尚未整合 main，计划等后续开发完成后统一合入；按主题 `feat(control): verify cross-repo recovery protocol`、`test(control): verify real ccloop recovery protocol` 等定位，不要求固定 HEAD。
+最终历史验收：ccloop control 24/306、全套 56/771、typecheck/build RC0；Orca 实际二进制 cross-repo 1/3、control 19/120、完整 verify 主套 148/1195 两次、scheduler51/167、chain13/213、Web build、panel PASS0–14、Web9/34，正式日志无 skipped/todo。六个同步 SIGKILL 边界恢复不重复 agent、usage、checkpoint、continuation 或 D3 Markdown。精确证据在 Orca 开发树 `.superpowers/sdd/2026-09-19-ccloop-control-handoff-d3/`；ccloop 原始 Task 8 日志在其开发树同名目录。
+关键竞态已修：Orca polling 不再提前创建 terminal source；ccloop 在 candidate durable 后才暴露 terminal，并负责物化真实 Git `sourceDir/repo`；Orca 只读校验，既存非 Git 目录失败关闭。Codex 仍只有 `phase-end + soft`，不是 strict token 封顶；一次真钱三阶段功能成功，但 wrapper 修正版仅离线修复、未真钱重跑，不能升级表述。
+下一步是 Web 可恢复任务控制 → 自动拆分 → ccmem 纠正闭环／组 goal 验收。Web > CLI；Orca 控制 ccloop，具体 adapter 与 agent 生命周期留在 ccloop。到 ccmem 切片时才新增产品接线与隔离验收，当前没有 ccmem 产品改动或数据迁移。
 
 ## 继续工作的边界
 
 ccmem 的生产库、WAL/SHM 与 daemon 仍受本仓库 CLAUDE.md Rule13 约束；验证用隔离副本，不用真实用户数据。只读 SQLite 连接也可能触及 SHM 元数据，不把 mode=ro 当零触碰证明。
-本次无产品执行或数据迁移授权扩展；未来接入先写对应切片计划和可执行验收，不重开已批准架构。push／整合／清理由人处理。
+本次无 ccmem 产品执行或数据迁移授权扩展；未来记忆接入先写对应切片计划和可执行验收，使用已完成的控制协议统一 work item 归组计费、独立证据引用和幂等恢复，不另建隐形模型开销路径；不重开已批准架构。保留两开发树、诊断根 `.../orca-real-ccloop-MyDo5O`、fixture `/private/tmp/orca-ccloop-d3-task8`、node_modules 与全部证据；真实 `/Users/biran/.orca` 在最终离线验收后仍不存在。push／整合／清理由人处理，本轮暂不合入 main。
 Claude 额度按用户通知需等 2026-09-22 09:00 Asia/Shanghai 后；这不等于自动获准调用。Orca chain 验收须人提交 `.orca/chain.json` 选 model 并点头，首调现测 F，副本 T1 > F。

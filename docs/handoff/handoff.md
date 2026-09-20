@@ -7696,6 +7696,7 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 
 ccmem 是 Orca 的决策记忆系统：保存人工纠正的语境，使后续决策能检索、引用和审计；通过公开 CLI／DB 接口使用，不 vendor。本轮尚未实施此闭环，不能把架构批准当成现有集成已运行。
 本仓库原生进度仍从本文开头及 ⅩⅬⅡ／ⅩⅬⅠ 接手；T13、存量临时目录和原有待授权事项不因 Orca 进展而关闭。本次没有重新测量 ccmem 测试基线、生产记忆数或 daemon 状态，旧快照不得冒充当前读数。
+本次主线 handoff 后复核 ccmem 全套为 743 tests：741 passed、2 failed；失败是 `cmdAdminDaemon start, restart, and stop manage the daemon lifecycle` 的 stop timeout，以及 `plist-drift` 的 PATH refresh 写入判据，均未由 Orca 文档改动引起，下一位不要把本轮写成 ccmem 全绿。
 Orca 设计入口：`/Users/biran/code/skills/loop/Orca/docs/superpowers/specs/2026-09-19-task-control-design.md`，§13 优先于旧正文；用户已批准书面规格。当前状态先读 Orca 同仓 `docs/handoff/handoff.md` 最新入口，再现查三仓 status/worktree/remote；不固定任何“当前 HEAD”、领先笔数或发布状态。
 
 ## 已确定的记忆接口语义

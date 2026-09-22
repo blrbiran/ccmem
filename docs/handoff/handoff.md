@@ -7687,88 +7687,74 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-09-22**；整节替换上一版，不新增 Orca 会话章节）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-09-23**；整节替换上一版，**不新增 Orca 会话章节**）
 
-**本节只讲与 ccmem 有关的部分**；Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 的最新入口读，
-**别从这里抄数**。定位用提交主题与路径，**本文这一笔提交会移动 HEAD，不把任何哈希或发布状态当接手条件**。
-**本轮没有任何 ccmem 产品、hooks、配置或 daemon 改动，也没有访问真实 `~/.claude/ccmem/**`。**
+**本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
+⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，而人也会自己推远端。
+判发布只跑 `/usr/bin/git ls-remote origin refs/heads/main` 与本地比，**三个仓各跑一次**。
+**本轮没有碰 ccmem 的任何文件。**
 
-## 角色与边界（未变）
+## ccmem 在这套系统里是什么（**未变**）
 
-ccmem 是 Orca 的决策记忆系统：保存人工纠正的语境，使后续决策可检索、可引用、可审计；
-通过公开 CLI／DB 接口使用，**一个字都不 vendor**。**记忆接入切片仍未开始**，
-不能把架构批准当成集成已在运行。本仓库原生进度仍从本文开头及 ⅩⅬⅡ／ⅩⅬⅠ 接手 ——
-T13、存量临时目录、原有待授权事项**不因 Orca 的进展而关闭**。
-本轮**没有**重新测量 ccmem 测试基线、生产记忆数或 daemon 状态，**旧快照不得冒充当前读数**。
+ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续决策可检索、可引用、可审计。
+- 走 **CLI/DB 接口**，Orca **一个字都不 vendor**、不走 submodule。
+- **`projectKey` ＋ `decisionId` 联合键**归桶。⚠️ **Orca 独立实现了一份 `normalizeRemoteUrl`** ——
+  **改本仓库的算法要双方核对**，否则会静默分叉。
+- ⚠️ **ccmem 自己的挂账（T13、存量临时目录、待授权事项）不因 Orca 的进展而关闭。**
 
-## 已确定的记忆接口语义（未变）
+## 已确定的记忆接口语义（**未变，上一版的结论逐条保留**）
 
-- 对照样本由 decision 的 chose／because／evidence／alternatives 与 correction 的人工修改及原因拼接；
-  `overturned` 是瘦闭环事件，不承载完整样本。
-- correction.because 保留拒绝另一方案的语境；指标输出不含 because／by，记忆接入不能依赖 metrics 取得这些字段。
-- 关联用 `projectKey + decisionId` 联合键；projectKey 与 ccmem 的 git remote URL 规范化口径一致。
-  Orca 独立实现 `normalizeRemoteUrl`，改本仓库算法要双方核对；Orca 不采用非 Git 的 path fallback。
-- 已有 correction／台账写入方 ⇒ 改字段或语义有迁移成本；历史读数不能当当前迁移依据。
-- 纠正先阻断旧决策继续派发，再同步记忆并记录后续引用；所有模型型记忆处理都归组计费。
-  严格额度下外部服务给不出可执行消耗上界时，用无模型读写或拒绝该能力，**不能隐去成本**。
-
-## Orca 2026-09-22：人拍了六条方向性裁决，其中**一条直接落在 ccmem 邻居身上**
-
-裁决全文在 Orca 仓 `docs/handoff/goal.md` §8（该文件**不是接手材料，每轮不必读**）。与本仓库有关的只有两条：
-
-- *** **G5：syncskill 要补三件**（profile／清单、按 run 注入、版本记录）。 ***
-  这是本轮**唯一新增的跨仓工作量**，落在中期。**它不改 ccmem 的任何东西**，
-  但意味着 Orca 周边从三个仓变成**四个仓在演进**，**ccmem 的记忆接入切片排在它之后**。
-- **G1：control v1 的线上契约归 ccloop（生产方），Orca 跟随。**
-  ⇒ 上一版本节写的「ccloop 的 `capabilities` 缺五个字段、要 ccloop 侧先改」**结论仍然成立**，
-  **但前提变了**：那不再是 Orca 开的需求清单，而是 **ccloop 自己契约要定义的词汇表**。
-  **ccmem 侧不需要跟改任何东西。**
-
-其余四条（G2 `level`／`checkpoint`／`gate` 留 Orca、G3 `orca chain` 是 Orca 自用、
-G4 完成度口径、G6 A2A 只做只读状态外壳）**与本仓库无关**，仅供知情。
-
-## 「Web 控制可用」仍然**不是**事实（原因比上一版更具体）
-
-Orca 本轮把两道此前**状态未知**的门跑出了基线（台账与未过滤日志在 Orca
-`.superpowers/sdd/2026-09-22-control-gates-baseline/`）：
-`verify:web-control:consumer` **RC1 ＝ 2 失败／2 通过**；
-`verify:control` **RC1 ＝ 42 文件通过／1 失败，430 通过／2 失败**，两门皆 0 skipped。
-*** **两道门的全部失败就是同一对判据**（`targetVersion` 那条缝），**不是回归**。 ***
-
-⇒ 仍然打不通，卡点未变：① Web 派活到真 ccloop 必得 `control-capability-unsupported`；
-② `targetVersion` 定成什么**尚未裁**（G1 只裁了由 ccloop 拍，没裁拍成什么）；
-③ 生产里仍没有 execution profile 快照的来源；④ `acceptContextObservation` 仍接不起来
-（`ContextObservationV1` 在 Orca `src/` 无生产者，缺 ccloop 侧 emit）。
-
-## 🔴 更正：`~/.orca` 的残留**已被清理**
-
-上一版本节写的是「⚠️ **真实 `/Users/biran/.orca` 现在【存在】了** —— 是 Orca 本轮那次 Rule 17 事故
-造出来的控制 store 残留……家目录下的删除要人点头」。
-**「残留还在」这句现在为假** —— **人自己在 2026-09-22 删掉了那六个目录**（不是 agent 干的）。
-
-Orca 现测（`rtk proxy ls -la ~/.orca ~/.orca/control`，未过滤整份读回）：
-两级目录**都还在、都是 `drwx------`（0700）**，**`control/` 下为空**。
-⚠️ **`~/.orca` 这个目录本身仍然存在** —— 「它不存在」那个更早的说法同样不要复活。
+- **对照样本**由 decision 的 `chose`／`because`／`evidence`／`alternatives`
+  与 correction 的人工修改及原因**拼接而成**；`overturned` 是**瘦闭环事件**，**不承载完整样本**。
+- **`correction.because` 保留「为什么拒绝另一方案」的语境**；
+  ⚠️ **指标输出不含 `because`／`by`** ⇒ **记忆接入不能依赖 metrics 取得这两个字段**。
+- 关联用 **`projectKey + decisionId` 联合键**；`projectKey` 与 ccmem 的 git remote URL 规范化口径一致。
+  ⚠️ **Orca 独立实现了一份 `normalizeRemoteUrl`，改本仓库算法要双方核对**；Orca 不采用非 Git 的 path fallback。
+- 已有 correction／台账写入方 ⇒ **改字段或语义有迁移成本**；**历史读数不能当当前迁移依据**。
+- 纠正**先阻断旧决策继续派发**，再同步记忆并记录后续引用；所有模型型记忆处理**都归组计费**。
+  严格额度下外部服务给不出可执行消耗上界时，**用无模型读写或拒绝该能力，不能隐去成本**。
+- ⚠️ **「记忆接入切片仍未开始」** —— 不要把架构批准当成集成已在运行。
 
 ## 对 ccmem 特别相关的一条教训（**未变，值得本仓库直接用**）
 
-Orca 踩过一次写进真实用户数据：默认挂载让面板在真实 `~/.orca` 下造出 control store，
+Orca 踩过一次**写进真实用户数据**：默认挂载让面板在真实 `~/.orca` 下造出 control store，
 **而第一次「机械改道」只动了 `process.env`，那些判据传的是自己构造的 env 对象、根本不读它，
-于是没修好、整套又写了一次**。最终靠的不是改道，是一条**会红的判据**：
-每个测试文件跑完比对真实 `~/.orca` 快照，变了就红。
+于是没修好、整套又写了一次。**
+最终靠的不是改道，是一条**会红的判据**：每个测试文件跑完比对真实目录的快照，变了就红。
 ⇒ *** **改道是希望，快照比对才是护栏。** ***
 ccmem 的 Rule 13（生产库、WAL/SHM、daemon 用隔离副本）同形，**建议照此补一条快照护栏**；
-**只读 SQLite 连接也可能触及 SHM 元数据，`mode=ro` 不是零触碰证明** —— 这条未变。
+⚠️ **只读 SQLite 连接也会触及 SHM 元数据，`mode=ro` 不是零触碰证明** —— 这条未变。
 
-## 继续工作的边界与 awaitingHuman
+## 本轮（2026-09-23）发生了什么 —— **与 ccmem 无关，但会影响排期**
 
-- 本轮**无 ccmem 产品执行或数据迁移授权扩展**。未来记忆接入先写切片计划与可执行验收，
-  复用已完成的控制协议统一 work item 归组计费、独立证据引用与幂等恢复，
-  **不另建隐形模型开销路径**，**不重开已批准架构**。
-- 保留两开发树、fixture `/private/tmp/orca-ccloop-d3-task8`、node_modules 与全部证据。
-  ⚠️ 上一版要求保留的诊断根 `.../orca-real-ccloop-MyDo5O` **现测已不存在**（`/private/tmp` 下无匹配）。
-- **Orca 那边人定的顺序**：两道门拿基线（已完成）→ 三仓 handoff 更正（本节即是）
-  → *** **ccloop 先做完它自己的 E1 I-2 ＋ 人裁 85（人明确要求不插队）** *** → 才是 G1 那条线。
-  **ccmem 的记忆接入切片仍排在这一串之后。**
-- 归人的：`targetVersion` 定成什么（在 ccloop 拍）、Orca 的 push、
-  以及 Orca 那条「第二个 panel 不挂控制面」的控制器自决。
+Orca 这条线本轮**全程在 ccloop 仓库里干活**，做完了 ccloop 挂了很久的 **E1 的 I-2**
+（人裁 127／128；一个非字符串 holder 被强转成 pid、导致无法归属的锁被无凭证删除的缺陷）。
+
+⇒ *** **ccmem 的记忆接入切片仍然排在后面，本轮没有前进，也没有后退。** ***
+⚠️ **另一条影响排期的（2026-09-22 人裁 G5，未变）**：**syncskill 要补三件**
+（profile／清单、按 run 注入、版本记录）。**它不改 ccmem 的任何东西**，
+但意味着 Orca 周边从三个仓变成**四个仓在演进**，**ccmem 的接入排在它之后**。
+⚠️ **「Web 控制可用」仍然不是事实**，卡点未变：① Web 派活到真 ccloop 必得 `control-capability-unsupported`；
+② `targetVersion` 定成什么尚未裁；③ 生产里仍没有 execution profile 快照的来源；
+④ `ContextObservationV1` 在 Orca `src/` 无生产者，缺 ccloop 侧 emit。
+人定的顺序未变：**ccloop 的 E1 I-2（✅ 已完成）→ ccloop 人裁 85 → 才是 G1 那条线**，
+**ccmem 的接入排在这一串之后。**
+
+## 本轮产出的、**ccmem 可以直接拿去用**的两条方法论
+
+这两条不是 Orca 特有的，是**扫描器类工具的通用陷阱**，ccmem 的探测器与普查同样会中：
+
+1. *** **`grep` 配 `$'\x00\|\x01…'` 在 bash 里会在 NUL 处【截断参数】** *** ⇒ 模式变成空串、
+   **命中每一行**。实测报出的数正好等于文件总行数，看起来像「扫到了一大堆」，其实什么都没扫。
+   ⇒ **扫控制字节一律用 python 直接读字节，不要用 grep。**
+   （ccmem 有过同形的一次：`credential_assignment` 的死正则里那两个 `\b` 是**两个字面 0x08 退格符**，
+   所以它从落地起一次都没执行过。**同一族缺陷。**）
+2. *** **扫描词从英文源码机械导出，对中文活文档恒零命中。** ***
+   本轮的全树扫描**范围覆盖到了**中文 handoff，却一条都没捞到 —— 因为句子是中文。
+   ⇒ *** **「扫描器跑了」「范围对了」都不等于「它在做它声称的事」。导出扫描词时要覆盖语料的语言。** ***
+
+## awaitingHuman（**与 ccmem 相关的**）
+
+- **`targetVersion` 定成非空字符串还是安全整数** —— 人裁 G1 已定「由 **ccloop** 拍」，
+  **拍成什么仍未裁**。与 ccmem 无直接关系，仅供知情。
+- **三个仓的 push 都归人**，控制器不许 push。

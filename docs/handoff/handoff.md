@@ -7687,12 +7687,12 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-09-25 第五版**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-09-25 第七版**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
 判发布只跑 `/usr/bin/git ls-remote origin refs/heads/main` 与本地比，**三个仓各跑一次**。
-**G1 两缝与执行驱动三轮（2026-09-24／25）都没有碰 ccmem 的任何文件，除本节。**
+**G1 两缝、执行驱动、真 codex 活体验收与 ④ handoff 设计＋实施（2026-09-24／25）都没有碰 ccmem 的任何文件，除本节。**
 
 ## ccmem 在这套系统里是什么（**未变**）
 
@@ -7744,25 +7744,16 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 
 ## 最近几轮（2026-09-24／09-25）发生了什么 —— **与 ccmem 无关，但影响排期**
 
-*** **G1 缝 A（capability 词汇表）做完了**：ccloop 一笔、Orca 六个 Task 全部落地并过评审。 ***
-🔴 **结论未变：G1 是两条独立的缝**（A＝capability 词汇表，B＝`targetVersion` 类型分叉），修好 A 不会让 B 的两条红判据回绿。
-真 ccloop 的 `capabilities` 现在答 v2 八字段，Orca 直通对端应答、不再从 declared profile 借字段。
-⚠️ **诚实的验收表述**：soft 组的 Web 派活能在 **Orca 台账里记下一条 `starting` run**；
-**ccloop 那一侧的 `accept` 在生产里从没发生过**。
-⇒ *** **「Web 控制可用」仍然不是事实。** *** 剩余卡点（2026-09-25 现测更新）：① ~~执行驱动缺口~~（已做完，见下）⇒ 现在是**真 codex 活体验收**；② 生产部署**没有 execution profile 快照**；
-③ `ContextObservationV1` 在 Orca `src/` 仍无生产者（ccloop 答 `contextObservation:"unavailable"`、`contextWindowTokens:null`
-⇒ 真 ccloop 下每个 Web 组的预估都会是 `estimate-blocked-capability`）。
-⇒ *** **ccmem 的记忆接入仍排在 G1 之后 —— 本轮没有前进，也没有后退。** ***
-✅ **缝 B 已做完（2026-09-25）**：Orca 全链路 `targetVersion` 统一为正安全整数。
-✅ **执行驱动（第一片）也做完了（2026-09-25，Orca 会话 `905e41ce`）**：Web 派活在 **fake codex** 下能从 confirm 跑到 settle、落到目标仓库的 `orca/<groupId>`，
-冲突由单独的解冲突 run 解。⚠️ **真 codex 从没跑过 ⇒「Web 控制可用」仍然不是事实**；handoff 投递、预算预估链、strict 组仍在范围外。
-⇒ *** **ccmem 的记忆接入仍排在后面，本轮没有前进也没有后退。** *** 执行驱动每一步都在 Orca 控制台账里落盘（run body 的 `drive` 记录、`blockedReason`），
-**将来记忆接入若要取「为什么这个 run 被阻断」，那是现成的结构化来源**（仅供知情，不是承诺）。
-⚠️ **另一条影响排期的（人裁 G5，未变）**：**syncskill 要补三件**。**它不改 ccmem 的任何东西。**
+- ✅ G1 两缝（capability 词汇表、`targetVersion`）、执行驱动第一片都做完了（fake codex 下 Web 派活能从 confirm 跑到 settle）。
+- ✅ **真 codex 下单任务主链跑通过一次**（2026-09-25，Orca 会话 `af3dc0d3`，n＝1）。⚠️ *** **「Web 控制可用」仍然不是事实** *** —— 冲突、依赖、崩溃恢复、面板 HTTP 都没在真模型下验过。
+- ✅ **Orca 的 ④ handoff 投递＋续跑＋N 路并行落地做完了**（2026-09-25，Orca 会话 `e5f56bfe`；只在 fake codex 下验过，真 codex 下 handoff 从没跑过）。下一片是「claude 走 ccloop control 模式」。
+- 仍然成立的卡点：生产部署**没有 execution profile 快照**；`ContextObservationV1` 在 Orca `src/` 无生产者（ccloop 答 `contextObservation:"unavailable"` ⇒ 真 ccloop 下每个 Web 组的预估都是 `estimate-blocked-capability`）。
+- ⇒ *** **ccmem 的记忆接入仍排在后面，本轮没有前进也没有后退。** *** 仅供知情：执行驱动每一步都在 Orca 控制台账落盘（run body 的 `drive`、`blockedReason`），④ 之后 handoff 检查点里也有 `unfinished`／`pendingDecisions`／`awaitingHuman`（Orca 台账的 `checkpoints` 行，规范字节） —— 将来记忆接入若要取「为什么这个 run 停了、还剩什么」，那是现成的结构化来源（不是承诺）。
+- ⚠️ **另一条影响排期的（人裁 G5，未变）**：**syncskill 要补三件**。**它不改 ccmem 的任何东西。**
+- 🆕 **一条 ccmem 也用得上的教训**：*** **跨仓词表不一致是反复出现的根因** *** —— 同一个词（`null` 用量、handoff 的 `complete`）在两仓里意思不同，对端按自己的意思保守处理然后卡死。ccmem 与 Orca 之间的 `projectKey`／`normalizeRemoteUrl` 是同一类风险（上文已登记）。
 
 ## awaitingHuman（**与 ccmem 相关的**）
 
-- **三个仓的 push 都归人，时机由人自己定**（人 2026-09-25：「以后你都不用管push」），控制器不许 push、也不再把它列为待办。
-  ⚠️ **这台机器上有东西在把提交推到真实 GitHub 远端**（三个仓同一个 `post-commit` 钩子，调混淆过的二进制）——
-  本轮 Orca 在会话中途被推了一次，**本会话没有任何一席执行过 push**。**要人自己查并决定。**
-- ~~缝 B~~、~~执行驱动第一片~~ —— **已做完**（2026-09-25）。仍待人定的是 Orca 的**真 codex 活体验收**与后续几片何时开 —— 与 ccmem 无直接关系，仅供知情（它决定记忆接入何时能排上）。
+- **三个仓的 push 都归人，时机由人自己定**，控制器不许 push、也不把它列为待办。
+  ⚠️ **这台机器上有东西在把提交推到真实 GitHub 远端**（三个仓同一个 `post-commit` 钩子，调混淆过的二进制）——**要人自己查并决定。**
+- Orca ④ 之后的排期（claude 那一片、⑤ 预估链、strict 组）何时开 —— 与 ccmem 无直接关系，仅供知情（它决定记忆接入何时能排上）。

@@ -7763,7 +7763,7 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 
 - ✅ G1 两缝、执行驱动第一片、真 codex 单任务活体验收（n＝1）、④ handoff 投递＋续跑＋N 路落地、agent 选择一轮及其人审都做完了。**真 claude 下单任务主链跑通过一次**（n＝1）；2026-09-27 又各跑通一次 1M 窗口单任务与两任务解冲突（Orca 台账 §20）；依赖、handoff、混 kind 都没跑过。偏好按 `operatorId` 分键，存在 Orca 控制 store 的 `agent_preferences` 表 —— 将来记忆接入若要取「人偏好哪个模型」，这是现成的结构化来源（不是承诺）。
 - ✅ 2026-09-27（Orca 会话 `94b09282`）付费轮四个发现都已裁定落地，全部改在 ccloop：claude 的 cache token 计入用量；runner 失败时保留 claude 的 stdout；`agents detect` 给 claude 的草稿带隔离参数、`--settings {"autoMemoryEnabled":false}` 与 `--max-budget-usd 100`。
-- ✅ 2026-09-27（Orca 会话 `4d2e426e`／`5b01dbd9`）**claude 中止前观测用量**一轮做完、等人审：在 fake claude 下，被 handoff deadline 中止的 claude 阶段会报它从 stream 观测到的用量下界，不再是 `null`，于是该 run 可续。**真 claude 下没跑过**（付费验证归人）。与 ccmem 无关。
+- ✅ 2026-09-27（Orca 会话 `4d2e426e`／`5b01dbd9`）**claude 中止前观测用量**一轮做完、等人审：在 fake claude 下，被 handoff deadline 中止的 claude 阶段会报它从 stream 观测到的用量下界，不再是 `null`，于是该 run 可续。真 claude 下跑过一次：中止与可续都成立，但续跑因额度太紧，没有落地（n＝1）。与 ccmem 无关。
 - ⚠️ *** **「Web 派活可用」仍然不是事实**；生产部署仍**没有 execution profile 快照**。 *** ⇒ *** **ccmem 的记忆接入仍排在后面，本轮没有前进也没有后退。** ***
 - ⚠️ 人裁 G5（syncskill 要补三件）未变，**不改 ccmem 的任何东西**。
 - 教训仍是「**跨仓词表不一致是反复出现的根因**」；ccmem 与 Orca 之间的 `projectKey`／`normalizeRemoteUrl` 是同一类风险（上文已登记）。

@@ -7687,7 +7687,7 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-09-28 第十五版**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-09-28 第十六版**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
@@ -7766,10 +7766,15 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 - ✅ 已做完：G1 两缝、执行驱动第一片、真 codex 单任务验收（n＝1）、④ handoff 投递、agent 选择一轮及其人审、claude 中止前观测用量（人已审）。
   - 真 claude 下各跑通过一次（n＝1）：单任务主链、1M 窗口单任务、两任务解冲突，以及「deadline 中止 → 报用量 → 可续 → 续跑落地」。
   - 偏好按 `operatorId` 分键，存在 Orca 控制 store 的 `agent_preferences` 表。将来记忆接入若要知道「人偏好哪个模型」，这是一个现成的结构化来源（只是现有，不是承诺）。
-- 🆕 2026-09-28（Orca 会话 `f341f05f`）**⑤ 预算预估链**已落地，终审修复已过，人已推送，**仍等人审**（会话 `fa672d9e` 做了人审准备，没有新功能）：
+- 2026-09-28（Orca 会话 `f341f05f`）**⑤ 预算预估链**已落地、已推送，**人已审完**（Orca 会话 `292277d5`）：
   - Orca 导入 plan 后，模型预估经 ccloop 新增的通用 `single-call` 活执行一次，结果以「建议」的形式出现，人在面板上按字段、按行或整体应用。
   - 真 claude 下一次都没跑过。
   - 与 ccmem 无关。不过「人应用了模型的哪条建议、又改掉了哪条」将来可以成为对照样本的一个来源（只是一种可能，不是承诺）。
+- 🆕 *** **与 ccmem 直接相关：人已把「memory tab ＋ memory adapter」定为 Orca 的后续方向**（Orca 仓 `docs/handoff/goal.md` §10 N5，人裁 G9，2026-09-28 会话 `292277d5`）。 ***
+  - Orca Web UI 加一个 memory tab。第一版只接 ccmem，以后能接别的 memory 插件，中间隔一层 `MemoryAdapter`（接口是草案：`capabilities`／`health`／`search`／`get`，外加唯一的写入口 `recordCorrection`）。
+  - **G9：第一版只读，写入只走 correction。** Orca 仍然一个字都不 vendor，走 CLI／DB 接口。
+  - **前置没核过**：ccmem 的 CLI 能不能输出 JSON、能不能按 `projectKey` 查。Orca 开这一轮时要先读本仓库的源码；本仓库需要补的接口到那时再由人裁。
+  - 排期：在 goal.md §10.1 里排第 5，前面还有标签和进度、loop 方案层、需求拆分、CLI／skill／MCP。**还没开，本仓库暂时不用动。**
 - ⚠️ *** **「Web 派活可用」「claude 可用」仍然不是事实**；生产部署仍**没有 execution profile 快照**。 *** ⇒ *** **ccmem 的记忆接入仍排在后面，本轮没有前进也没有后退。** ***
 - ⚠️ 人裁 G5（syncskill 要补三件）未变，**不改 ccmem 的任何东西**。
 - 教训仍是「**跨仓词表不一致是反复出现的根因**」：ccmem 与 Orca 之间的 `projectKey`／`normalizeRemoteUrl` 属于同一类风险（上文已登记）。本轮又撞上一次：ccloop 与 Orca 的 canonical JSON 排 key 算法不同（`localeCompare` 对 code unit），跨仓比哈希因此不可靠。
@@ -7778,5 +7783,5 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 
 - **三个仓的 push 都归人，时机由人自己定**，控制器不许 push、也不把它列为待办。
   ⚠️ **这台机器上有东西在把提交推到真实 GitHub 远端**（三个仓同一个 `post-commit` 钩子，调混淆过的二进制）——**要人自己查并决定。** 2026-09-27 那一会话里，它没有推动任何一笔（ccloop／Orca 提交后 `ls-remote` 一直落后本地）；2026-09-28 是人自己推的三个仓。
-- Orca 的排期（人审 ⑤ 这一轮、更多真 claude 形状、strict 组）—— 与 ccmem 无直接关系，仅供知情（它决定记忆接入何时能排上）。
+- Orca 的排期（⑤ 已审完；下一轮由人在 A 线、付费估算验证、goal.md §10.1 新路线之间选）—— 与 ccmem 无直接关系，仅供知情（它决定记忆接入何时能排上）。
 - 知情（**2026-09-27 更新**）：不关 auto memory 时，真 claude 会在**启动时**于 `~/.claude/projects/<cwd 编码>/` 建一个空 `memory/`，带 `--no-session-persistence` 也照建；关掉就不建。`agents detect` 的新草稿已经关掉它，付费轮留下的两个空目录也已按人授权删除。⇒ ccmem 若扫 `~/.claude/projects/`，**来自 Orca 自动化的这类空目录应不再新增**；但用旧安装表或手动跑的 claude 仍会留下。

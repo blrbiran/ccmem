@@ -7687,7 +7687,7 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-09-29 第十九版**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-09-29 第二十版**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
@@ -7765,21 +7765,22 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 
 ## 最近几轮（2026-09-24 至 29）发生了什么 —— **除 memory tab 的 spec 外都与 ccmem 无关，但影响排期**
 
-- ✅ 已做完（Orca 与 ccloop）：G1 两缝、执行驱动、④ handoff、agent 选择、claude 中止前观测用量、⑤ 预算预估链及其后续修复、两仓临时目录泄漏（每个测试文件一个临时根＋`check-tmp-leak` 护栏；ccmem ⅩⅬⅡ.4 若要选护栏形状可参考）、2026-09-29 的**标签＋内部进度**、一批待办、ccloop 走 git 依赖（Orca `package.json` 那一步归人）。
+- ✅ 已做完（Orca 与 ccloop）：G1 两缝、执行驱动、④ handoff、agent 选择、claude 中止前观测用量、⑤ 预算预估链及其后续修复、两仓临时目录泄漏护栏（`check-tmp-leak`）、标签＋内部进度、一批待办、ccloop 走 git 依赖（Orca 已钉住一个 ccloop SHA；以后只在 Orca 需要 ccloop 新行为时由 agent 重钉）。这一批的 `Ruling:` 行人已全部同意。
   - 真 claude 下各跑通过一次（n＝1）：单任务主链、1M 单任务、两任务解冲突、「deadline 中止 → 报用量 → 可续 → 续跑落地」。其余没跑过。
   - 偏好按 `operatorId` 分键存在 Orca 的 `agent_preferences` 表；「人应用了模型的哪条建议」、task 标签（10 个系统词＋`custom:`）将来都可能成为对照样本的来源（只是可能，不是承诺）。
-- 🆕 *** **与 ccmem 直接相关：Orca 的 memory tab 已写 spec，待人审**：Orca 仓 `docs/superpowers/specs/2026-09-29-memory-tab-design.md`（会话 `2724716d`）。 ***
-  - 第一版只读（人裁 G9），走 `ccmem export --json`（唯一只读的动词；`list`／`show` 会跑 `maybeRunTier15` 写库），不 vendor、不直接读 SQLite（引了本文「`mode=ro` 不是零触碰」那条教训）。项目范围靠把子进程 cwd 设成目标仓库、让 ccmem 自己算项目键。
-  - ⚠️ **待人裁 Q2 直接碰本仓库的数据**：每次 `openDb` 都会跑迁移；有待跑迁移时 ccmem 会把约 207 MB 的库整份复制成 `global.db.bak.<ts>` 并删最旧的备份（本机正好 5 个＝max_keep）。Orca 触发它等于在人的真实 `~/.claude/ccmem` 上写。
-  - 发现的 ccmem 侧缺口（**本仓库的人裁，Orca 不改 ccmem**）：`export` 不校验 `--scope`（写错会导出所有项目）；`list`／`show` 没有 `--json`、没有 `--project-key`；没有 remote 的仓库，钩子记的原始 cwd 与子进程的 realpath 可能算出不同的 `path:` 键；ccmem 里没有任何指向 Orca 的字段，所以「这条记忆由哪次 correction 产生」在 v1 做不了（Q7）。
-  - 排期：goal.md §10.1 排第 5；spec 建议可以提前（Q1）。**实现之前本仓库不用动。**
+- 🆕 *** **与 ccmem 直接相关：Orca 的 memory tab spec 人已裁（2026-09-29，「Q1–Q7 按建议定」）**，记在 Orca 仓 `docs/superpowers/specs/2026-09-29-memory-tab-design.md` §9。 ***
+  - 第一版只读，走 `ccmem export --json`（唯一只读的动词；`list`／`show` 会跑 `maybeRunTier15` 写库），不 vendor、不直接读 SQLite。项目范围靠把子进程 cwd 设成目标仓库、让 ccmem 自己算项目键。`ORCA_CCMEM_BIN` 不设就不启动 ccmem。
+  - ⚠️ **人已接受（Q2）**：Orca 读记忆可能在真实 `~/.claude/ccmem` 上触发 ccmem 自己的迁移（约 207 MB 的整份备份、删最旧的一份）。理由：下一次 Claude 会话的钩子开库同样会触发，Orca 不增加新风险。
+  - ⚠️ **实现前 Orca 会先读本仓库源码核两件事（Q6）**：① 被 SIGTERM 杀在复制途中的半截 `global.db.bak.<ts>` 会不会被当成可复用备份；② `runVersionedMigration` 是否整体在一个事务里。**若结论不安全，要在本仓库加保护，那是本仓库的人裁**（Orca 不改 ccmem）。
+  - 发现的 ccmem 侧缺口（本仓库的人裁，Orca 不改 ccmem）：`export` 不校验 `--scope`（写错会导出所有项目）；`list`／`show` 没有 `--json`、没有 `--project-key`；没有 remote 的仓库，钩子记的原始 cwd 与子进程的 realpath 可能算出不同的 `path:` 键（Q5：v1 只在 UI 上说明）；ccmem 里没有指向 Orca 的字段（Q7：现在不立项）。
+  - 排期：**不提前**（Q1），排在 Orca 的 §3.3 loop 方案层之后。**实现之前本仓库不用动。**
 - ⚠️ *** **「Web 派活可用」「claude 可用」仍然不是事实**；生产部署仍**没有 execution profile 快照**。 ***
 - ⚠️ 人裁 G5（syncskill 要补三件）未变，**不改 ccmem 的任何东西**。
-- 教训仍是「**跨仓词表不一致是反复出现的根因**」：ccmem 与 Orca 之间的 `projectKey`／`normalizeRemoteUrl` 属于同一类风险；memory tab 的 spec 为此选择让 ccmem 自己算项目键。
+- 教训仍是「**跨仓词表不一致是反复出现的根因**」：ccmem 与 Orca 之间的 `projectKey`／`normalizeRemoteUrl` 属于同一类风险；memory tab 为此选择让 ccmem 自己算项目键。
 
 ## awaitingHuman（**与 ccmem 相关的**）
 
 - **三个仓的 push 都归人，时机由人自己定**，控制器不许 push、也不把它列为待办。
-  ⚠️ **这台机器上有东西在把提交推到真实 GitHub 远端**（三个仓同一个 `post-commit` 钩子，调混淆过的二进制）——**要人自己查并决定。** 2026-09-27 那一会话里，它没有推动任何一笔（ccloop／Orca 提交后 `ls-remote` 一直落后本地）；2026-09-28 是人自己推的三个仓。
-- Orca 的排期（⑤ 已审完，授权的修复已做完；下一轮由人在 A 线、付费估算验证、ccloop 全套泄漏、goal.md §10.1 新路线之间选）—— 与 ccmem 无直接关系，仅供知情（它决定记忆接入何时能排上）。
-- 知情（**2026-09-27 更新**）：不关 auto memory 时，真 claude 会在**启动时**于 `~/.claude/projects/<cwd 编码>/` 建一个空 `memory/`，带 `--no-session-persistence` 也照建；关掉就不建。`agents detect` 的新草稿已经关掉它，付费轮留下的两个空目录也已按人授权删除。⇒ ccmem 若扫 `~/.claude/projects/`，**来自 Orca 自动化的这类空目录应不再新增**；但用旧安装表或手动跑的 claude 仍会留下。
+  ⚠️ **这台机器上有东西在把提交推到真实 GitHub 远端**（三个仓同一个 `post-commit` 钩子，调混淆过的二进制）——**要人自己查并决定。** 2026-09-27 那一会话里，它没有推动任何一笔；此后都是人自己推的。
+- Orca 的排期（下一会话：#13(a)/(b) → ccloop 重钉脚本与门 → brainstorm §3.3；memory tab 实现在那之后）—— 仅供知情，它决定记忆接入何时能排上。
+- 知情（2026-09-27）：不关 auto memory 时，真 claude 会在**启动时**于 `~/.claude/projects/<cwd 编码>/` 建一个空 `memory/`，带 `--no-session-persistence` 也照建；关掉就不建。`agents detect` 的新草稿已经关掉它。⇒ ccmem 若扫 `~/.claude/projects/`，**来自 Orca 自动化的这类空目录应不再新增**；但用旧安装表或手动跑的 claude 仍会留下。

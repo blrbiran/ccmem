@@ -7687,7 +7687,7 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-09-28 第十八版**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-09-29 第十九版**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
@@ -7763,27 +7763,19 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
    （2026-09-28 并入）**只跑「点名的判据文件」会漏掉嵌在别处的同形夹具**：⑤ 一轮给线上应答加了一个必填字段，每个 Task 都只跑了自己点名的文件，全绿；只有干净 clone 的全量门抓到一个测试里内嵌的假对端应答还缺那个字段（3/3 稳定红）。⇒ ccmem 改接口字段时，逐 Task 的局部绿不算数，收尾必须跑一次全量。
    （2026-09-28 并入）**清理一个会派生进程的判据，单文件连跑 10 次全绿也不够**：ccloop 的一处 `afterEach` 在负载下的全量里撞上子进程还在写，报了 `ENOTEMPTY`，又漏了一个目录。⇒ 先等子进程退出（pid 在记录里）再删，并在全量里验证。
 
-## 最近几轮（2026-09-24 至 28）发生了什么 —— **与 ccmem 无关，但影响排期**
+## 最近几轮（2026-09-24 至 29）发生了什么 —— **除 memory tab 的 spec 外都与 ccmem 无关，但影响排期**
 
-- ✅ 已做完：G1 两缝、执行驱动第一片、真 codex 单任务验收（n＝1）、④ handoff 投递、agent 选择一轮及其人审、claude 中止前观测用量（人已审）。
-  - 真 claude 下各跑通过一次（n＝1）：单任务主链、1M 窗口单任务、两任务解冲突，以及「deadline 中止 → 报用量 → 可续 → 续跑落地」。
-  - 偏好按 `operatorId` 分键，存在 Orca 控制 store 的 `agent_preferences` 表。将来记忆接入若要知道「人偏好哪个模型」，这是一个现成的结构化来源（只是现有，不是承诺）。
-- 2026-09-28（Orca 会话 `f341f05f`）**⑤ 预算预估链**已落地、已推送，**人已审完**（Orca 会话 `292277d5`）；人授权的后续修复由 Orca 会话 `c85d2c4e`（同日）做完：
-  - Orca 导入 plan 后，模型预估经 ccloop 新增的通用 `single-call` 活执行一次，结果以「建议」的形式出现，人在面板上按字段、按行或整体应用。
-  - 后续修复：ccloop 一个判据文件的临时目录泄漏、loop 阶段超时带观测用量、大 prompt 走 stdin、两处闸门的独立判据、应用建议后 draft 仍显示。
-  - 同一会话发现 **ccloop 全套每跑一次约在 `$TMPDIR` 漏 805 个目录**，与 ccmem ⅩⅬⅡ.3 修过的同形。
-  - 🆕 Orca 会话 `2724716d`（同日）按人授权修了 ccloop 与 Orca 两仓的这类泄漏（修前 805／364，修后 0），并删了真 `$TMPDIR` 里 94,729 个 `ccloop-*`。做法和 ccmem ⅩⅬⅡ.3 不同：不逐个改判据，而是**每个测试文件一个临时根**（vitest setup 文件把 `TMPDIR` 指过去、文件结束删掉），外加护栏 `scripts/check-tmp-leak.mjs`（空 `TMPDIR` 跑全量、剩任何条目退 1）。ccmem 若要给 ⅩⅬⅡ.4 的「回归护栏」选形状，这是一个现成的参考（只是参考；ccmem 用 `node:test`，要自己量）。
-  - ⚠️ 同轮踩的坑，ccmem 量泄漏时同样适用：**`TMPDIR` 要用短路径的真目录**。太长会让 socket 路径超过 macOS 104 字节上限；用软链会让比真实路径的判据红。两种都曾各造出 7 条假红。
-  - 真 claude 下估算一次都没跑过。
-  - 与 ccmem 无关。不过「人应用了模型的哪条建议、又改掉了哪条」将来可以成为对照样本的一个来源（只是一种可能，不是承诺）。
-- 🆕 *** **与 ccmem 直接相关：人已把「memory tab ＋ memory adapter」定为 Orca 的后续方向**（Orca 仓 `docs/handoff/goal.md` §10 N5，人裁 G9，2026-09-28 会话 `292277d5`）。 ***
-  - Orca Web UI 加一个 memory tab。第一版只接 ccmem，以后能接别的 memory 插件，中间隔一层 `MemoryAdapter`（接口是草案：`capabilities`／`health`／`search`／`get`，外加唯一的写入口 `recordCorrection`）。
-  - **G9：第一版只读，写入只走 correction。** Orca 仍然一个字都不 vendor，走 CLI／DB 接口。
-  - **前置没核过**：ccmem 的 CLI 能不能输出 JSON、能不能按 `projectKey` 查。Orca 开这一轮时要先读本仓库的源码；本仓库需要补的接口到那时再由人裁。
-  - 排期：在 goal.md §10.1 里排第 5，前面还有标签和进度、loop 方案层、需求拆分、CLI／skill／MCP。**还没开，本仓库暂时不用动。**
-- ⚠️ *** **「Web 派活可用」「claude 可用」仍然不是事实**；生产部署仍**没有 execution profile 快照**。 *** ⇒ *** **ccmem 的记忆接入仍排在后面，本轮没有前进也没有后退。** ***
+- ✅ 已做完（Orca 与 ccloop）：G1 两缝、执行驱动、④ handoff、agent 选择、claude 中止前观测用量、⑤ 预算预估链及其后续修复、两仓临时目录泄漏（每个测试文件一个临时根＋`check-tmp-leak` 护栏；ccmem ⅩⅬⅡ.4 若要选护栏形状可参考）、2026-09-29 的**标签＋内部进度**、一批待办、ccloop 走 git 依赖（Orca `package.json` 那一步归人）。
+  - 真 claude 下各跑通过一次（n＝1）：单任务主链、1M 单任务、两任务解冲突、「deadline 中止 → 报用量 → 可续 → 续跑落地」。其余没跑过。
+  - 偏好按 `operatorId` 分键存在 Orca 的 `agent_preferences` 表；「人应用了模型的哪条建议」、task 标签（10 个系统词＋`custom:`）将来都可能成为对照样本的来源（只是可能，不是承诺）。
+- 🆕 *** **与 ccmem 直接相关：Orca 的 memory tab 已写 spec，待人审**：Orca 仓 `docs/superpowers/specs/2026-09-29-memory-tab-design.md`（会话 `2724716d`）。 ***
+  - 第一版只读（人裁 G9），走 `ccmem export --json`（唯一只读的动词；`list`／`show` 会跑 `maybeRunTier15` 写库），不 vendor、不直接读 SQLite（引了本文「`mode=ro` 不是零触碰」那条教训）。项目范围靠把子进程 cwd 设成目标仓库、让 ccmem 自己算项目键。
+  - ⚠️ **待人裁 Q2 直接碰本仓库的数据**：每次 `openDb` 都会跑迁移；有待跑迁移时 ccmem 会把约 207 MB 的库整份复制成 `global.db.bak.<ts>` 并删最旧的备份（本机正好 5 个＝max_keep）。Orca 触发它等于在人的真实 `~/.claude/ccmem` 上写。
+  - 发现的 ccmem 侧缺口（**本仓库的人裁，Orca 不改 ccmem**）：`export` 不校验 `--scope`（写错会导出所有项目）；`list`／`show` 没有 `--json`、没有 `--project-key`；没有 remote 的仓库，钩子记的原始 cwd 与子进程的 realpath 可能算出不同的 `path:` 键；ccmem 里没有任何指向 Orca 的字段，所以「这条记忆由哪次 correction 产生」在 v1 做不了（Q7）。
+  - 排期：goal.md §10.1 排第 5；spec 建议可以提前（Q1）。**实现之前本仓库不用动。**
+- ⚠️ *** **「Web 派活可用」「claude 可用」仍然不是事实**；生产部署仍**没有 execution profile 快照**。 ***
 - ⚠️ 人裁 G5（syncskill 要补三件）未变，**不改 ccmem 的任何东西**。
-- 教训仍是「**跨仓词表不一致是反复出现的根因**」：ccmem 与 Orca 之间的 `projectKey`／`normalizeRemoteUrl` 属于同一类风险（上文已登记）。本轮又撞上一次：ccloop 与 Orca 的 canonical JSON 排 key 算法不同（`localeCompare` 对 code unit），跨仓比哈希因此不可靠。
+- 教训仍是「**跨仓词表不一致是反复出现的根因**」：ccmem 与 Orca 之间的 `projectKey`／`normalizeRemoteUrl` 属于同一类风险；memory tab 的 spec 为此选择让 ccmem 自己算项目键。
 
 ## awaitingHuman（**与 ccmem 相关的**）
 

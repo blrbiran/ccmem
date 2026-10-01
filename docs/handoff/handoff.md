@@ -7687,12 +7687,12 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-01 第二十三版**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-02 第二十四版**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
 判发布只跑 `/usr/bin/git ls-remote origin refs/heads/main` 与本地比，**三个仓各跑一次**。
-**2026-09-24 至 10-01 的所有 Orca／ccloop 轮次（含 loop 方案层、面板中英双语、adapter／CLI 合并）都没有碰 ccmem 的任何文件，除本节。**
+**2026-09-24 至 10-02 的所有 Orca／ccloop 轮次（含 loop 方案层、面板中英双语、adapter／CLI 合并、N1 需求→拆分）都没有碰 ccmem 的任何文件，除本节。**
 
 ## ccmem 在这套系统里是什么（**未变**）
 
@@ -7747,6 +7747,7 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
    （2026-09-27 并入）**「变异零杀伤」只相对于跑过的范围成立**：Orca 审计判「没有判据抓它」的一个变异，跑全套后有 11 条判据抓它，真正的缺口在下一层消费方守卫；**夹具对所有输入答同一个常量**会让「值被张冠李戴」完全不可见。⇒ ccmem 判某个探测器「无覆盖」或「可删」前，先在全量上跑，再看夹具是不是恒答一个值。
    （2026-09-28 并入）**量「夹具默认值会不会造成空绿」要两个方向一起量**：删闸门看有没有判据红，翻默认值看有没有判据红；只量一个方向证明不了另一个方向。
    （2026-09-27 并入）**fake 只认形状，不认真实服务的约束**：ccloop 的 fake claude 从不校验 `--json-schema`，一个真 API 必拒的 schema 在全部 fake 判据下都是绿的，第一次付费跑才撞上。⇒ ccmem 调外部 embed／summarize 服务的路径，至少要有一条判据直接读「实际发出去的请求」，不能只靠假服务回绿。
+   （2026-10-02 并入）**fake 的输出永远很小，所以「写完就退出」的丢数据缺陷在 fake 下恒绿**：ccloop 的 runner 在中断路径上写完 stdout 立刻 `process.exit`，macOS 上子进程写管道是异步的，12–40 KB 的输出稳定截在 8192 字节；fake 判据的输出都只有几百字节，第一次付费跑才撞上。⇒ **ccmem 的钩子与 daemon 凡是「写 stdout／socket 后 exit」的地方，都要等 write 回调，并用大于 16 KB 的输出量一次。**
    （2026-10-01 并入）**fake 永远不会像真模型那样「解释为什么规则不适用」**：Orca 的 loop 方案用子串匹配的拒绝令牌，真 verifier 通过时在解释里引用了令牌原文，好活被判失败——所有 fake 判据都绿。⇒ ccmem 任何「在模型输出里找关键字」的判定，都要用真输出量一次「通过时会不会提到这个词」。
    （2026-09-28 并入）**只用 ASCII 的判据看不见编码缺陷**：ccloop 的 runner 读 stdin 时按块 `chunk.toString()`，多字节字符落在块边界上就变成 U+FFFD，超过约 64 KiB 的中文 prompt 会被悄悄改坏。这个缺陷存在了好几轮，是一条边界判据刚好用了 `é` 才露出来的。⇒ **ccmem 的钩子和 daemon 凡是按块读 stdin／socket 再解码的地方，都值得用一个跨块的多字节样本量一次**（先量，别凭读码下结论）。
 
@@ -7764,18 +7765,19 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
    （2026-09-28 并入）**只跑「点名的判据文件」会漏掉嵌在别处的同形夹具**：⑤ 一轮给线上应答加了一个必填字段，每个 Task 都只跑了自己点名的文件，全绿；只有干净 clone 的全量门抓到一个测试里内嵌的假对端应答还缺那个字段（3/3 稳定红）。⇒ ccmem 改接口字段时，逐 Task 的局部绿不算数，收尾必须跑一次全量。
    （2026-09-28 并入）**清理一个会派生进程的判据，单文件连跑 10 次全绿也不够**：ccloop 的一处 `afterEach` 在负载下的全量里撞上子进程还在写，报了 `ENOTEMPTY`，又漏了一个目录。⇒ 先等子进程退出（pid 在记录里）再删，并在全量里验证。
 
-## 最近几轮（2026-09-24 至 10-01）—— **除 memory tab 的 spec 外都与 ccmem 无关，但影响排期**
+## 最近几轮（2026-09-24 至 10-02）—— **除 memory tab 的 spec 外都与 ccmem 无关，但影响排期**
 
 - ✅ 已做完（Orca 与 ccloop）：G1 两缝、执行驱动、④ handoff、agent 选择、claude 中止前观测用量、⑤ 预算预估链及其后续、两仓临时目录泄漏护栏、标签＋内部进度、git 依赖钉 ccloop、loop 方案层（2026-09-30）。
 - ✅ （2026-10-01，Orca 会话 `e604b1ba`／`ceca1c47`）loop 方案跟进与 v2（含 C4：方案不再依赖 `rejectOn` 令牌；阶段超时 3 小时）、**面板中英双语**；ccloop 的 `rejectOn` 改为只交给 verifier 判断（Orca 已重钉）。**都没有碰 ccmem。** 若将来 memory tab 在面板里显示 ccmem 的文字：记忆内容是数据、原样显示；只有面板自己的标签走翻译。
-- ✅ （2026-10-01，Orca 会话 `be653b22`）Orca／ccloop 的 adapter／CLI 合并四步做完了（ccloop 只剩 `--agents` 入口，`orca run` 命令不存在了）；与 ccmem 无关。控制器替人定的裁定待人审，推送由人定（ccloop 先于 Orca）。
+- ✅ （2026-10-01，Orca 会话 `be653b22`）Orca／ccloop 的 adapter／CLI 合并四步做完了（ccloop 只剩 `--agents` 入口，`orca run` 命令不存在了）；与 ccmem 无关。人已审完全部裁定。
   - 真 claude 下各跑通过一次（n＝1）：单任务主链、1M 单任务、两任务解冲突、「deadline 中止 → 报用量 → 可续 → 续跑落地」；另有 6 次单独的 verify 调用（测拒绝令牌）。其余没跑过。
+- ✅ （2026-10-02，Orca 会话 `b5e8d368`）**N1「提想法 → 澄清需求 → 拆分 → 确认」第一版**做完（只在 fake claude 下验过）：一个需求就是一个 `clarifying` 状态的 group，模型按轮出题，代码记录与判定；需求文档导出到目标仓库 `.orca/requirements/`。**没有碰 ccmem**；第一版不读记忆。控制 store 升到 schema 6（旧版 Orca 打开迁移后的 `~/.orca` 会拒绝）——那是 Orca 的数据，与 `~/.claude/ccmem` 无关。
 - 🆕 *** **与 ccmem 直接相关：Orca 的 memory tab spec 人已裁（2026-09-29，「Q1–Q7 按建议定」）**，记在 Orca 仓 `docs/superpowers/specs/2026-09-29-memory-tab-design.md` §9。 ***
   - 第一版只读，走 `ccmem export --json`（唯一只读的动词；`list`／`show` 会跑 `maybeRunTier15` 写库），不 vendor、不直接读 SQLite。项目范围靠把子进程 cwd 设成目标仓库、让 ccmem 自己算项目键。`ORCA_CCMEM_BIN` 不设就不启动 ccmem。
   - ⚠️ **人已接受（Q2）**：Orca 读记忆可能在真实 `~/.claude/ccmem` 上触发 ccmem 自己的迁移（约 207 MB 的整份备份、删最旧的一份）。理由：下一次 Claude 会话的钩子开库同样会触发，Orca 不增加新风险。
   - ⚠️ **实现前 Orca 会先读本仓库源码核两件事（Q6）**：① 被 SIGTERM 杀在复制途中的半截 `global.db.bak.<ts>` 会不会被当成可复用备份；② `runVersionedMigration` 是否整体在一个事务里。**若结论不安全，要在本仓库加保护，那是本仓库的人裁**（Orca 不改 ccmem）。
   - 发现的 ccmem 侧缺口（本仓库的人裁，Orca 不改 ccmem）：`export` 不校验 `--scope`（写错会导出所有项目）；`list`／`show` 没有 `--json`、没有 `--project-key`；没有 remote 的仓库，钩子记的原始 cwd 与子进程的 realpath 可能算出不同的 `path:` 键（Q5：v1 只在 UI 上说明）；ccmem 里没有指向 Orca 的字段（Q7：现在不立项）。
-  - 排期：adapter／CLI 合并已做完，**现在由人在 N5（memory tab）与 N1（需求 → 拆分）之间选**。**实现之前本仓库不用动。**
+  - 排期：N1 第一版已做完，**下一件由人选**：N5（memory tab）、ccloop 崩溃续跑＋孤儿 runner 收、或 N1 第二版。**实现之前本仓库不用动。**
 - ⚠️ *** **「Web 派活可用」「claude 可用」仍然不是事实**；生产部署仍**没有 execution profile 快照**。 ***
 - ⚠️ 人裁 G5（syncskill 要补三件）未变，**不改 ccmem 的任何东西**。
 - 教训仍是「**跨仓词表不一致是反复出现的根因**」：ccmem 与 Orca 之间的 `projectKey`／`normalizeRemoteUrl` 属于同一类风险；memory tab 为此选择让 ccmem 自己算项目键。
@@ -7784,5 +7786,5 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 
 - **三个仓的 push 都归人，时机由人自己定**，控制器不许 push、也不把它列为待办。
   ⚠️ **这台机器上有东西在把提交推到真实 GitHub 远端**（三个仓同一个 `post-commit` 钩子，调混淆过的二进制）——**要人自己查并决定。** 2026-09-27 之后都是人自己推的。
-- Orca 的排期：adapter／CLI 合并已做完，下一步由人在 N1 与 memory tab 实现之间选 —— 仅供知情，它决定记忆接入何时能排上。
+- Orca 的排期：N1 第一版已做完，下一件由人在 memory tab、ccloop 崩溃续跑与 N1 第二版之间选 —— 仅供知情，它决定记忆接入何时能排上。
 - 知情（2026-09-27）：不关 auto memory 时，真 claude 会在**启动时**于 `~/.claude/projects/<cwd 编码>/` 建一个空 `memory/`，带 `--no-session-persistence` 也照建；关掉就不建。`agents detect` 的新草稿已经关掉它。⇒ ccmem 若扫 `~/.claude/projects/`，**来自 Orca 自动化的这类空目录应不再新增**；但用旧安装表或手动跑的 claude 仍会留下。（2026-10-01 Orca 的 6 次付费 verify 调用前后实测：`~/.claude/projects` 24 → 24 条，未新增。）

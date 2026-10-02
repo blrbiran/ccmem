@@ -7687,7 +7687,7 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-03 第二十八版**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-03 第二十九版**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
@@ -7768,7 +7768,7 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 ## 最近几轮（2026-09-24 至 10-03）—— **只有 Orca 记忆区与 ccmem 直接相关**
 
 - ✅ 已做完、都没有碰 ccmem（Orca 与 ccloop）：G1 两缝、执行驱动、④ handoff、agent 选择、claude 中止前观测用量、⑤ 预算预估链、临时目录泄漏护栏、git 依赖钉 ccloop、loop 方案层与 v2、面板中英双语、adapter／CLI 合并、N1 需求→拆分、ccloop 被杀 run 续跑＋孤儿 runner 收。对 ccmem 有参考价值的一点：**「父进程死了子进程要跟着死」不能靠 stdin EOF 判断**（请求写完就关了 stdin），要给子进程一根父进程从不写的管道，看它何时 EOF。
-- ✅ *** **（2026-10-03，Orca 会话 `184d0372`）Orca 面板的「记忆」分区第一版做完，本仓库零改动。** *** 设计：Orca 仓 `docs/superpowers/specs/2026-09-29-memory-tab-design.md`（§9 人裁、§10 实施期更正）。
+- ✅ *** **（2026-10-03，Orca 会话 `184d0372`）Orca 面板的「记忆」分区第一版做完，本仓库零改动；人当天已审过该轮的裁定并同意。** *** 下一件由人选（Orca handoff §4.0 第 2 条），候选里没有一件要改 ccmem。设计：Orca 仓 `docs/superpowers/specs/2026-09-29-memory-tab-design.md`（§9 人裁、§10 实施期更正）。
   - Orca **只**跑 `ccmem export --json --scope global`，再跑 `--scope project`（顺序，不并发），子进程 cwd＝目标仓库（项目键由 ccmem 自己算），env 原样透传，超时 30 s、输出上限 64 MiB。**从不**调 `list`／`show`／`save`，不读 SQLite，不 vendor。`ORCA_CCMEM_BIN` 不设就不起 ccmem；分区第一次被打开前不发请求。
   - **Orca 把 export 当严格协议读**：顶层只认 `version: "0.7"`、`exported_at`、`memories`；行只认 `id, scope, project_key, type, content, pinned, source, trust_score, tags, created_at, updated_at`；`type` 只认 `rule|fact|episode|consolidated`，`source` 只认那六个值；`tags` 必须是字符串数组的 JSON 文本或 `null`；`created_at`／`updated_at` 是 0..8.64e15 的整数毫秒；`--scope project` 的行必须带非空 `project_key`。⚠️ *** **本仓库给 export 加一列、给 `type`／`source` 加一个值、或改 `version`，Orca 的记忆区就会整个报 `ccmem-output-invalid`（有意的大声失败）——改之前请同步 Orca。** ***
   - Orca 的判据只在临时 `CCMEM_DATA_ROOT`／`HOME` 里起 ccmem（真 ccmem 那一条用 `ccmem import` 灌数据，因为 `save` 会同步算嵌入）；每个测试文件后按条目名比对真实 `~/.claude/ccmem`，只抓「新出现 `global.db.bak.*`／`global.db-wal.bak.*`」「`global.db` 消失」「数据根从无到有」三种变化（daemon 与 SQLite 自己增删的 `daemon.wake`、`-wal`、`-shm` 不算）。门里前后比对为空。

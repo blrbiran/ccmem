@@ -7687,7 +7687,7 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-02 第二十六版**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-02 第二十七版**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
@@ -7772,9 +7772,11 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 - 🆕 *** **与 ccmem 直接相关：Orca 的 memory tab spec 人已裁（2026-09-29，「Q1–Q7 按建议定」）**，记在 Orca 仓 `docs/superpowers/specs/2026-09-29-memory-tab-design.md` §9。 ***
   - 第一版只读，走 `ccmem export --json`（唯一只读的动词；`list`／`show` 会跑 `maybeRunTier15` 写库），不 vendor、不直接读 SQLite。项目范围靠把子进程 cwd 设成目标仓库、让 ccmem 自己算项目键。`ORCA_CCMEM_BIN` 不设就不启动 ccmem。
   - ⚠️ **人已接受（Q2）**：Orca 读记忆可能在真实 `~/.claude/ccmem` 上触发 ccmem 自己的迁移（约 207 MB 的整份备份、删最旧的一份）。理由：下一次 Claude 会话的钩子开库同样会触发，Orca 不增加新风险。
-  - ⚠️ **实现前 Orca 会先读本仓库源码核两件事（Q6）**：① 被 SIGTERM 杀在复制途中的半截 `global.db.bak.<ts>` 会不会被当成可复用备份；② `runVersionedMigration` 是否整体在一个事务里。**若结论不安全，要在本仓库加保护，那是本仓库的人裁**（Orca 不改 ccmem）。
+  - ✅ **Q6 已核（2026-10-02，Orca 会话 `7fe6d61b`，读的是本仓库 `scripts/lib/db.mjs`，① 另有实测）**：
+    ① 被 SIGTERM 杀在复制途中的半截 `global.db.bak.<ts>` **不会**被当成可复用备份：`copyFileSync` 直接写最终名，实测 839 MB 源拷到中途杀掉留下 35／40／102 MB 的文件，`findReusableMigrationBackup`（60 秒内＋大小相等）对它们返回 `null`。**但**它会出现在 `listMigrationBackups` 里、计入 `max_keep`（默认 5）的轮换，可能挤掉一份好的旧备份，人去「取最新备份」时也会拿到它；另外 WAL 模式下备份只拷主文件、不拷 `-wal`，缺最近一次 checkpoint 之后的写入。⇒ **要不要改成「临时名＋rename」、要不要连 WAL 一起备，是本仓库的人裁**，Orca 不改 ccmem。
+    ② `runVersionedMigration` 不是整体一个事务，而是**每个迁移文件一个 `BEGIN IMMEDIATE` 事务**，版本号的更新在同一事务里（`.sql` 走 `runInTransaction`；`015_v012_repair.cjs` 自带事务；v06–v09 特殊迁移也走 `runInTransaction`）⇒ 在两步之间被杀，库停在一致的中间版本，下次开库接着迁。安全。
   - 发现的 ccmem 侧缺口（本仓库的人裁，Orca 不改 ccmem）：`export` 不校验 `--scope`（写错会导出所有项目）；`list`／`show` 没有 `--json`、没有 `--project-key`；没有 remote 的仓库，钩子记的原始 cwd 与子进程的 realpath 可能算出不同的 `path:` 键（Q5：v1 只在 UI 上说明）；ccmem 里没有指向 Orca 的字段（Q7：现在不立项）。
-  - 排期：ccloop 的崩溃续跑＋孤儿 runner 收已做完（2026-10-02）；下一件由人选（N5 memory tab 是候选之一）。**实现之前本仓库不用动。**
+  - 排期：人已选 N5 memory tab（2026-10-02，Orca 会话 `7fe6d61b`）；Q6 核完，下一步是 Orca 侧写实施计划。**实现之前本仓库不用动**（上面 ① 的加固若要做，是本仓库自己的一轮）。
 - ⚠️ *** **「Web 派活可用」「claude 可用」仍然不是事实**；生产部署仍**没有 execution profile 快照**。 ***
 - ⚠️ 人裁 G5（syncskill 要补三件）未变，**不改 ccmem 的任何东西**。
 - 教训仍是「**跨仓词表不一致是反复出现的根因**」：ccmem 与 Orca 之间的 `projectKey`／`normalizeRemoteUrl` 属于同一类风险；memory tab 为此选择让 ccmem 自己算项目键。
@@ -7783,5 +7785,6 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 
 - **三个仓的 push 都归人，时机由人自己定**，控制器不许 push、也不把它列为待办。
   ⚠️ **这台机器上有东西在把提交推到真实 GitHub 远端**（三个仓同一个 `post-commit` 钩子，调混淆过的二进制）——**要人自己查并决定。** 2026-09-27 之后都是人自己推的。
-- Orca 的排期：ccloop 崩溃续跑那件已做完；下一件由人选（memory tab 是候选）—— 仅供知情，它决定记忆接入何时能排上。
+- Orca 的排期：memory tab 已被人选为下一件（Q6 已核，见上）—— 仅供知情。
+- **本仓库的人裁（新）**：迁移备份要不要改成「临时名＋rename」、要不要连 `-wal` 一起备（见上 Q6 ①）。
 - 知情（2026-09-27）：不关 auto memory 时，真 claude 会在**启动时**于 `~/.claude/projects/<cwd 编码>/` 建一个空 `memory/`，带 `--no-session-persistence` 也照建；关掉就不建。`agents detect` 的新草稿已经关掉它。⇒ ccmem 若扫 `~/.claude/projects/`，**来自 Orca 自动化的这类空目录应不再新增**；但用旧安装表或手动跑的 claude 仍会留下。（2026-10-01 Orca 的 6 次付费 verify 调用前后实测：`~/.claude/projects` 24 → 24 条，未新增。）

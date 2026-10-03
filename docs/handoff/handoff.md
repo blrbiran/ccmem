@@ -7765,7 +7765,7 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
    （2026-09-28 并入）**只跑「点名的判据文件」会漏掉嵌在别处的同形夹具**：⑤ 一轮给线上应答加了一个必填字段，每个 Task 都只跑了自己点名的文件，全绿；只有干净 clone 的全量门抓到一个测试里内嵌的假对端应答还缺那个字段（3/3 稳定红）。⇒ ccmem 改接口字段时，逐 Task 的局部绿不算数，收尾必须跑一次全量。
    （2026-09-28 并入）**清理一个会派生进程的判据，单文件连跑 10 次全绿也不够**：ccloop 的一处 `afterEach` 在负载下的全量里撞上子进程还在写，报了 `ENOTEMPTY`，又漏了一个目录。⇒ 先等子进程退出（pid 在记录里）再删，并在全量里验证。
 
-## 最近几轮（2026-09-24 至 10-03）—— **只有 Orca 记忆区与 ccmem 直接相关**
+## 最近几轮（2026-09-24 至 10-03）—— **只有 Orca 记忆区与 ccmem 直接相关**（本节单节滚动，整条替换，不追加）
 
 - ✅ 已做完、都没有碰 ccmem（Orca 与 ccloop）：G1 两缝、执行驱动、④ handoff、agent 选择、claude 中止前观测用量、⑤ 预算预估链、临时目录泄漏护栏、git 依赖钉 ccloop、loop 方案层与 v2、面板中英双语、adapter／CLI 合并、N1 需求→拆分、ccloop 被杀 run 续跑＋孤儿 runner 收。对 ccmem 有参考价值的一点：**「父进程死了子进程要跟着死」不能靠 stdin EOF 判断**（请求写完就关了 stdin），要给子进程一根父进程从不写的管道，看它何时 EOF。
 - ✅ *** **（2026-10-03，Orca 会话 `184d0372`）Orca 面板的「记忆」分区第一版做完，本仓库零改动；人当天已审过该轮的裁定并同意。** *** 之后 Orca 又做了看板的依赖关系图与 Git 区、面板 HTTP 在真 claude 下的一次付费验收，syncskill 补了 profile／按 run 注入／版本记录（Orca 会话 `16ab00f2`）——都不经过 ccmem。设计：Orca 仓 `docs/superpowers/specs/2026-09-29-memory-tab-design.md`（§9 人裁、§10 实施期更正）。
@@ -7778,7 +7778,7 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 - Q6（2026-10-02 读本仓库 `scripts/lib/db.mjs`，① 另有实测）：半截 `global.db.bak.<ts>` 不会被当成可复用备份，但会计入 `max_keep` 轮换、人「取最新备份」时会拿到它；WAL 模式下备份只拷主文件。`runVersionedMigration` 每个迁移文件一个事务，被杀停在一致的中间版本。（另：真实数据根里现已出现 `global.db-wal.bak.*`，说明 WAL 备份可能已经有人加了，要不要再改，本仓库自己核。）
 - 发现的本仓库缺口（本仓库的人裁，Orca 不改 ccmem）：`export` 不校验 `--scope`（写错会导出所有项目）；`list`／`show` 没有 `--json`、没有 `--project-key`；没有 remote 的仓库，钩子记的原始 cwd 与子进程的 realpath 可能算出不同的 `path:` 键（Orca 只在界面上说明）；ccmem 里没有指向 Orca 的字段（Q7：现在不立项）。
 - ⚠️ *** **「Web 派活可用」「claude 可用」仍然不是事实**；生产部署仍**没有 execution profile 快照**。 ***
-- 人裁 G5（syncskill 补三件）已在 syncskill 仓做完（2026-10-03），**没有改 ccmem 的任何东西**。可借鉴的一条：syncskill 的 `--sync-dir`／`SYNCSKILL_DIR` 只被解析、从没被读，改道只能靠 HOME —— 「有改道开关」要实测它真生效，和上面第 1 条同源。
+- 人裁 G5 的两半都做完了，**都没有改 ccmem 的任何东西**：syncskill 补三件（2026-10-03，syncskill 仓；`--sync-dir`／`SYNCSKILL_DIR` 也已修成真生效，Orca 会话 `08b1007d`）；Orca 接 syncskill（Orca 会话 `08b1007d`：loop 方案可声明 skill 集，每个 run 注入一份只读快照、作为 claude plugin 加载，锁信息记在 run 上）。可借鉴的两条：「有改道开关」要实测它真生效（syncskill 那两个开关曾经只被解析、从没被读，和上面第 1 条同源）；Orca 不读 agent 安装表，所以「这是不是 claude」只交给 ccloop 判，跨仓的身份判断要指定唯一权威。
 - 教训仍是「**跨仓词表不一致是反复出现的根因**」：export 的列与枚举现在是 Orca 严格依赖的跨仓词表，与 `projectKey`／`normalizeRemoteUrl` 同类。
 
 ## awaitingHuman（**与 ccmem 相关的**）

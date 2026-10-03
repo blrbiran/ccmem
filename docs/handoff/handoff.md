@@ -7687,7 +7687,7 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-03 第二十九版**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-03 第三十版**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
@@ -7774,6 +7774,7 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
   - Orca 的判据只在临时 `CCMEM_DATA_ROOT`／`HOME` 里起 ccmem（真 ccmem 那一条用 `ccmem import` 灌数据，因为 `save` 会同步算嵌入）；每个测试文件后按条目名比对真实 `~/.claude/ccmem`，只抓「新出现 `global.db.bak.*`／`global.db-wal.bak.*`」「`global.db` 消失」「数据根从无到有」三种变化（daemon 与 SQLite 自己增删的 `daemon.wake`、`-wal`、`-shm` 不算）。门里前后比对为空。
   - ⚠️ **人已接受（Q2）**：Orca 读记忆可能在真实 `~/.claude/ccmem` 上触发本仓库自己的迁移（整份备份、删最旧的一份）。Orca 的真 ccmem 判据**没有**对真实数据根跑过。
   - 实测（临时根、两条记忆）：一次 Orca 读取（两次 export）约 192–198 ms。
+  - （2026-10-03，Orca 会话 `6a4dd7f3`）Orca 侧小修，本仓库仍零改动：`ORCA_CCMEM_BIN` 指向一个不是程序的文件时，错误码由 `ccmem-failed:Unknown system error -8` 改成 `ccmem-failed:ENOEXEC`。真 ccmem 判据（临时根）在门里又过一次，真实 `~/.claude/ccmem` 条目名前后相同。
 - Q6（2026-10-02 读本仓库 `scripts/lib/db.mjs`，① 另有实测）：半截 `global.db.bak.<ts>` 不会被当成可复用备份，但会计入 `max_keep` 轮换、人「取最新备份」时会拿到它；WAL 模式下备份只拷主文件。`runVersionedMigration` 每个迁移文件一个事务，被杀停在一致的中间版本。（另：真实数据根里现已出现 `global.db-wal.bak.*`，说明 WAL 备份可能已经有人加了，要不要再改，本仓库自己核。）
 - 发现的本仓库缺口（本仓库的人裁，Orca 不改 ccmem）：`export` 不校验 `--scope`（写错会导出所有项目）；`list`／`show` 没有 `--json`、没有 `--project-key`；没有 remote 的仓库，钩子记的原始 cwd 与子进程的 realpath 可能算出不同的 `path:` 键（Orca 只在界面上说明）；ccmem 里没有指向 Orca 的字段（Q7：现在不立项）。
 - ⚠️ *** **「Web 派活可用」「claude 可用」仍然不是事实**；生产部署仍**没有 execution profile 快照**。 ***

@@ -7687,12 +7687,12 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-03 第三十二版**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-03 第三十三版**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
 判发布只跑 `/usr/bin/git ls-remote origin refs/heads/main` 与本地比，**三个仓各跑一次**。
-**2026-09-24 至 10-03 的所有 Orca／ccloop／syncskill 轮次（含 2026-10-03 的 Orca 记忆区、看板、面板 HTTP 真 agent 验收与 syncskill 补三件）都没有碰 ccmem 的任何文件，除本节。**
+**2026-09-24 至 10-03 的所有 Orca／ccloop／syncskill 轮次（含 2026-10-03 的 Orca 记忆区、看板、面板 HTTP 真 agent 验收、syncskill 补三件与 Orca 会话 `9d95e6c8` 的 syncskill 跟进）都没有碰 ccmem 的任何文件，除本节。**
 
 ## ccmem 在这套系统里是什么（**未变**）
 
@@ -7777,9 +7777,14 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
   - （2026-10-03，Orca 会话 `6a4dd7f3`）Orca 侧小修，本仓库仍零改动：`ORCA_CCMEM_BIN` 指向一个不是程序的文件时，错误码由 `ccmem-failed:Unknown system error -8` 改成 `ccmem-failed:ENOEXEC`。真 ccmem 判据（临时根）在门里又过一次，真实 `~/.claude/ccmem` 条目名前后相同。
 - Q6（2026-10-02 读本仓库 `scripts/lib/db.mjs`，① 另有实测）：半截 `global.db.bak.<ts>` 不会被当成可复用备份，但会计入 `max_keep` 轮换、人「取最新备份」时会拿到它；WAL 模式下备份只拷主文件。`runVersionedMigration` 每个迁移文件一个事务，被杀停在一致的中间版本。（另：真实数据根里现已出现 `global.db-wal.bak.*`，说明 WAL 备份可能已经有人加了，要不要再改，本仓库自己核。）
 - 发现的本仓库缺口（本仓库的人裁，Orca 不改 ccmem）：`export` 不校验 `--scope`（写错会导出所有项目）；`list`／`show` 没有 `--json`、没有 `--project-key`；没有 remote 的仓库，钩子记的原始 cwd 与子进程的 realpath 可能算出不同的 `path:` 键（Orca 只在界面上说明）；ccmem 里没有指向 Orca 的字段（Q7：现在不立项）。
-- ⚠️ *** **「Web 派活可用」「claude 可用」仍然不是事实**；生产部署仍**没有 execution profile 快照**。 ***
-- 人裁 G5 的两半都做完了，**都没有改 ccmem 的任何东西**：syncskill 补三件（2026-10-03，syncskill 仓；`--sync-dir`／`SYNCSKILL_DIR` 也已修成真生效，Orca 会话 `08b1007d`）；Orca 接 syncskill（Orca 会话 `08b1007d`：loop 方案可声明 skill 集，每个 run 注入一份只读快照、作为 claude plugin 加载，锁信息记在 run 上）。可借鉴的两条：「有改道开关」要实测它真生效（syncskill 那两个开关曾经只被解析、从没被读，和上面第 1 条同源）；Orca 不读 agent 安装表，所以「这是不是 claude」只交给 ccloop 判，跨仓的身份判断要指定唯一权威。
+- ⚠️ *** **「Web 派活可用」仍然不是事实**（真 claude 下各条主链各只付费跑通过一次）；execution profile 快照仍没有生成命令——人的机器上现在用一份手写的 `~/.orca/profile.json`（Orca 会话 `9d95e6c8`）。 ***
+- 人裁 G5 的两半都做完了，**都没有改 ccmem 的任何东西**：syncskill 补三件（2026-10-03，syncskill 仓；`--sync-dir`／`SYNCSKILL_DIR` 也已修成真生效，Orca 会话 `08b1007d`）；Orca 接 syncskill（Orca 会话 `08b1007d`：loop 方案可声明 skill 集，每个 run 注入一份只读快照、作为 claude plugin 加载，锁信息记在 run 上）。可借鉴的两条：「有改道开关」要实测它真生效（syncskill 那两个开关曾经只被解析、从没被读，和上面第 1 条同源）；跨仓的身份判断要指定唯一权威——Orca 后来（会话 `9d95e6c8`）改为读 ccloop `listAgents` 答的 kind 在 confirm 时就拒，权威仍是 ccloop 的安装表。
 - 教训仍是「**跨仓词表不一致是反复出现的根因**」：export 的列与枚举现在是 Orca 严格依赖的跨仓词表，与 `projectKey`／`normalizeRemoteUrl` 同类。
+
+## 🔴 本仓库的新缺陷（Orca 会话 `9d95e6c8` 在人的真实面板上撞到，**未修，本仓库自己修**）
+
+- **origin 是本地路径的仓库，`ccmem export --scope project` 直接崩**（退 1）：`scripts/lib/project-key.mjs` 的 `normalizeRemoteUrl` 对不匹配 scp 形式的 remote 做 `new URL(remote)`，本地路径（如 `/path/to/repo`）抛 `ERR_INVALID_URL`。复现：一个 `git clone <本地路径>` 出来的仓库里跑 `ccmem export --json --scope project`。Orca 记忆区如实显示 `ccmem-failed:1`（Orca 侧行为正确，不改）。
+- 建议补丁（只是建议）：`new URL` 失败或 remote 是绝对路径／`file://` 时，回落到一个确定的键（例如对路径 realpath 后走 `fallbackProjectKey`，或 `file:` 前缀＋路径）。⚠️ **Orca 有一份独立实现的 `normalizeRemoteUrl`（见上），改算法要双方核对**；钩子写入与 export 读取必须算出同一个键。
 
 ## awaitingHuman（**与 ccmem 相关的**）
 

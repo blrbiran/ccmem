@@ -7687,12 +7687,12 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-04 第三十四版**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-05，会话 `01a10a08`**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
 判发布只跑 `/usr/bin/git ls-remote origin refs/heads/main` 与本地比，**三个仓各跑一次**。
-**2026-09-24 至 10-04 的所有 Orca／ccloop／syncskill 轮次（含 2026-10-03 的 Orca 记忆区、看板、面板 HTTP 真 agent 验收、syncskill 补三件、Orca 会话 `9d95e6c8` 的 syncskill 跟进，与 2026-10-04 Orca 会话 `08011394` 的面板修复与项目切换）都没有碰 ccmem 的任何文件，除本节。**
+**本轮 H6（Orca 会话 `01a10a08`，2026-10-05）只更新 ccmem 本节，按人追加要求收录到 `docs(handoff): sync Orca Codex skills status and validation limits` 本地提交；未改产品代码、未调用真实数据根、未重启 daemon。** 依据 Orca 的 `feat(control): support frozen Codex skills and preserve phase refusals` 与其 H6 ledger；本地路径 origin 的修复是 ccmem 自己的前轮成果，见下方，不受本轮零产品改动声明影响。
 
 ## ccmem 在这套系统里是什么（**未变**）
 
@@ -7710,7 +7710,7 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
   ⚠️ **指标输出不含 `because`／`by`** ⇒ **记忆接入不能依赖 metrics 取得这两个字段**。
 - 已有 correction／台账写入方 ⇒ **改字段或语义有迁移成本**；**历史读数不能当当前迁移依据**。
 - 严格额度下外部服务给不出可执行消耗上界时，**用无模型读写或拒绝该能力，不能隐去成本**。
-- ⚠️ **「记忆接入切片仍未开始」** —— 不要把架构批准当成集成已在运行。
+- ⚠️ **决策／correction 的自动记忆接入切片仍未开始**；面板只读记忆区已完成，不能把它或架构批准当成自动记忆写入已在运行。
 
 ## ccmem 可以直接拿去用的教训（**十二条；第十条、第十二条在 2026-09-28 各并入一条新的**）
 
@@ -7765,23 +7765,16 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
    （2026-09-28 并入）**只跑「点名的判据文件」会漏掉嵌在别处的同形夹具**：⑤ 一轮给线上应答加了一个必填字段，每个 Task 都只跑了自己点名的文件，全绿；只有干净 clone 的全量门抓到一个测试里内嵌的假对端应答还缺那个字段（3/3 稳定红）。⇒ ccmem 改接口字段时，逐 Task 的局部绿不算数，收尾必须跑一次全量。
    （2026-09-28 并入）**清理一个会派生进程的判据，单文件连跑 10 次全绿也不够**：ccloop 的一处 `afterEach` 在负载下的全量里撞上子进程还在写，报了 `ENOTEMPTY`，又漏了一个目录。⇒ 先等子进程退出（pid 在记录里）再删，并在全量里验证。
 
-## 最近几轮（2026-09-24 至 10-05）—— **只有 Orca 记忆区与 ccmem 直接相关**（本节单节滚动，整条替换，不追加）
+## Orca 当前关联状态（单节滚动；历史过程见 Orca handoff／ledger）
 
-- （2026-10-04／05，Orca 会话 `08011394`／项目注册表续作）Orca 的全局项目选择现可在侧栏新增和改名；记忆区仍用所选项目的 `projectKey`，仍只顺序调用 `ccmem export --json --scope global` 与 `--scope project`，接口未变，本仓库在这两轮零改动。本地路径 origin 的项目键问题已由 ccmem 自己修复，见下方状态。
-
-- ✅ 已做完、都没有碰 ccmem（Orca 与 ccloop）：G1 两缝、执行驱动、④ handoff、agent 选择、claude 中止前观测用量、⑤ 预算预估链、临时目录泄漏护栏、git 依赖钉 ccloop、loop 方案层与 v2、面板中英双语、adapter／CLI 合并、N1 需求→拆分、ccloop 被杀 run 续跑＋孤儿 runner 收。对 ccmem 有参考价值的一点：**「父进程死了子进程要跟着死」不能靠 stdin EOF 判断**（请求写完就关了 stdin），要给子进程一根父进程从不写的管道，看它何时 EOF。
-- ✅ *** **（2026-10-03，Orca 会话 `184d0372`）Orca 面板的「记忆」分区第一版做完，本仓库零改动；人当天已审过该轮的裁定并同意。** *** 之后 Orca 又做了看板的依赖关系图与 Git 区、面板 HTTP 在真 claude 下的一次付费验收，syncskill 补了 profile／按 run 注入／版本记录（Orca 会话 `16ab00f2`）——都不经过 ccmem。设计：Orca 仓 `docs/superpowers/specs/2026-09-29-memory-tab-design.md`（§9 人裁、§10 实施期更正）。
-  - Orca **只**跑 `ccmem export --json --scope global`，再跑 `--scope project`（顺序，不并发），子进程 cwd＝目标仓库（项目键由 ccmem 自己算），env 原样透传，超时 30 s、输出上限 64 MiB。**从不**调 `list`／`show`／`save`，不读 SQLite，不 vendor。`ORCA_CCMEM_BIN` 不设就不起 ccmem；分区第一次被打开前不发请求。
-  - **Orca 把 export 当严格协议读**：顶层只认 `version: "0.7"`、`exported_at`、`memories`；行只认 `id, scope, project_key, type, content, pinned, source, trust_score, tags, created_at, updated_at`；`type` 只认 `rule|fact|episode|consolidated`，`source` 只认那六个值；`tags` 必须是字符串数组的 JSON 文本或 `null`；`created_at`／`updated_at` 是 0..8.64e15 的整数毫秒；`--scope project` 的行必须带非空 `project_key`。⚠️ *** **本仓库给 export 加一列、给 `type`／`source` 加一个值、或改 `version`，Orca 的记忆区就会整个报 `ccmem-output-invalid`（有意的大声失败）——改之前请同步 Orca。** ***
-  - Orca 的判据只在临时 `CCMEM_DATA_ROOT`／`HOME` 里起 ccmem（真 ccmem 那一条用 `ccmem import` 灌数据，因为 `save` 会同步算嵌入）；每个测试文件后按条目名比对真实 `~/.claude/ccmem`，只抓「新出现 `global.db.bak.*`／`global.db-wal.bak.*`」「`global.db` 消失」「数据根从无到有」三种变化（daemon 与 SQLite 自己增删的 `daemon.wake`、`-wal`、`-shm` 不算）。门里前后比对为空。
-  - ⚠️ **人已接受（Q2）**：Orca 读记忆可能在真实 `~/.claude/ccmem` 上触发本仓库自己的迁移（整份备份、删最旧的一份）。Orca 的真 ccmem 判据**没有**对真实数据根跑过。
-  - 实测（临时根、两条记忆）：一次 Orca 读取（两次 export）约 192–198 ms。
-  - （2026-10-03，Orca 会话 `6a4dd7f3`）Orca 侧小修，本仓库仍零改动：`ORCA_CCMEM_BIN` 指向一个不是程序的文件时，错误码由 `ccmem-failed:Unknown system error -8` 改成 `ccmem-failed:ENOEXEC`。真 ccmem 判据（临时根）在门里又过一次，真实 `~/.claude/ccmem` 条目名前后相同。
-- Q6（2026-10-02 读本仓库 `scripts/lib/db.mjs`，① 另有实测）：半截 `global.db.bak.<ts>` 不会被当成可复用备份，但会计入 `max_keep` 轮换、人「取最新备份」时会拿到它；WAL 模式下备份只拷主文件。`runVersionedMigration` 每个迁移文件一个事务，被杀停在一致的中间版本。（另：真实数据根里现已出现 `global.db-wal.bak.*`，说明 WAL 备份可能已经有人加了，要不要再改，本仓库自己核。）
-- 发现的本仓库缺口（本仓库的人裁，Orca 不改 ccmem）：`export` 不校验 `--scope`（写错会导出所有项目）；`list`／`show` 没有 `--json`、没有 `--project-key`；没有 remote 的仓库，钩子记的原始 cwd 与子进程的 realpath 可能算出不同的 `path:` 键（Orca 只在界面上说明）；ccmem 里没有指向 Orca 的字段（Q7：现在不立项）。
-- ⚠️ *** **「Web 派活可用」仍然不是事实**（真 claude 下各条主链各只付费跑通过一次）；execution profile 快照仍没有生成命令——人的机器上现在用一份手写的 `~/.orca/profile.json`（Orca 会话 `9d95e6c8`）。 ***
-- 人裁 G5 的两半都做完了，**都没有改 ccmem 的任何东西**：syncskill 补三件（2026-10-03，syncskill 仓；`--sync-dir`／`SYNCSKILL_DIR` 也已修成真生效，Orca 会话 `08b1007d`）；Orca 接 syncskill（Orca 会话 `08b1007d`：loop 方案可声明 skill 集，每个 run 注入一份只读快照、作为 claude plugin 加载，锁信息记在 run 上）。可借鉴的两条：「有改道开关」要实测它真生效（syncskill 那两个开关曾经只被解析、从没被读，和上面第 1 条同源）；跨仓的身份判断要指定唯一权威——Orca 后来（会话 `9d95e6c8`）改为读 ccloop `listAgents` 答的 kind 在 confirm 时就拒，权威仍是 ccloop 的安装表。
-- 教训仍是「**跨仓词表不一致是反复出现的根因**」：export 的列与枚举现在是 Orca 严格依赖的跨仓词表，与 `projectKey`／`normalizeRemoteUrl` 同类。
+- **H6 Codex skills** 本地实现和两项 Important 修复完成，未发布／重钉；ccloop 产品实现仅在隔离 clone 和 Orca ledger 的 bundle。临时 `.agents/skills` 链接保留原有 skill，同名拒绝、child close 后精确清理、清理失败阻止发布。此路径不经过 ccmem；人的 ccloop 原仓本轮也只同步 handoff。交接入口是 Orca handoff §4.0.q、`docs/superpowers/plans/2026-10-05-codex-skill-support.md` 与 `.superpowers/sdd/2026-10-05-codex-skill-support/progress.md`（命令／观测提交／完整输出）。
+- **H6 验证边界**：Orca 全量 2796 passed／6 skipped／0 failed，RC0；其中 `tests/memory/ccmemReal.test.ts` 的真实 ccmem 读回判据仍 skipped，本轮没有新增真实 ccmem 验收。ccloop 最终全量 1186 passed／2 failed／0 skipped，RC1，两红是已登记 stopProof／codexWatchdog；不能报告全绿。旧项目注册表轮的 Orca `ccmemAdapter` errno 问题本轮未复现，**未据此关闭**，也不能与本地 origin 修复混为一谈。
+- **项目注册表／面板记忆区**：Orca 侧栏新增／改名与持久选择已实现；记忆区继续用所选项目的 `projectKey`。读取仍只顺序运行 `ccmem export --json --scope global` 再 `--scope project`，cwd 是目标仓库、env 原样透传、30 s 超时／64 MiB 上限；未设 `ORCA_CCMEM_BIN` 或未打开分区则不请求。Orca 不调 `list`／`show`／`save`、不读 SQLite、不 vendor。记忆区第一版裁定已于 2026-10-03 经人审核同意，设计在 Orca `docs/superpowers/specs/2026-09-29-memory-tab-design.md`（§9 人裁／§10 实施期更正）。
+- **export 严格协议必须同步**：Orca 顶层只认 `version: "0.7"`、`exported_at`、`memories`；行只认 `id, scope, project_key, type, content, pinned, source, trust_score, tags, created_at, updated_at`。`type` 仅 `rule|fact|episode|consolidated`，`source` 六个已有值；`tags` 为字符串数组 JSON 文本或 null，时间戳为 0..8.64e15 整数毫秒，project 行必须有非空 `project_key`。本仓加列／枚举／改 version 会令整个记忆区 `ccmem-output-invalid`，改前同步 Orca。
+- **前轮临时根验收仍有效**：真 ccmem 判据用临时 `CCMEM_DATA_ROOT`／HOME、import 灌两条记忆，没在真实数据根跑；每文件后真实根条目名护栏只抓新备份、主库消失、数据根从无到有，不覆盖 daemon／WAL／SHM 自身变化。2026-10-03 两次 export 约 192–198 ms 是历史测量。本轮没有重跑。人已接受 Q2：真实面板读记忆可能触发 ccmem 自己迁移与备份轮换；该风险不因临时根验证而消失。Orca 前轮非程序文件错误已从 Unknown system error -8 改为 ENOEXEC，本轮旧 adapter 判据问题仍在 Orca 历史记录。
+- **仍挂账**：`export` 不校验 `--scope`；`list`／`show` 无 `--json`／`--project-key`；无 remote 的仓库，原始 cwd 和 realpath 可算不同 `path:`；Q7 不立项 ccmem→Orca 字段。Q6：半截备份不视为可复用，但计入轮换且可能被人取为最新，迁移逐文件事务，被杀落在一致中间版本；2026-10-02 读码为 WAL 模式只拷主文件，之后有 `global.db-wal.bak.*` 的历史观察，当前备份实现须本仓再核，不能凭旧读码决定修改。T13 与本仓其余挂账不变。
+- **前轮跨仓结论仍有效**：G1、执行驱动、④ handoff、agent 选择、中止用量、预算链、泄漏护栏、依赖钉版、loop／v2、双语面板、adapter／CLI、N1、crash resume／reaper 均已完成，未改 ccmem 产品代码，过程在 Orca 原记录；关闭 stdin 不能证明父进程死亡，runner 用专用管道 EOF；syncskill 的改道开关需实测落点（曾解析但没读取），身份 kind 的唯一权威是 ccloop `listAgents`。Orca 的 syncskill profile／按 run 只读快照／lock 记录已实现，H6 本地实现扩展到 Codex，均不经过 ccmem。Web 派活的各主链历史仅真 Claude n＝1，execution profile 仍手写，不把一次通过当可靠性结论。
+- **本轮隔离边界**：无 push、无付费／外部模型验收、未访问真实 `~/.orca/*` 或 ccmem 数据根，未重启人的面板。此前四仓远端查询因 DNS 失败，网络恢复后由人核对；这里不记发布状态。跨仓词表（export 列／枚举、projectKey／normalizeRemoteUrl）改动仍须双方同步。
 
 ## ✅ 本仓库修复（由 Orca 会话 `9d95e6c8` 报告；ccmem 自己修）
 

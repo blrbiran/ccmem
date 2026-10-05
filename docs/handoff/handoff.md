@@ -7765,9 +7765,9 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
    （2026-09-28 并入）**只跑「点名的判据文件」会漏掉嵌在别处的同形夹具**：⑤ 一轮给线上应答加了一个必填字段，每个 Task 都只跑了自己点名的文件，全绿；只有干净 clone 的全量门抓到一个测试里内嵌的假对端应答还缺那个字段（3/3 稳定红）。⇒ ccmem 改接口字段时，逐 Task 的局部绿不算数，收尾必须跑一次全量。
    （2026-09-28 并入）**清理一个会派生进程的判据，单文件连跑 10 次全绿也不够**：ccloop 的一处 `afterEach` 在负载下的全量里撞上子进程还在写，报了 `ENOTEMPTY`，又漏了一个目录。⇒ 先等子进程退出（pid 在记录里）再删，并在全量里验证。
 
-## 最近几轮（2026-09-24 至 10-04）—— **只有 Orca 记忆区与 ccmem 直接相关**（本节单节滚动，整条替换，不追加）
+## 最近几轮（2026-09-24 至 10-05）—— **只有 Orca 记忆区与 ccmem 直接相关**（本节单节滚动，整条替换，不追加）
 
-- （2026-10-04，Orca 会话 `08011394`）Orca 面板多了全局项目切换：项目＝面板自己 discovery 出来的 `projectKey`（与记忆区同源），记忆区第一次打开时读选中的那个项目、之后跟着切换。Orca 仍只跑 `ccmem export --json`，调用方式与严格协议都没变；本仓库零改动。下面那条「本地路径 origin 崩 export」的缺陷**仍未修**——项目切换让人更容易切到这种仓库上。
+- （2026-10-04／05，Orca 会话 `08011394`／项目注册表续作）Orca 的全局项目选择现可在侧栏新增和改名；记忆区仍用所选项目的 `projectKey`，仍只顺序调用 `ccmem export --json --scope global` 与 `--scope project`，接口未变，本仓库在这两轮零改动。本地路径 origin 的项目键问题已由 ccmem 自己修复，见下方状态。
 
 - ✅ 已做完、都没有碰 ccmem（Orca 与 ccloop）：G1 两缝、执行驱动、④ handoff、agent 选择、claude 中止前观测用量、⑤ 预算预估链、临时目录泄漏护栏、git 依赖钉 ccloop、loop 方案层与 v2、面板中英双语、adapter／CLI 合并、N1 需求→拆分、ccloop 被杀 run 续跑＋孤儿 runner 收。对 ccmem 有参考价值的一点：**「父进程死了子进程要跟着死」不能靠 stdin EOF 判断**（请求写完就关了 stdin），要给子进程一根父进程从不写的管道，看它何时 EOF。
 - ✅ *** **（2026-10-03，Orca 会话 `184d0372`）Orca 面板的「记忆」分区第一版做完，本仓库零改动；人当天已审过该轮的裁定并同意。** *** 之后 Orca 又做了看板的依赖关系图与 Git 区、面板 HTTP 在真 claude 下的一次付费验收，syncskill 补了 profile／按 run 注入／版本记录（Orca 会话 `16ab00f2`）——都不经过 ccmem。设计：Orca 仓 `docs/superpowers/specs/2026-09-29-memory-tab-design.md`（§9 人裁、§10 实施期更正）。
@@ -7783,10 +7783,9 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 - 人裁 G5 的两半都做完了，**都没有改 ccmem 的任何东西**：syncskill 补三件（2026-10-03，syncskill 仓；`--sync-dir`／`SYNCSKILL_DIR` 也已修成真生效，Orca 会话 `08b1007d`）；Orca 接 syncskill（Orca 会话 `08b1007d`：loop 方案可声明 skill 集，每个 run 注入一份只读快照、作为 claude plugin 加载，锁信息记在 run 上）。可借鉴的两条：「有改道开关」要实测它真生效（syncskill 那两个开关曾经只被解析、从没被读，和上面第 1 条同源）；跨仓的身份判断要指定唯一权威——Orca 后来（会话 `9d95e6c8`）改为读 ccloop `listAgents` 答的 kind 在 confirm 时就拒，权威仍是 ccloop 的安装表。
 - 教训仍是「**跨仓词表不一致是反复出现的根因**」：export 的列与枚举现在是 Orca 严格依赖的跨仓词表，与 `projectKey`／`normalizeRemoteUrl` 同类。
 
-## 🔴 本仓库的新缺陷（Orca 会话 `9d95e6c8` 在人的真实面板上撞到，**未修，本仓库自己修**）
+## ✅ 本仓库修复（由 Orca 会话 `9d95e6c8` 报告；ccmem 自己修）
 
-- **origin 是本地路径的仓库，`ccmem export --scope project` 直接崩**（退 1）：`scripts/lib/project-key.mjs` 的 `normalizeRemoteUrl` 对不匹配 scp 形式的 remote 做 `new URL(remote)`，本地路径（如 `/path/to/repo`）抛 `ERR_INVALID_URL`。复现：一个 `git clone <本地路径>` 出来的仓库里跑 `ccmem export --json --scope project`。Orca 记忆区如实显示 `ccmem-failed:1`（Orca 侧行为正确，不改）。
-- 建议补丁（只是建议）：`new URL` 失败或 remote 是绝对路径／`file://` 时，回落到一个确定的键（例如对路径 realpath 后走 `fallbackProjectKey`，或 `file:` 前缀＋路径）。⚠️ **Orca 有一份独立实现的 `normalizeRemoteUrl`（见上），改算法要双方核对**；钩子写入与 export 读取必须算出同一个键。
+- **本地路径 origin 不再让 `ccmem export --scope project` 崩溃**。提交主题行：`fix(project-key): follow a local-path origin instead of crashing on it`。`resolveProjectKey` 最多沿本地 origin 跟 8 跳，直到仓库自己的可解析 origin；无 origin、非仓库、循环或超过上限时回落到原有 `path:` 键。URL 与 scp 风格 remote 的键保持原样。相关覆盖在 `tests/unit/project-key.test.mjs`（绝对／相对本地路径及回落情形）。Orca 侧无需改；若后续再次看到 `ccmem-failed:1`，先看当前错误与该仓库的 origin，不要沿用旧的 `ERR_INVALID_URL` 诊断。
 
 ## awaitingHuman（**与 ccmem 相关的**）
 

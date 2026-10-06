@@ -7687,12 +7687,12 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-05，会话 `01a10a08`**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-06，会话 `01a10aca`**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
 判发布只跑 `/usr/bin/git ls-remote origin refs/heads/main` 与本地比，**三个仓各跑一次**。
-**本轮 H6（Orca 会话 `01a10a08`，2026-10-05）只更新 ccmem 本节，按人追加要求收录到 `docs(handoff): sync Orca Codex skills status and validation limits` 本地提交；未改产品代码、未调用真实数据根、未重启 daemon。** 依据 Orca 的 `feat(control): support frozen Codex skills and preserve phase refusals` 与其 H6 ledger；本地路径 origin 的修复是 ccmem 自己的前轮成果，见下方，不受本轮零产品改动声明影响。
+**本轮（Orca会话 `01a10aca`，2026-10-06）只就地同步本节；ccmem产品代码／真实数据根／daemon未触碰。** H6已合并ccloop默认main并重钉Orca，依据主题行 `Merge Codex frozen skill support into main`、`build(deps): pin published ccloop Codex skill support`；此事实取代前版未重钉／clone-only说明。新项目过滤spec修正依据 `docs(spec): bind recovery, drafts and decision results to their owners`；本仓本地origin修复仍为自己的前轮成果，保留下文。
 
 ## ccmem 在这套系统里是什么（**未变**）
 
@@ -7767,14 +7767,15 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 
 ## Orca 当前关联状态（单节滚动；历史过程见 Orca handoff／ledger）
 
-- **H6 Codex skills** 本地实现和两项 Important 修复完成，未发布／重钉；ccloop 产品实现仅在隔离 clone 和 Orca ledger 的 bundle。临时 `.agents/skills` 链接保留原有 skill，同名拒绝、child close 后精确清理、清理失败阻止发布。此路径不经过 ccmem；人的 ccloop 原仓本轮也只同步 handoff。交接入口是 Orca handoff §4.0.q、`docs/superpowers/plans/2026-10-05-codex-skill-support.md` 与 `.superpowers/sdd/2026-10-05-codex-skill-support/progress.md`（命令／观测提交／完整输出）。
+- **Orca当前下一项**：项目过滤＋全部项目视图→N2 agent入口→隔离真实集成／known reds诊断，顺序已获人同意。written spec `docs/superpowers/specs/2026-10-06-panel-project-filtering-design.md` §11三项review修正已追加，**修正版尚待人审，没有实施plan／产品改动**。任务／Decisions／需求列表scope分具体或全部；Memory继续具体projectKey、Metrics全局。恢复目标revision、需求草稿归属、决策POST／retry归属是Orca UI约束，不变更ccmem export／自动记忆接口。
+- **H6 Codex skills** 已合并默认ccloop main并完成Orca精确依赖重钉／本地安装刷新，不再仅存在临时clone；原bundle保留恢复。临时链接保留原有skill，同名拒绝、child close后清理、清理失败阻止发布，此路径不经过ccmem。细节／命令／观测提交见Orca §4.0.q、H6原ledger与 `.superpowers/sdd/2026-10-05-codex-skill-repin/progress.md`，本节不固定当前HEAD。
 - **H6 验证边界**：Orca 全量 2796 passed／6 skipped／0 failed，RC0；其中 `tests/memory/ccmemReal.test.ts` 的真实 ccmem 读回判据仍 skipped，本轮没有新增真实 ccmem 验收。ccloop 最终全量 1186 passed／2 failed／0 skipped，RC1，两红是已登记 stopProof／codexWatchdog；不能报告全绿。旧项目注册表轮的 Orca `ccmemAdapter` errno 问题本轮未复现，**未据此关闭**，也不能与本地 origin 修复混为一谈。
 - **项目注册表／面板记忆区**：Orca 侧栏新增／改名与持久选择已实现；记忆区继续用所选项目的 `projectKey`。读取仍只顺序运行 `ccmem export --json --scope global` 再 `--scope project`，cwd 是目标仓库、env 原样透传、30 s 超时／64 MiB 上限；未设 `ORCA_CCMEM_BIN` 或未打开分区则不请求。Orca 不调 `list`／`show`／`save`、不读 SQLite、不 vendor。记忆区第一版裁定已于 2026-10-03 经人审核同意，设计在 Orca `docs/superpowers/specs/2026-09-29-memory-tab-design.md`（§9 人裁／§10 实施期更正）。
 - **export 严格协议必须同步**：Orca 顶层只认 `version: "0.7"`、`exported_at`、`memories`；行只认 `id, scope, project_key, type, content, pinned, source, trust_score, tags, created_at, updated_at`。`type` 仅 `rule|fact|episode|consolidated`，`source` 六个已有值；`tags` 为字符串数组 JSON 文本或 null，时间戳为 0..8.64e15 整数毫秒，project 行必须有非空 `project_key`。本仓加列／枚举／改 version 会令整个记忆区 `ccmem-output-invalid`，改前同步 Orca。
 - **前轮临时根验收仍有效**：真 ccmem 判据用临时 `CCMEM_DATA_ROOT`／HOME、import 灌两条记忆，没在真实数据根跑；每文件后真实根条目名护栏只抓新备份、主库消失、数据根从无到有，不覆盖 daemon／WAL／SHM 自身变化。2026-10-03 两次 export 约 192–198 ms 是历史测量。本轮没有重跑。人已接受 Q2：真实面板读记忆可能触发 ccmem 自己迁移与备份轮换；该风险不因临时根验证而消失。Orca 前轮非程序文件错误已从 Unknown system error -8 改为 ENOEXEC，本轮旧 adapter 判据问题仍在 Orca 历史记录。
 - **仍挂账**：`export` 不校验 `--scope`；`list`／`show` 无 `--json`／`--project-key`；无 remote 的仓库，原始 cwd 和 realpath 可算不同 `path:`；Q7 不立项 ccmem→Orca 字段。Q6：半截备份不视为可复用，但计入轮换且可能被人取为最新，迁移逐文件事务，被杀落在一致中间版本；2026-10-02 读码为 WAL 模式只拷主文件，之后有 `global.db-wal.bak.*` 的历史观察，当前备份实现须本仓再核，不能凭旧读码决定修改。T13 与本仓其余挂账不变。
 - **前轮跨仓结论仍有效**：G1、执行驱动、④ handoff、agent 选择、中止用量、预算链、泄漏护栏、依赖钉版、loop／v2、双语面板、adapter／CLI、N1、crash resume／reaper 均已完成，未改 ccmem 产品代码，过程在 Orca 原记录；关闭 stdin 不能证明父进程死亡，runner 用专用管道 EOF；syncskill 的改道开关需实测落点（曾解析但没读取），身份 kind 的唯一权威是 ccloop `listAgents`。Orca 的 syncskill profile／按 run 只读快照／lock 记录已实现，H6 本地实现扩展到 Codex，均不经过 ccmem。Web 派活的各主链历史仅真 Claude n＝1，execution profile 仍手写，不把一次通过当可靠性结论。
-- **本轮隔离边界**：无 push、无付费／外部模型验收、未访问真实 `~/.orca/*` 或 ccmem 数据根，未重启人的面板。此前四仓远端查询因 DNS 失败，网络恢复后由人核对；这里不记发布状态。跨仓词表（export 列／枚举、projectKey／normalizeRemoteUrl）改动仍须双方同步。
+- **本轮隔离边界**：无executor push、付费／外部模型验收、真实 `~/.orca/*`／ccmem数据根访问或人的面板／daemon重启。H6重钉的隔离默认包12/12、控制81/81、同提交fake夹具补入后E2E4/4，不是新增真实ccmem验收；本轮handoff同步也没跑产品门。远端现查ls-remote，不沿用旧DNS失败结论或固定HEAD。export列／枚举与projectKey／normalizeRemoteUrl改动仍须双方同步。
 
 ## ✅ 本仓库修复（由 Orca 会话 `9d95e6c8` 报告；ccmem 自己修）
 

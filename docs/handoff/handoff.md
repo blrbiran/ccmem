@@ -7687,12 +7687,12 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-07，会话 `6cc0c1e9`**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-07，会话 `9a20ac38`**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
 判发布只跑 `/usr/bin/git ls-remote origin refs/heads/main` 与本地比，**三个仓各跑一次**。
-**本轮（Orca 会话 `6cc0c1e9`，2026-10-07）只就地同步本节；ccmem 产品代码、真实数据根、daemon 都没碰。** 上一版本节写的 H6 重钉、项目过滤 spec 修正都已过去，结论留在下文。
+**本轮（Orca 会话 `9a20ac38`，2026-10-07）只就地同步本节；ccmem 产品代码、真实数据根、daemon 都没碰。** 上一版说「隔离根真实验收未开始」，已在本轮做完，结论在下文。
 
 ## ccmem 在这套系统里是什么（**未变**）
 
@@ -7767,12 +7767,11 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 
 ## Orca 当前关联状态（单节滚动；历史过程见 Orca handoff／ledger）
 
-- **2026-10-07（Orca 会话 `6cc0c1e9`）：本仓零改动。**
-  - Orca 在 main 上做完 N2 agent 入口（等人审）：面板多开一个 0600 的 unix socket，加上 `orca control get|send`、skill `skills/orca-control`、`orca mcp serve`。全部只读写 Orca 自己的控制 store，**不调 ccmem、不改 export／自动记忆接口**。
-  - 2026-10-06 的「面板项目过滤＋全部项目视图」也已做完（等人审）：Memory 分区仍按所选具体 `projectKey`。
-  - 详情见 Orca `docs/handoff/handoff.md` §4.0／§4.0.r。
-- **ccmem 验收边界**：Orca 本轮全量里 `tests/memory/ccmemReal.test.ts` 仍是 skipped，**没有新增真实 ccmem 验收**。Orca `ccmemAdapter` 的 errno 旧红本轮未复现，**不据此关闭**，也不能和本仓本地 origin 修复混为一谈。
-- **Orca 下一项**：隔离根的真实 ccmem／syncskill 验收（临时 `CCMEM_DATA_ROOT`／HOME，不碰真实数据根）。未开始。
+- **2026-10-07（Orca 会话 `9a20ac38`）：本仓零改动。** 人已审完 Orca N2；Orca 下一轮是两份已批计划（面板做成 launchd／systemd 每用户服务；账户登录＋按模型 token 账＋花费上限），都**不调 ccmem、不改 export 接口**。详情见 Orca `docs/handoff/handoff.md` §4.0。
+- **隔离根真实验收（本轮做完）**：`env -i` 下临时 HOME＋四 XDG＋`CCMEM_DATA_ROOT`，PATH 上无 claude／codex。Orca `tests/memory/ccmemReal.test.ts` 3/3 绿；面板记忆区经真 ccmem `export` 读回种子记忆，别的项目的记忆不漏、`item` 跨项目 404、无 token 401。真实 `~/.claude/ccmem` 前后快照有 3 个文件变化，按内容归到运行中的 daemon（embed 探针）与挂 ccmem 插件的 claude 会话钩子，**机制推断、非逐进程证明**（其中一笔落在一次验收运行窗口内）。
+  - ⚠️ 必须 `env -i`：人的 shell 导出了 `CCMEM_CONFIG_PATH=~/.claude/ccmem/config.json`，不去掉会让隔离跑读真实配置。
+  - 知情（ccmem 侧）：真实 daemon 的 embed 探针与会话钩子报 OpenAI `429 You have no credits remaining`，语义检索降级为 `B-fail／B-circuit`。
+- Orca `ccmemAdapter` 的 errno 旧红仍未复现，**不据此关闭**。
 - **记忆区读法（不变）**：只顺序跑 `ccmem export --json --scope global` 再 `--scope project`，cwd 是目标仓库、env 原样透传、30 s 超时／64 MiB 上限；未设 `ORCA_CCMEM_BIN` 或分区未打开则不请求。不调 `list`／`show`／`save`、不读 SQLite、不 vendor。设计在 Orca `docs/superpowers/specs/2026-09-29-memory-tab-design.md`（§9 人裁／§10 实施期更正）。
 - **export 严格协议必须同步**：顶层只认 `version: "0.7"`、`exported_at`、`memories`；行只认 `id, scope, project_key, type, content, pinned, source, trust_score, tags, created_at, updated_at`。`type` 仅 `rule|fact|episode|consolidated`，`source` 六个已有值；`tags` 为字符串数组 JSON 文本或 null，时间戳为 0..8.64e15 整数毫秒，project 行必须有非空 `project_key`。本仓加列／枚举／改 version 会令整个记忆区 `ccmem-output-invalid`，改前同步 Orca；`projectKey`／`normalizeRemoteUrl` 改动同理。
 - **前轮临时根验收仍有效**：真 ccmem 判据用临时 `CCMEM_DATA_ROOT`／HOME、import 灌两条记忆；真实根条目名护栏只抓新备份、主库消失、数据根从无到有，不覆盖 daemon／WAL／SHM 自身变化。人已接受 Q2：真实面板读记忆可能触发 ccmem 自己迁移与备份轮换。

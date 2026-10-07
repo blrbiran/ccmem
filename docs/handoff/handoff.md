@@ -7777,7 +7777,7 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 - **前轮临时根验收仍有效**：真 ccmem 判据用临时 `CCMEM_DATA_ROOT`／HOME、import 灌两条记忆；真实根条目名护栏只抓新备份、主库消失、数据根从无到有，不覆盖 daemon／WAL／SHM 自身变化。人已接受 Q2：真实面板读记忆可能触发 ccmem 自己迁移与备份轮换。
 - **仍挂账**：`export` 不校验 `--scope`；`list`／`show` 无 `--json`／`--project-key`；无 remote 的仓库，原始 cwd 和 realpath 可算不同 `path:`；Q7 不立项 ccmem→Orca 字段。Q6：半截备份不视为可复用，但计入轮换且可能被人取为最新，迁移逐文件事务；WAL 模式备份是否只拷主文件须本仓按当前实现再核，不能凭 2026-10-02 的旧读码决定修改。T13 与本仓其余挂账不变。
 - **前轮跨仓结论仍有效**：G1 起各轮（执行驱动、④、agent 选择、预算链、N1、crash resume／reaper、syncskill、H6 等）均未改 ccmem 产品代码；关闭 stdin 不能证明父进程死亡，runner 用专用管道 EOF；身份 kind 的唯一权威是 ccloop `listAgents`。Web 派活各主链仅真 Claude n＝1，不当可靠性结论。
-- **隔离边界**：本轮无 push、无付费／外部模型、未访问真实 `~/.orca/*`／ccmem 数据根、未重启人的面板／daemon。远端现查 `ls-remote`，本节不固定 HEAD。
+- **隔离边界**：本轮无 push、无付费／外部模型、未写真实 ccmem 数据根、未动 ccmem daemon；Orca 会话应人授权重起了人的 Orca 面板（它设了 `ORCA_CCMEM_BIN`，打开记忆区会对真实根跑 `ccmem export`，这是既有行为）。远端现查 `ls-remote`，本节不固定 HEAD。
 
 ## ✅ 本仓库修复（由 Orca 会话 `9d95e6c8` 报告；ccmem 自己修）
 

@@ -7687,105 +7687,42 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-09，会话 `3156185d`**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（单节滚动，2026-10-10，Codex controller；整节替换本会话旧入口，不新增Orca章节）
 
-**本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
-⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
-判发布只跑 `/usr/bin/git ls-remote origin refs/heads/main` 与本地比，**三个仓各跑一次**。
-**本轮（Orca 会话 `e34dc963`＋`3156185d`，2026-10-08～09）只就地同步本节；ccmem 产品代码、真实数据根、daemon 都没碰。** Orca 修的是本地部署问题清单（报错说人话、关面板不再卡死空闲组、失败任务可重试、活动记录与 schema 9、组归档、依赖图与详情页），全部在 Orca 侧，与 ccmem 无接口变化；前半已由人合并推送，后半在 Orca 分支上等人合并。
+Orca细节/当前接手：`/Users/biran/code/skills/loop/Orca/docs/handoff/handoff.md` §4.0；产品与台账已按人授权本地合 main，审查 worktree/分支保留。不固定任何当前HEAD；三个仓远端main分别现查 `/usr/bin/git ls-remote origin refs/heads/main`，提交本文后本地HEAD会移动。
 
-## ccmem 在这套系统里是什么（**未变**）
+**本会话ccmem仅就地同步 main 上的本节，产品/配置值/真实数据根/daemon均未动。config-value-parity 仍受本仓独立人裁“不合并”保护；已询问本次一般整合授权是否解除它，未得到明确解除前保留。候选测试隔离2/2通过不等于解除禁令，历史禁令和该分支均不修改。** Orca issue-fixes人已合并推送；D9/M3与M5/M6全部任务完成、独立终审，并按人 2026-10-10 授权本地合 main，push 由人做。Orca控制库schema10单向升级、保守结清未知用量和交接后失败重试，不改变ccmem接口。执行进度只看Orca新两本Round close，不重做已完轮。
 
-ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续决策可检索、可引用、可审计。
-- 走 **CLI/DB 接口**，Orca **一个字都不 vendor**、不走 submodule。
-- 关联用 **`projectKey` ＋ `decisionId` 联合键**；`projectKey` 与 ccmem 的 git remote URL 规范化口径一致。
-  ⚠️ **Orca 独立实现了一份 `normalizeRemoteUrl`，改本仓库算法要双方核对**，否则会静默分叉。
-- ⚠️ **ccmem 自己的挂账（T13、存量临时目录、待授权事项）不因 Orca 的进展而关闭。**
+## 记忆边界与接口（结论保留）
 
-## 已确定的记忆接口语义（**未变**）
+- ccmem为Orca决策记忆层，CLI/DB边界、不vendor/submodule；关联 `projectKey+decisionId`，双方normalizeRemoteUrl口径必须同步。Orca自动decision/correction写入仍未开始，面板只读不代表自动记忆链已运行。
+- 对照样本拼decision的chose/because/evidence/alternatives与人工correction原因；overturned是瘦闭环事件。metrics缺because/by，不能依赖metrics补语境；改存量字段有迁移成本。严格额度若外部服务无可执行消耗上界，只能无模型读写或拒绝能力。
+- 面板顺序 `ccmem export --json --scope global`再project，cwd目标仓库、env透传、30s/64MiB；分区没打开或ORCA_CCMEM_BIN没设就不请求。无list/show/save、SQLite直读/vendor。spec为Orca memory-tab §9人裁/§10更正。
+- export顶层只认version0.7/exported_at/memories；行字段 `id,scope,project_key,type,content,pinned,source,trust_score,tags,created_at,updated_at`。type为rule/fact/episode/consolidated，source六个既有值，tags字符串数组JSON文本或null，时间0..8.64e15整数毫秒，project_key非空；列/枚举/version/projectKey变化先同步Orca，否则整区ccmem-output-invalid。
+- 本地origin不再令export崩溃：本仓主题 `fix(project-key): follow a local-path origin instead of crashing on it`，最多沿本地origin8跳，失败/循环/上限回原path键，URL/scp键不变。新ccmem-failed先读当前错误/origin，不沿旧ERR_INVALID_URL诊断。
+- 新D9门的真实ccmemReal测试在临时HOME/CCMEM_DATA_ROOT跑import/export；具体最新RC见OrcaRound close，非真实根/daemon可靠性结论。**隔离必须去掉CCMEM_CONFIG_PATH**，人的shell曾指向真实config。前轮真实根3文件变化归daemon/claude钩子只是机制推断、非逐进程证明；429 no credits使语义检索降级B-fail/B-circuit，不因本轮消失。
+- 前轮根条目护栏只抓新备份、主库消失/根从无到有，不覆盖daemon/WAL/SHM变化；人接受Q2真实export可触发ccmem迁移/轮换。真正数据/迁移测试仍须临时副本。
+- 历史2026-10-09隔离验收仍保留：真ccmem面板记忆区3/3通过，跨项目记忆不漏、item跨项目404、无token401；真实根快照有3文件变化，归因只是机制推断。新全量的ccmemReal单文件1条与该历史3条不是同一计数。
 
-- **对照样本**由 decision 的 `chose`／`because`／`evidence`／`alternatives` 与 correction 的人工修改
-  及原因**拼接而成**；`overturned` 是**瘦闭环事件**，**不承载完整样本**。
-- **`correction.because` 保留「为什么拒绝另一方案」的语境**；
-  ⚠️ **指标输出不含 `because`／`by`** ⇒ **记忆接入不能依赖 metrics 取得这两个字段**。
-- 已有 correction／台账写入方 ⇒ **改字段或语义有迁移成本**；**历史读数不能当当前迁移依据**。
-- 严格额度下外部服务给不出可执行消耗上界时，**用无模型读写或拒绝该能力，不能隐去成本**。
-- ⚠️ **决策／correction 的自动记忆接入切片仍未开始**；面板只读记忆区已完成，不能把它或架构批准当成自动记忆写入已在运行。
+## 已有十二条教训（压缩过程，保留约束）
 
-## ccmem 可以直接拿去用的教训（**十二条；第十条、第十二条在 2026-09-28 各并入一条新的**）
+1. 环境改道需真实目录快照护栏；SQLite只读仍可能写SHM，mode=ro不能当零触碰证明。
+2. shell正则遇NUL可截成空模式；字面退格符不等于正则边界，先实测输入。
+3. 英文源码导出的扫描词不适合中文文档；跑过扫描器不等于有效检查。
+4. 快照要含目录mtime；用touch目录变异证明能红。
+5. grep曾静默漏行；消费者/命中清点用Python逐行实际读取。
+6. 恒假guard仍可能被合成夹具覆盖；删探测器前先数夹具。
+7. 后台通知可能报最后命令RC；保留真正RC，子agent不得替人署名/杀非己进程，逐条核归属。
+8. 测试调用不代表生产链调用；逐个数实际生产消费者。
+9. 仓库外缺省路径走传入env，不走os.homedir；改道落点与真实HOME零写入要可红。
+10. 判定器需坏输入非0；变异零杀伤只对跑过范围成立，防常量fake/空扫描。默认值要两向翻；fake还会漏真实API约束、stdout超过16KiB异步退出丢数据、跨块多字节解码，以及成功解释引用拒绝词。逐项用真实请求/大输出/边界样本验证。
+11. flake先负载复现并记录事件/结局，再定机制；bash数组逐PID核退出，zsh不拆$pids；无人监听端口可量CLI启动副作用。
+12. 门与变异clone分开；单跑绿不足判flake，降负载记录uptime。等待真实状态而非仅文件存在；字段改动须全量查嵌入fake；派生进程close后删且全量验证残留。
 
-1. **改道是希望，快照比对才是护栏。** Orca 踩过一次**写进真实用户数据**。最终靠的是**一条会红的判据**：
-   每个测试文件跑完比对真实目录快照，变了就红。**ccmem 的 Rule 13 同形，建议照此补。**
-   ⚠️ **只读 SQLite 连接也会触及 SHM 元数据，`mode=ro` 不是零触碰证明。**
-2. *** **`grep` 配 `$'\x00\|…'` 在 bash 里会在 NUL 处截断参数** *** ⇒ 模式变空串、**命中每一行**。
-   （ccmem 同形：`credential_assignment` 死正则里那两个 `\b` 是**两个字面 0x08 退格符**。）
-3. *** **扫描词从英文源码机械导出，对中文活文档恒零命中。** ***
-   ⇒ **「扫描器跑了」「范围对了」都不等于「它在做它声称的事」。**
-4. *** **快照护栏自己也有盲区，而盲区看起来和「通过」一模一样。** *** 零写证明用的快照 helper
-   **从来没记录过目录的 mtime** ⇒ 「探测时 touch 了目录」的变异**跑出全绿**。
-   ⇒ **补快照护栏时先写一条 touch【目录】（而非文件）的变异。ccmem 的 WAL/SHM 场景尤其容易中招。**
-5. ⭐ 🔴 *** **（2026-09-24 新）`grep` 会【静默漏行】，而且不打任何截断提示。** ***
-   实测：同一个文件 grep 报 1 行命中、python 逐行直读是 5 行。⚠️ 这与第 2 条的 NUL 截断**不同源** ——
-   那一种是「命中全部」，这一种是「**看起来就是完整结果**」。
-   ⇒ *** **清点消费者、数命中行数一律 python 逐行读。** *** **ccmem 的探测器普查同理。**
-6. ⭐ *** **（新）「守卫恒假」不等于「没有判据覆盖它」。** *** Orca 断言「删掉那三格守卫不会红」，
-   实测**立刻两处红** —— 判据用的是**合成对象**，不是生产对端的应答。**中间隔着夹具。**
-   ⇒ **ccmem 判断某个探测器「从没命中过所以可以删」之前，先去数它的夹具。**
-7. ⭐ *** **后台任务通知报的 exit code 是【最后一条命令】的；子代理会替人签名、会杀非己进程。** ***
-   ⇒ 真 RC 写进日志文件再读回；派发写死「不许替人署名、不许杀非己进程」，收货逐条核归属行（ccmem 的记忆写入若由子代理代劳，同样要核「这条是谁说的」）。
-8. ⭐ *** **（缝 B 设计轮）「有判据覆盖」≠「生产里有人调它」。** *** Orca 的 `toStartEnvelope` 只有测试调用，
-   冒烟测试因此能绿，生产却从没走到那一步。⇒ **宣称一条链路能跑之前，逐个函数数生产代码里的调用方**（python 逐行）。
-   **ccmem 的探测器／钩子路径同理**：测试绿不代表 daemon 里真的走到了。
+## 挂账与人审（没有被本轮关闭）
 
-9. ⭐ 🔴 *** **（agent 选择一轮新）仓库外路径的缺省值必须从【传入的 env】推，不能调 `os.homedir()`。** ***
-   Orca 计划写作期一条变异因此往**真实 `~/.orca/`** 写了两个夹具文件（2026-09-27 已按人授权删除）。判据改道的是 `env.HOME`，代码却读进程的 home ⇒ 改道形同虚设。
-   ⇒ **ccmem 的 Rule 13 同形：任何缺省路径都要走调用方给的 env，并让一条判据在改道后的临时 HOME 里断言「落点正确、真 HOME 零写入」。**
-
-10. ⭐ 🔴 *** **（agent 选择一轮收尾）判定器读的行格式与写入方的格式对不上 ⇒ 检查零行、照样报 OK。** ***
-   Orca 的判定器要从台账读「改写过的判据」行，实施席却都写在各自报告里、格式不同 ⇒ 台账 0 行，那一项检查空转了一整轮。
-   ⇒ **任何机械判定器都要先喂一份故意写坏的输入、看见它退非 0，再信它的 OK。ccmem 的扫描器／探测器普查同理。**
-   （2026-09-27 并入）**「变异零杀伤」只相对于跑过的范围成立**：Orca 审计判「没有判据抓它」的一个变异，跑全套后有 11 条判据抓它，真正的缺口在下一层消费方守卫；**夹具对所有输入答同一个常量**会让「值被张冠李戴」完全不可见。⇒ ccmem 判某个探测器「无覆盖」或「可删」前，先在全量上跑，再看夹具是不是恒答一个值。
-   （2026-09-28 并入）**量「夹具默认值会不会造成空绿」要两个方向一起量**：删闸门看有没有判据红，翻默认值看有没有判据红；只量一个方向证明不了另一个方向。
-   （2026-09-27 并入）**fake 只认形状，不认真实服务的约束**：ccloop 的 fake claude 从不校验 `--json-schema`，一个真 API 必拒的 schema 在全部 fake 判据下都是绿的，第一次付费跑才撞上。⇒ ccmem 调外部 embed／summarize 服务的路径，至少要有一条判据直接读「实际发出去的请求」，不能只靠假服务回绿。
-   （2026-10-02 并入）**fake 的输出永远很小，所以「写完就退出」的丢数据缺陷在 fake 下恒绿**：ccloop 的 runner 在中断路径上写完 stdout 立刻 `process.exit`，macOS 上子进程写管道是异步的，12–40 KB 的输出稳定截在 8192 字节；fake 判据的输出都只有几百字节，第一次付费跑才撞上。⇒ **ccmem 的钩子与 daemon 凡是「写 stdout／socket 后 exit」的地方，都要等 write 回调，并用大于 16 KB 的输出量一次。**
-   （2026-10-01 并入）**fake 永远不会像真模型那样「解释为什么规则不适用」**：Orca 的 loop 方案用子串匹配的拒绝令牌，真 verifier 通过时在解释里引用了令牌原文，好活被判失败——所有 fake 判据都绿。⇒ ccmem 任何「在模型输出里找关键字」的判定，都要用真输出量一次「通过时会不会提到这个词」。
-   （2026-09-28 并入）**只用 ASCII 的判据看不见编码缺陷**：ccloop 的 runner 读 stdin 时按块 `chunk.toString()`，多字节字符落在块边界上就变成 U+FFFD，超过约 64 KiB 的中文 prompt 会被悄悄改坏。这个缺陷存在了好几轮，是一条边界判据刚好用了 `é` 才露出来的。⇒ **ccmem 的钩子和 daemon 凡是按块读 stdin／socket 再解码的地方，都值得用一个跨块的多字节样本量一次**（先量，别凭读码下结论）。
-
-11. ⭐ 🔴 *** **（2026-09-27）修抖动之前，先在负载下复现，并让判据把结局与事件序列打出来。** ***
-   ccloop 一条负载 flake 被凭读码归因为「execute 离截止差 10 ms」；起 20 个忙循环实测，8 次红 5 次，每次都是 **verify** 撞上 20 ms 的单阶段超时。按错误根因写的修复在提交前就推翻了。⇒ **ccmem 的 T13 同理：先复现、先看它实际怎么红，再谈机制。**
-   另两条同源：
-   - **zsh 不拆分未加引号的 `$pids`**：`kill $pids` 一个都没杀掉，存活检查也是空的。⇒ 起后台进程用 bash 数组，并逐个 `ps -p` 核对。
-   - **零成本量一个 CLI 的启动期副作用**：把它的 API 地址指向无人监听的端口，先用对照组复现副作用，再测开关。
-
-12. ⭐ 🔴 *** **（2026-09-27 stream-usage 一轮）一份被当作「门」的副本，不能同时拿来做变异；「单跑一次绿」也不足以判 flake。** ***
-   - Orca 的一次全量门指向一份 ccloop clone，终审员同时在同一份 clone 里改过被现读的脚本。那次门只能作废重跑。
-   - 另一条负载型 flake 在 load 约 37 时单文件连红 3 次，负载降下来后同一命令 3/3 绿。
-   ⇒ ccmem 判 T13 一类抖动时：①门与实验各用各的副本；②单跑判别要在负载降下来之后做，并记下 `uptime`。
-   同轮还有一条同源的：**判据只等「文件存在」就中止，会和分两次写入的夹具竞态。** 要等到你真正要断言的那个状态。
-   （2026-09-28 并入）**只跑「点名的判据文件」会漏掉嵌在别处的同形夹具**：⑤ 一轮给线上应答加了一个必填字段，每个 Task 都只跑了自己点名的文件，全绿；只有干净 clone 的全量门抓到一个测试里内嵌的假对端应答还缺那个字段（3/3 稳定红）。⇒ ccmem 改接口字段时，逐 Task 的局部绿不算数，收尾必须跑一次全量。
-   （2026-09-28 并入）**清理一个会派生进程的判据，单文件连跑 10 次全绿也不够**：ccloop 的一处 `afterEach` 在负载下的全量里撞上子进程还在写，报了 `ENOTEMPTY`，又漏了一个目录。⇒ 先等子进程退出（pid 在记录里）再删，并在全量里验证。
-
-## Orca 当前关联状态（单节滚动；历史过程见 Orca handoff／ledger）
-
-- **2026-10-09（Orca 会话 `3156185d`）：本仓零改动。** Orca 控制库已升到 schema 9（单向，新表 `activity`，已在 Orca main 上）；记忆区读法、`export` 严格协议、`projectKey` 规范化都未变，ccmem 侧不需要改。该轮已全部做完，后半在 Orca 分支上等人合并（见 Orca handoff §4.0）。
-- **隔离根真实验收（本轮做完）**：`env -i` 下临时 HOME＋四 XDG＋`CCMEM_DATA_ROOT`，PATH 上无 claude／codex。Orca `tests/memory/ccmemReal.test.ts` 3/3 绿；面板记忆区经真 ccmem `export` 读回种子记忆，别的项目的记忆不漏、`item` 跨项目 404、无 token 401。真实 `~/.claude/ccmem` 前后快照有 3 个文件变化，按内容归到运行中的 daemon（embed 探针）与挂 ccmem 插件的 claude 会话钩子，**机制推断、非逐进程证明**（其中一笔落在一次验收运行窗口内）。
-  - ⚠️ 必须 `env -i`：人的 shell 导出了 `CCMEM_CONFIG_PATH=~/.claude/ccmem/config.json`，不去掉会让隔离跑读真实配置。
-  - 知情（ccmem 侧）：真实 daemon 的 embed 探针与会话钩子报 OpenAI `429 You have no credits remaining`，语义检索降级为 `B-fail／B-circuit`。
-- Orca `ccmemAdapter` 的 errno 旧红仍未复现，**不据此关闭**。
-- **记忆区读法（不变）**：只顺序跑 `ccmem export --json --scope global` 再 `--scope project`，cwd 是目标仓库、env 原样透传、30 s 超时／64 MiB 上限；未设 `ORCA_CCMEM_BIN` 或分区未打开则不请求。不调 `list`／`show`／`save`、不读 SQLite、不 vendor。设计在 Orca `docs/superpowers/specs/2026-09-29-memory-tab-design.md`（§9 人裁／§10 实施期更正）。
-- **export 严格协议必须同步**：顶层只认 `version: "0.7"`、`exported_at`、`memories`；行只认 `id, scope, project_key, type, content, pinned, source, trust_score, tags, created_at, updated_at`。`type` 仅 `rule|fact|episode|consolidated`，`source` 六个已有值；`tags` 为字符串数组 JSON 文本或 null，时间戳为 0..8.64e15 整数毫秒，project 行必须有非空 `project_key`。本仓加列／枚举／改 version 会令整个记忆区 `ccmem-output-invalid`，改前同步 Orca；`projectKey`／`normalizeRemoteUrl` 改动同理。
-- **前轮临时根验收仍有效**：真 ccmem 判据用临时 `CCMEM_DATA_ROOT`／HOME、import 灌两条记忆；真实根条目名护栏只抓新备份、主库消失、数据根从无到有，不覆盖 daemon／WAL／SHM 自身变化。人已接受 Q2：真实面板读记忆可能触发 ccmem 自己迁移与备份轮换。
-- **仍挂账**：`export` 不校验 `--scope`；`list`／`show` 无 `--json`／`--project-key`；无 remote 的仓库，原始 cwd 和 realpath 可算不同 `path:`；Q7 不立项 ccmem→Orca 字段。Q6：半截备份不视为可复用，但计入轮换且可能被人取为最新，迁移逐文件事务；WAL 模式备份是否只拷主文件须本仓按当前实现再核，不能凭 2026-10-02 的旧读码决定修改。T13 与本仓其余挂账不变。
-- **前轮跨仓结论仍有效**：G1 起各轮（执行驱动、④、agent 选择、预算链、N1、crash resume／reaper、syncskill、H6 等）均未改 ccmem 产品代码；关闭 stdin 不能证明父进程死亡，runner 用专用管道 EOF；身份 kind 的唯一权威是 ccloop `listAgents`。Web 派活各主链仅真 Claude n＝1，不当可靠性结论。
-- **隔离边界**：本轮无 push、无付费／外部模型、未写真实 ccmem 数据根、未动 ccmem daemon、未动人的面板。远端现查 `ls-remote`，本节不固定 HEAD。
-
-## ✅ 本仓库修复（由 Orca 会话 `9d95e6c8` 报告；ccmem 自己修）
-
-- **本地路径 origin 不再让 `ccmem export --scope project` 崩溃**。提交主题行：`fix(project-key): follow a local-path origin instead of crashing on it`。`resolveProjectKey` 最多沿本地 origin 跟 8 跳，直到仓库自己的可解析 origin；无 origin、非仓库、循环或超过上限时回落到原有 `path:` 键。URL 与 scp 风格 remote 的键保持原样。相关覆盖在 `tests/unit/project-key.test.mjs`（绝对／相对本地路径及回落情形）。Orca 侧无需改；若后续再次看到 `ccmem-failed:1`，先看当前错误与该仓库的 origin，不要沿用旧的 `ERR_INVALID_URL` 诊断。
-
-## awaitingHuman（**与 ccmem 相关的**）
-
-- **三个仓的 push 都归人，时机由人自己定**，控制器不许 push、也不把它列为待办。
-  ⚠️ **这台机器上有东西在把提交推到真实 GitHub 远端**（三个仓同一个 `post-commit` 钩子，调混淆过的二进制）——**要人自己查并决定。**
-- **本仓库的人裁**：迁移备份要不要改成「临时名＋rename」、要不要连 `-wal` 一起备（先核现状）；`export` 要不要校验 `--scope`。
-- 知情：不关 auto memory 时，真 claude 会在**启动时**于 `~/.claude/projects/<cwd 编码>/` 建一个空 `memory/`；Orca 的 `agents detect` 新草稿已经关掉它，用旧安装表或手动跑的 claude 仍会留下。
+- T13、存量临时目录、daemon/待授权事项仍属本仓；ccmemAdapter errno旧红未复现不关闭。export不校验scope；list/show缺json/project-key；无remote的cwd/realpath可能不同path键；Q7不立项ccmem→Orca字段。
+- Q6半截备份不可复用却计轮换且可能被人取为最新，迁移逐文件事务；临时名+rename、WAL备份现状需本仓先核再由人裁，不能用旧读码决定。
+- G1至H6等Orca跨仓轮未改ccmem产品；父进程死亡用专用管道EOF而非stdin关闭，kind权威为ccloop listAgents，真Claude主链各n=1不作可靠性结论。
+- 此次本地整合已获人授权；push/删除仍归人。本次handoff本地提交以一次性hooksPath避开既有Qoder外部tracker，仓库hook配置未变。此前共同post-commit混淆二进制有远端副作用疑点，归人自己查，不能当本次已推送。
+- 不关auto memory时真claude启动可在真实projects下建空memory；Orca detect新表关了，旧表/手工claude仍会留下。本轮无付费/外部模型，未动真实ccmem数据、daemon或人的面板。

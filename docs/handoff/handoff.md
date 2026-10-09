@@ -7687,12 +7687,12 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-08，会话 `eaee0f2c`**；整节替换上一版，**不新增 Orca 会话章节**）
+# 📌 §15 Orca 那条线（**单节滚动更新，2026-10-09，会话 `e34dc963`**；整节替换上一版，**不新增 Orca 会话章节**）
 
 **本节只讲与 ccmem 有关的部分。** Orca 的细节去 Orca 仓 `docs/handoff/handoff.md` 读。
 ⚠️ **本节不写任何哈希、不记任何仓库的发布状态** —— 提交本文这个动作就会移动 HEAD，人也会自己推远端。
 判发布只跑 `/usr/bin/git ls-remote origin refs/heads/main` 与本地比，**三个仓各跑一次**。
-**本轮（Orca 会话 `eaee0f2c`，2026-10-08）只就地同步本节；ccmem 产品代码、真实数据根、daemon 都没碰。** 上一版的两份计划已由人合并推送；本轮 Orca 做的是「合入方案」与四个面板修复，与 ccmem 相关的只有下文第一条。
+**本轮（Orca 会话 `e34dc963`，2026-10-08～09）只就地同步本节；ccmem 产品代码、真实数据根、daemon 都没碰。** 上一轮的「合入方案」已由人合并推送；本轮 Orca 修的是本地部署问题清单（报错说人话、关面板不再卡死空闲组、失败任务可重试、活动记录与 schema 9、组归档与列表），全部在 Orca 侧，与 ccmem 无接口变化。
 
 ## ccmem 在这套系统里是什么（**未变**）
 
@@ -7767,7 +7767,7 @@ ccmem 是 Orca 的**决策记忆层**：保存人工纠正的语境，使后续�
 
 ## Orca 当前关联状态（单节滚动；历史过程见 Orca handoff／ledger）
 
-- **2026-10-08（Orca 会话 `eaee0f2c`）：本仓零改动。** 面板服务与账户两份计划已由人合进 Orca main 并推送（面板服务的 `service.env` 带 `ORCA_CCMEM_BIN`；Web 要登录，记忆区在登录之后——ccmem 侧不需要改）。本轮 Orca 在 worktree 分支上做了「合入方案」（任务／组完成后推分支、开 GitHub PR、合进目标分支）与四个面板修复，**等人合并**。其中**记忆区只改了布局**（左列表、右详情，sticky）——读法、请求、协议一字未变。详情见 Orca `docs/handoff/handoff.md` §4.0。
+- **2026-10-09（Orca 会话 `e34dc963`）：本仓零改动。** Orca 控制库将升到 schema 9（单向，新表 `activity`）；记忆区读法、`export` 严格协议、`projectKey` 规范化都未变，ccmem 侧不需要改。Orca 那一轮仍在分支上进行中（见 Orca handoff §4.0）。
 - **隔离根真实验收（本轮做完）**：`env -i` 下临时 HOME＋四 XDG＋`CCMEM_DATA_ROOT`，PATH 上无 claude／codex。Orca `tests/memory/ccmemReal.test.ts` 3/3 绿；面板记忆区经真 ccmem `export` 读回种子记忆，别的项目的记忆不漏、`item` 跨项目 404、无 token 401。真实 `~/.claude/ccmem` 前后快照有 3 个文件变化，按内容归到运行中的 daemon（embed 探针）与挂 ccmem 插件的 claude 会话钩子，**机制推断、非逐进程证明**（其中一笔落在一次验收运行窗口内）。
   - ⚠️ 必须 `env -i`：人的 shell 导出了 `CCMEM_CONFIG_PATH=~/.claude/ccmem/config.json`，不去掉会让隔离跑读真实配置。
   - 知情（ccmem 侧）：真实 daemon 的 embed 探针与会话钩子报 OpenAI `429 You have no credits remaining`，语义检索降级为 `B-fail／B-circuit`。

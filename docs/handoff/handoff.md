@@ -1,5 +1,7 @@
 # ccmem —— Handoff
 
+> 2026-10-10（Codex controller）：人最新明确允许 ccmem 改动合 main，已解除本会话询问的 config-value-parity 旧合并禁令并本地合入。只新增配置值一致性测试，合并前后隔离配置判据均25/25通过；旧章节与测试注释里的“不合并”仅为该支历史记录，最新授权优先。其它禁令不变，未 push 或删分支。当前 HEAD 请现查。
+
 > ## 🟢 接手入口（2026-09-10，最新一轮见 **ⅩⅬⅡ**）
 >
 > *** **v0.14 已收尾发布，没有在飞的工作，没有半成品分支。** ***
@@ -7691,7 +7693,9 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 
 Orca细节/当前接手：`/Users/biran/code/skills/loop/Orca/docs/handoff/handoff.md` §4.0；产品与台账已按人授权本地合 main，审查 worktree/分支保留。不固定任何当前HEAD；三个仓远端main分别现查 `/usr/bin/git ls-remote origin refs/heads/main`，提交本文后本地HEAD会移动。
 
-**本会话ccmem仅就地同步 main 上的本节，产品/配置值/真实数据根/daemon均未动。config-value-parity 仍受本仓独立人裁“不合并”保护；已询问本次一般整合授权是否解除它，未得到明确解除前保留。候选测试隔离2/2通过不等于解除禁令，历史禁令和该分支均不修改。** Orca issue-fixes人已合并推送；D9/M3与M5/M6全部任务完成、独立终审，并按人 2026-10-10 授权本地合 main，push 由人做。Orca控制库schema10单向升级、保守结清未知用量和交接后失败重试，不改变ccmem接口。执行进度只看Orca新两本Round close，不重做已完轮。
+**本会话ccmem在 main 同步本节，并按人2026-10-10最新明确授权本地合入 config-value-parity；该旧合并禁令已解除，只增加101行配置值一致性测试。合并前候选和合并后实际main的独立临时clone均跑四个配置文件，25通过/0失败/0跳过；未声称全仓验收。产品/配置值/真实数据根/daemon均未动，未push/删支。历史禁令保留并由本文开头最新授权说明覆盖。** Orca issue-fixes人已合并推送；D9/M3与M5/M6全部任务完成、独立终审，并按人 2026-10-10 授权本地合 main，push 由人做。Orca控制库schema10单向升级、保守结清未知用量和交接后失败重试，不改变ccmem接口。执行进度只看Orca新两本Round close，不重做已完轮。
+
+本次整合原始证据：`/Users/biran/code/skills/loop/Orca/docs/handoff/2026-10-10-ccmem-local-integration.md`。旧Orca台账的pending说明为当时观测，不是当前待办。
 
 ## 记忆边界与接口（结论保留）
 

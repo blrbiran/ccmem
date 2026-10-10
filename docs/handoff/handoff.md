@@ -1,6 +1,6 @@
 # ccmem —— Handoff
 
-> 2026-10-10（Codex controller）：人最新明确允许 ccmem 改动合 main，已解除本会话询问的 config-value-parity 旧合并禁令并本地合入。只新增配置值一致性测试，合并前后隔离配置判据均25/25通过；旧章节与测试注释里的“不合并”仅为该支历史记录，最新授权优先。其它禁令不变，未 push 或删分支。当前 HEAD 请现查。
+> 2026-10-10（Codex controller）：人最新明确允许 ccmem 改动合 main，已解除本会话询问的 config-value-parity 旧合并禁令并本地合入。只新增配置值一致性测试，合并前后隔离配置判据均25/25通过；旧章节与测试注释里的“不合并”仅为该支历史记录，最新授权优先。本轮随后按人明确清理授权删除已合入分支，未 push；其它禁令不变。当前 HEAD 请现查。
 
 > ## 🟢 接手入口（2026-09-10，最新一轮见 **ⅩⅬⅡ**）
 >
@@ -7691,11 +7691,11 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 
 # 📌 §15 Orca 那条线（单节滚动，2026-10-10，Codex controller；整节替换本会话旧入口，不新增Orca章节）
 
-Orca细节/当前接手：`/Users/biran/code/skills/loop/Orca/docs/handoff/handoff.md` §4.0；当前主检出是 `codex/feedback-maintenance-20261010`，无需brainstorm反馈修复已完、待人审核，未合Orca main。旧issue-fixes/D9/M3/M5/M6已收口/在main，审查worktree/分支保留。不固定任何当前HEAD；三个仓远端main分别现查 `/usr/bin/git ls-remote origin refs/heads/main`，提交本文后本地HEAD会移动。
+Orca细节/当前接手：`/Users/biran/code/skills/loop/Orca/docs/handoff/handoff.md` §4.0；无需brainstorm反馈修复已按人2026-10-10最新授权fast-forward合Orca main，三仓本地main整合/无用worktree及branch清理完成，未push。旧issue-fixes/D9/M3/M5/M6已收口/在main，不重做；历史未提交材料和隐藏证据已归档。不固定任何当前HEAD；三个仓远端main分别现查 `/usr/bin/git ls-remote origin refs/heads/main`，提交本文后本地HEAD会移动。
 
-**本会话ccmem在 main 同步本节，并按人2026-10-10最新明确授权本地合入 config-value-parity；该旧合并禁令已解除，只增加101行配置值一致性测试。合并前候选和合并后实际main的独立临时clone均跑四个配置文件，25通过/0失败/0跳过；未声称全仓验收。产品/配置值/真实数据根/daemon均未动，未push/删支。历史禁令保留并由本文开头最新授权说明覆盖。** Orca issue-fixes人已合并推送；D9/M3与M5/M6全部任务完成、独立终审，并按人 2026-10-10 授权本地合 main，push 由人做。Orca控制库schema10单向升级、保守结清未知用量和交接后失败重试，不改变ccmem接口。执行进度只看Orca新两本Round close，不重做已完轮。
+**本会话ccmem在 main 同步本节，并按人2026-10-10最新明确授权本地合入 config-value-parity；该旧合并禁令已解除，只增加101行配置值一致性测试。合并前候选和合并后实际main的独立临时clone均跑四个配置文件，25通过/0失败/0跳过；未声称全仓验收。产品/配置值/真实数据根/daemon均未动，本轮按人明确清理授权删除已合入的config-value-parity，未push。历史禁令保留并由本文开头最新授权说明覆盖。** Orca issue-fixes人已合并推送；D9/M3与M5/M6全部任务完成、独立终审，并按人 2026-10-10 授权本地合 main，push 由人做。Orca控制库schema10单向升级、保守结清未知用量和交接后失败重试，不改变ccmem接口。执行进度只看Orca新两本Round close，不重做已完轮。
 
-本次整合原始证据：`/Users/biran/code/skills/loop/Orca/docs/handoff/2026-10-10-ccmem-local-integration.md`。旧Orca台账的pending说明为当时观测，不是当前待办。
+本次整合原始证据：`/Users/biran/code/skills/loop/Orca/docs/handoff/2026-10-10-ccmem-local-integration.md`。旧Orca台账的pending说明为当时观测，不是当前待办。最新三仓整合/清理及本轮验证看Orca `docs/handoff/2026-10-10-main-integration-and-cleanup.md`。
 
 本轮本仓产品/配置/接口零改，仅就地同步本节。新反馈轮台账为Orca `.superpowers/sdd/2026-10-10-feedback-maintenance/progress.md` 末尾Round close；root3505过/0失败/4跳过、web751过、pin另3/3、panel0–14绿，20最终删除变异RED/diff0、clone60绿/内层leak0；不转述成本仓全量门。真实launchd与浏览器布局几何未验。真实ccmem import/export在隔离根执行，去掉CCMEM_CONFIG_PATH；真实库/daemon/人的面板未切换。config-value-parity合入的已有25/25证据仍按上段，不再重复合。三仓push仍归人，文档提交不固定当前HEAD。
 

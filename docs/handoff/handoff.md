@@ -7691,11 +7691,13 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 
 # 📌 §15 Orca 那条线（单节滚动，2026-10-11；后续仍就地替换）
 
-Orca 接手入口 `/Users/biran/code/skills/loop/Orca/docs/handoff/handoff.md` §4.0。本轮 Orca 的进展布局/总览/设置与成果后端 Results 1–4 已快进至本地 main；ccloop 的成果通道分支也已快进至其本地 main；Results 5 Web 页面仍是 Orca worktree 内未提交 WIP，未验收。编辑本文期间 Orca 与 ccloop 的 `origin/main` 跟踪引用移动到了已合提交，但网络 DNS 不通，未直接核验远端；文档提交后的推送状态须现查，不固定本文提交前后的 HEAD。旧 issue-fixes/D9/M3/M5/M6/feedback-maintenance 不重做。
+Orca 接手入口 /Users/biran/code/skills/loop/Orca/docs/handoff/handoff.md §4.0。本轮 feedback-followup Tasks1–7 已完成并独立 Approved，含 Results5、captureRevision 整合 P2、Task7 R1；完成内容按人的授权合本地 main。Tasks8–14 留后续，不称十四项全轮接受。原 Results5 worktree 的旧未提交改动保留不清理；旧 issue-fixes/D9/M3/M5/M6/feedback-maintenance 不重做。
 
-本仓本轮无新的产品/配置/接口改动，也无待合开发分支；此前人已授权的 `config-value-parity` 已在 main，只加配置值一致性测试，隔离配置 25/25 通过，未声称全仓门；证据见 Orca `docs/handoff/2026-10-10-ccmem-local-integration.md`。Orca 的结果说明和验收来自 ccloop/Orca 的保存证据，本轮没有启动 ccmem 自动决策写入，也没有改变双方决策记忆接口。控制库 schema 10 单向只属 Orca；真实库、ccmem 数据根、面板和 daemon 都未切换，升级/备份仍需后续人审。Orca 本轮 root 3627 通过／4 既有跳过是其 Results 4 完成边界，不转述成本仓测试。
+本仓仅滚动 handoff 文档，无产品/配置/接口变化。此前 config-value-parity 隔离25/25是历史证据，未转成全仓门；见 Orca docs/handoff/2026-10-10-ccmem-local-integration.md。Orca 最新 root3695/391（30逐名条件跳过）、Web926/106零跳过、保存专用23/2零跳过、面板15步及 ccloop147/1566串行零跳过都有精确 source/raw/JSON/RC，不能转述成本仓产品验收。双方记忆接口、ccmem 自动决策写入边界保持。
 
-下面的记忆边界、历史教训及本仓 T13/临时目录/daemon/备份挂账继续有效；只在这里滚动同步 Orca 状态，不继续追加 Orca 会话章节。
+Orca schema12 单向，真实旧库升级/备份/旧 owner 退役、面板/daemon/ccmem 数据根切换未做。默认 ccloop pinab824d1保持，无 push/发布/repin/付费 provider或真实运行切换。最终三库清洁/只读远端/配置和 WIP保留指纹见 Orca handoff-merged-verification-report.md 及审计；接手现查 HEAD，不写死。Tasks8–14、真实浏览器几何、Linux 原生捕获及旧 Claude 并行停止/重复输出竞态仍待后续，串行绿不是修复豁免。
+
+下面记忆边界、十二条历史教训、T13/临时目录/daemon/备份挂账继续有效；只替换此开头，不继续追加 Orca 会话章节。
 
 ## 记忆边界与接口（结论保留）
 

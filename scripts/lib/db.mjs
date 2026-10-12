@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, rmSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -40,7 +41,7 @@ function listMigrationBackups(dbPath = getDbPath()) {
   }
 
   return readdirSync(dir)
-    .filter((file) => file.startsWith(`${base}.bak.`))
+    .filter((file) => file.startsWith(`${base}.bak.`) && /^\d+$/.test(file.slice(`${base}.bak.`.length)))
     .map((file) => ({
       file,
       path: path.join(dir, file),
@@ -54,31 +55,47 @@ function pruneMigrationBackups(dbPath = getDbPath(), maxKeep = Number(loadConfig
     return;
   }
 
-  for (const backup of listMigrationBackups(dbPath).slice(maxKeep)) {
-    rmSync(backup.path, { force: true });
+  const backups = listMigrationBackups(dbPath);
+  if (backups.length <= maxKeep) return;
+  let kept = 0;
+  for (const backup of backups) {
+    if (!validMigrationBackup(backup.path)) continue;
+    if (kept < maxKeep) kept += 1;
+    else rmSync(backup.path, { force: true });
   }
 }
 
-function fileSize(filePath) {
+function validMigrationBackup(filePath) {
+  let db;
   try {
-    return statSync(filePath).size;
+    if (!lstatSync(filePath).isFile()) return false;
+    db = new DatabaseSync(filePath, { readOnly: true });
+    return db.prepare('PRAGMA integrity_check').get().integrity_check === 'ok';
   } catch {
-    return null;
+    return false;
+  } finally {
+    db?.close();
   }
 }
 
-function findReusableMigrationBackup(dbPath = getDbPath(), now = Date.now()) {
-  const currentSize = fileSize(dbPath);
-  if (!Number.isFinite(currentSize)) {
-    return null;
-  }
+function fileHash(filePath) {
+  const hash = createHash('sha256');
+  const fd = openSync(filePath, 'r');
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    for (let bytes; (bytes = readSync(fd, buffer, 0, buffer.length, null)) > 0;) hash.update(buffer.subarray(0, bytes));
+  } finally { closeSync(fd); }
+  return hash.digest('hex');
+}
 
+function findReusableMigrationBackup(dbPath = getDbPath(), now = Date.now(), snapshotHash = null) {
+  if (snapshotHash === null) return null;
   for (const backup of listMigrationBackups(dbPath)) {
     if ((now - backup.ts) > BACKUP_DEDUPE_WINDOW_MS) {
       break;
     }
 
-    if (fileSize(backup.path) === currentSize) {
+    if (validMigrationBackup(backup.path) && fileHash(backup.path) === snapshotHash) {
       return backup.path;
     }
   }
@@ -86,20 +103,46 @@ function findReusableMigrationBackup(dbPath = getDbPath(), now = Date.now()) {
   return null;
 }
 
-function createMigrationBackup(dbPath = getDbPath()) {
+function publishMigrationSnapshot(snapshotPath, dbPath, initialTs = Date.now(), link = linkSync) {
+  for (let offset = 0; offset < 1000; offset += 1) {
+    const backupPath = `${dbPath}.bak.${initialTs + offset}`;
+    try { link(snapshotPath, backupPath); return backupPath; }
+    catch (error) { if (error.code !== 'EEXIST') throw error; }
+  }
+  throw new Error('migration-backup-name-exhausted');
+}
+
+function createMigrationBackup(dbPath = getDbPath(), sourceDb = null) {
   if (!existsSync(dbPath)) {
     return null;
   }
 
-  const reusableBackup = findReusableMigrationBackup(dbPath);
-  if (reusableBackup) {
-    return reusableBackup;
+  // An interrupted snapshot must not even match a person's global.db.bak.* glob.
+  const snapshotPath = path.join(path.dirname(dbPath), `.${path.basename(dbPath)}.backup-${randomUUID()}.partial`);
+  const db = sourceDb ?? new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const oldUmask = process.umask(0o077);
+    try { db.exec(`VACUUM INTO '${snapshotPath.replaceAll("'", "''")}'`); }
+    finally { process.umask(oldUmask); }
+    if (!validMigrationBackup(snapshotPath)) throw new Error('migration-backup-invalid');
+    const verify = new DatabaseSync(snapshotPath, { readOnly: true });
+    try {
+      if (getSchemaVersion(verify) !== getSchemaVersion(db)) throw new Error('migration-backup-schema-mismatch');
+    } finally { verify.close(); }
+    const fd = openSync(snapshotPath, 'r');
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+    const snapshotHash = fileHash(snapshotPath);
+    const reusableBackup = findReusableMigrationBackup(dbPath, Date.now(), snapshotHash);
+    if (reusableBackup) return reusableBackup;
+    const backupPath = publishMigrationSnapshot(snapshotPath, dbPath);
+    const dir = openSync(path.dirname(dbPath), 'r');
+    try { fsyncSync(dir); } finally { closeSync(dir); }
+    pruneMigrationBackups(dbPath);
+    return backupPath;
+  } finally {
+    if (sourceDb === null) db.close();
+    rmSync(snapshotPath, { force: true });
   }
-
-  const backupPath = `${dbPath}.bak.${Date.now()}`;
-  copyFileSync(dbPath, backupPath);
-  pruneMigrationBackups(dbPath);
-  return backupPath;
 }
 
 function tableExists(db, tableName) {
@@ -570,7 +613,7 @@ export function runMigration(db) {
   }
 
   if (currentVersion > 0) {
-    createMigrationBackup();
+    createMigrationBackup(getDbPath(), db);
   }
 
   for (const file of pending) {
@@ -585,7 +628,7 @@ export function runMigration(db) {
   }
 }
 
-export { createMigrationBackup, findReusableMigrationBackup, listMigrationBackups, pruneMigrationBackups };
+export { createMigrationBackup, findReusableMigrationBackup, listMigrationBackups, pruneMigrationBackups, publishMigrationSnapshot };
 
 export function ensureSchema(db) {
   runMigration(db);

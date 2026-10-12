@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-loop-'));
@@ -4990,7 +4991,10 @@ test('dispatchTask runs daily_maintenance maintenance SQL', async () => {
   ).run(now - (31 * 86400000), now - (5 * 86400000));
 
   for (let i = 1; i <= 7; i += 1) {
-    writeFileSync(`${dbPath}.bak.${1700000000000 + i}`, `backup-${i}`);
+    const backup = new DatabaseSync(`${dbPath}.bak.${1700000000000 + i}`);
+    backup.exec('CREATE TABLE backup_marker(value INTEGER)');
+    backup.prepare('INSERT INTO backup_marker(value) VALUES (?)').run(i);
+    backup.close();
   }
 
   db.prepare(

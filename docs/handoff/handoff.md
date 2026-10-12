@@ -7689,13 +7689,13 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（单节滚动，2026-10-12；后续仍就地替换）
+# 📌 §15 Orca 那条线（单节滚动，2026-10-13；后续仍就地替换）
 
-Orca 接手入口 `/Users/biran/code/skills/loop/Orca/docs/handoff/handoff.md` §4.0；本轮细节和原始证据索引在其 `docs/handoff/2026-10-12-followup-acceptance.md`。feedback-followup Tasks 1–14、schema 13 真实库备份／升级、旧 owner 退役、launchd 切换与 Results 5 旧 WIP 归档此前已完成，不重做。接手现查三仓 main／远端／工作树，本文不固定活 HEAD。
+Orca 接手入口现为 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §4.0；前轮证据见其 `docs/handoff/2026-10-12-followup-acceptance.md`，OMP 新轮见 `docs/handoff/2026-10-12-oh-my-pi-acceptance.md`。feedback-followup Tasks 1–14、真实控制库 schema 13、旧 owner 退役、launchd 与 Results 5 归档此前已完成，不重做。接手现查三仓 main／远端／工作树，本文不固定活 HEAD。
 
 **本仓新完成**：原 Q6 的迁移备份代码已修复并快进本地 main，主题 `fix(db): publish validated WAL-safe migration backups` 与 `fix(test): remove temporary data root after every suite`；原 topic 分支已删除。新路径用 SQLite `VACUUM INTO` 把已提交 WAL 页纳入临时一致性副本，完整性与 schema 检查、fsync 后原子发布，不以半截备份占最终名字；按内容散列复用，只轮换有效备份。专用判据旧实现见红，最终全量 `npm test` **760/760、0 skip**，原始日志 `/private/tmp/ccmem-full-reviewed-final-20261012.log`。先前真实备份的**临时副本**验证 source／backup 各 12879 行且 `integrity_check=ok`，副本已删。当前生产 daemon 仍是 2026-09-08 启动的原进程，未因本轮重启；修复是代码就绪，不能冒充真实 daemon 升级验收。本地 main 的新提交尚未推远端，push 仍需本仓 Rule 13 单独授权。
 
-**跨仓新增证据与限制**：ccloop 的 Codex 严格 execute wire schema 修复在 topic 分支，受控全量 1602/1602，真实 Codex Luna 隔离任务 plan／execute／verify 落地，Orca 与 ccloop 同记 102919 tokens；Orca 正式固定包尚未 repin 到该修复。Linux 临时 VM 上 Orca systemd 用户服务的安装／HTTP／重启／停止／再启动／卸载，以及 Orca `mkdir` 锁、ccloop `/usr/bin/flock` 两进程串行均已实跑；VM 已停。真 Claude 任务在周额度限制处停止；正式面板 owner 登录页仍待登录，不得声称已验真实记忆页。原本的隔离 ccmem export 仍只证明读接口，自动 decision／correction 写回未实现；本机 `~/.orca/corrections.jsonl` 尚无样本。下面保留的接口约束与历史教训继续有效，Orca 后续轮次只改写本节，不另增 Orca 章节。
+**跨仓新增证据与限制**：ccloop 的 Codex 严格 execute wire 修复仍在 `codex/codex-strict-output-wire`，此前 1602/1602，真实 Codex Luna 隔离任务与 Orca 同记 102919 tokens。新 OMP 集成在隔离的 ccloop `codex/omp-agent-integration` 与 Orca `codex/omp-integration` 本地分支，未合并／push／正式 repin；最终真实 Orca→OMP 单任务三阶段只落地 `answer.txt`，双账本 27729 tokens，独立工具／路径审计通过。本仓产品未随 OMP 改动。ccloop 新分支最终全量 1631/1638、7 红（两条旧双 agent 判据待具名授权、五条时序失败的隔离复跑证据见 Orca 记录），不可与前支线 1602/1602 混称全绿。Linux VM 的 systemd／原生锁验收已完成且 VM 已停；正式面板 owner 登录仍待做。原本隔离 ccmem export 只证明读接口，自动 decision／correction 写回未实现；本机 `~/.orca/corrections.jsonl` 尚无样本。生产 ccmem daemon 仍未重启，本地 main 新修复仍待本仓 Rule 13 单独授权 push。下面的接口约束与历史教训继续有效；后续只改写本节，不另增 Orca 章节。
 
 ## 记忆边界与接口（结论保留）
 

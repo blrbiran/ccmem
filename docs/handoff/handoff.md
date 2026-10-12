@@ -7693,11 +7693,11 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 
 Orca 接手入口 `/Users/biran/code/skills/loop/Orca/docs/handoff/handoff.md` §4.0。feedback-followup Tasks 1–14 已实现、独立复审并合入 Orca／ccloop 本地 main；Results 5 原工作树的旧 HEAD、状态和 21 项 WIP 指纹保持，不清理。旧 issue-fixes／D9/M3／M5/M6／feedback-maintenance／Task 7 复审不重做；接手现查分支和远端，不固定活 HEAD。
 
-本仓这一轮只滚动这份 handoff，无 ccmem 产品、配置或接口变化。此前 config-value-parity 隔离 25/25 是历史证据，不是本仓新的全量门；见 Orca `docs/handoff/2026-10-10-ccmem-local-integration.md`。Orca 本轮以私有 HOME／CCMEM_DATA_ROOT 和真实本地 ccmem 二进制通过 ccmemReal 等隔离夹具 3/3，但这不证明真实 ccmem 数据根或 daemon 可靠性。双方记忆接口及 Orca 自动 decision／correction 写入边界保持。
+本仓此次仍无产品代码、配置或接口改动。此前 config-value-parity 隔离 25/25 和 Orca 私有 HOME／CCMEM_DATA_ROOT 的 ccmemReal 等夹具 3/3 都是历史证据，见 Orca `docs/handoff/2026-10-10-ccmem-local-integration.md`。2026-10-12 Orca 真实服务切换前，用 SQLite backup API 给现有 `~/.claude/ccmem/global.db` 连同已提交 WAL 页做了一份一致性备份，`integrity_check=ok`；清单在 `~/.orca/backups/service-cutover-1791780311676/manifest.json`。随后显式 `CCMEM_DATA_ROOT=~/.claude/ccmem` 的真实 `ccmem export --json --scope global` 返回 version 0.7、3901 条，临时导出内容已删除。daemon PID 33120、启动时间 2026-09-08 20:28:02 在切换前后不变，未重启；这不是 daemon 长期可靠性或自动记忆写入验收。双方记忆接口及 Orca 自动 decision／correction 写入边界保持。
 
 Orca 最终产品源码根级 JSON 3742 通过／30 条逐名条件跳过，Web 987/987、历史保存成果专用 23/23、默认 ccloop pin 3/3、面板 0–14、正式 chain 和全量临时目录残留 0；ccloop 全量 1601/1601、正式 control 793/793。30 条中的 29 条有专用门通过，真实 launchd 冒烟未执行。精确源、命令、RC、raw 哈希与旧红修复见 Orca `.superpowers/sdd/2026-10-11-feedback-followup/` 的 `task-14-native-gates-report.md`、`task-14-native-evidence-manifest.json`、`task-14-browser-report.md` 和台账；这些不是 ccmem 产品验收。
 
-Orca 原有 schema 12 代码之上新增单向 schema 13；真实旧库备份、升级、旧 owner 退役及面板／daemon／ccmem 数据根切换未做。默认 ccloop pin `ab824d1` 保持，无 push、发布、repin、付费 provider 或真实运行切换。ccloop Claude 重复发布竞态已在代码和 fake 门修复，但历史精确交错仍未证成；Linux 原生锁与真实服务亦未验。下面记忆边界、十二条历史教训、T13／临时目录／daemon／备份挂账继续有效；只替换此开头，不追加 Orca 会话章节。
+Orca 切换分支从本地 main 拉出，真实两份 Orca 控制库原为 schema 9／7，备份、临时副本演练后升到 13，旧死 owner 锁退役；真实 `dev.orca.panel` LaunchAgent 在 7777 运行，服务配置显式指向本仓生产数据根。ccloop 远端新 CLI 已由人推送，Orca 切换分支已 repin 并重装为默认固定包，本地 main 尚未合入该分支、Orca 未推远端。真实 launchd 隔离冒烟已在 Node 22／24 各 1/1；没有付费 provider、真实任务执行、Linux 原生锁或 ccmem 产品迁移。本次 ccmem 全量产品门未跑，不能把 Orca 服务／导出验证当成本仓验收。详见 Orca `docs/handoff/2026-10-12-live-service-cutover.md`。ccloop Claude 历史精确交错仍未证成，下面的记忆边界、十二条历史教训、T13／临时目录／daemon／备份挂账继续有效；只替换此开头，不追加 Orca 会话章节。
 
 ## 记忆边界与接口（结论保留）
 

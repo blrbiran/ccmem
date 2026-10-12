@@ -7689,15 +7689,15 @@ T18 之后 **5.5s** 才跑。⇒ 这就是 §0.1 那场"目录被删"的调度�
 - **本轮全程没写过 `~/.claude/ccmem/**`**，全部 `sqlite3 -readonly`。**push 由人执行。**
 ---
 
-# 📌 §15 Orca 那条线（单节滚动，2026-10-11；后续仍就地替换）
+# 📌 §15 Orca 那条线（单节滚动，2026-10-12；后续仍就地替换）
 
-Orca 接手入口 /Users/biran/code/skills/loop/Orca/docs/handoff/handoff.md §4.0。本轮 feedback-followup Tasks1–7 已完成并独立 Approved，含 Results5、captureRevision 整合 P2、Task7 R1；完成内容按人的授权合本地 main。Tasks8–14 留后续，不称十四项全轮接受。原 Results5 worktree 的旧未提交改动保留不清理；旧 issue-fixes/D9/M3/M5/M6/feedback-maintenance 不重做。
+Orca 接手入口 `/Users/biran/code/skills/loop/Orca/docs/handoff/handoff.md` §4.0。feedback-followup Tasks 1–14 已实现、独立复审并合入 Orca／ccloop 本地 main；Results 5 原工作树的旧 HEAD、状态和 21 项 WIP 指纹保持，不清理。旧 issue-fixes／D9/M3／M5/M6／feedback-maintenance／Task 7 复审不重做；接手现查分支和远端，不固定活 HEAD。
 
-本仓仅滚动 handoff 文档，无产品/配置/接口变化。此前 config-value-parity 隔离25/25是历史证据，未转成全仓门；见 Orca docs/handoff/2026-10-10-ccmem-local-integration.md。Orca 最新 root3695/391（30逐名条件跳过）、Web926/106零跳过、保存专用23/2零跳过、面板15步及 ccloop147/1566串行零跳过都有精确 source/raw/JSON/RC，不能转述成本仓产品验收。双方记忆接口、ccmem 自动决策写入边界保持。
+本仓这一轮只滚动这份 handoff，无 ccmem 产品、配置或接口变化。此前 config-value-parity 隔离 25/25 是历史证据，不是本仓新的全量门；见 Orca `docs/handoff/2026-10-10-ccmem-local-integration.md`。Orca 本轮以私有 HOME／CCMEM_DATA_ROOT 和真实本地 ccmem 二进制通过 ccmemReal 等隔离夹具 3/3，但这不证明真实 ccmem 数据根或 daemon 可靠性。双方记忆接口及 Orca 自动 decision／correction 写入边界保持。
 
-Orca schema12 单向，真实旧库升级/备份/旧 owner 退役、面板/daemon/ccmem 数据根切换未做。默认 ccloop pinab824d1保持，无 push/发布/repin/付费 provider或真实运行切换。最终三库清洁/只读远端/配置和 WIP保留指纹见 Orca handoff-merged-verification-report.md 及审计；接手现查 HEAD，不写死。Tasks8–14、真实浏览器几何、Linux 原生捕获及旧 Claude 并行停止/重复输出竞态仍待后续，串行绿不是修复豁免。
+Orca 最终产品源码根级 JSON 3742 通过／30 条逐名条件跳过，Web 987/987、历史保存成果专用 23/23、默认 ccloop pin 3/3、面板 0–14、正式 chain 和全量临时目录残留 0；ccloop 全量 1601/1601、正式 control 793/793。30 条中的 29 条有专用门通过，真实 launchd 冒烟未执行。精确源、命令、RC、raw 哈希与旧红修复见 Orca `.superpowers/sdd/2026-10-11-feedback-followup/` 的 `task-14-native-gates-report.md`、`task-14-native-evidence-manifest.json`、`task-14-browser-report.md` 和台账；这些不是 ccmem 产品验收。
 
-下面记忆边界、十二条历史教训、T13/临时目录/daemon/备份挂账继续有效；只替换此开头，不继续追加 Orca 会话章节。
+Orca 原有 schema 12 代码之上新增单向 schema 13；真实旧库备份、升级、旧 owner 退役及面板／daemon／ccmem 数据根切换未做。默认 ccloop pin `ab824d1` 保持，无 push、发布、repin、付费 provider 或真实运行切换。ccloop Claude 重复发布竞态已在代码和 fake 门修复，但历史精确交错仍未证成；Linux 原生锁与真实服务亦未验。下面记忆边界、十二条历史教训、T13／临时目录／daemon／备份挂账继续有效；只替换此开头，不追加 Orca 会话章节。
 
 ## 记忆边界与接口（结论保留）
 

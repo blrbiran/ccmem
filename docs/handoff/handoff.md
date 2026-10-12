@@ -7697,7 +7697,7 @@ Orca 接手入口 `/Users/biran/code/skills/loop/Orca/docs/handoff/handoff.md` �
 
 Orca 最终产品源码根级 JSON 3742 通过／30 条逐名条件跳过，Web 987/987、历史保存成果专用 23/23、默认 ccloop pin 3/3、面板 0–14、正式 chain 和全量临时目录残留 0；ccloop 全量 1601/1601、正式 control 793/793。30 条中的 29 条有专用门通过，真实 launchd 冒烟未执行。精确源、命令、RC、raw 哈希与旧红修复见 Orca `.superpowers/sdd/2026-10-11-feedback-followup/` 的 `task-14-native-gates-report.md`、`task-14-native-evidence-manifest.json`、`task-14-browser-report.md` 和台账；这些不是 ccmem 产品验收。
 
-Orca 切换分支从本地 main 拉出，真实两份 Orca 控制库原为 schema 9／7，备份、临时副本演练后升到 13，旧死 owner 锁退役；真实 `dev.orca.panel` LaunchAgent 在 7777 运行，服务配置显式指向本仓生产数据根。ccloop 远端新 CLI 已由人推送，Orca 切换分支已 repin 并重装为默认固定包，本地 main 尚未合入该分支、Orca 未推远端。真实 launchd 隔离冒烟已在 Node 22／24 各 1/1；没有付费 provider、真实任务执行、Linux 原生锁或 ccmem 产品迁移。本次 ccmem 全量产品门未跑，不能把 Orca 服务／导出验证当成本仓验收。详见 Orca `docs/handoff/2026-10-12-live-service-cutover.md`。ccloop Claude 历史精确交错仍未证成，下面的记忆边界、十二条历史教训、T13／临时目录／daemon／备份挂账继续有效；只替换此开头，不追加 Orca 会话章节。
+Orca 切换分支从本地 main 拉出，真实两份 Orca 控制库原为 schema 9／7，备份、临时副本演练后升到 13，旧死 owner 锁退役；真实 `dev.orca.panel` LaunchAgent 在 7777 运行，服务配置显式指向本仓生产数据根。ccloop 远端新 CLI 已由人推送，Orca 已 repin 并重装为默认固定包；人分别授权后，三仓本轮分支均以 `--ff-only` 合入各自本地 main，Orca 本轮未推远端。真实 launchd 隔离冒烟已在 Node 22／24 各 1/1；没有付费 provider、真实任务执行、Linux 原生锁或 ccmem 产品迁移。本次 ccmem 全量产品门未跑，不能把 Orca 服务／导出验证当成本仓验收。详见 Orca `docs/handoff/2026-10-12-live-service-cutover.md`。ccloop Claude 历史精确交错仍未证成，下面的记忆边界、十二条历史教训、T13／临时目录／daemon／备份挂账继续有效；只替换此开头，不追加 Orca 会话章节。
 
 ## 记忆边界与接口（结论保留）
 

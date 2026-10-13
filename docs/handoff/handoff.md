@@ -258,9 +258,9 @@ Orca 侧已有 Codex 与 OMP 的 agent 适配经验（见 §6 指向的 Orca 文
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-13 晚（Orca 会话 `6b7843ec`）：Orca 入口为 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.3（当前状态）与 §4.2（下一件事）。
-Orca／ccloop 的 OMP 工作已合并推送，Orca 已 repin 并从新路径重装面板服务（服务的 `ORCA_CCMEM_BIN` 现指本仓 `bin/ccmem`；人同时把 `/usr/local/bin/ccmem` 软链修到本仓）。
-Orca 下一步的 D（不限预算 run 放行不记数）与 C（ccloop 429 退避）**都不动本仓**。人的下一个项目「ccmem 适配 Codex／OMP」见 §5.3，仍未开始。
+2026-10-13 夜（Orca 会话 `7f37d261`）：Orca 入口为 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.3（当前状态）与 §4（下一件事）。
+Orca 的 D（不限预算 run 未知用量不计量放行）与 ccloop 的 C（Codex 429 阶段内退避）都已在各自分支上完成、等人合推，**都不动本仓**；本仓状态未变（§1、§5）。
+人的下一个项目「ccmem 适配 Codex／OMP」见 §5.3，仍未开始。
 
 ---
 

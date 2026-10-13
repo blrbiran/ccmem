@@ -232,6 +232,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
   查它必须在隔离 data root／LaunchAgent 目录下做（§2.4 硬护栏），不碰真实 plist。
 - **归人自己查**（旧 §15 转来）：本仓 handoff 本地提交曾用一次性 `hooksPath` 绕开既有 Qoder 外部 tracker（仓库 hook 配置未变）；
   共同 post-commit 混淆二进制有远端副作用疑点。
+- 🔴 **embedding 账号无额度**（§5.1 第 2 条，2026-10-13 现测）：hook 语义检索全落 `B-fail`／`B-circuit`，要人充值或换 key；agent 不碰凭据。
 - 仓库外刻意保留的残留：`~/.ccmem-inspect-reminder.log`（"通知有没有送达"的唯一证据）与改名为 `.disabled-20260826` 的巡检提醒 plist。别当垃圾删。
 
 ### 5.3 人的下一个项目（未开始）
@@ -257,9 +258,9 @@ Orca 侧已有 Codex 与 OMP 的 agent 适配经验（见 §6 指向的 Orca 文
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-13（会话 `808feb6a`）：Orca 入口为 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §三（当前状态）与 §四（下一件事）。
-OMP 集成与 OMP 技能注入在 Orca／ccloop 的本地分支上（Orca `codex/omp-integration`、`codex/omp-skills`；验收记录 `docs/handoff/2026-10-12-oh-my-pi-acceptance.md` 在这两支上），
-待人按 Orca 文档里的顺序合并、推送、重钉 ccloop、从新路径重装面板服务。**本仓库产品未随这些改动。**
+2026-10-13 晚（Orca 会话 `6b7843ec`）：Orca 入口为 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.3（当前状态）与 §4.2（下一件事）。
+Orca／ccloop 的 OMP 工作已合并推送，Orca 已 repin 并从新路径重装面板服务（服务的 `ORCA_CCMEM_BIN` 现指本仓 `bin/ccmem`；人同时把 `/usr/local/bin/ccmem` 软链修到本仓）。
+Orca 下一步的 D（不限预算 run 放行不记数）与 C（ccloop 429 退避）**都不动本仓**。人的下一个项目「ccmem 适配 Codex／OMP」见 §5.3，仍未开始。
 
 ---
 

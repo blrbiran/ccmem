@@ -76,7 +76,7 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
   3. 先 `sqlite3 .backup` 到 `~/.claude/ccmem/global.db.bak.1791853763689`（`integrity_check ok`），再 `launchctl bootout/bootstrap`。
      随后 `ccmem admin daemon status`：alive、新 pid、`startup_schema 16`、从新路径运行；旧进程已消失。
   ⇒ **生产 daemon 现在跑的是当前 main 的代码**（此前一直是 2026-09-08 启动的旧进程）。
-  ⚠️ **但没有做行为级复验**：重启后 `summarize_pending` 是否真的成功（`exit_code=0` 的新 cost 行）、迁移备份新代码在真实库上的行为，都**未验**（§5.1）。
+  行为级复验见 §5.1（`summarize_pending` 已恢复；embedding 因账号无额度不可用）；迁移备份新代码在真实库上的行为**仍未验**。
 - `daemon.err.log` 尾部有 `vec_backfill failed: 403 Country, region, or territory not supported` 与 `Connection error.`；
   **行不带时间戳，不知道是否早于重启**。更早还记过 `429 no credits` 让语义检索降级为 `B-fail`／`B-circuit`。⇒ embedding 通道现状未知（§5.1）。
 - 本仓库**产品代码未随 Orca 的 OMP 工作改动**。
@@ -216,8 +216,9 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 5.1 ccmem 自己的
 
-1. **daemon 重启后的行为复验（未做）**：确认重启后出现 `exit_code=0` 的 `summarize_pending` cost 行（旧 `CCMEM_CLAUDE_P_COMMAND` 是坏 shim，修前 `claude -p` 不可用）；只读 `daemon-cost.jsonl`，不跑写命令。
-2. **embedding 通道现状**：`vec_backfill` 403（地区不支持）／`Connection error.`／历史 `429 no credits`。先确定这些行是否晚于 2026-10-13 重启，再决定是不是配置／账号问题（属人的账号，agent 不改凭据）。
+1. ~~daemon 重启后的行为复验~~ **已做**（Orca 会话 `6b7843ec`，2026-10-13，只读 `daemon-cost.jsonl`；重启时刻取备份文件名的毫秒 epoch 1791853763689）：重启后 `summarize_pending` 11 次，10 次 `exit_code=0`、1 次 1 ⇒ daemon 的 `claude -p` 已恢复。
+2. **embedding 通道：坏在账号额度**（同一会话现测）：`daemon.err.log` 里的 403／`Connection error.` 全部**早于重启**（plist 的 StandardErrorPath 就是它，mtime 2026-09-08，重启后零新行）；
+   但 `metrics.jsonl` 里重启后 9 次 `prompt_submit` 全是 `B-fail`／`B-circuit`，`retrieval_embed_error` 为 `429 You have no credits remaining` ×3、`Request timed out.` ×3 ⇒ **语义检索当前不可用，要人给 embedding 账号充值或换 key**（agent 不改凭据）。
 3. **迁移备份新代码在真实库上**：代码已就绪且全量门过，但真实库**不作**修复后的迁移判据；下一次真实升级前仍须：先备份、只在副本演练、写清回退。
 4. **7 个死键处置**（待人定，见 §2.3）。 5. **v0.15 范围**（未定；输入 `docs/ccmem-v0.14-dogfood.md` §八）。
 6. **hook embed 冷启动（B 线）**：~220ms TLS 握手，只剩"走常驻 daemon"或"不做"两条路（TLS 会话恢复已排除）；spec `docs/superpowers/specs/2026-08-10-hook-embed-cold-start.md`；设计改动，需人裁决。

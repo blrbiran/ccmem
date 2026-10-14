@@ -258,8 +258,8 @@ Orca 侧已有 Codex 与 OMP 的 agent 适配经验（见 §6 指向的 Orca 文
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-14（Orca 会话 `7ea088aa`）：Orca 入口为 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.3（当前状态）与 §4（下一件事）。
-Orca 下一轮做 OMP single-call（落在 ccloop＋Orca）与外部反馈优先级 1–7，**都不动本仓**；本仓状态未变（§1、§5）。
+2026-10-15（Orca 会话 `02f047f6`）：Orca 入口为 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.3（当前状态）与 §4（下一件事）——那一份在 Orca 分支 `codex/round-20261014` 上，人 ff 合进 main 后才在 main 上可见。
+Orca 本轮做了 OMP single-call（ccloop＋Orca）与外部反馈优先级 1–7 中的 6 项，**都不动本仓**；本仓状态未变（§1、§5）。
 人的下一个项目「ccmem 适配 Codex／OMP」见 §5.3，仍未开始。
 
 ---

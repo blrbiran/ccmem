@@ -230,8 +230,9 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 - 🔴 **daemon 漂移检测疑似误报**：`ccmem admin daemon status` 打印 `plist=in_sync`，而磁盘上的 plist 与新 `renderPlist()` 不同（旧路径、旧 shim）。
   疑点在 `scripts/lib/admin/daemon.mjs` 的 `describePlistDrift`；**n=1，根因未查**。若属实，"`plist=in_sync`"这个读数不能当证据用（§0.3 已标注）。
   查它必须在隔离 data root／LaunchAgent 目录下做（§2.4 硬护栏），不碰真实 plist。
-- **归人自己查**（旧 §15 转来）：本仓 handoff 本地提交曾用一次性 `hooksPath` 绕开既有 Qoder 外部 tracker（仓库 hook 配置未变）；
-  共同 post-commit 混淆二进制有远端副作用疑点。
+- **Qoder 钩子已移除**（人 2026-10-15 在 Orca 会话 `026d10e3` 授权）：本仓 `.git/hooks/post-commit`、`post-checkout` 两个文件全是 `# BEGIN Qoder AI tracker` 块（Qoder CN 应用 2026-09-21 写入，Orca／ccloop 两仓字节相同），备份到该会话 scratchpad 后删除；Qoder 应用再启动可能重新写入。旧记录：本仓 handoff 本地提交曾用一次性 `hooksPath` 绕开它；共同 post-commit 混淆二进制有远端副作用疑点（未查，归人）。
+- ⚠️ **本仓 `core.hooksPath` 指向已不存在的旧路径** `/Users/biran/code/skills/ccmem/.git/hooks`（2026-10-15 `git config --get core.hooksPath` 现测；搬家前留下）⇒ 本仓 git 钩子当前一个都不跑。改不改、改成什么归人（agent 未动）。
+- 🔴 **`UserPromptSubmit` 钩子 5 s 超时**（人 2026-10-15 在两个 Claude Code 窗口里看到 `timed out after 5s — output discarded`）。Orca 会话 `026d10e3` 只读 `~/.claude/ccmem/metrics.jsonl` 量过：本仓代码 2026-10-12 后无改动（只有 handoff 提交），不是代码回归。`B-circuit` 路径（不调 embedding）中位耗时 10-06～10-12 为 68 ms、10-13 起 328 ms，最大 4301 ms；`B-fail` 路径（embedding 回 `429 You have no credits remaining`）中位 1232 → 1457 ms、p90 2812、最大 4821 ms；被杀的调用不留行 ⇒ 尾部被低估。成因：embedding 账号无额度（每次熔断关着就多一次被拒的 embed 调用）＋本机负载（42 users、load 18–44）。建议的临时办法 `embedding.enabled=false`（走 `B-off`，历史 27 ms，n＝1）**人决定先不改**，在处理额度／换 key。
 - 🔴 **embedding 账号无额度**（§5.1 第 2 条，2026-10-13 现测）：hook 语义检索全落 `B-fail`／`B-circuit`，要人充值或换 key；agent 不碰凭据。
 - 仓库外刻意保留的残留：`~/.ccmem-inspect-reminder.log`（"通知有没有送达"的唯一证据）与改名为 `.disabled-20260826` 的巡检提醒 plist。别当垃圾删。
 
@@ -258,9 +259,8 @@ Orca 侧已有 Codex 与 OMP 的 agent 适配经验（见 §6 指向的 Orca 文
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-15（Orca 会话 `02f047f6`）：Orca 入口为 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.3（当前状态）与 §4（下一件事）——那一份在 Orca 分支 `codex/round-20261014` 上，人 ff 合进 main 后才在 main 上可见。
-Orca 本轮做了 OMP single-call（ccloop＋Orca）与外部反馈优先级 1–7 中的 6 项，**都不动本仓**；本仓状态未变（§1、§5）。
-人的下一个项目「ccmem 适配 Codex／OMP」见 §5.3，仍未开始。
+2026-10-15（Orca 会话 `026d10e3`）：Orca 入口为 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` 的「当前状态」与「下一件事」（在 Orca 分支 `feat/error-codes-start-guard` 上，人 ff 合进 main 后在 main 上可见）。
+Orca 本轮：repin ccloop、真 OMP single-call 验收、ccloop 错误码显示到面板、#53 start 守卫，**都不动本仓代码**；本仓只动了 `.git/hooks`（见 §5.2）。人的下一个项目「ccmem 适配 Codex／OMP」见 §5.3，仍未开始。
 
 ---
 

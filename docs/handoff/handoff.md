@@ -64,7 +64,7 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
 
 ### 1.0 2026-10-17：Codex／OMP 适配一轮（Orca 会话 `d0843ec0`）—— **先读这一节**
 
-- **代码在分支 `codex/codex-omp-adaptation`（工作树 `/Users/biran/code/skills/orca/ccmem-wt/codex-omp-adaptation`），未合、未推。** 合并前 main 上的生产行为不变（`~/.claude/plugins/ccmem` 指向主工作树）。
+- ✅ **已合并、已推送、已在生产**（Orca 会话 `a3b2a7a7`，2026-10-17 晚；主题行 `docs(handoff): hand off the Codex/OMP round and keep its SDD ledger` 即 main tip，人 `--ff-only` 合推、删了分支与工作树）。SDD 台账已由 agent 从工作树原样复制到主仓 `.superpowers/sdd/2026-10-17-codex-omp-adaptation/`（`diff -r` 无差异，git-ignored）。
 - spec：`docs/superpowers/specs/2026-10-17-codex-omp-adaptation-design.md`；计划：`docs/superpowers/plans/2026-10-17-codex-omp-adaptation.md`（Task 0–12）；
   SDD 台账（git-ignored，只在该工作树里）：`.superpowers/sdd/2026-10-17-codex-omp-adaptation/progress.md`，**每条裁决（`Ruling:`）和挂账的 minor 都在里面**。
 - 做成的（每个任务都过了任务评审，最后整分支评审＋一轮修复；全量 `npm test` 在分支末端 924/924，临时 HOME 下跑）：
@@ -73,10 +73,11 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
   - 整理结果不再悄悄截断（摘要、周／月汇总、矛盾合并都改成「模型改写到上限，否则整条进审计」）。
   - 记忆记下来源 agent（迁移 017：`memories.origin_agent`；`list`／`show` 显示，**export 不变**）。
   - 后台 LLM 可选 Claude／Codex／OMP（`llm.backend` 等）；额度用完**先问人**（`ccmem admin llm status|approve|reject`），批准后才切，恢复后自动切回。
-- 🔴 **合并前必须人做（顺序不能乱）**：
-  1. 删掉测试误写进真实 OMP 的文件：`~/.omp/agent/extensions/ccmem.ts`（2026-10-17 18:16:30 由 Task 7 一次测试运行写入，它 import 一个已删的临时克隆 ⇒ 真 OMP 每次启动会报加载失败）；`extensions/` 里没别的就一并删。
-  2. **迁移 017 不能让钩子去跑**：真实库大小的副本上 `openDb` 跑 017（含 `VACUUM INTO` 备份）耗时 3.07 s，超过 SessionStart 2 s／Stop 3 s 的钩子超时，被杀会留下约 440 MB 的 `.partial`。做法：停 daemon → 在**工作树**里跑一次任意 CLI（如 `node --no-warnings --experimental-sqlite scripts/cli.mjs stats`）让它迁移 → 现查 `schema_meta.version` = 17 且有 `.bak` → `--ff-only` 合并 → 重启 daemon 并按行为验证 → 查 `~/.claude/ccmem` 有无 `.partial`。v16 代码能容忍 v17 库（新列都可空）。回滚 SQL 在 `scripts/migrations/017_v015_agents.sql` 头注释。
-  3. 合并后重启正在跑的 Claude 会话（旧会话记着旧文件名 `context-<8 位>.md`，之后不会再更新）。
+- **合并前三步已做**（会话 `a3b2a7a7`）：
+  1. 误写的 `~/.omp/agent/extensions/ccmem.ts`：开工时 `extensions/` 已不存在（人先删了）。
+  2. 迁移 017 由 CLI 跑（**钩子跑会超时**：实测 3.07 s ＞ SessionStart 2 s／Stop 3 s，被杀留约 440 MB `.partial`；回滚 SQL 在 `scripts/migrations/017_v015_agents.sql` 头注释）：daemon 空闲（`running=none`）后 `admin daemon stop` → `sqlite3 .backup` 到 `~/.claude/ccmem/global.db.bak.1792245593182`（integrity ok，schema 16，538 MB）→ 工作树里 `/usr/local/bin/node … scripts/cli.mjs stats`（**93 s**：`stats` 顺带跑了一轮 Tier 1.5 opportunistic maintenance）→ `schema_meta.version`＝17、`memories.origin_agent` 在、迁移自备份 `global.db.bak.1792245608056`、无 `.partial`。⚠️ 迁移的备份轮换删掉了三份 9 月旧备份（`.bak.1788684287000`、`.bak.1788709639575`、`.bak.1788821416000`，按设计「只轮换有效备份」）；其 `-shm`／`-wal` 空壳残留未动。合并后 `admin daemon start`（负载下报 timeout，属已知假阴性）→ `status`：alive、`startup_schema=17`、主仓路径、新增的 `llm backend=claude … order=claude,codex,omp` 行出现（行为判别：只有新代码打印它）。
+  3. 合并后重启正在跑的 Claude 会话（旧会话记着旧文件名 `context-<8 位>.md`，之后不会再更新）——**人做**。
+- **真实安装已做**（会话 `a3b2a7a7`，人授权「帮我配置 ccmem 的 omp 和 codex」）：在主仓用 `/usr/local/bin/node --no-warnings --experimental-sqlite scripts/cli.mjs install codex|omp`（⚠️ 必须这样跑：钩子命令写死 `process.execPath` 与 `REPO_ROOT`；`bin/ccmem` 的 `exec node` 是无 fts5 的 nvm v22，从工作树跑则工作树一删就悬空）。写出 `~/.codex/hooks.json`（新建，0600，三个钩子，`timeout: 5`）、`~/.omp/agent/extensions/ccmem.ts`（新建，0600，import 主仓 `integrations/omp/ccmem-extension.ts`）、安装记录 `~/.claude/ccmem/installs/{codex,omp}.json`。`~/.codex/config.toml` 无 `[hooks]`、无 OMP profile 环境变量。**Codex 钩子要人在 codex 里 `/hooks` 批准后才跑**；OMP 下次启动自动加载（**真加载未验**）。之后免费端到端在主仓重跑：RC 0、51 ok，真实安装的三份文件 sha 前后不变。卸载：同样方式 `uninstall codex|omp`。
 - **付费验收都没跑**（spec §7，人每次单独批准）：三家整理质量并排比（`scripts/acceptance/compare-summarizers.mjs --i-approve-paid-calls …`）、真 Codex／OMP 会话里模型确实读了 `.ccmem/…`（含 OMP `/new`）、cache 命中前后对比、真 Claude 额度用完时的报错形状、Codex 严格 schema 是否接受 `maxLength`、OMP `session_stop` 时 `session_file` 是否已落盘。命令在台账 Task 12 报告 §5。免费端到端已过：`scripts/acceptance/e2e-codex-omp.mjs`（51 ok，bun 与 node 各一遍）。
 - ⚠️ 事故：Task 2 的实现 agent 第一次 RED 跑时**真调了一次 `claude -p`**（旧 refiner 不认 mock），费用拿不到、不估。之后 `scripts/run-tests.sh` 在 PATH 最前放了只认 `-p --help` 的假 `claude`，并整套换临时 HOME。
 - 其它发现（未修，登记）：真实库有 4,251 条活跃全局记忆（膨胀本身不是本轮目标）；有一条记忆正文是原样 JSON 字符串（新写入已解包，旧行没修）；`launchctl getenv CCMEM_CONFIG_PATH` 在这台机器上有值（就是默认路径，无害；但任何改道 data root 的跑都要 `env -u`）；`daemon-stop-wait-budget.test.mjs` 全量负载下偶发红、单跑 3/3 绿；已发布 v0.7 spec 验收第 62 条 grep `slice(0, 80)`，本轮之后找不到了（不改已发布 spec，此处记更正）；周汇总按簇调用时遇到额度用完仍是记 `weekly_synthesis_cluster_failed` 跳过，不重试。
@@ -257,9 +258,9 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 - 🔴 **embedding 账号无额度**（§5.1 第 2 条，2026-10-13 现测）：hook 语义检索全落 `B-fail`／`B-circuit`，要人充值或换 key；agent 不碰凭据。
 - 仓库外刻意保留的残留：`~/.ccmem-inspect-reminder.log`（"通知有没有送达"的唯一证据）与改名为 `.disabled-20260826` 的巡检提醒 plist。别当垃圾删。
 
-### 5.3 Codex／OMP 适配（已实施，待人合并与付费验收）
+### 5.3 Codex／OMP 适配（已合并、已安装，付费验收未跑）
 
-见 §1.0。合并前人要做的三步、付费验收清单都在那里；agent 不做合并、推送、真实安装和付费调用。
+见 §1.0。付费验收清单在那里，每一次人单独批准；Codex 钩子等人 `/hooks` 批准。
 
 ---
 

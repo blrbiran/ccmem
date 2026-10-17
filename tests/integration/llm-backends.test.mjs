@@ -143,6 +143,11 @@ function writeConfig(llm) {
 }
 
 function useFakes(backend, mode = 'ok', extra = {}) {
+  // An exhaustion an earlier test recorded would keep that backend from
+  // running here (backend-state.mjs); every test starts with none.
+  const db = openDb();
+  db.exec('DELETE FROM llm_backend_state; DELETE FROM llm_switch_proposals;');
+  db.close();
   writeConfig({ backend, commands: { codex: FAKE_CODEX, omp: FAKE_OMP }, ...extra });
   process.env.CCMEM_FAKE_MODE = mode;
   rmSync(RECORD, { force: true });

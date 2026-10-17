@@ -136,9 +136,11 @@ function extractContentHash(text) {
 
 // The file body is a list of sections joined by a blank line; the hash covers
 // all of them, so a change to any section rewrites the file and an unchanged
-// file is never rewritten (prompt-cache friendly re-reads).
-function buildHashedContent(stableText, rows) {
-  const sections = [stableText, rows.length ? renderRetrievedBlock(rows) : ''].filter(Boolean);
+// file is never rewritten (prompt-cache friendly re-reads). A notice (one
+// line, e.g. a backend switch waiting for approval) leads the body and counts
+// against the whole-file cap only.
+function buildHashedContent(stableText, rows, notice = null) {
+  const sections = [notice, stableText, rows.length ? renderRetrievedBlock(rows) : ''].filter(Boolean);
   const body = sections.join('\n\n');
   const hash = createHash('sha256').update(body).digest('hex').slice(0, 8);
   return {
@@ -154,12 +156,12 @@ function fitsCaps(candidate, rows) {
     && Buffer.byteLength(candidate.fullContent, 'utf8') <= MAX_CONTEXT_FILE_BYTES;
 }
 
-function truncateRows(rows, stableText) {
+function truncateRows(rows, stableText, notice) {
   const working = [...rows];
   let notices = 0;
 
   while (working.length > 1) {
-    const candidate = buildHashedContent(stableText, working);
+    const candidate = buildHashedContent(stableText, working, notice);
     if (fitsCaps(candidate, working)) {
       return { ...candidate, rows: working, notices };
     }
@@ -168,7 +170,7 @@ function truncateRows(rows, stableText) {
   }
 
   while (working[0]?.content?.length) {
-    const candidate = buildHashedContent(stableText, working);
+    const candidate = buildHashedContent(stableText, working, notice);
     if (fitsCaps(candidate, working)) {
       return { ...candidate, rows: working, notices };
     }
@@ -176,7 +178,7 @@ function truncateRows(rows, stableText) {
     notices += 1;
   }
 
-  const fallback = buildHashedContent(stableText, working);
+  const fallback = buildHashedContent(stableText, working, notice);
   return { ...fallback, rows: working, notices };
 }
 
@@ -335,13 +337,13 @@ function recordWriteHistory(db, sessionId, contentHash, content, bytes, written)
 
 // stableIds in the result are the stable rows that actually landed in the
 // file (after the byte cap), for injection telemetry.
-export function writeContextFile(cwd, rows, sessionId = null, db = null, { stableRows = null, projectKey = null } = {}) {
+export function writeContextFile(cwd, rows, sessionId = null, db = null, { stableRows = null, projectKey = null, notice = null } = {}) {
   const dir = getContextDir(cwd);
   mkdirSync(dir, { recursive: true });
 
   const filePath = getContextFilePath(cwd, sessionId);
   const stable = buildStableSection(projectKey, stableRows);
-  const truncated = truncateRows(rows, stable.text);
+  const truncated = truncateRows(rows, stable.text, notice);
   if (truncated.notices > 0) {
     process.stderr.write(`ccmem: ${contextFileName(sessionId)} exceeded ${RETRIEVED_MAX_BYTES}B, trimmed to ${truncated.rows.length} mems\n`);
   }

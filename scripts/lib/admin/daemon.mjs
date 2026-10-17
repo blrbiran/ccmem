@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { describeBackendState } from '../../daemon/backend-state.mjs';
 import { isLockRowAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
 import { DB_BUSY_TIMEOUT_MS, getDataRoot } from '../db.mjs';
@@ -783,7 +784,9 @@ function describePlistDrift() {
 export async function cmdAdminDaemon(db, { verb } = {}) {
   if (verb === 'status') {
     const status = loadDaemonStatus(db);
-    return { ...status, plist_drift: describePlistDrift() };
+    // Which backend runs LLM work, and any exhaustion or switch waiting for
+    // the human (spec G5: visible in the existing status output).
+    return { ...status, plist_drift: describePlistDrift(), llm: describeBackendState(db, loadConfig()) };
   }
 
   if (verb === 'start') {

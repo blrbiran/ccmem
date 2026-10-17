@@ -7,6 +7,7 @@ import { openDb } from '../lib/db.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { getDataRoot } from '../lib/paths.mjs';
 import { recordDaemonCost } from '../lib/metrics.mjs';
+import { clearExhaustion, exhaustedError, exhaustedUntil, recordExhaustion, resolveActiveBackend } from './backend-state.mjs';
 import { claudeBackend, RATE_LIMIT_PATTERN, resolveCommand } from './backends/claude.mjs';
 import { codexBackend } from './backends/codex.mjs';
 import { ompBackend } from './backends/omp.mjs';
@@ -23,15 +24,45 @@ let tail = Promise.resolve();
 
 export { resolveCommand };
 
-// Task 9 replaces this with resolveActiveBackend(db, config), which adds the
-// exhaustion state and approved failover on top of the same setting.
+// The active backend (backend-state.mjs: the preferred one, or one the human
+// approved while it is exhausted). An active codex/omp that is itself
+// exhausted is not run: the call fails at once with a retryAfter that keeps
+// the task queued until the reset. Claude is still run: its 429 hands back its
+// own retry-after, which its retries have always followed (and which the
+// rate-limit tests pin), so failing it early would only replace a known wait
+// with a guessed one.
 function resolveBackend(cfg) {
-  const id = cfg.llm?.backend ?? 'claude';
-  const backend = BACKENDS[id];
-  if (!backend) {
-    throw new Error(`llm.backend '${id}' is not one of ${Object.keys(BACKENDS).join(', ')}`);
+  const db = openDb();
+  try {
+    const now = Date.now();
+    const id = resolveActiveBackend(db, cfg, now);
+    const backend = BACKENDS[id];
+    if (!backend) {
+      throw new Error(`llm.backend '${id}' is not one of ${Object.keys(BACKENDS).join(', ')}`);
+    }
+    const until = exhaustedUntil(db, id, now);
+    if (until != null && id !== 'claude') {
+      throw exhaustedError(id, until, now);
+    }
+    return { backend, recordedExhausted: until != null };
+  } finally {
+    db.close();
   }
-  return backend;
+}
+
+// Backend-state writes must not replace the call's own outcome (its error is
+// what keeps the task queued): a failure is reported and yields null.
+function withDb(work) {
+  let db;
+  try {
+    db = openDb();
+    return work(db);
+  } catch (error) {
+    process.stderr.write(`ccmem: could not update llm backend state (${error?.message ?? error})\n`);
+    return null;
+  } finally {
+    db?.close();
+  }
 }
 
 function configuredString(map, id) {
@@ -70,8 +101,8 @@ function readOutputFile(file) {
   }
 }
 
-// An exhausted backend's task waits until the reported reset (or a minute when
-// none was reported), the same way a Claude 429 waits out its retry-after.
+// An exhausted backend's task waits until its recorded reset, and at least a
+// minute, the same way a Claude 429 waits out its retry-after.
 function retryAfterFromReset(resetAt) {
   const wait = resetAt == null ? 0 : resetAt - Date.now();
   return wait > 60000 ? wait : 60000;
@@ -139,7 +170,7 @@ function registerBlacklistedSession(sessionId) {
 
 function runClaudeP(prompt, opts, queuedAt) {
   const cfg = loadConfig();
-  const backend = resolveBackend(cfg);
+  const { backend, recordedExhausted } = resolveBackend(cfg);
   const workDir = backend.isolatedCwd ? makeWorkDir(backend.id) : null;
   let invocation;
   try {
@@ -264,6 +295,11 @@ function runClaudeP(prompt, opts, queuedAt) {
           finish(reject, error, { exitCode: 0, timedOut: false });
           return;
         }
+        if (recordedExhausted) {
+          // It answered, so it is not exhausted after all: drop the record,
+          // and with it the question put to the human.
+          withDb((db) => clearExhaustion(db, backend.id));
+        }
         finish(resolve, result, { exitCode: 0, timedOut: false });
         return;
       }
@@ -274,11 +310,19 @@ function runClaudeP(prompt, opts, queuedAt) {
       if (exhaustion.exhausted) {
         error.exhaustion = { backend: backend.id, resetAt: exhaustion.resetAt };
       }
-      // Claude keeps its retry-after parsing exactly; the others wait for the
-      // reset they reported.
-      const retryAfter = backend.id === 'claude'
-        ? parseRetryAfterMs(stderr)
-        : (exhaustion.exhausted ? retryAfterFromReset(exhaustion.resetAt) : null);
+      // Claude keeps its retry-after parsing exactly. Its exhaustion is
+      // recorded with no reset time (a 429 gives none), so it lasts
+      // backend-state's default: long enough for an approved switch to be
+      // worth making. The others wait until the recorded reset: the one they
+      // reported, or that same default.
+      let retryAfter = backend.id === 'claude' ? parseRetryAfterMs(stderr) : null;
+      if (exhaustion.exhausted) {
+        // Records the exhaustion and opens a switch proposal.
+        const until = withDb((db) => recordExhaustion(db, backend.id, { resetAt: exhaustion.resetAt, error: excerpt, config: cfg }).exhaustedUntil);
+        if (backend.id !== 'claude') {
+          retryAfter = retryAfterFromReset(until ?? exhaustion.resetAt);
+        }
+      }
       if (retryAfter != null) {
         error.retryAfter = retryAfter;
       }

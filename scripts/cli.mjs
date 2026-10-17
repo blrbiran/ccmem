@@ -2,6 +2,7 @@ import { cmdAdminAlias } from './lib/admin/alias.mjs';
 import { cmdAdminCron } from './lib/admin/cron.mjs';
 import { cmdAdminDaemon } from './lib/admin/daemon.mjs';
 import { cmdAdminDiagnose, cmdDiagnoseCost, cmdDiagnoseFeedback } from './lib/admin/diagnose.mjs';
+import { cmdAdminLlm, formatLlmStatus } from './lib/admin/llm.mjs';
 import { cmdRetrievalCheck } from './lib/admin/retrieval-check.mjs';
 import { cmdAdminSemantic } from './lib/admin/semantic.mjs';
 import { openDb } from './lib/db.mjs';
@@ -46,6 +47,7 @@ function printHelp() {
     '  audit show <id>\n' +
     '  admin daemon <status|start|stop|restart|install|uninstall>\n' +
     '  admin cron <list|run>\n' +
+    '  admin llm <status|use <claude|codex|omp>|order <a,b,c>|approve|reject>\n' +
     '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina>]\n' +
     '  admin retrieval-check [--corpus <path>] [--k 1,3,5]\n' +
     '  admin diagnose [--retrieval] [--embedding-circuit <open|close|status>] [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections|--context-history|--feedback|--cost|--config] [--session ID] [--hash HASH] [--days N]\n' +
@@ -161,6 +163,14 @@ if (verb === 'admin' && args[0] === 'daemon' && args[1] == null) {
 if (verb === 'admin' && args[0] === 'cron' && args[1] == null) {
   printHelp();
   process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === 'llm' && (
+  !['status', 'use', 'order', 'approve', 'reject'].includes(args[1])
+  || ((args[1] === 'use' || args[1] === 'order') && args[2] == null)
+)) {
+  printHelp();
+  process.exit(args[1] == null || args[1] === '--help' ? 0 : 64);
 }
 
 if (verb === 'admin' && args[0] === 'semantic' && args[1] == null) {
@@ -714,6 +724,7 @@ try {
           process.stderr.write(`ccmem: plist drift detected; changed keys: ${changedKeys.join(', ')}\n`);
         }
       }
+      process.stdout.write(`${formatLlmStatus(result.llm)}\n`);
     } else if (result.status === 'already_running') {
       process.stdout.write(`ccmem: daemon already running pid=${result.pid}\n`);
     } else if (result.status === 'started') {
@@ -769,6 +780,35 @@ try {
     } else {
       process.stderr.write(`ccmem: daemon ${daemonVerb} failed\n`);
       process.exitCode = 1;
+    }
+  } else if (verb === 'admin' && args[0] === 'llm') {
+    const llmVerb = args[1];
+    let result;
+    try {
+      result = cmdAdminLlm(getDb(), { verb: llmVerb, value: args[2] ?? null });
+    } catch (error) {
+      process.stderr.write(`ccmem: ${error.message}\n`);
+      process.exitCode = 1;
+    }
+    if (!result) {
+      // reported above
+    } else if (llmVerb === 'status') {
+      process.stdout.write(`${formatLlmStatus(result.state)}\n`);
+      if (result.state.proposal) {
+        process.stdout.write(`ccmem: proposal #${result.state.proposal.id}: ${result.state.proposal.reason}; \`ccmem admin llm approve\` switches to ${result.state.proposal.to_backend}, \`ccmem admin llm reject\` keeps waiting\n`);
+      }
+    } else if (result.status === 'set') {
+      const what = llmVerb === 'use' ? `llm.backend=${result.backend}` : `llm.backend_order=${result.order.join(',')}`;
+      const backup = result.backup_path ? ` (backup ${result.backup_path})` : '';
+      process.stdout.write(`ccmem: ${what} written to ${result.config_path}${backup}\n`);
+    } else if (result.status === 'no_proposal') {
+      process.stdout.write('ccmem: no open llm switch proposal\n');
+      process.exitCode = 1;
+    } else {
+      const { from_backend: from, to_backend: to } = result.proposal;
+      process.stdout.write(result.status === 'approved'
+        ? `ccmem: approved switch ${from} -> ${to}; background work runs on ${to} until ${from} resets\n`
+        : `ccmem: rejected switch ${from} -> ${to}; tasks wait for ${from} to reset\n`);
     }
   } else if (verb === 'admin' && args[0] === 'cron' && args[1] === 'list') {
     const historyIdx = args.indexOf('--history');

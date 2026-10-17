@@ -1,12 +1,16 @@
+import { existsSync } from 'node:fs';
+
 import { openDb } from '../lib/db.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
 import { writeRecentInjection } from '../lib/recent-injections.mjs';
 import { runSessionStartMiniPrelude } from '../lib/tier15.mjs';
+import { proposalNotice } from '../daemon/backend-state.mjs';
 import {
   cleanupStaleContextFiles,
   contextFileName,
+  getContextFilePath,
   selectStableRows,
   writeContextFile
 } from '../lib/context-file.mjs';
@@ -123,9 +127,19 @@ export async function handleSessionStart(hookData) {
     if (useFileBased) {
       cleanupStaleContextFiles(hookData.cwd, hookData.session_id);
       let injectedIds = [];
-      if (stableRows.length) {
+      // A backend switch waiting for the human's approval leads the file: the
+      // daemon is headless, so this is where the ask gets seen (spec §5.5).
+      let notice = null;
+      try {
+        notice = proposalNotice(db);
+      } catch (error) {
+        process.stderr.write(`ccmem: llm proposal lookup failed (${error.message})\n`);
+      }
+      // An existing file is rewritten even when both are empty, so a notice
+      // the human already answered does not linger in it.
+      if (stableRows.length || notice || existsSync(getContextFilePath(hookData.cwd, hookData.session_id))) {
         try {
-          const result = writeContextFile(hookData.cwd, [], hookData.session_id, db, { stableRows, projectKey });
+          const result = writeContextFile(hookData.cwd, [], hookData.session_id, db, { stableRows, projectKey, notice });
           injectedIds = result.stableIds;
         } catch (error) {
           process.stderr.write(`ccmem: context file write failed (${error.message})\n`);

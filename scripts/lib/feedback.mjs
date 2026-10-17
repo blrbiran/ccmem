@@ -9,8 +9,8 @@ const SELF_CORRECT = /(actually|on second thought|i was wrong|更准确地说|�
 const AFFIRMATIVE = /^(对|好|嗯|是的|没错|正确|对的|好的|就这样|可以|行|ok|yes|yeah|right|correct|exactly|perfect|great|good|that's right|that works)/i;
 const AFFIRMATIVE_NEGATED = /^(对|好|嗯|是的|ok|yes|yeah).{0,5}(但是|不过|可是|然而|but|however|though|except)/i;
 
-function getLastAssistantText(transcriptPath) {
-  const lastAssistant = [...parseTranscript(transcriptPath)]
+function getLastAssistantText(transcriptPath, agent = 'claude-code') {
+  const lastAssistant = [...parseTranscript(transcriptPath, agent)]
     .reverse()
     .find((entry) => entry.type === 'assistant');
 
@@ -116,8 +116,8 @@ function lastUnknownFeedbackOrNull(db, sessionId) {
   return getLastUnknownFeedback(db, sessionId) ?? null;
 }
 
-function lastAssistantTextOrEmpty(transcriptPath) {
-  return getLastAssistantText(transcriptPath);
+function lastAssistantTextOrEmpty(transcriptPath, agent = 'claude-code') {
+  return getLastAssistantText(transcriptPath, agent);
 }
 
 function recentSessionMemories(db, sessionId) {
@@ -1200,16 +1200,16 @@ function inferStopImmediate(db, sessionId, transcriptPath) {
   applyStopInferenceNow(db, sessionId, transcriptPath);
 }
 
-function currentAssistantText(transcriptPath) {
-  return getLastAssistantText(transcriptPath);
+function currentAssistantText(transcriptPath, agent) {
+  return getLastAssistantText(transcriptPath, agent);
 }
 
 function canInferFromAssistant(text) {
   return Boolean(text);
 }
 
-function inferImplicitReference(db, sessionId, transcriptPath) {
-  const text = currentAssistantText(transcriptPath);
+function inferImplicitReference(db, sessionId, transcriptPath, agent) {
+  const text = currentAssistantText(transcriptPath, agent);
   if (!canInferFromAssistant(text) || isSelfCorrection(text)) {
     return;
   }
@@ -1217,8 +1217,8 @@ function inferImplicitReference(db, sessionId, transcriptPath) {
   updateImplicitHelpful(db, sessionId, text);
 }
 
-function inferAssistantSelfCorrection(db, sessionId, transcriptPath) {
-  const text = currentAssistantText(transcriptPath);
+function inferAssistantSelfCorrection(db, sessionId, transcriptPath, agent) {
+  const text = currentAssistantText(transcriptPath, agent);
   if (!canInferFromAssistant(text) || !isSelfCorrection(text)) {
     return;
   }
@@ -1238,12 +1238,12 @@ export function inferPrevTurnOutcome(db, sessionId, currentPrompt) {
   inferNegativeCurrentPrompt(db, sessionId, currentPrompt);
 }
 
-export function inferFromTranscript(db, sessionId, transcriptPath) {
-  inferAssistantSelfCorrection(db, sessionId, transcriptPath);
+export function inferFromTranscript(db, sessionId, transcriptPath, agent = 'claude-code') {
+  inferAssistantSelfCorrection(db, sessionId, transcriptPath, agent);
 }
 
-export function inferL25FromTranscript(db, sessionId, transcriptPath) {
-  inferImplicitReference(db, sessionId, transcriptPath);
+export function inferL25FromTranscript(db, sessionId, transcriptPath, agent = 'claude-code') {
+  inferImplicitReference(db, sessionId, transcriptPath, agent);
 }
 
 /**
@@ -1560,11 +1560,11 @@ function buildProbeRow(mem, ctx, control) {
  * trust, outcome, or decay_status. v0.14 sets a threshold from what this
  * collects; deciding one now, without data, would inject noise into trust.
  */
-export function recordL25Probe(db, sessionId, transcriptPath, config) {
+export function recordL25Probe(db, sessionId, transcriptPath, config, agent = 'claude-code') {
   if (config?.feedback?.l25_probe?.enabled === false) return;
   if (!sessionId) return;
 
-  const replyText = lastAssistantTextOrEmpty(transcriptPath);
+  const replyText = lastAssistantTextOrEmpty(transcriptPath, agent);
   if (!replyText) return;
 
   const { ids, promptIdx } = latestPromptInjectionIds(db, sessionId);

@@ -1,0 +1,13 @@
+{"type":"title","title":"fixture session","titleSource":"auto"}
+{"type":"session","version":3,"id":"00000000-0000-7000-8000-0000000000a1","timestamp":"2026-10-17T09:00:00.000Z","cwd":"/work/demo"}
+{"type":"model_change","id":"e1","parentId":null,"timestamp":"2026-10-17T09:00:00.100Z","model":"fixture-model"}
+{"type":"message","id":"e2","parentId":"e1","timestamp":"2026-10-17T09:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"How should the config file be formatted?"}]}}
+{"type":"message","id":"e3","parentId":"e2","timestamp":"2026-10-17T09:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ABANDONED: use YAML."}]}}
+{"type":"message","id":"e4","parentId":"e3","timestamp":"2026-10-17T09:00:03.000Z","message":{"role":"user","content":"ABANDONED follow-up on YAML."}}
+{"type":"message","id":"e5","parentId":"e2","timestamp":"2026-10-17T09:00:04.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"fixture thinking"},{"type":"toolCall","id":"tc1","name":"read","arguments":{"path":".ccmem/context-fixture.md"}},{"type":"text","text":"Let me check what the loader reads."}]}}
+{"type":"message","id":"e6","parentId":"e5","timestamp":"2026-10-17T09:00:05.000Z","message":{"role":"toolResult","toolCallId":"tc1","toolName":"read","content":[{"type":"text","text":"=== ccmem: stable context ===\n- fixture remembered rule"}]}}
+{"type":"custom","id":"e7","parentId":"e6","timestamp":"2026-10-17T09:00:06.000Z","customType":"fixture","data":{}}
+{"type":"message","id":"e8","parentId":"e7","timestamp":"2026-10-17T09:00:07.000Z","message":{"role":"user","content":"## ccmem context\nRead `.ccmem/context-fixture.md` at session start and after compaction."}}
+{"type":"message","id":"e9","parentId":"e8","timestamp":"2026-10-17T09:00:08.000Z","message":{"role":"user","content":"Use JSON; it is what the loader reads."}}
+{"type":"message","id":"e10","parentId":"e9","timestamp":"2026-10-17T09:00:09.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Switched the config to JSON."}]}}
+{"type":"title_change","id":"e11","parentId":"e10","timestamp":"2026-10-17T09:00:10.000Z","title":"fixture session"}

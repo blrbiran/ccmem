@@ -19,8 +19,8 @@ export async function handleStop(db, hookData) {
   }
 
   const agent = hookData.ccmem_agent ?? 'claude-code';
-  const stats = computeSessionStats(hookData.transcript_path);
-  const seq = countTranscriptLines(hookData.transcript_path);
+  const stats = computeSessionStats(hookData.transcript_path, agent);
+  const seq = countTranscriptLines(hookData.transcript_path, agent);
 
   db.prepare(
     `INSERT INTO session_context (
@@ -66,11 +66,11 @@ export async function handleStop(db, hookData) {
     Date.now()
   );
 
-  inferFromTranscript(db, hookData.session_id, hookData.transcript_path);
-  inferL25FromTranscript(db, hookData.session_id, hookData.transcript_path);
+  inferFromTranscript(db, hookData.session_id, hookData.transcript_path, agent);
+  inferL25FromTranscript(db, hookData.session_id, hookData.transcript_path, agent);
 
   try {
-    recordL25Probe(db, hookData.session_id, hookData.transcript_path, loadConfig());
+    recordL25Probe(db, hookData.session_id, hookData.transcript_path, loadConfig(), agent);
   } catch (e) {
     // Pure observation — never let it affect the Stop hook's real work.
     process.stderr.write(`ccmem: l25 probe skipped (${e.message})\n`);

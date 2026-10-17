@@ -42,9 +42,11 @@ const SUMMARIZE_PENDING_JSON_SCHEMA = {
   }
 };
 
-function readTranscriptExcerpt(transcriptPath, lastMessageSeq, maxChars) {
+function readTranscriptExcerpt(transcriptPath, lastMessageSeq, maxChars, agent) {
   const limit = Number.isFinite(maxChars) && maxChars > 0 ? maxChars : TRANSCRIPT_EXCERPT_MAX_FALLBACK;
-  const entries = parseTranscript(transcriptPath).slice(0, lastMessageSeq);
+  // lastMessageSeq counts entries of this same parser's output (see
+  // countTranscriptLines), so the slice lines up for every agent.
+  const entries = parseTranscript(transcriptPath, agent).slice(0, lastMessageSeq);
   const lines = entries
     .map((entry) => {
       const text = extractEntryText(entry).trim();
@@ -180,7 +182,7 @@ export async function runSummarizePending(db, task) {
   }
 
   const ctx = db.prepare(
-    `SELECT project_key, message_count, tool_calls
+    `SELECT project_key, message_count, tool_calls, agent
      FROM session_context
      WHERE session_id = ?`
   ).get(sessionId);
@@ -194,10 +196,13 @@ export async function runSummarizePending(db, task) {
     return;
   }
 
+  // Tasks queued before the agent was recorded carry neither field: Claude Code.
+  const agent = payload.agent ?? ctx?.agent ?? 'claude-code';
   const transcript = readTranscriptExcerpt(
     transcriptPath,
     lastMessageSeq,
-    Number(cfg.summarize?.transcript_excerpt_max)
+    Number(cfg.summarize?.transcript_excerpt_max),
+    agent
   );
   if (!transcript.excerpt) {
     writeAudit(db, 'summarize_pending_skipped', null, {
@@ -354,7 +359,8 @@ export async function runSummarizePending(db, task) {
         embedSync: false,
         embeddingBlob,
         summaryMeta: buildSummaryMeta(item),
-        temporalType: item.temporal_type ?? null
+        temporalType: item.temporal_type ?? null,
+        originAgent: agent
       });
       insertedIds.push(inserted.id);
     } catch {

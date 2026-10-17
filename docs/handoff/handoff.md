@@ -60,7 +60,28 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
 
 ---
 
-## 1. 当前状态（2026-10-13）
+## 1. 当前状态
+
+### 1.0 2026-10-17：Codex／OMP 适配一轮（Orca 会话 `d0843ec0`）—— **先读这一节**
+
+- **代码在分支 `codex/codex-omp-adaptation`（工作树 `/Users/biran/code/skills/orca/ccmem-wt/codex-omp-adaptation`），未合、未推。** 合并前 main 上的生产行为不变（`~/.claude/plugins/ccmem` 指向主工作树）。
+- spec：`docs/superpowers/specs/2026-10-17-codex-omp-adaptation-design.md`；计划：`docs/superpowers/plans/2026-10-17-codex-omp-adaptation.md`（Task 0–12）；
+  SDD 台账（git-ignored，只在该工作树里）：`.superpowers/sdd/2026-10-17-codex-omp-adaptation/progress.md`，**每条裁决（`Ruling:`）和挂账的 minor 都在里面**。
+- 做成的（每个任务都过了任务评审，最后整分支评审＋一轮修复；全量 `npm test` 在分支末端 924/924，临时 HOME 下跑）：
+  - 三家共用一份记忆：Codex 走命令钩子（`ccmem install codex` 写 `$CODEX_HOME/hooks.json`，人要在 Codex 里 `/hooks` 批准）、OMP 走 TS 扩展（`ccmem install omp` 写 `<agent dir>/extensions/ccmem.ts`）；都可 `uninstall`，先备份、原子写。
+  - 开局注入改成只有一句短说明，稳定规则进 `.ccmem/context-<sha256 前 16 位>.md`，有上限（稳定 4096 B、其中项目 2048 B、整文件 12288 B）。**Claude 也一起改了**——旧做法把整个范围（全局 138 万字符）塞进 SessionStart，Claude Code 只留约 2 KB 预览，读文件的那句说明排在最后，大概率被截掉。
+  - 整理结果不再悄悄截断（摘要、周／月汇总、矛盾合并都改成「模型改写到上限，否则整条进审计」）。
+  - 记忆记下来源 agent（迁移 017：`memories.origin_agent`；`list`／`show` 显示，**export 不变**）。
+  - 后台 LLM 可选 Claude／Codex／OMP（`llm.backend` 等）；额度用完**先问人**（`ccmem admin llm status|approve|reject`），批准后才切，恢复后自动切回。
+- 🔴 **合并前必须人做（顺序不能乱）**：
+  1. 删掉测试误写进真实 OMP 的文件：`~/.omp/agent/extensions/ccmem.ts`（2026-10-17 18:16:30 由 Task 7 一次测试运行写入，它 import 一个已删的临时克隆 ⇒ 真 OMP 每次启动会报加载失败）；`extensions/` 里没别的就一并删。
+  2. **迁移 017 不能让钩子去跑**：真实库大小的副本上 `openDb` 跑 017（含 `VACUUM INTO` 备份）耗时 3.07 s，超过 SessionStart 2 s／Stop 3 s 的钩子超时，被杀会留下约 440 MB 的 `.partial`。做法：停 daemon → 在**工作树**里跑一次任意 CLI（如 `node --no-warnings --experimental-sqlite scripts/cli.mjs stats`）让它迁移 → 现查 `schema_meta.version` = 17 且有 `.bak` → `--ff-only` 合并 → 重启 daemon 并按行为验证 → 查 `~/.claude/ccmem` 有无 `.partial`。v16 代码能容忍 v17 库（新列都可空）。回滚 SQL 在 `scripts/migrations/017_v015_agents.sql` 头注释。
+  3. 合并后重启正在跑的 Claude 会话（旧会话记着旧文件名 `context-<8 位>.md`，之后不会再更新）。
+- **付费验收都没跑**（spec §7，人每次单独批准）：三家整理质量并排比（`scripts/acceptance/compare-summarizers.mjs --i-approve-paid-calls …`）、真 Codex／OMP 会话里模型确实读了 `.ccmem/…`（含 OMP `/new`）、cache 命中前后对比、真 Claude 额度用完时的报错形状、Codex 严格 schema 是否接受 `maxLength`、OMP `session_stop` 时 `session_file` 是否已落盘。命令在台账 Task 12 报告 §5。免费端到端已过：`scripts/acceptance/e2e-codex-omp.mjs`（51 ok，bun 与 node 各一遍）。
+- ⚠️ 事故：Task 2 的实现 agent 第一次 RED 跑时**真调了一次 `claude -p`**（旧 refiner 不认 mock），费用拿不到、不估。之后 `scripts/run-tests.sh` 在 PATH 最前放了只认 `-p --help` 的假 `claude`，并整套换临时 HOME。
+- 其它发现（未修，登记）：真实库有 4,251 条活跃全局记忆（膨胀本身不是本轮目标）；有一条记忆正文是原样 JSON 字符串（新写入已解包，旧行没修）；`launchctl getenv CCMEM_CONFIG_PATH` 在这台机器上有值（就是默认路径，无害；但任何改道 data root 的跑都要 `env -u`）；`daemon-stop-wait-budget.test.mjs` 全量负载下偶发红、单跑 3/3 绿；已发布 v0.7 spec 验收第 62 条 grep `slice(0, 80)`，本轮之后找不到了（不改已发布 spec，此处记更正）；周汇总按簇调用时遇到额度用完仍是记 `weekly_synthesis_cluster_failed` 跳过，不重试。
+
+### 1.1 2026-10-13 的状态（历史，仍成立）
 
 - **main 已推送**：本地 `main` 与 `origin/main` 一致（会话 `808feb6a` 实测）。只剩 `main` 一个分支、主工作树一个 worktree（现查）。
   `config-value-parity` 已于 2026-10-10 经人授权合并（`Merge branch 'config-value-parity'`）并删除 ⇒ **旧禁令 1 已解除**。
@@ -236,11 +257,9 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 - 🔴 **embedding 账号无额度**（§5.1 第 2 条，2026-10-13 现测）：hook 语义检索全落 `B-fail`／`B-circuit`，要人充值或换 key；agent 不碰凭据。
 - 仓库外刻意保留的残留：`~/.ccmem-inspect-reminder.log`（"通知有没有送达"的唯一证据）与改名为 `.disabled-20260826` 的巡检提醒 plist。别当垃圾删。
 
-### 5.3 人的下一个项目（未开始）
+### 5.3 Codex／OMP 适配（已实施，待人合并与付费验收）
 
-**把 ccmem 适配到 Codex 与 oh-my-pi（OMP）。** 人 2026-10-13 定为下一个项目，**尚未开始，没有 spec、没有分支**。
-已知起点（供开题，不是设计）：ccmem 现在完全依赖 Claude Code 的三个钩子与 `claude -p`；daemon 的 LLM 任务经 `CCMEM_CLAUDE_P_COMMAND`；
-Orca 侧已有 Codex 与 OMP 的 agent 适配经验（见 §6 指向的 Orca 文档）。开工先走 `superpowers:brainstorming`。
+见 §1.0。合并前人要做的三步、付费验收清单都在那里；agent 不做合并、推送、真实安装和付费调用。
 
 ---
 
@@ -259,8 +278,7 @@ Orca 侧已有 Codex 与 OMP 的 agent 适配经验（见 §6 指向的 Orca 文
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-17（Orca 会话 `4de777f4`，「花了钱就一定要拿到能用的估算」一轮）：Orca 入口为 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` 的 §3.2a 与 §4（在 Orca 分支 `codex/round-20261017` 上，人合进 main 之后可见）。改动只在 Orca，**本仓的代码和配置都没动**，§6.1 的接口也没变。
-人的下一个项目「ccmem 适配 Codex／OMP」见 §5.3：人裁定放到下一会话做，先 brainstorming，**仍未开始**。embedding 额度（429）仍等人处理。
+2026-10-17（Orca 会话 `d0843ec0`）：Orca 的估算一轮已由人合推（入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.2a、§4）。本仓这一轮的改动见 §1.0，**§6.1 的 export 接口没变**（11 个字段、枚举、version 都不动；`origin_agent` 不导出，有判据 `export-contract-unchanged.test.mjs`）。Orca 侧无需改动。embedding 额度（429）仍等人处理。
 
 ---
 

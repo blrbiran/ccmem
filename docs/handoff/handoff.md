@@ -41,14 +41,14 @@ embedding 回填、revalidation、每日维护。存储是 SQLite（`node:sqlite
 | 查什么 | 怎么查 | 备注 |
 |---|---|---|
 | 工作区／分支／远端 | `git status -sb`、`git branch --list`、`git worktree list`、**裸** `/usr/bin/git ls-remote origin refs/heads/main` | "未 push"两个方向都错过：人会在提交后分钟到一小时内手推 |
-| daemon 状态 | `/Users/biran/code/skills/orca/ccmem/bin/ccmem admin daemon status` **＋** `daemon_lock` 的 `holder_pid`／`heartbeat_at` 年龄（`sqlite3 "file:$HOME/.claude/ccmem/global.db?mode=ro"`） | 单次 CLI 读数在负载下有假阴性；`plist=in_sync` 有疑似误报（§5.2） |
+| daemon 状态 | `/Users/biran/code/skills/orca/ccmem/bin/ccmem admin daemon status` **＋** `daemon_lock` 的 `holder_pid`／`heartbeat_at` 年龄（`sqlite3 "file:$HOME/.claude/ccmem/global.db?mode=ro"`） | 单次 CLI 读数在负载下有假阴性；`plist=in_sync` **只是报警轴，不等于字节相等**（§5.2）——差异的 key 名打在 stderr 那行 `plist differs …`（分支 `codex/plist-status-differs` 合并后才有） |
 | daemon 进程数 | `pgrep -f 'scripts/daemon/main.mjs'` | 🔴 **Claude Code 沙箱里 `ps -e` 是残的，会把泄漏数成 0**；`pgrep -f ccmem` 会把带 `--plugin-dir …/ccmem` 的会话数进来 |
 | 机器忙不忙 | `uptime` **加** `top -l 1 \| grep "CPU usage"` | load average 残留极久，单看 load 会误判 |
 | 套件 | `npm test`（= `scripts/run-tests.sh`：`/usr/local/bin/node --test`、隔离 data root、`-u CCMEM_CONFIG_PATH`、收尾删目录） | 最近记录 **760/760、0 skip**（2026-10-12，`fix(test): remove temporary data root after every suite` 之上，日志 `/private/tmp/ccmem-full-reviewed-final-20261012.log`）。**不是稳定绿**，见 §4 |
 | 单文件隔离跑 | `env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test <文件>` | 两个变量缺一不可；**必须显式 `/usr/local/bin/node`** |
 | 插件链接 | `ls -la ~/.claude/plugins/ \| grep ccmem` | 应指向 `/Users/biran/code/skills/orca/ccmem` |
 | LLM 任务有没有在成功 | 只读 `~/.claude/ccmem/daemon-cost.jsonl`（`timed_out`、`exit_code`、`timeout_ms`、`monotonic_ms`） | **别直接数 `timed_out`**：机器睡眠会饿死定时器，产生 `1974s` 这种"超时" |
-| `$TMPDIR` 泄漏 | 跑批前后各数一次 `$TMPDIR/ccmem-*` 与 `$TMPDIR/tmp.*` | 套件本身看不见这类泄漏 |
+| `$TMPDIR` 泄漏 | 跑批前后各 `ls -A "$TMPDIR"` 一次，`comm -13` 取新增 | 套件本身看不见这类泄漏；`run-tests.sh` 把 `TMPDIR` 改到自己的 data root 之后（分支 `codex/plist-status-differs`）应为 0 |
 
 **这台机器上的 node（别混用）**：`/usr/local/bin/node` v24.13.0（**有 fts5**；`npm test` 与 daemon 用它）；
 PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` 解析到它）；`/opt/homebrew/bin/node` **坏的**（缺 libsimdjson，2026-10-13 实测）。
@@ -78,7 +78,8 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
   2. 迁移 017 由 CLI 跑（**钩子跑会超时**：实测 3.07 s ＞ SessionStart 2 s／Stop 3 s，被杀留约 440 MB `.partial`；回滚 SQL 在 `scripts/migrations/017_v015_agents.sql` 头注释）：daemon 空闲（`running=none`）后 `admin daemon stop` → `sqlite3 .backup` 到 `~/.claude/ccmem/global.db.bak.1792245593182`（integrity ok，schema 16，538 MB）→ 工作树里 `/usr/local/bin/node … scripts/cli.mjs stats`（**93 s**：`stats` 顺带跑了一轮 Tier 1.5 opportunistic maintenance）→ `schema_meta.version`＝17、`memories.origin_agent` 在、迁移自备份 `global.db.bak.1792245608056`、无 `.partial`。⚠️ 迁移的备份轮换删掉了三份 9 月旧备份（`.bak.1788684287000`、`.bak.1788709639575`、`.bak.1788821416000`，按设计「只轮换有效备份」）；其 `-shm`／`-wal` 空壳残留未动。合并后 `admin daemon start`（负载下报 timeout，属已知假阴性）→ `status`：alive、`startup_schema=17`、主仓路径、新增的 `llm backend=claude … order=claude,codex,omp` 行出现（行为判别：只有新代码打印它）。
   3. 合并后重启正在跑的 Claude 会话（旧会话记着旧文件名 `context-<8 位>.md`，之后不会再更新）——**人做**。
 - **真实安装已做**（会话 `a3b2a7a7`，人授权「帮我配置 ccmem 的 omp 和 codex」）：在主仓用 `/usr/local/bin/node --no-warnings --experimental-sqlite scripts/cli.mjs install codex|omp`（⚠️ 必须这样跑：钩子命令写死 `process.execPath` 与 `REPO_ROOT`；`bin/ccmem` 的 `exec node` 是无 fts5 的 nvm v22，从工作树跑则工作树一删就悬空）。写出 `~/.codex/hooks.json`（新建，0600，三个钩子，`timeout: 5`）、`~/.omp/agent/extensions/ccmem.ts`（新建，0600，import 主仓 `integrations/omp/ccmem-extension.ts`）、安装记录 `~/.claude/ccmem/installs/{codex,omp}.json`。`~/.codex/config.toml` 无 `[hooks]`、无 OMP profile 环境变量。**Codex 钩子要人在 codex 里 `/hooks` 批准后才跑**；OMP 下次启动自动加载（**真加载未验**）。之后免费端到端在主仓重跑：RC 0、51 ok，真实安装的三份文件 sha 前后不变。卸载：同样方式 `uninstall codex|omp`。
-- **付费验收都没跑**（spec §7，人每次单独批准）：三家整理质量并排比（`scripts/acceptance/compare-summarizers.mjs --i-approve-paid-calls …`）、真 Codex／OMP 会话里模型确实读了 `.ccmem/…`（含 OMP `/new`）、cache 命中前后对比、真 Claude 额度用完时的报错形状、Codex 严格 schema 是否接受 `maxLength`、OMP `session_stop` 时 `session_file` 是否已落盘。命令在台账 Task 12 报告 §5。免费端到端已过：`scripts/acceptance/e2e-codex-omp.mjs`（51 ok，bun 与 node 各一遍）。
+- **付费验收 A 跑了 claude＋omp 一次**（会话 `a3b2a7a7`，2026-10-18，人批「先跑 claude 和 omp」）：报告 `~/ccmem-compare-20261018.md`（五列等人填）。3 份转录里只有 Claude 那份（Orca 会话 `e3c04226`）真调了：claude 产 5 条、工具报 `$0.519852`、21.6 s；omp 产 10 条、in 3439／out 2964 token、未报美元、17.8 s。Codex 那份（10-17 出错的一轮）`short_session`、OMP 那份（本机最大的 OMP 转录只有一问一答）`empty_after_clean`，**都没调用** ⇒ Codex／OMP 转录的整理质量**仍未测**，要等有实质内容的 Codex／OMP 会话再跑一次（本机 10-12 有 2–17 MB 的 Codex 转录可用）。
+- **其余付费验收没跑**（spec §7，人每次单独批准）：三家整理质量并排比的 codex 列（`scripts/acceptance/compare-summarizers.mjs --i-approve-paid-calls …`）、真 Codex／OMP 会话里模型确实读了 `.ccmem/…`（含 OMP `/new`）、cache 命中前后对比、真 Claude 额度用完时的报错形状、Codex 严格 schema 是否接受 `maxLength`、OMP `session_stop` 时 `session_file` 是否已落盘。命令在台账 Task 12 报告 §5。免费端到端已过：`scripts/acceptance/e2e-codex-omp.mjs`（51 ok，bun 与 node 各一遍）。
 - ⚠️ 事故：Task 2 的实现 agent 第一次 RED 跑时**真调了一次 `claude -p`**（旧 refiner 不认 mock），费用拿不到、不估。之后 `scripts/run-tests.sh` 在 PATH 最前放了只认 `-p --help` 的假 `claude`，并整套换临时 HOME。
 - 其它发现（未修，登记）：真实库有 4,251 条活跃全局记忆（膨胀本身不是本轮目标）；有一条记忆正文是原样 JSON 字符串（新写入已解包，旧行没修）；`launchctl getenv CCMEM_CONFIG_PATH` 在这台机器上有值（就是默认路径，无害；但任何改道 data root 的跑都要 `env -u`）；`daemon-stop-wait-budget.test.mjs` 全量负载下偶发红、单跑 3/3 绿；已发布 v0.7 spec 验收第 62 条 grep `slice(0, 80)`，本轮之后找不到了（不改已发布 spec，此处记更正）；周汇总按簇调用时遇到额度用完仍是记 `weekly_synthesis_cluster_failed` 跳过，不重试。
 
@@ -226,7 +227,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 | `:621` install falls back（`waitForDaemonLock` 3s） | 修后 432 次等待零超时，但三条锁修复同期落地、**归因未分离**；不算已解决 |
 | `daemon-loop.test.mjs` 一次整文件红（2026-08-09，5333ms） | n=1，之后 0/48，**不可判定**，别当已知抖动 |
 | `daemon status`／`restart` 负载敏感假阴性 | 未修、未开单 |
-| `$TMPDIR` 存量 | 新增已止住（每跑 24 → 0；`npm test` 自漏已由 `run-tests.sh` 修）。**存量未清**：旧记录 `ccmem-*` 7000+、`tmp.*` 605（2026-09-10 数，现查）——**删存量需人单独授权**。**无回归护栏**：套件永远看不见这类泄漏（变异实测：漏回 12，10 条测试照绿）；静态扫描器护栏有自带假阳性的风险，未做。 |
+| `$TMPDIR` 存量 | 🔴 **回归过一次**：Codex／OMP 一轮新增的测试每跑漏 16 个（`hook-agent-cwd` ×8 等，会话 `a3b2a7a7` 2026-10-18 前后 `ls -A` 比对）。修复在分支 `codex/plist-status-differs`（`fix(test): point TMPDIR under the suite's data root`）：16 → 0、925/925；这条同时就是护栏（以后漏的测试也落在被删的 data root 里）。**存量**：2026-10-18 现数 `ccmem-*` 561、`tmp.*` 36、`$TMPDIR` 共 2.0 GB，最老的 `ccmem-*` 是 10-17（旧的 7000+ 已不在，谁删的未知）——**删存量需人单独授权**。旧记录：套件永远看不见这类泄漏（变异实测：漏回 12，10 条测试照绿）；静态扫描器护栏有自带假阳性的风险，未做。 |
 | `stop-daemon-flow.test.mjs` 的 `Promise.race` | 1000ms 硬上限框真实子进程工作 + 50ms 任务超时，负载敏感；登记"没动"，无修复证据 |
 | 扫描器盲区 | 根钩子普查的扫描器只认行首 `test(`；循环／缩进里注册的测试它看不见（43 文件里没遇到 ≠ 不可能） |
 
@@ -249,16 +250,14 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 5.2 2026-10-13 新发现、需要人看的
 
-- 🔴 **daemon 漂移检测疑似误报**：`ccmem admin daemon status` 打印 `plist=in_sync`，而磁盘上的 plist 与新 `renderPlist()` 不同（旧路径、旧 shim）。
-  疑点在 `scripts/lib/admin/daemon.mjs` 的 `describePlistDrift`；**n=1，根因未查**。若属实，"`plist=in_sync`"这个读数不能当证据用（§0.3 已标注）。
-  查它必须在隔离 data root／LaunchAgent 目录下做（§2.4 硬护栏），不碰真实 plist。
+- ✅ **「漂移检测误报」查清了，不是检测 bug**（会话 `a3b2a7a7`，2026-10-18）：spec `2026-08-02-finding10-plist-drift-design.md` §五 把 `status` 定义为**报警轴**——自由变 key（`PATH`、`CCMEM_CLAUDE_P_COMMAND` 等）和模板（`ProgramArguments`）的差异**按设计**判 `in_sync`，只单列在 `benign_changed`／`template_changed`；10-13 看到的「旧路径、旧 shim」正是这两类。真缺口在 CLI：`status` 只打 `plist=in_sync`、从不打这两个列表。修复在分支 `codex/plist-status-differs`（`fix(cli): name the keys behind an in_sync plist that still differs`）：in_sync 但有差异时 stderr 打 key 名（不打值）；新测试先红后绿，删掉 `template_changed` 那行的变异见红。全量 925/925。2026-10-18 现场只读比对（只取 key 名）：`benign_changed=[PATH, CCMEM_CLAUDE_P_COMMAND]`、`template_changed=[]`——注意 `renderPlist()` 用的是**调用者 shell 的环境**，换个 shell 列表会变。
 - **Qoder 钩子已移除**（人 2026-10-15 在 Orca 会话 `026d10e3` 授权）：本仓 `.git/hooks/post-commit`、`post-checkout` 两个文件全是 `# BEGIN Qoder AI tracker` 块（Qoder CN 应用 2026-09-21 写入，Orca／ccloop 两仓字节相同），备份到该会话 scratchpad 后删除；Qoder 应用再启动可能重新写入。旧记录：本仓 handoff 本地提交曾用一次性 `hooksPath` 绕开它；共同 post-commit 混淆二进制有远端副作用疑点（未查，归人）。
 - ✅（2026-10-15 晚，Orca 会话 `ec9ce319` 经人授权 `--unset`，现用默认 `.git/hooks`）~~本仓 `core.hooksPath` 指向已不存在的旧路径~~ `/Users/biran/code/skills/ccmem/.git/hooks`（2026-10-15 `git config --get core.hooksPath` 现测；搬家前留下）⇒ 本仓 git 钩子当前一个都不跑。改不改、改成什么归人（agent 未动）。
 - 🔴 **`UserPromptSubmit` 钩子 5 s 超时**（人 2026-10-15 在两个 Claude Code 窗口里看到 `timed out after 5s — output discarded`）。Orca 会话 `026d10e3` 只读 `~/.claude/ccmem/metrics.jsonl` 量过：本仓代码 2026-10-12 后无改动（只有 handoff 提交），不是代码回归。`B-circuit` 路径（不调 embedding）中位耗时 10-06～10-12 为 68 ms、10-13 起 328 ms，最大 4301 ms；`B-fail` 路径（embedding 回 `429 You have no credits remaining`）中位 1232 → 1457 ms、p90 2812、最大 4821 ms；被杀的调用不留行 ⇒ 尾部被低估。成因：embedding 账号无额度（每次熔断关着就多一次被拒的 embed 调用）＋本机负载（42 users、load 18–44）。建议的临时办法 `embedding.enabled=false`（走 `B-off`，历史 27 ms，n＝1）**人决定先不改**，在处理额度／换 key。
 - 🔴 **embedding 账号无额度**（§5.1 第 2 条，2026-10-13 现测）：hook 语义检索全落 `B-fail`／`B-circuit`，要人充值或换 key；agent 不碰凭据。
 - 仓库外刻意保留的残留：`~/.ccmem-inspect-reminder.log`（"通知有没有送达"的唯一证据）与改名为 `.disabled-20260826` 的巡检提醒 plist。别当垃圾删。
 
-### 5.3 Codex／OMP 适配（已合并、已安装，付费验收未跑）
+### 5.3 Codex／OMP 适配（已合并、已安装，付费验收只跑了 A 的 claude＋omp）
 
 见 §1.0。付费验收清单在那里，每一次人单独批准；Codex 钩子等人 `/hooks` 批准。
 

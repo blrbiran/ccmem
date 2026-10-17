@@ -224,9 +224,11 @@ test('writeContextFile skips an oversized stable row and keeps filling', () => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-context-file-'));
 
   try {
+    // Same scope and pin state, so all four rows are in one fill phase and
+    // the small ones rank below the oversized one.
     const stableRows = [
-      { id: 1, scope: 'global', pinned: 1, content: `oversized-${'o'.repeat(5000)}` },
-      ...makeStableRows(3, 10)
+      { id: 1, scope: 'global', pinned: 0, content: `oversized-${'o'.repeat(5000)}` },
+      ...makeStableRows(3, 10).map((row) => ({ ...row, scope: 'global' }))
     ];
     const { result, stderr } = captureStderr(() => writeContextFile(cwd, [], null, null, { stableRows, projectKey: 'k' }));
     const text = readFileSync(getContextFilePath(cwd), 'utf8');

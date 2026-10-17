@@ -1747,9 +1747,7 @@ test('stop hook wake preserves rate-limit retry scheduling for configured claude
   assert.equal(tasks[1].status, 'queued');
   assert.equal(tasks[1].attempts, 1);
   assert.equal(tasks[1].error_excerpt, null);
-  // A claude 429 is an exhaustion now: with no approved switch its sub-minute
-  // retry-after (1234 ms) is floored at a minute (backend-state exhaustedRetryDelay).
-  assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 60_000);
+  assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 1234);
   assert.equal(memory.n, 0);
   assert.equal(audit, undefined);
 
@@ -2241,9 +2239,7 @@ test('stop hook wake converts second-based retry-after into milliseconds for con
   assert.equal(tasks[1].status, 'queued');
   assert.equal(tasks[1].attempts, 1);
   assert.equal(tasks[1].error_excerpt, null);
-  // A claude 429 is an exhaustion now: with no approved switch its sub-minute
-  // retry-after (2_000 ms) is floored at a minute (backend-state exhaustedRetryDelay).
-  assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 60_000);
+  assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 2_000);
   assert.equal(memory.n, 0);
   assert.equal(audit, undefined);
 

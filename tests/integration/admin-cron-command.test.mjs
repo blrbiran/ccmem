@@ -977,9 +977,7 @@ test('manual weekly admin cron run completes the claimed lease after a seconds r
        LIMIT 1`
     ).get();
 
-    // A claude 429 is an exhaustion now: with no approved switch its sub-minute
-    // retry-after (2000 ms) is floored at a minute (backend-state exhaustedRetryDelay).
-    assert.equal(retryTask.scheduled_for - retryTask.enqueued_at, 60_000);
+    assert.equal(retryTask.scheduled_for - retryTask.enqueued_at, 2000);
 
     writeFileSync(
       script,

@@ -41,6 +41,41 @@ export function parseClaudeResetAt(text, now = new Date()) {
   return null;
 }
 
+// The wait a 429 asks for: its retry-after, or a minute when it names none;
+// null when stderr is not a rate limit.
+export function parseRetryAfterMs(stderr) {
+  const text = String(stderr ?? '').trim();
+  if (!RATE_LIMIT_PATTERN.test(text)) {
+    return null;
+  }
+
+  const match = text.match(/retry[- ]after[: ]+(\d+)(ms|s|sec|secs|seconds|m|min|mins|minutes)?/i);
+  if (!match) {
+    return 60000;
+  }
+
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) {
+    return 60000;
+  }
+
+  const unit = String(match[2] ?? 'ms').toLowerCase();
+  if (unit === 'm' || unit === 'min' || unit === 'mins' || unit === 'minutes') {
+    return value * 60000;
+  }
+
+  if (unit === 's' || unit === 'sec' || unit === 'secs' || unit === 'seconds') {
+    return value * 1000;
+  }
+
+  return value;
+}
+
+// A rate limit asking for at least this long is a quota running out, not a
+// burst: it is recorded as exhaustion (and may lead to a switch proposal). A
+// shorter one just retries, as it always did.
+const EXHAUSTED_RETRY_AFTER_MS = 300_000;
+
 function parseArgsEnv(raw) {
   if (!raw) {
     return null;
@@ -136,9 +171,9 @@ export const claudeBackend = {
       : { input_tokens: null, output_tokens: null, total_cost_usd: null };
   },
 
-  // A 429 carries a relative retry-after, not a reset time; claude-p.mjs turns
-  // it into error.retryAfter as before. A subscription usage limit may carry
-  // its reset. Only stderr and an is_error result envelope are read: model
+  // A short 429 is not exhaustion: claude-p.mjs turns its retry-after into
+  // error.retryAfter as before. A long one, or a subscription usage limit, is
+  // -- the latter with its reset when it prints one. Only stderr and an is_error result envelope are read: model
   // text that merely mentions a limit is not an exhaustion.
   classifyExhaustion({ stderr, stdout }) {
     const errText = String(stderr ?? '');
@@ -146,6 +181,10 @@ export const claudeBackend = {
     if (USAGE_LIMIT_PATTERN.test(errText) || (envelope != null && USAGE_LIMIT_PATTERN.test(envelope))) {
       return { exhausted: true, resetAt: parseClaudeResetAt(`${errText}\n${envelope ?? ''}`) };
     }
-    return { exhausted: RATE_LIMIT_PATTERN.test(errText), resetAt: null };
+    const retryAfter = parseRetryAfterMs(errText);
+    if (retryAfter != null && retryAfter >= EXHAUSTED_RETRY_AFTER_MS) {
+      return { exhausted: true, resetAt: Date.now() + retryAfter };
+    }
+    return { exhausted: false, resetAt: null };
   }
 };

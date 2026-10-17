@@ -15,7 +15,7 @@ import {
   recordExhaustion,
   resolveActiveBackend
 } from './backend-state.mjs';
-import { claudeBackend, RATE_LIMIT_PATTERN, resolveCommand } from './backends/claude.mjs';
+import { claudeBackend, parseRetryAfterMs, resolveCommand } from './backends/claude.mjs';
 import { codexBackend } from './backends/codex.mjs';
 import { ompBackend } from './backends/omp.mjs';
 
@@ -125,33 +125,6 @@ function resolveTimeoutMs(opts) {
   return Number.isFinite(value) && value > 0 ? value : 60000;
 }
 
-function parseRetryAfterMs(stderr) {
-  const text = String(stderr ?? '').trim();
-  if (!RATE_LIMIT_PATTERN.test(text)) {
-    return null;
-  }
-
-  const match = text.match(/retry[- ]after[: ]+(\d+)(ms|s|sec|secs|seconds|m|min|mins|minutes)?/i);
-  if (!match) {
-    return 60000;
-  }
-
-  const value = Number(match[1]);
-  if (!Number.isFinite(value) || value <= 0) {
-    return 60000;
-  }
-
-  const unit = String(match[2] ?? 'ms').toLowerCase();
-  if (unit === 'm' || unit === 'min' || unit === 'mins' || unit === 'minutes') {
-    return value * 60000;
-  }
-
-  if (unit === 's' || unit === 'sec' || unit === 'secs' || unit === 'seconds') {
-    return value * 1000;
-  }
-
-  return value;
-}
 
 function registerBlacklistedSession(sessionId) {
   if (!sessionId) {
@@ -317,8 +290,8 @@ function runClaudeP(prompt, opts, queuedAt) {
       if (exhaustion.exhausted) {
         error.exhaustion = { backend: backend.id, resetAt: exhaustion.resetAt };
       }
-      // Claude keeps its retry-after parsing for an ordinary 429. An exhaustion
-      // (any backend) is recorded -- with the reset the tool reported, or
+      // Claude keeps its retry-after parsing for an ordinary (short) 429. An
+      // exhaustion (any backend) is recorded -- with the reset the tool reported, or
       // backend-state's default -- and its task waits per exhaustedRetryDelay:
       // at least a minute unless an approved switch can take the retry.
       let retryAfter = backend.id === 'claude' ? parseRetryAfterMs(stderr) : null;
@@ -327,7 +300,9 @@ function runClaudeP(prompt, opts, queuedAt) {
           const { exhaustedUntil: until } = recordExhaustion(db, backend.id, { resetAt: exhaustion.resetAt, error: excerpt, config: cfg });
           return exhaustedRetryDelay(db, until, retryAfter);
         });
-        retryAfter = delay ?? retryAfter ?? retryAfterFromReset(exhaustion.resetAt);
+        // delay is null when the state DB could not be written: the task must
+        // still wait and stay queued, so it gets the reset-based wait instead.
+        retryAfter = delay ?? Math.max(60000, retryAfter ?? retryAfterFromReset(exhaustion.resetAt));
       }
       if (retryAfter != null) {
         error.retryAfter = retryAfter;

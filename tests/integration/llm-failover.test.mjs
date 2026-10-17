@@ -47,7 +47,7 @@ const { openDb } = await import('../../scripts/lib/db.mjs');
 const { getContextFilePath } = await import('../../scripts/lib/context-file.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
 const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submit.mjs');
-const { proposalNotice } = await import('../../scripts/daemon/backend-state.mjs');
+const { exhaustedRetryDelay, proposalNotice } = await import('../../scripts/daemon/backend-state.mjs');
 const { claudeBackend } = await import('../../scripts/daemon/backends/claude.mjs');
 const { resolveProjectKey } = await import('../../scripts/lib/project-key.mjs');
 
@@ -400,13 +400,66 @@ test('exhaustion never uses up a task: after more than three exhausted attempts 
   });
 });
 
-test('a sub-minute retry-after while exhausted and unapproved still waits a minute', async () => {
-  reset({ claude: 'short' });
+test('a usage limit resetting in seconds still waits a minute while unapproved', async () => {
+  reset({ claude: 'usage' });
+  process.env.CCMEM_FAKE_RESET = String(Math.floor((Date.now() + 10_000) / 1000));
   await withDbAsync(async (db) => {
     await runTask(db, enqueue(db), dispatchLlm);
     const [retry] = queuedTasks(db);
-    assert.equal(retry.scheduled_for - retry.enqueued_at, 60_000, 'not 2 s: asking an exhausted claude sooner gains nothing');
+    assert.equal(retry.scheduled_for - retry.enqueued_at, 60_000, 'asking an exhausted claude sooner gains nothing');
   });
+});
+
+test('a short claude 429 is a rate limit, not exhaustion: raw retry-after, no proposal, retries capped', async () => {
+  reset({ claude: 'short' });
+  await withDbAsync(async (db) => {
+    await runTask(db, enqueue(db), dispatchLlm);
+    let retries = 0;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const [next] = queuedTasks(db);
+      if (!next) break;
+      retries += 1;
+      assert.equal(next.scheduled_for - next.enqueued_at, 2000, 'the 2 s retry-after, as before Task 9');
+      await runTask(db, next, dispatchLlm);
+    }
+    assert.equal(retries, 3, 'three retries, then the cap');
+    assert.equal(queuedTasks(db).length, 0, 'RETRY_ATTEMPTS_MAX still ends an ordinary rate-limit loop');
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM llm_switch_proposals').get().n, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM llm_backend_state').get().n, 0);
+  });
+});
+
+test('with a usable approved switch, an exhausted retry-after is passed through raw', () => {
+  reset();
+  withDb((db) => {
+    const now = Date.now();
+    const until = now + 3_600_000;
+    assert.equal(exhaustedRetryDelay(db, until, 2000, now), 60_000, 'unapproved: floored');
+    db.prepare(
+      `INSERT INTO llm_switch_proposals (from_backend, to_backend, reason, created_at, approved_at)
+       VALUES ('claude', 'codex', 'test', ?, ?)`
+    ).run(now, now);
+    assert.equal(exhaustedRetryDelay(db, until, 2000, now), 2000, 'the next call goes to codex: no reason to wait');
+  });
+});
+
+test('if the state DB cannot be written, an exhausted task still waits and stays queued', async () => {
+  reset({ codex: 'limit' });
+  writeConfig({ backend: 'codex' });
+  withDb((db) => db.exec(
+    `CREATE TRIGGER fail_state BEFORE INSERT ON llm_backend_state BEGIN SELECT RAISE(ABORT, 'injected state failure'); END;`
+  ));
+  try {
+    await withDbAsync(async (db) => {
+      const before = Date.now();
+      await runTask(db, enqueue(db), dispatchLlm);
+      const [retry] = queuedTasks(db);
+      assert.ok(retry, 'still queued');
+      assert.ok(retry.scheduled_for >= before + 60_000, 'still waits at least a minute');
+    });
+  } finally {
+    withDb((db) => db.exec('DROP TRIGGER fail_state'));
+  }
 });
 
 test('a claude usage-limit envelope records its reset, and the task waits until then', async () => {
@@ -439,7 +492,12 @@ test('claude classifier: usage-limit text on stderr or an error envelope, never 
   assert.equal(classify('', JSON.stringify({ is_error: false, result: 'the user said: usage limit reached, resets 3pm' })).exhausted, false);
   assert.equal(classify('', 'Claude AI usage limit reached|1792300000').exhausted, false);
   assert.equal(classify('boom').exhausted, false);
-  assert.deepEqual(classify('429 rate limit'), { exhausted: true, resetAt: null });
+  // A 429 is exhaustion only when it asks for five minutes or more.
+  assert.deepEqual(classify('429 rate limit'), { exhausted: false, resetAt: null });
+  assert.deepEqual(classify('429 rate limit; retry-after: 2s'), { exhausted: false, resetAt: null });
+  const long = classify('429 rate limit; retry-after: 30m');
+  assert.equal(long.exhausted, true);
+  assert.ok(Math.abs(long.resetAt - (Date.now() + 1_800_000)) < 5000);
 });
 
 test('the notice survives prompt-submit rewrites, with and without retrieved rows', async () => {

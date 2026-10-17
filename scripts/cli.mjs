@@ -529,9 +529,16 @@ try {
       if (!result.changed) {
         process.stdout.write('ccmem: no ccmem hooks to remove from Codex\n');
       } else if (result.restored) {
+        if (result.damagedBackup) {
+          process.stdout.write(`ccmem: ${target} did not parse (likely a failed ccmem write); its damaged bytes are saved at ${result.damagedBackup}\n`);
+        }
         process.stdout.write(`ccmem: ${target} is back to what it was before install\n`);
       } else {
-        process.stdout.write(`ccmem: removed the ccmem hooks from ${target} and kept the edits made since install (the edited file is backed up next to it)\n`);
+        process.stdout.write(`ccmem: removed ${result.removed} of ${result.total} ccmem hooks from ${target} and kept the edits made since install\n`);
+        if (result.missing.length > 0) {
+          process.stdout.write(`ccmem: not found (changed by hand?), left as they are: ${result.missing.join(', ')}\n`);
+        }
+        process.stdout.write(`ccmem: the edited file is backed up at ${result.backup}\n`);
       }
       if (result.changed) {
         process.stdout.write('Codex\'s own approval records for the removed hooks stay in its config.toml; ccmem never edits that file.\n');

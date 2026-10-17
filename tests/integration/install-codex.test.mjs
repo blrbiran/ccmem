@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -271,9 +271,126 @@ test('uninstall keeps hooks the human added after install and removes only ccmem
   writeFileSync(target, JSON.stringify(edited, null, 2));
 
   const result = uninstall(dirs);
-  assert.deepEqual(result, { changed: true, restored: false });
+  assert.equal(result.changed, true);
+  assert.equal(result.restored, false);
+  assert.equal(result.removed, 3);
+  assert.deepEqual(result.missing, []);
   assert.deepEqual(JSON.parse(readFileSync(target, 'utf8')), { hooks: { Stop: [added] } });
-  assert.equal(backupsIn(dirs.codexHome).length, 1, 'the edited file is backed up before ccmem removes its entries');
+  assert.deepEqual(backupsIn(dirs.codexHome), [path.basename(result.backup)], 'the edited file is backed up before ccmem removes its entries');
+});
+
+test('uninstall names the ccmem hooks it could not find because they were changed by hand', () => {
+  const dirs = freshDirs();
+  install(dirs);
+  const target = path.join(dirs.codexHome, 'hooks.json');
+  const edited = JSON.parse(readFileSync(target, 'utf8'));
+  edited.hooks.Stop[0].hooks[0].timeout = 9;
+  writeFileSync(target, JSON.stringify(edited, null, 2));
+
+  const result = uninstall(dirs);
+  assert.equal(result.restored, false);
+  assert.equal(result.removed, 2);
+  assert.equal(result.total, 3);
+  assert.deepEqual(result.missing, ['Stop']);
+  assert.deepEqual(JSON.parse(readFileSync(target, 'utf8')), { hooks: { Stop: edited.hooks.Stop } });
+});
+
+test('a failed hooks.json write names the backup, and uninstall restores the original from it', () => {
+  const dirs = freshDirs();
+  mkdirSync(dirs.codexHome);
+  const target = path.join(dirs.codexHome, 'hooks.json');
+  writeFileSync(target, FOREIGN_BYTES);
+
+  // Simulates a writer that dies half-way: truncated bytes on disk, then an error.
+  const truncatingWriter = (file) => {
+    writeFileSync(file, '{"hoo');
+    throw new Error('disk full');
+  };
+  let message = '';
+  try {
+    installCodex({ codexHome: dirs.codexHome, dataRoot: dirs.dataRoot, repoRoot: REPO, execPath: EXEC, writeFile: truncatingWriter });
+  } catch (error) {
+    message = error.message;
+  }
+  const [backupName] = backupsIn(dirs.codexHome);
+  assert.ok(backupName, 'the backup was written before the failing write');
+  assert.ok(message.includes(path.join(dirs.codexHome, backupName)), message);
+  assert.match(message, /ccmem uninstall codex/);
+
+  const result = uninstall(dirs);
+  assert.equal(result.changed, true);
+  assert.equal(result.restored, true);
+  assert.equal(readFileSync(target, 'utf8'), FOREIGN_BYTES);
+  assert.equal(readFileSync(result.damagedBackup, 'utf8'), '{"hoo', 'the damaged bytes are kept, not discarded');
+  assert.equal(existsSync(path.join(dirs.dataRoot, 'installs', 'codex.json')), false);
+});
+
+test('a writer that fails before touching hooks.json leaves the original bytes in place', () => {
+  const dirs = freshDirs();
+  mkdirSync(dirs.codexHome);
+  const target = path.join(dirs.codexHome, 'hooks.json');
+  writeFileSync(target, FOREIGN_BYTES);
+  assert.throws(() => installCodex({
+    codexHome: dirs.codexHome, dataRoot: dirs.dataRoot, repoRoot: REPO, execPath: EXEC,
+    writeFile: () => { throw new Error('EACCES'); }
+  }), /backed up at/);
+  assert.equal(readFileSync(target, 'utf8'), FOREIGN_BYTES);
+});
+
+test('a failed install record names the backup and leaves hooks.json unchanged', () => {
+  const dirs = freshDirs();
+  mkdirSync(dirs.codexHome);
+  const target = path.join(dirs.codexHome, 'hooks.json');
+  writeFileSync(target, FOREIGN_BYTES);
+  writeFileSync(dirs.dataRoot, 'a file where the data root directory should be');
+
+  let message = '';
+  try {
+    install(dirs);
+  } catch (error) {
+    message = error.message;
+  }
+  const [backupName] = backupsIn(dirs.codexHome);
+  assert.ok(backupName);
+  assert.ok(message.includes(path.join(dirs.codexHome, backupName)), message);
+  assert.equal(readFileSync(target, 'utf8'), FOREIGN_BYTES);
+});
+
+test('install writes through a symlinked hooks.json, keeping the link and the mode', () => {
+  const dirs = freshDirs();
+  mkdirSync(dirs.codexHome);
+  const real = path.join(dirs.base, 'dotfiles-hooks.json');
+  writeFileSync(real, FOREIGN_BYTES);
+  chmodSync(real, 0o640);
+  const target = path.join(dirs.codexHome, 'hooks.json');
+  symlinkSync(real, target);
+
+  install(dirs);
+  assert.ok(lstatSync(target).isSymbolicLink(), 'the dotfile link must survive');
+  assert.equal(mode(real), 0o640);
+  assert.deepEqual(JSON.parse(readFileSync(real, 'utf8')).hooks.Stop[1], ccmemGroup('stop'));
+  assert.deepEqual(readdirSync(dirs.codexHome).filter((name) => name.endsWith('.tmp')), []);
+});
+
+test('install refuses a node or repo path that the shell would split', () => {
+  const dirs = freshDirs();
+  assert.throws(
+    () => installCodex({ codexHome: dirs.codexHome, dataRoot: dirs.dataRoot, repoRoot: REPO, execPath: '/opt/my node/bin/node' }),
+    /shell would split/
+  );
+  assert.throws(
+    () => installCodex({ codexHome: dirs.codexHome, dataRoot: dirs.dataRoot, repoRoot: '/opt/$HOME/ccmem', execPath: EXEC }),
+    /shell would split/
+  );
+  assert.equal(existsSync(dirs.codexHome), false);
+});
+
+test('an unreadable install record is named, not a bare JSON error', () => {
+  const dirs = freshDirs();
+  mkdirSync(path.join(dirs.dataRoot, 'installs'), { recursive: true });
+  const manifestFile = path.join(dirs.dataRoot, 'installs', 'codex.json');
+  writeFileSync(manifestFile, '{ broken');
+  assert.throws(() => uninstall(dirs), (error) => error.message.includes(manifestFile));
 });
 
 test('ccmem install codex prints the diff and the trust instruction; uninstall undoes it', () => {

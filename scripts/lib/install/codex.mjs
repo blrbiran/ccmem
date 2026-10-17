@@ -154,7 +154,8 @@ function hookKeys(target, hooksFile, entries) {
   });
 }
 
-export function installCodex({ codexHome, dataRoot, repoRoot, execPath }) {
+// `writeFile` is a seam for the failure tests; callers leave it at the default.
+export function installCodex({ codexHome, dataRoot, repoRoot, execPath, writeFile = writeOwnedFile }) {
   for (const value of [execPath, repoRoot]) {
     if (!SHELL_SAFE_PATH.test(value)) {
       throw new Error(`refusing to install: ${JSON.stringify(value)} contains characters a shell would split or expand`);
@@ -209,16 +210,28 @@ export function installCodex({ codexHome, dataRoot, repoRoot, execPath }) {
 
   ensureDir(codexHome);
   const backup = beforeText === null ? null : backupFile(target);
+  const backupNote = backup ? `; its previous bytes are backed up at ${backup}` : '';
   // The manifest goes down before the hooks file: if writing the hooks file
   // fails, uninstall still knows about the backup and restores it.
-  writeManifest(dataRoot, 'codex', {
-    target,
-    createdFile: beforeText === null,
-    backup,
-    entries,
-    installedAt: Date.now()
-  });
-  writeOwnedFile(target, afterText);
+  try {
+    writeManifest(dataRoot, 'codex', {
+      target,
+      createdFile: beforeText === null,
+      backup,
+      entries,
+      installedAt: Date.now()
+    });
+  } catch (error) {
+    throw new Error(`could not record the install (${error.message}); ${target} was not changed${backupNote}`);
+  }
+  try {
+    writeFile(target, afterText);
+  } catch (error) {
+    throw new Error(
+      `writing ${target} failed (${error.message})${backupNote}; the install is recorded in ` +
+      `${manifestPath(dataRoot, 'codex')}: run \`ccmem uninstall codex\` to restore`
+    );
+  }
 
   // Diffed against the pretty-printed original so the human sees the hooks
   // that were added, not a reformatting; the original bytes are in `backup`.
@@ -242,22 +255,38 @@ export function uninstallCodex({ codexHome, dataRoot }) {
     return { changed: false, restored: false };
   }
 
-  const current = parseHooksFile(readFileSync(target, 'utf8'), target);
+  let current;
+  try {
+    current = parseHooksFile(readFileSync(target, 'utf8'), target);
+  } catch (error) {
+    // A damaged file after a recorded merge is most likely ccmem's own failed
+    // write (install wrote the backup first). Keep the damaged bytes, then put
+    // the original back. Without a backup there is nothing safe to restore.
+    if (manifest.createdFile || !existsSync(manifest.backup)) {
+      throw error;
+    }
+    const damagedBackup = backupFile(target);
+    writeOwnedFile(target, readFileSync(manifest.backup));
+    removeManifest(dataRoot, 'codex');
+    return { changed: true, restored: true, damagedBackup };
+  }
+
   const stripped = structuredClone(current);
-  let removedAny = false;
+  const missing = [];
   for (const { event, group } of manifest.entries) {
     const groups = stripped.hooks?.[event];
     const index = groups?.findIndex((candidate) => isDeepStrictEqual(candidate, group)) ?? -1;
     if (index === -1) {
+      missing.push(event);
       continue;
     }
 
     groups.splice(index, 1);
-    removedAny = true;
     if (groups.length === 0) {
       delete stripped.hooks[event];
     }
   }
+  const removedAny = missing.length < manifest.entries.length;
 
   let originalBytes = null;
   if (!manifest.createdFile) {
@@ -286,8 +315,15 @@ export function uninstallCodex({ codexHome, dataRoot }) {
   }
 
   // The human edited the file after install: keep their edits, remove only ccmem's hooks.
-  backupFile(target);
+  const backup = backupFile(target);
   writeOwnedFile(target, serialize(stripped));
   removeManifest(dataRoot, 'codex');
-  return { changed: true, restored: false };
+  return {
+    changed: true,
+    restored: false,
+    removed: manifest.entries.length - missing.length,
+    total: manifest.entries.length,
+    missing,
+    backup
+  };
 }

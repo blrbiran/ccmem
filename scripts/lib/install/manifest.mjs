@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -23,13 +24,17 @@ export function readManifest(dataRoot, agent) {
     return null;
   }
 
-  return JSON.parse(readFileSync(file, 'utf8'));
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    throw new Error(`the ccmem install record ${file} is unreadable (${error.message}); fix or remove it by hand`);
+  }
 }
 
 export function writeManifest(dataRoot, agent, manifest) {
   const file = manifestPath(dataRoot, agent);
   ensureDir(path.dirname(file));
-  writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+  writeOwnedFile(file, `${JSON.stringify(manifest, null, 2)}\n`);
   chmodSync(file, 0o600);
 }
 
@@ -68,18 +73,24 @@ export function backupFile(file, now = Date.now()) {
 }
 
 /**
- * Writes `data` to `file`. A new file is created 0600; an existing one is
- * rewritten in place, so it keeps its mode and a symlinked dotfile stays a
- * symlink.
+ * Writes `data` to `file` atomically: a temp file next to the real file, then a
+ * rename onto it, so a failed write never leaves a truncated file behind. A new
+ * file is created 0600; an existing one keeps its mode, and when `file` is a
+ * symlink (a managed dotfile) the rename lands on its target, so the link stays.
  */
 export function writeOwnedFile(file, data) {
-  if (existsSync(file)) {
-    writeFileSync(file, data);
-    return;
+  const exists = existsSync(file);
+  const real = exists ? realpathSync(file) : file;
+  const mode = exists ? statSync(real).mode & 0o7777 : 0o600;
+  const tmp = path.join(path.dirname(real), `.${path.basename(real)}.ccmem-${randomUUID()}.tmp`);
+  try {
+    writeFileSync(tmp, data, { mode: 0o600, flag: 'wx' });
+    chmodSync(tmp, mode);
+    renameSync(tmp, real);
+  } catch (error) {
+    rmSync(tmp, { force: true });
+    throw error;
   }
-
-  writeFileSync(file, data, { mode: 0o600, flag: 'wx' });
-  chmodSync(file, 0o600);
 }
 
 /**

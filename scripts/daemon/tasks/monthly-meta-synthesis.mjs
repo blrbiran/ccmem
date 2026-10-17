@@ -6,6 +6,11 @@ import { rebuildInjectionCache } from '../../lib/injection-cache.mjs';
 import { insertMemory } from '../../lib/cmd/save.mjs';
 import { buildMonthlyMetaPrompt, MONTHLY_META_SCHEMA } from '../../lib/llm-prompts/monthly-meta-synthesis.mjs';
 import { markLeaseComplete } from '../../lib/task-runs.mjs';
+import { refineContentToLimit } from '../../lib/content-refiner.mjs';
+
+// W-3: a meta-rule is a concise line of at most 80 characters (v0.7 spec).
+// The limit is kept, but enforced by rewrite-or-reject, never by slicing (spec A2).
+const META_CONTENT_MAX_CHARS = 80;
 
 function projectScopes(db) {
   return db.prepare(
@@ -65,7 +70,7 @@ async function processScope(db, scope, payload, cfg) {
     jsonSchema: MONTHLY_META_SCHEMA,
     mockOutput: payload.llm_output
   });
-  const out = parseLlmJson(raw);
+  const out = parseLlmJson(raw, { skipTruncate: true });
   let outputCount = 0;
   let supersededCount = 0;
 
@@ -75,11 +80,26 @@ async function processScope(db, scope, payload, cfg) {
       continue;
     }
 
+    const refined = await refineContentToLimit(item.content, {
+      enabled: cfg.summarize?.content_refiner?.enabled !== false,
+      maxChars: META_CONTENT_MAX_CHARS,
+      taskType: 'monthly_meta_synthesis',
+      mockOutputs: payload.refiner_llm_outputs
+    });
+    if (!refined.ok) {
+      writeAudit(db, 'monthly_meta_refine_rejected', null, {
+        scope,
+        reason: refined.reason,
+        content: refined.content
+      });
+      continue;
+    }
+
     const parentRows = consolidated.filter((row) => parents.includes(row.id));
     const newDepth = Math.max(...parentRows.map((row) => Number(row.consolidation_depth ?? 0))) + 1;
     const result = await insertMemory(db, {
       cwd: process.cwd(),
-      content: String(item.content ?? '').slice(0, 80),
+      content: refined.content,
       scope: scope === 'global' ? 'global' : 'project',
       projectKey: scope === 'global' ? null : scope,
       type: 'consolidated',

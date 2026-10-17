@@ -1,14 +1,16 @@
 import { callClaudeP } from '../daemon/claude-p.mjs';
 import { parseRawLlmOutput } from './llm-parse.mjs';
 
-const REFINER_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['content'],
-  properties: {
-    content: { type: 'string', maxLength: 500 }
-  }
-};
+function refinerSchema(maxChars) {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['content'],
+    properties: {
+      content: { type: 'string', maxLength: maxChars }
+    }
+  };
+}
 
 export function truncateAtWordBoundary(text, maxChars = 500) {
   const value = String(text ?? '').trim();
@@ -50,7 +52,15 @@ export async function refineContentToLimit(content, {
     return { ok: false, reason: 'refiner_disabled', content: source };
   }
 
-  const mocks = Array.isArray(mockOutputs) ? [...mockOutputs] : [];
+  // Once a test supplies mock outputs, running out of them is a failure
+  // (refine_failed), never a fall-through to a real model call.
+  const mocks = Array.isArray(mockOutputs) ? [...mockOutputs] : null;
+  const nextMock = () => {
+    if (!mocks.length) {
+      throw new Error('refiner mockOutputs exhausted');
+    }
+    return String(mocks.shift());
+  };
   const ask = async (instruction) => {
     const raw = await callClaudeP([
       instruction,
@@ -59,8 +69,8 @@ export async function refineContentToLimit(content, {
       source
     ].join('\n'), {
       taskType,
-      jsonSchema: REFINER_SCHEMA,
-      mockOutput: mocks.shift()
+      jsonSchema: refinerSchema(maxChars),
+      ...(mocks ? { mockOutput: nextMock() } : {})
     });
     return String(parseRawLlmOutput(raw)?.content ?? '').trim();
   };

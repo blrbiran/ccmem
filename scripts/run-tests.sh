@@ -15,4 +15,23 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$data_root" /usr/local/bin/node --test "$@"
+# No test may reach a real `claude`: a stub shadows it on PATH. It answers the
+# daemon-install capability probe (`claude -p --help`, which must list
+# --json-schema) and fails every other call. (CCMEM_CLAUDE_P_COMMAND is not used
+# for this: its mere presence turns on the LLM bridge and is written into the
+# daemon plist, so defaulting it would change what the tests measure.) Tests
+# that need a fake set their own.
+stub_bin="$data_root/stub-bin"
+/bin/mkdir -p "$stub_bin" || exit 1
+/bin/cat > "$stub_bin/claude" <<'STUB' || exit 1
+#!/bin/sh
+if [ "$#" -eq 2 ] && [ "$1" = "-p" ] && [ "$2" = "--help" ]; then
+  echo "ccmem test stub: --json-schema <schema>"
+  exit 0
+fi
+echo "ccmem tests: real claude is blocked" >&2
+exit 1
+STUB
+/bin/chmod 0700 "$stub_bin/claude" || exit 1
+
+env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$data_root" PATH="$stub_bin:$PATH" /usr/local/bin/node --test "$@"

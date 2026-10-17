@@ -36,6 +36,17 @@
 
 ---
 
+### Task 0: Repair stale repo paths in tests (baseline)
+
+Baseline on `d9d1547` (`npm test`, Orca session `d0843ec0`): 760 tests, 695 pass, 65 fail. Every failure inspected traces to the hardcoded pre-move path `/Users/biran/code/skills/ccmem` (76 occurrences in 10 files under `tests/integration/`; e.g. `ENOENT … /Users/biran/code/skills/ccmem/config.default.json`, `spawnSync /usr/local/bin/node ENOENT` from a missing cwd).
+
+**Files:** Modify the 10 files found by `grep -rln '/Users/biran/code/skills/ccmem' tests scripts`.
+
+- [ ] **Step 1:** In each file derive `const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))` (strip trailing slash) and replace every literal occurrence with it (template strings / `path.join`). No other edits.
+- [ ] **Step 2:** `grep -rn '/Users/biran/code/skills/ccmem' tests scripts` → no output.
+- [ ] **Step 3:** `npm test` (output to a file, read back) → 760 tests, 0 fail. Any remaining failure is reported with its cause, not fixed beyond this task's scope.
+- [ ] **Step 4:** Commit `test: derive the repo root instead of hardcoding the pre-move path`.
+
 ### Task 1: Bounded, file-based session start (all agents, Claude included)
 
 **Files:**

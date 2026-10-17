@@ -914,6 +914,49 @@ test('CLI reporting: daemon status surfaces plist drift by key name only', () =>
   cleanupDb.close();
 }));
 
+// 报警轴的 in_sync 不等于"字节相等"（spec §五：自由变 key 与模板的差异不进报警轴，
+// 但单列在 benign_changed / template_changed）。status 若只打 plist=in_sync，
+// 旧路径、旧 shim 这类差异就被咽掉了——2026-10-13 生产上就这样被误读成"plist 没变"。
+test('CLI reporting: an in_sync plist that still differs names the differing keys', () => withFakeLaunchctl(async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const cliPath = fileURLToPath(new URL('../../scripts/cli.mjs', import.meta.url));
+
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+  const expected = (await import('../../scripts/lib/admin/daemon.mjs')).renderPlist();
+  // 只改 PATH 的值（自由变 key）和 ProgramArguments（模板轴）——都不该抬报警轴。
+  const stale = expected
+    .replace(/(<key>PATH<\/key><string>)[^<]*(<\/string>)/, '$1/stale/bin$2')
+    .replace(/(<key>ProgramArguments<\/key>\s*<array>)/, '$1<string>/stale/node</string>');
+  assert.notEqual(stale, expected, 'the fixture must actually differ from the rendered plist');
+  writeFileSync(plistPath, stale);
+
+  const db = openDb();
+  const now = Date.now();
+  db.prepare(`DELETE FROM daemon_lock`).run();
+  db.prepare(
+    `INSERT INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive)
+     VALUES (1, 4321, 'drift-host', ?, ?, 1)`
+  ).run(now - 5000, now - 800);
+  db.close();
+
+  const result = spawnSync(process.execPath, [cliPath, 'admin', '--', 'daemon', 'status'], {
+    env: process.env,
+    encoding: 'utf8'
+  });
+
+  assert.match(result.stdout, /plist=in_sync/, 'free-key and template differences must not raise the verdict');
+  assert.match(result.stderr, /PATH/, 'the differing free key must be named');
+  assert.match(result.stderr, /ProgramArguments/, 'the differing template part must be named');
+  assert.doesNotMatch(result.stdout + result.stderr, /\/stale\//, 'no value may leak');
+
+  const cleanupDb = openDb();
+  cleanupDb.prepare(`DELETE FROM daemon_lock`).run();
+  cleanupDb.close();
+}));
+
 // drift 检测的基准必须与 install 实际写入的内容同源——否则两处求值点分道扬镳
 // 时不会有任何症状。见 task-5-brief：declaration 本身也匹配 renderDaemonPlist(
 // 这个 pattern，所以要用负向前瞻排除声明行，断言的是"恰好一个调用方"。

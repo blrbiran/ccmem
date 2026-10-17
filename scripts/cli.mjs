@@ -722,6 +722,23 @@ try {
             ])
           ];
           process.stderr.write(`ccmem: plist drift detected; changed keys: ${changedKeys.join(', ')}\n`);
+        } else if (plistStatus === 'in_sync') {
+          // in_sync is the alarm axis, not byte equality: free keys and the
+          // template may still differ (an old node path, an old claude shim).
+          // Name them so "in_sync" is not read as "the plist is current".
+          const differing = [
+            ...new Set([
+              ...(result.plist_drift.added ?? []),
+              ...(result.plist_drift.removed ?? []),
+              ...(result.plist_drift.benign_changed ?? []),
+              ...(result.plist_drift.template_changed ?? [])
+            ])
+          ];
+          if (differing.length) {
+            process.stderr.write(
+              `ccmem: plist differs from what this shell would install (no alarm; the next restart rewrites it): ${differing.join(', ')}\n`
+            );
+          }
         }
       }
       process.stdout.write(`${formatLlmStatus(result.llm)}\n`);

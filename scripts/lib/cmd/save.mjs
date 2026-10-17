@@ -48,7 +48,8 @@ export async function insertMemory(db, {
   quarantinedAt = null,
   embeddingBlob = undefined,
   summaryMeta = null,
-  temporalType = null
+  temporalType = null,
+  originAgent = null
 }) {
   const cfg = loadConfig();
   const maxChars = Number(cfg.save?.max_chars_per_memory ?? 500);
@@ -128,9 +129,10 @@ export async function insertMemory(db, {
       decay_status,
       quarantined_at,
       last_touched_at,
+      origin_agent,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     resolvedScope,
     resolvedProjectKey,
@@ -150,6 +152,7 @@ export async function insertMemory(db, {
     resolvedDecayStatus,
     resolvedQuarantinedAt,
     touchedAt,
+    originAgent ?? null,
     now,
     now
   );

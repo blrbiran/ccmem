@@ -14,7 +14,7 @@ test.after(() => rmSync(dataRoot, { recursive: true, force: true }));
 
 test('migration 016 brings schema to 16 and adds embedding_sig', () => {
   const db = openDb();
-  assert.equal(getSchemaVersion(db), 16);
+  assert.equal(getSchemaVersion(db), 17);
 
   const cols = db.prepare(`SELECT name FROM pragma_table_info('memories')`)
     .all().map((r) => r.name);
@@ -33,7 +33,7 @@ test('migration 016 records the 15 -> 16 transition', () => {
 test('migration 016 is idempotent across reopens', () => {
   openDb();
   const db = openDb();
-  assert.equal(getSchemaVersion(db), 16);
+  assert.equal(getSchemaVersion(db), 17);
   const n = db.prepare(
     `SELECT COUNT(*) c FROM schema_migrations WHERE from_version = 15 AND to_version = 16`
   ).get().c;

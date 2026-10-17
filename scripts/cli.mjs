@@ -535,6 +535,9 @@ try {
       process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope}${row.project_key ? `:${row.project_key}` : ''}\n`);
       process.stdout.write(`${row.content}\n`);
       process.stdout.write(`trust=${Number(row.trust_score ?? 0).toFixed(2)} status=${row.status} decay=${row.decay_status}\n`);
+      if (row.origin_agent) {
+        process.stdout.write(`origin_agent: ${row.origin_agent}\n`);
+      }
       if (row.injection_history?.length) {
         process.stdout.write('\nRecent injections (last 14d):\n');
         for (const item of row.injection_history) {

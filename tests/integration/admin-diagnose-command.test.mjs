@@ -254,7 +254,7 @@ test('cmdAdminDiagnose returns db health, daemon status, and fallback project ke
   const result = await cmdAdminDiagnose(db, { cwd: diagnoseCwd });
 
   assert.equal(result.db.health, 'ok');
-  assert.equal(result.db.schema_version, 16);
+  assert.equal(result.db.schema_version, 17);
   assert.equal(result.daemon.startup_schema_version, 12);
   assert.equal(typeof result.daemon.uptime_sec, 'number');
   assert.equal(result.daemon.alive, true);
@@ -283,7 +283,7 @@ test('cmdAdminDiagnose returns migration history when requested', async () => {
     applied_at: result.migrations[0].applied_at,
     applied_by: 'ccmem-cli'
   });
-  assert.equal(result.migrations.at(-1).to_version, 16);
+  assert.equal(result.migrations.at(-1).to_version, 17);
   db.close();
 });
 
@@ -344,7 +344,7 @@ test('cli admin diagnose prints default diagnostics', () => {
     encoding: 'utf8'
   });
 
-  assert.match(output, /ccmem: db ok schema=16/);
+  assert.match(output, /ccmem: db ok schema=17/);
   assert.match(output, /ccmem: daemon alive pid=2468 host=diagnose-host/);
   assert.match(output, /startup_schema=12/);
   assert.match(output, /uptime_sec=\d+/);

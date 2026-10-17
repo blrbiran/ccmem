@@ -16,6 +16,8 @@ import { cmdResurrect } from './lib/cmd/resurrect.mjs';
 import { cmdSave } from './lib/cmd/save.mjs';
 import { cmdShow } from './lib/cmd/show.mjs';
 import { cmdStats } from './lib/cmd/stats.mjs';
+import { getCodexHome, installCodex, REPO_ROOT, uninstallCodex } from './lib/install/codex.mjs';
+import { getDataRoot } from './lib/paths.mjs';
 import { resolveProjectKey } from './lib/project-key.mjs';
 
 let db = null;
@@ -49,7 +51,9 @@ function printHelp() {
     '  admin alias <old-project-key> <new-project-key>\n' +
     '  stats [--json|--buckets]\n' +
     '  promote <id> [--global]\n' +
-    '  resurrect [--quarantined|--alerts|--revalidation|--contradictions|--promote-candidates] [--all]\n'
+    '  resurrect [--quarantined|--alerts|--revalidation|--contradictions|--promote-candidates] [--all]\n' +
+    '  install <codex>     add the ccmem hooks to the agent\'s config (backs up, shows the diff)\n' +
+    '  uninstall <codex>   remove exactly what install added\n'
   );
 }
 
@@ -198,6 +202,14 @@ if (verb === 'import' && args.filter((arg) => !arg.startsWith('--')).length === 
   process.exit(0);
 }
 
+// Agents the install/uninstall verbs know; each has its own installer module.
+const INSTALL_TARGETS = ['codex'];
+
+if ((verb === 'install' || verb === 'uninstall') && !INSTALL_TARGETS.includes(args[0])) {
+  printHelp();
+  process.exit(64);
+}
+
 if (verb === 'unknown') {
   printHelp();
   process.exit(0);
@@ -251,7 +263,7 @@ if (verb === 'admin' && args[0] === 'diagnose') {
   // handled below.
 }
 
-if (!['save', 'list', 'show', 'export', 'import', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect'].includes(verb)) {
+if (!['save', 'list', 'show', 'export', 'import', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect', 'install', 'uninstall'].includes(verb)) {
   printHelp();
   process.exit(64);
 }
@@ -482,7 +494,50 @@ function printMetrics(result) {
 }
 
 try {
-  if (verb === 'save') {
+  if (verb === 'install' && args[0] === 'codex') {
+    let result;
+    try {
+      result = installCodex({ codexHome: getCodexHome(), dataRoot: getDataRoot(), repoRoot: REPO_ROOT, execPath: process.execPath });
+    } catch (error) {
+      process.stderr.write(`ccmem: ${error.message}\n`);
+      process.exitCode = 1;
+    }
+    if (result) {
+      const target = `${getCodexHome()}/hooks.json`;
+      if (result.changed) {
+        process.stdout.write(`ccmem: added the ccmem hooks to ${target}\n`);
+        if (result.backup) {
+          process.stdout.write(`ccmem: the previous file is backed up at ${result.backup}\n`);
+        }
+        process.stdout.write(`\n${result.diff}\n`);
+      } else {
+        process.stdout.write(`ccmem: the ccmem hooks are already in ${target}; nothing changed\n`);
+      }
+      process.stdout.write('Codex hooks run only after you trust them: open codex and run /hooks to approve the three ccmem hooks.\n');
+      process.stdout.write(`Codex tracks their approval under these keys (any change to a hook needs a new approval):\n${result.hookKeys.map((key) => `  ${key}\n`).join('')}`);
+    }
+  } else if (verb === 'uninstall' && args[0] === 'codex') {
+    let result;
+    try {
+      result = uninstallCodex({ codexHome: getCodexHome(), dataRoot: getDataRoot() });
+    } catch (error) {
+      process.stderr.write(`ccmem: ${error.message}\n`);
+      process.exitCode = 1;
+    }
+    if (result) {
+      const target = `${getCodexHome()}/hooks.json`;
+      if (!result.changed) {
+        process.stdout.write('ccmem: no ccmem hooks to remove from Codex\n');
+      } else if (result.restored) {
+        process.stdout.write(`ccmem: ${target} is back to what it was before install\n`);
+      } else {
+        process.stdout.write(`ccmem: removed the ccmem hooks from ${target} and kept the edits made since install (the edited file is backed up next to it)\n`);
+      }
+      if (result.changed) {
+        process.stdout.write('Codex\'s own approval records for the removed hooks stay in its config.toml; ccmem never edits that file.\n');
+      }
+    }
+  } else if (verb === 'save') {
     const content = args.filter((arg) => !arg.startsWith('--')).join(' ');
     const scope = args.includes('--global') ? 'global' : 'project';
     const result = await cmdSave(getDb(), { cwd: process.cwd(), content, scope });

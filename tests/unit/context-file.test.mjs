@@ -192,7 +192,8 @@ test('writeContextFile bounds the stable section and the whole file together', (
     assert.ok(Buffer.byteLength(stable, 'utf8') <= STABLE_SECTION_MAX_BYTES);
     assert.ok(stableLines.length > 0 && stableLines.length < stableRows.length);
     assert.ok(stableLines.every((line) => /^- stable-\d+-s{300}$/.test(line)), 'only whole stable rows land');
-    assert.deepEqual(result.stableIds, stableRows.slice(0, stableLines.length).map((row) => row.id));
+    const landedIds = stableLines.map((line) => 100 + Number(line.match(/^- stable-(\d+)-/)[1]));
+    assert.deepEqual([...result.stableIds].sort((a, b) => a - b), landedIds.sort((a, b) => a - b));
     assert.match(stderr, new RegExp(`stable section trimmed to ${stableLines.length} of 40 mems`));
     assert.match(text, /=== ccmem: retrieved for current prompt ===\n\n\[m1\] fact/);
   } finally {
@@ -212,6 +213,31 @@ test('writeContextFile rewrites the file when only the stable section changes', 
 
     assert.equal(result.written, true);
     assert.match(readFileSync(getContextFilePath(cwd), 'utf8'), /stable-1-s{10}/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+// WHY: one oversized rule must not block every rule ranked below it; it is
+// skipped (and named), and the fill goes on.
+test('writeContextFile skips an oversized stable row and keeps filling', () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-context-file-'));
+
+  try {
+    const stableRows = [
+      { id: 1, scope: 'global', pinned: 1, content: `oversized-${'o'.repeat(5000)}` },
+      ...makeStableRows(3, 10)
+    ];
+    const { result, stderr } = captureStderr(() => writeContextFile(cwd, [], null, null, { stableRows, projectKey: 'k' }));
+    const text = readFileSync(getContextFilePath(cwd), 'utf8');
+
+    assert.doesNotMatch(text, /oversized-/);
+    assert.match(text, /stable-0-s{10}/);
+    assert.match(text, /stable-1-s{10}/);
+    assert.match(text, /stable-2-s{10}/);
+    assert.deepEqual([...result.stableIds].sort((a, b) => a - b), [100, 101, 102]);
+    assert.match(stderr, /ccmem: stable row m1 skipped \(\d+B > 4096B section\)/);
+    assert.match(stderr, /stable section trimmed to 3 of 4 mems/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

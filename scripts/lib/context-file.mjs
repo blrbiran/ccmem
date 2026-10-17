@@ -17,6 +17,8 @@ export const CONTEXT_FILE = 'context.md';
 export const CONTEXT_EMPTY_SENTINEL = '<!-- ccmem: no relevant memories -->\n';
 export const MAX_CONTEXT_FILE_BYTES = 12288;
 export const STABLE_SECTION_MAX_BYTES = 4096;
+// Project lines reserved inside the stable section before globals fill it.
+export const PROJECT_STABLE_SHARE_BYTES = 2048;
 // Retrieved rows keep the 8 KB they had before the stable section moved into
 // this file, measured the same way as then: hash line + retrieved block.
 const RETRIEVED_MAX_BYTES = MAX_CONTEXT_FILE_BYTES - STABLE_SECTION_MAX_BYTES;
@@ -188,8 +190,9 @@ function parseMemberIds(memberIds) {
 }
 
 // Stable rows in the injection cache's ranked order (rankRows: pinned,
-// priority, recency), global first, then the project scope(s). Returns every
-// member; the byte cap is applied when the section is rendered.
+// priority, recency), global cache first, then the project scope(s). Returns
+// every member; the byte cap and the project/global fill order are applied
+// when the section is built (buildStableSection).
 export function selectStableRows(db, projectKey, { disableScopeIsolation = false } = {}) {
   const scopeClause = disableScopeIsolation ? '' : "WHERE scope = 'global' OR scope = ?";
   const scopeParams = disableScopeIsolation ? [] : [`project:${projectKey}`];
@@ -214,24 +217,70 @@ export function selectStableRows(db, projectKey, { disableScopeIsolation = false
   return ids.map((id) => byId.get(id)).filter(Boolean);
 }
 
-// Whole rows only, in ranked order, until the next row would push the
-// section past STABLE_SECTION_MAX_BYTES. A cut is reported on stderr.
+function stableLineBytes(row) {
+  return Buffer.byteLength(`- ${row.pinned ? '(pinned) ' : ''}${row.content}\n`, 'utf8');
+}
+
+// Whole rows only, within STABLE_SECTION_MAX_BYTES, filled in this order
+// (each group keeps the cache's rank order):
+//   (a) pinned rows, project before global;
+//   (b) project rows while project lines stay within PROJECT_STABLE_SHARE_BYTES;
+//   (c) global rows;
+//   (d) project rows left over from (b).
+// Without (b) a few KB of globals starve every project rule (the global cache
+// alone is MBs on real data). A row that does not fit is skipped and the fill
+// goes on; a row too big for the section on its own is named on stderr, and
+// any cut is reported (spec A4).
 function buildStableSection(projectKey, stableRows) {
+  const rows = stableRows ?? [];
+  const isProject = (row) => row.scope === 'project';
+  const pinned = rows.filter((row) => row.pinned);
+  const unpinnedProject = rows.filter((row) => !row.pinned && isProject(row));
+  const phases = [
+    { rows: [...pinned.filter(isProject), ...pinned.filter((row) => !isProject(row))] },
+    { rows: unpinnedProject, projectShare: true },
+    { rows: rows.filter((row) => !row.pinned && !isProject(row)) },
+    { rows: unpinnedProject }
+  ];
+
   const kept = [];
+  const keptIds = new Set();
+  let projectBytes = 0;
   let text = '';
-  for (const row of stableRows ?? []) {
-    const next = renderStableContext(projectKey, [...kept, row]);
-    if (Buffer.byteLength(next, 'utf8') > STABLE_SECTION_MAX_BYTES) {
-      break;
+  for (const phase of phases) {
+    for (const row of phase.rows) {
+      if (keptIds.has(row.id)) {
+        continue;
+      }
+      const lineBytes = stableLineBytes(row);
+      if (phase.projectShare && projectBytes + lineBytes > PROJECT_STABLE_SHARE_BYTES) {
+        continue;
+      }
+      const next = renderStableContext(projectKey, [...kept, row]);
+      if (Buffer.byteLength(next, 'utf8') > STABLE_SECTION_MAX_BYTES) {
+        continue;
+      }
+      kept.push(row);
+      keptIds.add(row.id);
+      if (isProject(row)) {
+        projectBytes += lineBytes;
+      }
+      text = next;
     }
-    kept.push(row);
-    text = next;
   }
 
-  if (stableRows?.length && kept.length < stableRows.length) {
-    process.stderr.write(`ccmem: stable section trimmed to ${kept.length} of ${stableRows.length} mems\n`);
+  for (const row of rows) {
+    const soloBytes = Buffer.byteLength(renderStableContext(projectKey, [row]), 'utf8');
+    if (soloBytes > STABLE_SECTION_MAX_BYTES) {
+      process.stderr.write(`ccmem: stable row m${row.id} skipped (${soloBytes}B > ${STABLE_SECTION_MAX_BYTES}B section)\n`);
+    }
   }
-  return { text, ids: kept.map((row) => row.id) };
+  if (kept.length < rows.length) {
+    process.stderr.write(`ccmem: stable section trimmed to ${kept.length} of ${rows.length} mems\n`);
+  }
+  // ids in file order (renderStableContext puts [GLOBAL] before [PROJECT]).
+  const ids = [...kept.filter((row) => !isProject(row)), ...kept.filter(isProject)].map((row) => row.id);
+  return { text, ids };
 }
 
 function nextPromptIdx(db, sessionId) {

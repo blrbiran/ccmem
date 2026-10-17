@@ -130,6 +130,39 @@ test('context file holds a bounded ranked stable section', async () => {
   db.close();
 });
 
+// WHY: several KB of globals used to fill the section before any project
+// rule was reached (real data: 0 of 1,960 project rows landed). The seed has
+// >4 KB of unpinned globals and one unpinned project rule.
+test('project rules are not starved by globals', async () => {
+  const { db } = seed();
+  db.close();
+
+  await captureStderr(() => handleSessionStart({ cwd: CWD, session_id: SESSION_ID }));
+  const stable = stableSectionOf(readContextFile());
+
+  assert.ok(stable.includes(`[PROJECT ${PROJECT_KEY}]\n- zebrafish research notes`), stable);
+  assert.match(stable, /\[GLOBAL\]\n- \(pinned\) PINNED-MARKER/);
+});
+
+test('pinned rows of both scopes land', async () => {
+  const { db } = seed();
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO memories (scope, project_key, type, content, source, trust_score, pinned,
+                           status, decay_status, created_at, updated_at, last_touched_at)
+     VALUES ('project', ?, 'rule', 'PROJECT-PINNED-MARKER keep migrations reversible', 'auto_inferred', 0.5, 1,
+             'active', 'active', ?, ?, ?)`
+  ).run(PROJECT_KEY, now, now, now - (20 * 86400000));
+  rebuildInjectionCache(db, PROJECT_KEY);
+  db.close();
+
+  await captureStderr(() => handleSessionStart({ cwd: CWD, session_id: SESSION_ID }));
+  const stable = stableSectionOf(readContextFile());
+
+  assert.match(stable, /- \(pinned\) PINNED-MARKER/);
+  assert.match(stable, /- \(pinned\) PROJECT-PINNED-MARKER/);
+});
+
 test('prompt submit keeps the stable section', async () => {
   const { db } = seed();
   db.close();

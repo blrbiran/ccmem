@@ -124,10 +124,50 @@ test('session_start sends the read instruction once per session, hidden, for the
     message: { customType: 'ccmem', content: INSTRUCTION, display: false },
     options: { deliverAs: 'nextTurn' }
   }]);
+});
 
-  // A new session in the same process (OMP rebinds the factory) gets its own instruction.
-  await pi.handlers.session_start({ type: 'session_start' }, ctx({ sessionId: 's2', file: '/omp/sessions/s2.jsonl' }));
-  assert.equal(pi.sent.length, 2);
+test('session_switch (/new, /resume, fork) instructs the new session once; the old one is not repeated', async () => {
+  // OMP emits session_start only when the runtime starts; switching sessions
+  // emits session_switch, with ctx.sessionManager already on the new session.
+  const { spawnImpl, calls } = fakeSpawn((args) => ({ stdout: hookOutput('SessionStart', `instruction for ${args.length}`) }));
+  const pi = load(spawnImpl);
+  await pi.handlers.session_start({ type: 'session_start' }, ctx());
+
+  const switched = ctx({ sessionId: 's2', file: '/omp/sessions/s2.jsonl' });
+  const event = { type: 'session_switch', reason: 'new', previousSessionFile: '/omp/sessions/s1.jsonl' };
+  assert.equal(await pi.handlers.session_switch(event, switched), undefined);
+  await pi.handlers.session_switch({ ...event, reason: 'resume' }, switched);
+  // Resuming back into s1 within the same process: it already has the instruction.
+  await pi.handlers.session_switch({ ...event, reason: 'resume' }, ctx());
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(JSON.parse(calls[1].child.stdinText()), {
+    session_id: 's2',
+    cwd: '/work/repo',
+    transcript_path: '/omp/sessions/s2.jsonl'
+  });
+  assert.equal(pi.sent.length, 2, 'one instruction for s1 at start, one for s2 at the switch');
+  assert.deepEqual(pi.sent[1].options, { deliverAs: 'nextTurn' });
+});
+
+test('an aborted session_stop kills the hook and resolves at once', { timeout: 10_000 }, async () => {
+  const { spawnImpl, calls } = fakeSpawn({ hang: true });
+  const pi = load(spawnImpl, { timeoutMs: 5000 });
+  const controller = new AbortController();
+  const event = { type: 'session_stop', messages: [], session_id: 's1', session_file: '/f.jsonl', signal: controller.signal };
+
+  const started = Date.now();
+  const pending = pi.handlers.session_stop(event, ctx());
+  setTimeout(() => controller.abort(), 50);
+  assert.equal(await pending, undefined);
+  assert.ok(Date.now() - started < 1000, 'abort must not wait for the 5 s timeout');
+  assert.equal(calls[0].child.killed, true);
+
+  // Already aborted before the hook starts: killed straight away.
+  const before = Date.now();
+  await pi.handlers.session_stop({ ...event, signal: AbortSignal.abort() }, ctx());
+  assert.ok(Date.now() - before < 1000);
+  assert.equal(calls[1].child.killed, true);
 });
 
 test('session_start sends nothing when the hook returns no instruction', async () => {

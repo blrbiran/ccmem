@@ -546,15 +546,17 @@ try {
       }
     }
   } else if (verb === 'install' && args[0] === 'omp') {
+    const agentDir = getOmpAgentDir();
+    process.stdout.write(`ccmem: OMP agent directory ${agentDir} (CCMEM_OMP_AGENT_DIR, else OMP's own profile / PI_CODING_AGENT_DIR rules)\n`);
     let result;
     try {
-      result = installOmp({ agentDir: getOmpAgentDir(), dataRoot: getDataRoot(), repoRoot: REPO_ROOT, execPath: process.execPath });
+      result = installOmp({ agentDir, dataRoot: getDataRoot(), repoRoot: REPO_ROOT, execPath: process.execPath });
     } catch (error) {
       process.stderr.write(`ccmem: ${error.message}\n`);
       process.exitCode = 1;
     }
     if (result) {
-      const target = `${getOmpAgentDir()}/extensions/ccmem.ts`;
+      const target = `${agentDir}/extensions/ccmem.ts`;
       if (result.changed) {
         process.stdout.write(`ccmem: added the ccmem extension at ${target}\n`);
         if (result.backup) {
@@ -567,15 +569,16 @@ try {
       }
     }
   } else if (verb === 'uninstall' && args[0] === 'omp') {
+    const agentDir = getOmpAgentDir();
     let result;
     try {
-      result = uninstallOmp({ agentDir: getOmpAgentDir(), dataRoot: getDataRoot() });
+      result = uninstallOmp({ agentDir, dataRoot: getDataRoot() });
     } catch (error) {
       process.stderr.write(`ccmem: ${error.message}\n`);
       process.exitCode = 1;
     }
     if (result) {
-      const target = `${getOmpAgentDir()}/extensions/ccmem.ts`;
+      const target = `${agentDir}/extensions/ccmem.ts`;
       if (!result.changed) {
         process.stdout.write('ccmem: no ccmem extension to remove from OMP\n');
       } else {

@@ -6,8 +6,10 @@ import { spawn } from 'node:child_process';
  * `scripts/hook.mjs <mode> --agent omp`, with the Claude-shaped stdin JSON the
  * handlers already read:
  *
- *   session_start      -> session-start: the short read instruction is sent once
- *                         per session as a hidden next-turn message
+ *   session_start,     -> session-start: the short read instruction is sent once
+ *   session_switch        per session as a hidden next-turn message (OMP emits
+ *                         session_start only at startup; /new, /resume and fork
+ *                         emit session_switch with the new session in ctx)
  *   before_agent_start -> prompt-submit: rewrites the context file; returns
  *                         nothing, so OMP's system prompt is never touched
  *   session_stop       -> stop: hands the session file to ccmem's learner
@@ -40,10 +42,11 @@ interface OmpBeforeAgentStartEvent {
 interface OmpSessionStopEvent {
   session_id: string;
   session_file?: string;
+  signal?: AbortSignal;
 }
 
 interface OmpExtensionApi {
-  on(event: 'session_start', handler: (event: unknown, ctx: OmpContext) => Promise<undefined>): void;
+  on(event: 'session_start' | 'session_switch', handler: (event: unknown, ctx: OmpContext) => Promise<undefined>): void;
   on(event: 'before_agent_start', handler: (event: OmpBeforeAgentStartEvent, ctx: OmpContext) => Promise<undefined>): void;
   on(event: 'session_stop', handler: (event: OmpSessionStopEvent, ctx: OmpContext) => Promise<undefined>): void;
   sendMessage(
@@ -74,15 +77,20 @@ export function createCcmemExtension(opts: CcmemExtensionOptions): (pi: OmpExten
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const spawnImpl = opts.spawnImpl ?? spawn;
 
-  // Resolves with the hook's stdout, or '' on any spawn error, non-zero exit or timeout.
-  function runHook(mode: HookMode, input: HookInput): Promise<string> {
+  // Resolves with the hook's stdout, or '' on any spawn error, non-zero exit,
+  // timeout or abort of `signal` (the hook is killed on the last two).
+  function runHook(mode: HookMode, input: HookInput, signal?: AbortSignal): Promise<string> {
     return new Promise((resolve) => {
       let settled = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let abandon: (() => void) | undefined;
       const finish = (stdout: string) => {
         if (!settled) {
           settled = true;
           clearTimeout(timer);
+          if (abandon) {
+            signal?.removeEventListener('abort', abandon);
+          }
           resolve(stdout);
         }
       };
@@ -93,10 +101,10 @@ export function createCcmemExtension(opts: CcmemExtensionOptions): (pi: OmpExten
           ['--no-warnings', '--experimental-sqlite', opts.hookScript, mode, '--agent', 'omp'],
           { stdio: ['pipe', 'pipe', 'ignore'] }
         );
-        timer = setTimeout(() => {
+        abandon = () => {
           child.kill('SIGKILL');
           finish('');
-        }, timeoutMs);
+        };
 
         let stdout = '';
         child.stdout?.setEncoding('utf8');
@@ -108,6 +116,15 @@ export function createCcmemExtension(opts: CcmemExtensionOptions): (pi: OmpExten
         // A hook that exits before reading stdin makes the write fail with EPIPE.
         child.stdin?.on('error', () => {});
         child.stdin?.end(JSON.stringify(input));
+
+        // Unref'd: an abandoned handler must not keep OMP alive at exit.
+        timer = setTimeout(abandon, timeoutMs);
+        timer.unref?.();
+        if (signal?.aborted) {
+          abandon();
+        } else {
+          signal?.addEventListener('abort', abandon, { once: true });
+        }
       } catch {
         finish('');
       }
@@ -140,7 +157,7 @@ export function createCcmemExtension(opts: CcmemExtensionOptions): (pi: OmpExten
   return (pi: OmpExtensionApi) => {
     const instructedSessions = new Set<string>();
 
-    pi.on('session_start', async (_event, ctx) => {
+    const instructOnce = async (_event: unknown, ctx: OmpContext): Promise<undefined> => {
       try {
         if (skipped(ctx)) {
           return undefined;
@@ -159,7 +176,9 @@ export function createCcmemExtension(opts: CcmemExtensionOptions): (pi: OmpExten
         // Never let ccmem break the session.
       }
       return undefined;
-    });
+    };
+    pi.on('session_start', instructOnce);
+    pi.on('session_switch', instructOnce);
 
     pi.on('before_agent_start', async (event, ctx) => {
       try {
@@ -175,7 +194,7 @@ export function createCcmemExtension(opts: CcmemExtensionOptions): (pi: OmpExten
     pi.on('session_stop', async (event, ctx) => {
       try {
         if (!skipped(ctx)) {
-          await runHook('stop', { session_id: event.session_id, cwd: ctx.cwd, transcript_path: event.session_file });
+          await runHook('stop', { session_id: event.session_id, cwd: ctx.cwd, transcript_path: event.session_file }, event.signal);
         }
       } catch {
         // Never let ccmem block the turn from settling.

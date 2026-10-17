@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -17,7 +17,7 @@ const scratch = mkdtempSync(path.join(tmpdir(), 'ccmem-install-omp-'));
 process.env.CCMEM_OMP_AGENT_DIR = path.join(scratch, 'env-agent-dir-never-used');
 process.env.CCMEM_DATA_ROOT = path.join(scratch, 'env-data-root');
 
-const { installOmp, uninstallOmp, ompLoaderSource } = await import('../../scripts/lib/install/omp.mjs');
+const { getOmpAgentDir, installOmp, uninstallOmp, ompLoaderSource } = await import('../../scripts/lib/install/omp.mjs');
 
 const NODE = process.execPath;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -101,7 +101,7 @@ test('the written loader imports the real extension and default-exports a factor
   assert.equal(typeof loaded.default, 'function', 'OMP takes module.default as the extension factory');
   const events = [];
   loaded.default({ on: (event) => events.push(event), sendMessage: () => {} });
-  assert.deepEqual(events.sort(), ['before_agent_start', 'session_start', 'session_stop']);
+  assert.deepEqual(events.sort(), ['before_agent_start', 'session_start', 'session_stop', 'session_switch']);
 });
 
 test('install backs up a different ccmem.ts, replaces it, and keeps its mode', () => {
@@ -213,6 +213,37 @@ test('a failed loader write names the backup, and uninstall restores the origina
   const result = uninstall(dirs);
   assert.equal(result.restored, true);
   assert.equal(readFileSync(dirs.target, 'utf8'), FOREIGN);
+});
+
+test('getOmpAgentDir follows OMP: profile, then PI_CODING_AGENT_DIR, then ~/.omp/agent; CCMEM_OMP_AGENT_DIR wins', () => {
+  const home = os.homedir();
+  assert.equal(getOmpAgentDir({}), path.join(home, '.omp', 'agent'));
+  assert.equal(getOmpAgentDir({ PI_CODING_AGENT_DIR: '/x/agent' }), '/x/agent');
+  assert.equal(getOmpAgentDir({ PI_CONFIG_DIR: '.pi' }), path.join(home, '.pi', 'agent'));
+  // A named profile derives its own agent dir and ignores PI_CODING_AGENT_DIR.
+  assert.equal(getOmpAgentDir({ OMP_PROFILE: 'work', PI_CODING_AGENT_DIR: '/x/agent' }), path.join(home, '.omp', 'profiles', 'work', 'agent'));
+  assert.equal(getOmpAgentDir({ PI_PROFILE: 'legacy' }), path.join(home, '.omp', 'profiles', 'legacy', 'agent'));
+  // An explicitly empty OMP_PROFILE selects the default profile over PI_PROFILE.
+  assert.equal(getOmpAgentDir({ OMP_PROFILE: '', PI_PROFILE: 'legacy', PI_CODING_AGENT_DIR: '/x/agent' }), '/x/agent');
+  assert.equal(getOmpAgentDir({ CCMEM_OMP_AGENT_DIR: '/c/agent', OMP_PROFILE: 'work', PI_CODING_AGENT_DIR: '/x/agent' }), '/c/agent');
+});
+
+test('ccmem install omp writes into PI_CODING_AGENT_DIR when CCMEM_OMP_AGENT_DIR is unset', () => {
+  const dirs = freshDirs();
+  const env = { ...process.env, PI_CODING_AGENT_DIR: dirs.agentDir, CCMEM_DATA_ROOT: dirs.dataRoot };
+  for (const name of ['CCMEM_OMP_AGENT_DIR', 'OMP_PROFILE', 'PI_PROFILE', 'PI_CONFIG_DIR']) {
+    delete env[name];
+  }
+  const run = (...args) => spawnSync(NODE, ['--no-warnings', '--experimental-sqlite', CLI, ...args], { cwd: ROOT, encoding: 'utf8', env });
+
+  const installed = run('install', 'omp');
+  assert.equal(installed.status, 0, installed.stderr);
+  assert.ok(installed.stdout.includes(`OMP agent directory ${dirs.agentDir} `), installed.stdout);
+  assert.equal(readFileSync(dirs.target, 'utf8'), ompLoaderSource({ repoRoot: ROOT, execPath: NODE }));
+
+  const removed = run('uninstall', 'omp');
+  assert.equal(removed.status, 0, removed.stderr);
+  assert.equal(existsSync(dirs.target), false);
 });
 
 test('ccmem install omp prints the target and diff; uninstall undoes it', () => {

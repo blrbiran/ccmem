@@ -30,8 +30,27 @@ const AGENT = 'omp';
 // would end or escape the literal rather than write a loader that fails to load.
 const LITERAL_UNSAFE = /['\\\r\n]/;
 
-export function getOmpAgentDir() {
-  return process.env.CCMEM_OMP_AGENT_DIR ?? path.join(os.homedir(), '.omp', 'agent');
+/**
+ * The agent directory OMP itself would use (pi-utils src/dirs.ts in the
+ * installed 18.10.1): a named profile (OMP_PROFILE, else PI_PROFILE) gets
+ * `~/<PI_CONFIG_DIR|.omp>/profiles/<name>/agent` and ignores
+ * PI_CODING_AGENT_DIR; otherwise PI_CODING_AGENT_DIR replaces
+ * `~/<PI_CONFIG_DIR|.omp>/agent`. CCMEM_OMP_AGENT_DIR overrides all of it.
+ */
+export function getOmpAgentDir(env = process.env) {
+  if (env.CCMEM_OMP_AGENT_DIR !== undefined) {
+    return env.CCMEM_OMP_AGENT_DIR;
+  }
+
+  const configRoot = path.join(os.homedir(), env.PI_CONFIG_DIR || '.omp');
+  const profile = (env.OMP_PROFILE !== undefined ? env.OMP_PROFILE : env.PI_PROFILE)?.trim();
+  if (profile) {
+    return path.join(configRoot, 'profiles', profile, 'agent');
+  }
+  if (env.PI_CODING_AGENT_DIR) {
+    return path.resolve(env.PI_CODING_AGENT_DIR);
+  }
+  return path.join(configRoot, 'agent');
 }
 
 export function ompLoaderSource({ repoRoot, execPath }) {

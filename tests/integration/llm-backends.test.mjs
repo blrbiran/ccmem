@@ -131,6 +131,11 @@ if (mode === 'fail') {
   out({ type: 'message_end', message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'connection reset' } });
   process.exit(1);
 }
+if (mode === 'error-exit-0') {
+  out({ type: 'message_end', message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'upstream model unavailable' } });
+  out({ type: 'agent_end', messages: [] });
+  process.exit(0);
+}
 out({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'draft' }], stopReason: 'toolUse' } });
 out({ type: 'message_end', message: assistant });
 out({ type: 'agent_end', messages: [] });
@@ -340,6 +345,13 @@ test('omp: a provider 429 is exhaustion; the echoed prompt mentioning a quota is
   assert.equal(failed.exhaustion, undefined, 'the user turn says "429 quota"; only the assistant error counts');
 
   assert.equal(ompBackend.classifyExhaustion({ stderr: 'insufficient credits', stdout: '', exitCode: 1 }).exhausted, true);
+});
+
+test('omp: exit 0 with an assistant error and no text is a failure, not an empty answer', async () => {
+  useFakes('omp', 'error-exit-0');
+  const failed = await callClaudeP('p', { taskType: 'summarize_pending' }).then((value) => ({ value }), (e) => e);
+  assert.ok(failed instanceof Error, `resolved with ${JSON.stringify(failed.value)}`);
+  assert.match(failed.message, /^omp -p exit 0 but the assistant reported an error: upstream model unavailable/);
 });
 
 test('claude stays the default backend and its row names it', async () => {

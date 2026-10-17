@@ -39,10 +39,17 @@ export const ompBackend = {
       throw new Error('omp -p exit 0 but printed no assistant message');
     }
     const content = Array.isArray(last.content) ? last.content : [];
-    return content
+    const text = content
       .filter((part) => part?.type === 'text' && typeof part.text === 'string')
       .map((part) => part.text)
       .join('');
+    // OMP can exit 0 with the provider's error on the last assistant message
+    // and no text. Returning '' would read downstream as "the model extracted
+    // nothing" (the same guard as codex's empty -o file).
+    if (!text && (last.errorMessage || last.stopReason === 'error')) {
+      throw new Error(`omp -p exit 0 but the assistant reported an error: ${String(last.errorMessage ?? 'stopReason error').slice(0, 200)}`);
+    }
+    return text;
   },
 
   // usage.input / usage.output (pi-catalog Usage). usage.cost.total is left

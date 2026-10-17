@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,6 +76,13 @@ const { cmdList } = await import('../../scripts/lib/cmd/list.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submit.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
+const { getContextFilePath } = await import('../../scripts/lib/context-file.mjs');
+
+// Spec §5.2: stable rules are written to the session's context file; the
+// conversation only gets the read instruction.
+function readSessionContextFile(sessionId) {
+  return readFileSync(getContextFilePath(process.cwd(), sessionId), 'utf8');
+}
 
 function resetSaveListTables(db) {
   db.prepare(`DELETE FROM daemon_lock`).run();
@@ -137,7 +144,8 @@ test('save -> list -> session start inject works and records session diagnostics
      WHERE session_id = 's-start'`
   ).get();
 
-  assert.match(result.additionalContext, /Prefer concise answers/);
+  assert.match(readSessionContextFile('s-start'), /Prefer concise answers/);
+  assert.doesNotMatch(result.additionalContext, /Prefer concise answers/);
   assert.match(result.additionalContext, /Read `\.ccmem\/context-unknown\.md` at session start and after each \/compact\./);
   assert.equal(injection.prompt_idx, 0);
   assert.equal(injection.inject_source, 'session_start');
@@ -596,7 +604,7 @@ test('session-start runs mini-prelude cleanup after writing injection', async ()
     `SELECT inject_source FROM recent_injections WHERE session_id = 's-mini' AND prompt_idx = 0`
   ).get();
 
-  assert.match(result.additionalContext, /Prefer concise answers/);
+  assert.match(readSessionContextFile('s-mini'), /Prefer concise answers/);
   assert.match(result.additionalContext, /ALWAYS re-read regardless of compressed summary content/);
   assert.equal(stale.n, 0);
   assert.equal(kept.n, 20);
@@ -645,7 +653,8 @@ test('handleSessionStart records the local calendar day mini-prelude lease at ea
        LIMIT 1`
     ).get();
 
-    assert.match(result.additionalContext, /Prefer concise answers/);
+    assert.match(readSessionContextFile('s-local-day'), /Prefer concise answers/);
+    assert.match(result.additionalContext, /Read `\.ccmem\/context-s-local-\.md`/);
     assert.equal(lease.date_key, '2026-06-08');
     assert.equal(lease.status, 'completed');
     assert.equal(typeof lease.completed_at, 'number');
@@ -749,7 +758,7 @@ test('session-start hook ignores expired blacklisted sessions and proceeds norma
   ).get('s-expired');
 
   assert.match(output, /"hookEventName":"SessionStart"/);
-  assert.match(output, /Prefer concise answers/);
+  assert.match(readSessionContextFile('s-expired'), /Prefer concise answers/);
   assert.equal(injection.n, 1);
   assert.equal(session.n, 1);
   assert.equal(blacklist.n, 1);

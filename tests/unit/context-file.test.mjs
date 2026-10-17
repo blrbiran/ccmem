@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   CONTEXT_EMPTY_SENTINEL,
+  MAX_CONTEXT_FILE_BYTES,
+  STABLE_SECTION_MAX_BYTES,
   getContextFilePath,
   writeContextFile,
   clearContextFile
@@ -157,6 +159,59 @@ test('writeContextFile truncates oversized payloads to 8KB and warns', () => {
     assert.equal(Buffer.byteLength(text, 'utf8') <= 8192, true);
     assert.match(stderr, /context-unknown\.md exceeded 8192B, trimmed to /);
     assert.match(text, /^<!-- content-hash: [a-f0-9]{8} -->\n/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+function makeStableRows(count, size) {
+  return Array.from({ length: count }, (_, i) => ({
+    id: 100 + i,
+    scope: i % 2 ? 'project' : 'global',
+    pinned: 0,
+    content: `stable-${i}-${'s'.repeat(size)}`
+  }));
+}
+
+// WHY: both caps hold at once — a 4 KB stable section plus a full retrieved
+// block must still fit the 12 KB file, and the stable cut drops whole rows
+// (a half-rendered rule is worse than a missing one).
+test('writeContextFile bounds the stable section and the whole file together', () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-context-file-'));
+
+  try {
+    const stableRows = makeStableRows(40, 300);
+    const rows = makeRows(Array.from({ length: 10 }, (_, i) => `row-${i}-${'x'.repeat(1500)}`));
+    const { result, stderr } = captureStderr(() => writeContextFile(cwd, rows, null, null, { stableRows, projectKey: 'k' }));
+    const text = readFileSync(getContextFilePath(cwd), 'utf8');
+    const body = text.slice(text.indexOf('\n') + 1);
+    const stable = body.slice(0, body.indexOf('\n\n=== ccmem: retrieved for current prompt ==='));
+    const stableLines = stable.split('\n').filter((line) => line.startsWith('- '));
+
+    assert.ok(Buffer.byteLength(text, 'utf8') <= MAX_CONTEXT_FILE_BYTES);
+    assert.ok(Buffer.byteLength(stable, 'utf8') <= STABLE_SECTION_MAX_BYTES);
+    assert.ok(stableLines.length > 0 && stableLines.length < stableRows.length);
+    assert.ok(stableLines.every((line) => /^- stable-\d+-s{300}$/.test(line)), 'only whole stable rows land');
+    assert.deepEqual(result.stableIds, stableRows.slice(0, stableLines.length).map((row) => row.id));
+    assert.match(stderr, new RegExp(`stable section trimmed to ${stableLines.length} of 40 mems`));
+    assert.match(text, /=== ccmem: retrieved for current prompt ===\n\n\[m1\] fact/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+// WHY: the hash gate must see the stable section too, or a changed stable
+// rule set with the same retrieved rows would leave the old file in place.
+test('writeContextFile rewrites the file when only the stable section changes', () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-context-file-'));
+
+  try {
+    const rows = makeRows(['Same retrieved row']);
+    captureStderr(() => writeContextFile(cwd, rows, null, null, { stableRows: makeStableRows(1, 10), projectKey: 'k' }));
+    const { result } = captureStderr(() => writeContextFile(cwd, rows, null, null, { stableRows: makeStableRows(2, 10), projectKey: 'k' }));
+
+    assert.equal(result.written, true);
+    assert.match(readFileSync(getContextFilePath(cwd), 'utf8'), /stable-1-s{10}/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

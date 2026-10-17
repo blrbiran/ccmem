@@ -10,12 +10,17 @@ import {
   writeFileSync
 } from 'node:fs';
 import path from 'node:path';
-import { renderRetrievedBlock } from './render.mjs';
+import { renderRetrievedBlock, renderStableContext } from './render.mjs';
 
 export const CONTEXT_DIR = '.ccmem';
 export const CONTEXT_FILE = 'context.md';
 export const CONTEXT_EMPTY_SENTINEL = '<!-- ccmem: no relevant memories -->\n';
-const MAX_CONTEXT_FILE_BYTES = 8192;
+export const MAX_CONTEXT_FILE_BYTES = 12288;
+export const STABLE_SECTION_MAX_BYTES = 4096;
+// Retrieved rows keep the 8 KB they had before the stable section moved into
+// this file, measured the same way as then: hash line + retrieved block.
+const RETRIEVED_MAX_BYTES = MAX_CONTEXT_FILE_BYTES - STABLE_SECTION_MAX_BYTES;
+const HASH_LINE_BYTES = Buffer.byteLength('<!-- content-hash: 00000000 -->\n', 'utf8');
 const EXCLUDE_RULE = '.ccmem/';
 const GITDIR_PREFIX = 'gitdir:';
 const GITIGNORE_HINT = 'ccmem: hint — add .ccmem/ to .gitignore to exclude context cache\n';
@@ -127,8 +132,12 @@ function extractContentHash(text) {
   return text?.match(/^<!-- content-hash:\s*([a-f0-9]+) -->$/m)?.[1] ?? null;
 }
 
-function buildHashedContent(rows) {
-  const body = renderRetrievedBlock(rows);
+// The file body is a list of sections joined by a blank line; the hash covers
+// all of them, so a change to any section rewrites the file and an unchanged
+// file is never rewritten (prompt-cache friendly re-reads).
+function buildHashedContent(stableText, rows) {
+  const sections = [stableText, rows.length ? renderRetrievedBlock(rows) : ''].filter(Boolean);
+  const body = sections.join('\n\n');
   const hash = createHash('sha256').update(body).digest('hex').slice(0, 8);
   return {
     body,
@@ -137,13 +146,19 @@ function buildHashedContent(rows) {
   };
 }
 
-function truncateRows(rows) {
+function fitsCaps(candidate, rows) {
+  const retrievedBytes = rows.length ? HASH_LINE_BYTES + Buffer.byteLength(renderRetrievedBlock(rows), 'utf8') : 0;
+  return retrievedBytes <= RETRIEVED_MAX_BYTES
+    && Buffer.byteLength(candidate.fullContent, 'utf8') <= MAX_CONTEXT_FILE_BYTES;
+}
+
+function truncateRows(rows, stableText) {
   const working = [...rows];
   let notices = 0;
 
   while (working.length > 1) {
-    const candidate = buildHashedContent(working);
-    if (Buffer.byteLength(candidate.fullContent, 'utf8') <= MAX_CONTEXT_FILE_BYTES) {
+    const candidate = buildHashedContent(stableText, working);
+    if (fitsCaps(candidate, working)) {
       return { ...candidate, rows: working, notices };
     }
     working.pop();
@@ -151,16 +166,72 @@ function truncateRows(rows) {
   }
 
   while (working[0]?.content?.length) {
-    const candidate = buildHashedContent(working);
-    if (Buffer.byteLength(candidate.fullContent, 'utf8') <= MAX_CONTEXT_FILE_BYTES) {
+    const candidate = buildHashedContent(stableText, working);
+    if (fitsCaps(candidate, working)) {
       return { ...candidate, rows: working, notices };
     }
     working[0] = { ...working[0], content: working[0].content.slice(0, -1) };
     notices += 1;
   }
 
-  const fallback = buildHashedContent(working);
+  const fallback = buildHashedContent(stableText, working);
   return { ...fallback, rows: working, notices };
+}
+
+function parseMemberIds(memberIds) {
+  try {
+    const parsed = JSON.parse(memberIds ?? '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// Stable rows in the injection cache's ranked order (rankRows: pinned,
+// priority, recency), global first, then the project scope(s). Returns every
+// member; the byte cap is applied when the section is rendered.
+export function selectStableRows(db, projectKey, { disableScopeIsolation = false } = {}) {
+  const scopeClause = disableScopeIsolation ? '' : "WHERE scope = 'global' OR scope = ?";
+  const scopeParams = disableScopeIsolation ? [] : [`project:${projectKey}`];
+  const caches = db.prepare(
+    `SELECT member_ids
+     FROM injection_cache
+     ${scopeClause}
+     ORDER BY CASE WHEN scope = 'global' THEN 0 ELSE 1 END, scope`
+  ).all(...scopeParams);
+  const ids = [...new Set(caches.flatMap((row) => parseMemberIds(row.member_ids)))];
+  if (!ids.length) {
+    return [];
+  }
+
+  const byId = new Map(
+    db.prepare(
+      `SELECT id, scope, content, pinned
+       FROM memories
+       WHERE id IN (SELECT value FROM json_each(?))`
+    ).all(JSON.stringify(ids)).map((row) => [row.id, row])
+  );
+  return ids.map((id) => byId.get(id)).filter(Boolean);
+}
+
+// Whole rows only, in ranked order, until the next row would push the
+// section past STABLE_SECTION_MAX_BYTES. A cut is reported on stderr.
+function buildStableSection(projectKey, stableRows) {
+  const kept = [];
+  let text = '';
+  for (const row of stableRows ?? []) {
+    const next = renderStableContext(projectKey, [...kept, row]);
+    if (Buffer.byteLength(next, 'utf8') > STABLE_SECTION_MAX_BYTES) {
+      break;
+    }
+    kept.push(row);
+    text = next;
+  }
+
+  if (stableRows?.length && kept.length < stableRows.length) {
+    process.stderr.write(`ccmem: stable section trimmed to ${kept.length} of ${stableRows.length} mems\n`);
+  }
+  return { text, ids: kept.map((row) => row.id) };
 }
 
 function nextPromptIdx(db, sessionId) {
@@ -213,28 +284,31 @@ function recordWriteHistory(db, sessionId, contentHash, content, bytes, written)
   }
 }
 
-export function writeContextFile(cwd, rows, sessionId = null, db = null) {
+// stableIds in the result are the stable rows that actually landed in the
+// file (after the byte cap), for injection telemetry.
+export function writeContextFile(cwd, rows, sessionId = null, db = null, { stableRows = null, projectKey = null } = {}) {
   const dir = getContextDir(cwd);
   mkdirSync(dir, { recursive: true });
 
   const filePath = getContextFilePath(cwd, sessionId);
-  const truncated = truncateRows(rows);
+  const stable = buildStableSection(projectKey, stableRows);
+  const truncated = truncateRows(rows, stable.text);
   if (truncated.notices > 0) {
-    process.stderr.write(`ccmem: ${contextFileName(sessionId)} exceeded ${MAX_CONTEXT_FILE_BYTES}B, trimmed to ${truncated.rows.length} mems\n`);
+    process.stderr.write(`ccmem: ${contextFileName(sessionId)} exceeded ${RETRIEVED_MAX_BYTES}B, trimmed to ${truncated.rows.length} mems\n`);
   }
 
   const existing = readExistingContext(filePath);
   if (existing && extractContentHash(existing) === truncated.hash) {
     const bytes = Buffer.byteLength(existing, 'utf8');
     recordWriteHistory(db, sessionId, truncated.hash, truncated.body, bytes, false);
-    return { written: false, bytes, skipped: true };
+    return { written: false, bytes, skipped: true, stableIds: stable.ids };
   }
 
   writeFileSync(filePath, truncated.fullContent, 'utf8');
   ensureIgnoreRule(cwd);
   const bytes = Buffer.byteLength(truncated.fullContent, 'utf8');
   recordWriteHistory(db, sessionId, truncated.hash, truncated.body, bytes, true);
-  return { written: true, bytes, skipped: false };
+  return { written: true, bytes, skipped: false, stableIds: stable.ids };
 }
 
 export function clearContextFile(cwd, sessionId = null, db = null) {

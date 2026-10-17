@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -20,6 +20,8 @@ const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { resolveProjectKey } = await import('../../scripts/lib/project-key.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
 const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submit.mjs');
+const { rebuildInjectionCache } = await import('../../scripts/lib/injection-cache.mjs');
+const { getContextFilePath } = await import('../../scripts/lib/context-file.mjs');
 
 // Project keys are computed, never literals: resolveProjectKey(cwd) shells
 // out to `git config --get remote.origin.url` in that cwd and falls back to
@@ -323,6 +325,71 @@ test('prompt-submit writes both recent_injections and memory_feedback as usual w
   assert.ok(out._metricFields.matched > 0, 'fixture must actually match — otherwise this test is vacuous');
   assert.ok(db.prepare('SELECT COUNT(*) AS n FROM recent_injections').get().n > 0);
   assert.ok(db.prepare('SELECT COUNT(*) AS n FROM memory_feedback').get().n > 0);
+});
+
+// ============================================================
+// File-based injection (the default, spec §5.2): the stable section is
+// written to the session's context file instead of additionalContext, and
+// read through selectStableRows — a second copy of the scope clause. The
+// tests above pin the legacy inline path; these pin the same isolation on
+// the file, with real memories behind the cache (selectStableRows resolves
+// member_ids to memories rows, so the fake 'g1'-style ids would not land).
+// ============================================================
+const FILE_SESSION_ID = 'w2-file-session';
+
+function seedStableMemories() {
+  const db = openDb();
+  db.exec('DELETE FROM memories');
+  db.exec('DELETE FROM injection_cache');
+  db.exec('DELETE FROM recent_injections');
+  db.exec('DELETE FROM session_context');
+  db.exec("DELETE FROM config_kv WHERE key = 'mode'");
+
+  const now = Date.now();
+  const insert = db.prepare(
+    `INSERT INTO memories (scope, project_key, type, content, source, trust_score,
+                           status, decay_status, created_at, updated_at, last_touched_at)
+     VALUES (?, ?, 'rule', ?, 'auto_inferred', 0.5, 'active', 'active', ?, ?, ?)`
+  );
+  insert.run('global', null, 'GLOBAL-STABLE-MARK', now, now, now);
+  insert.run('project', KEY_A, 'PROJ-A-STABLE-MARK', now, now, now);
+  insert.run('project', KEY_B, 'PROJ-B-STABLE-MARK', now, now, now);
+  rebuildInjectionCache(db, KEY_A);
+  rebuildInjectionCache(db, KEY_B);
+  return db;
+}
+
+async function runFileBasedSessionStart(disableScopeIsolation) {
+  writeFileSync(CONFIG_PATH, JSON.stringify({ eval: { disable_scope_isolation: disableScopeIsolation } }));
+  // Swallowed, not passed through: the switch-on warning is asserted by the
+  // legacy tests above and would only be noise here.
+  const original = process.stderr.write;
+  process.stderr.write = () => true;
+  try {
+    const out = await handleSessionStart({ cwd: PROJ_A_CWD, session_id: FILE_SESSION_ID });
+    return { out, text: readFileSync(getContextFilePath(PROJ_A_CWD, FILE_SESSION_ID), 'utf8') };
+  } finally {
+    process.stderr.write = original;
+  }
+}
+
+test('file-based session_start writes only own project + global into the context file when the switch is off', async () => {
+  const db = seedStableMemories();
+  const { out, text } = await runFileBasedSessionStart(false);
+  assert.match(text, /GLOBAL-STABLE-MARK/);
+  assert.match(text, /PROJ-A-STABLE-MARK/);
+  assert.doesNotMatch(text, /PROJ-B-STABLE-MARK/, 'the other project row must not leak into the file');
+  assert.doesNotMatch(out.additionalContext, /STABLE-MARK/);
+  assert.ok(db.prepare('SELECT COUNT(*) AS n FROM recent_injections').get().n > 0);
+});
+
+test('file-based session_start reads every scope and writes no recent_injections while the switch is on', async () => {
+  const db = seedStableMemories();
+  const { text } = await runFileBasedSessionStart(true);
+  assert.match(text, /GLOBAL-STABLE-MARK/);
+  assert.match(text, /PROJ-A-STABLE-MARK/);
+  assert.match(text, /PROJ-B-STABLE-MARK/);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM recent_injections').get().n, 0);
 });
 
 test.after(() => {

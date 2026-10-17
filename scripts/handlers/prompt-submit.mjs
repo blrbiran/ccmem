@@ -1,7 +1,7 @@
 import { openDb } from '../lib/db.mjs';
 import { inferPositiveFeedback, inferPrevTurnOutcome } from '../lib/feedback.mjs';
 import { loadConfig } from '../lib/config.mjs';
-import { clearContextFile, contextFileName, writeContextFile } from '../lib/context-file.mjs';
+import { clearContextFile, contextFileName, selectStableRows, writeContextFile } from '../lib/context-file.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
 import { getNextPromptIdx, writeRecentInjection } from '../lib/recent-injections.mjs';
@@ -74,8 +74,11 @@ export async function handlePromptSubmit(hookData) {
 
     if (useFileBased) {
       try {
-        if (rows.length) {
-          const result = writeContextFile(hookData.cwd, rows, hookData.session_id, db);
+        // The rewrite keeps the session's stable section; only when there is
+        // neither stable nor retrieved content does the file get the sentinel.
+        const stableRows = selectStableRows(db, projectKey, { disableScopeIsolation });
+        if (rows.length || stableRows.length) {
+          const result = writeContextFile(hookData.cwd, rows, hookData.session_id, db, { stableRows, projectKey });
           contextFileWritten = result.written;
           contextFileBytes = result.bytes;
         } else {

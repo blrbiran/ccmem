@@ -15,7 +15,7 @@ const HOOK = path.join(ROOT, 'scripts/hook.mjs');
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { callClaudeP } = await import('../../scripts/daemon/claude-p.mjs');
-const { getContextFilePath, CONTEXT_EMPTY_SENTINEL } = await import('../../scripts/lib/context-file.mjs');
+const { getContextFilePath } = await import('../../scripts/lib/context-file.mjs');
 const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
@@ -618,7 +618,11 @@ test('prompt-submit falls back to non-FTS retrieval when FTS5 is unavailable', a
   });
 });
 
-test('prompt-submit replaces an existing context file with the no relevant sentinel when retrieval is empty', async () => {
+// Spec §5.2: the session's stable section stays in the file across rewrites,
+// so an empty retrieval now drops only the stale retrieved block. The
+// sentinel path (neither stable nor retrieved rows) is covered in
+// bounded-session-start.test.mjs.
+test('prompt-submit drops the stale retrieved block but keeps the stable section when retrieval is empty', async () => {
   const sessionId = 's-empty-1';
   await saveProjectFact('Existing context memory under /app/api');
   await runPromptSubmit({
@@ -626,6 +630,7 @@ test('prompt-submit replaces an existing context file with the no relevant senti
     session_id: sessionId,
     prompt: 'app api seed'
   });
+  assert.match(readFileSync(getContextFilePath(process.cwd(), sessionId), 'utf8'), /=== ccmem: retrieved for current prompt ===/);
 
   const result = await runPromptSubmit({
     cwd: process.cwd(),
@@ -633,8 +638,10 @@ test('prompt-submit replaces an existing context file with the no relevant senti
     prompt: 'completely unrelated phrase that matches nothing'
   });
 
+  const text = readFileSync(getContextFilePath(process.cwd(), sessionId), 'utf8');
   assert.equal(result.additionalContext, '');
-  assert.equal(readFileSync(getContextFilePath(process.cwd(), sessionId), 'utf8'), CONTEXT_EMPTY_SENTINEL);
+  assert.doesNotMatch(text, /=== ccmem: retrieved for current prompt ===/);
+  assert.match(text, /=== ccmem: stable context ===[\s\S]*Existing context memory under \/app\/api/);
 });
 
 test('prompt-submit falls back to inline additionalContext when file-based injection is disabled', async () => {

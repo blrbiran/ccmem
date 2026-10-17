@@ -4,7 +4,12 @@ import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
 import { writeRecentInjection } from '../lib/recent-injections.mjs';
 import { runSessionStartMiniPrelude } from '../lib/tier15.mjs';
-import { cleanupStaleContextFiles, contextFileName } from '../lib/context-file.mjs';
+import {
+  cleanupStaleContextFiles,
+  contextFileName,
+  selectStableRows,
+  writeContextFile
+} from '../lib/context-file.mjs';
 
 const SHADOW_NOTICE = 'ccmem: mode=shadow (read-only diagnostic — no writes, no inject)\n';
 const SCOPE_ISOLATION_NOTICE =
@@ -75,9 +80,13 @@ export async function handleSessionStart(hookData) {
     // failure. Do not wrap this in try/catch.
     const config = loadConfig();
     const disableScopeIsolation = config?.eval?.disable_scope_isolation === true;
+    const useFileBased = config.injection?.file_based !== false;
     const scopeClause = disableScopeIsolation ? '' : "WHERE scope = 'global' OR scope = ?";
     const scopeParams = disableScopeIsolation ? [] : [`project:${projectKey}`];
-    const rows = db.prepare(
+    // File-based (default): the stable rules go into the context file, ranked
+    // and bounded (spec §5.2). Legacy inline path: the whole rendered cache.
+    const stableRows = useFileBased ? selectStableRows(db, projectKey, { disableScopeIsolation }) : [];
+    const rows = useFileBased ? [] : db.prepare(
       `SELECT rendered_text, member_ids
        FROM injection_cache
        ${scopeClause}
@@ -100,7 +109,22 @@ export async function handleSessionStart(hookData) {
 
     upsertSessionContext(db, hookData.session_id, projectKey);
 
-    if (hookData.session_id && stableContext && !disableScopeIsolation) {
+    if (useFileBased) {
+      cleanupStaleContextFiles(hookData.cwd, hookData.session_id);
+      let injectedIds = [];
+      if (stableRows.length) {
+        try {
+          const result = writeContextFile(hookData.cwd, [], hookData.session_id, db, { stableRows, projectKey });
+          injectedIds = result.stableIds;
+        } catch (error) {
+          process.stderr.write(`ccmem: context file write failed (${error.message})\n`);
+        }
+      }
+      // Only the rows that landed in the file count as injected.
+      if (hookData.session_id && injectedIds.length && !disableScopeIsolation) {
+        writeRecentInjection(db, hookData.session_id, 0, 'session_start', injectedIds);
+      }
+    } else if (hookData.session_id && stableContext && !disableScopeIsolation) {
       const injectedIds = [...new Set(rows.flatMap((row) => parseMemberIds(row.member_ids)))];
       writeRecentInjection(db, hookData.session_id, 0, 'session_start', injectedIds);
     }
@@ -109,13 +133,10 @@ export async function handleSessionStart(hookData) {
       runSessionStartMiniPrelude(db);
     } catch {}
 
-    const useFileBased = config.injection?.file_based !== false;
-    if (useFileBased) {
-      cleanupStaleContextFiles(hookData.cwd, hookData.session_id);
-    }
-
+    // File-based: the conversation gets the short, fixed read instruction
+    // only, identical on every call of a session (stable cache prefix).
     const additionalContext = useFileBased
-      ? [stableContext, buildReadInstruction(hookData.session_id)].filter(Boolean).join('\n\n')
+      ? buildReadInstruction(hookData.session_id)
       : stableContext;
     return { additionalContext };
   } finally {

@@ -7,6 +7,7 @@ import { callClaudeP } from '../../daemon/claude-p.mjs';
 import { insertMemory } from './save.mjs';
 import { buildMergePrompt, MERGE_SCHEMA } from '../llm-prompts/contradiction-merge.mjs';
 import { parseRawLlmOutput } from '../llm-parse.mjs';
+import { refineContentToLimit } from '../content-refiner.mjs';
 
 function clampLimit(value, fallback = 10) {
   const n = Number(value ?? fallback);
@@ -268,7 +269,31 @@ async function mergeContradictionPair(db, row, merge) {
       return { action: outcome?.action ?? 'skip', touched: [] };
     }
 
-    const mergedContent = String(merged.merged_content ?? '').slice(0, 500);
+    // The merge is rewritten to fit before the human is asked to confirm it, so
+    // what they approve is exactly what gets stored. It is never sliced to fit:
+    // a merge that cannot be rewritten is audited whole and reported as a
+    // failed merge (spec A2).
+    const cfg = loadConfig();
+    const refined = await refineContentToLimit(String(merged.merged_content ?? ''), {
+      enabled: cfg.summarize?.content_refiner?.enabled !== false,
+      maxChars: Number(cfg.save?.max_chars_per_memory ?? 500),
+      taskType: 'contradiction_merge'
+    });
+    if (!refined.ok) {
+      writeAudit(db, 'contradiction_merge_refine_rejected', memA.id, {
+        alert_id: row.id,
+        reason: refined.reason,
+        content: refined.content,
+        source_ids: [memA.id, memB.id]
+      });
+      outcome = await merge(row, {
+        merge_possible: false,
+        error: `merged content is too long and could not be rewritten (${refined.reason})`
+      });
+      return { action: outcome?.action ?? 'skip', touched: [] };
+    }
+
+    const mergedContent = refined.content;
     outcome = await merge(row, {
       merge_possible: true,
       merged_content: mergedContent

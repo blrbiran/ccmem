@@ -9,7 +9,8 @@ import { rebuildInjectionCache } from '../../lib/injection-cache.mjs';
 import { parseRawLlmOutput } from '../../lib/llm-parse.mjs';
 import { buildStaleCheckPrompt, STALE_CHECK_SCHEMA } from '../../lib/llm-prompts/stale-check.mjs';
 import { buildSynthesisPromptV2, SYNTHESIS_V2_SCHEMA } from '../../lib/llm-prompts/weekly-synthesis-v2.mjs';
-import { scoreSynthesisOutput } from '../../lib/synthesis-quality.mjs';
+import { scoreSynthesisOutput, synthesisMaxChars } from '../../lib/synthesis-quality.mjs';
+import { refineContentToLimit } from '../../lib/content-refiner.mjs';
 import { markLeaseComplete } from '../../lib/task-runs.mjs';
 
 function hasConfiguredClaudeBridge() {
@@ -104,7 +105,7 @@ function parseSynthesisVerdict(raw) {
   const mergedDuplicates = Array.isArray(parsed.merged_duplicates)
     ? parsed.merged_duplicates
       .map((item) => ({
-        content: String(item?.content ?? '').slice(0, 500),
+        content: String(item?.content ?? ''),
         source_ids: normalizeSourceIds(item?.source_ids)
       }))
       .filter((item) => item.content.length > 0)
@@ -113,7 +114,7 @@ function parseSynthesisVerdict(raw) {
   const synthesized = Array.isArray(parsed.synthesized)
     ? parsed.synthesized
       .map((item) => ({
-        content: String(item?.content ?? '').slice(0, 500),
+        content: String(item?.content ?? ''),
         output_type: item?.output_type === 'rule' ? 'rule' : 'consolidated',
         source_ids: normalizeSourceIds(item?.source_ids),
         temporal_type: ['permanent', 'temporary', 'time-bound'].includes(item?.temporal_type) ? item.temporal_type : null
@@ -229,7 +230,7 @@ export function clusterBatchV2(batch, config) {
   return finalClusters;
 }
 
-async function applyMergedDuplicates(db, cluster, mergedDuplicates) {
+async function applyMergedDuplicates(db, cluster, mergedDuplicates, fitToLimit, maxChars) {
   let mergedCount = 0;
   const now = Date.now();
 
@@ -239,12 +240,17 @@ async function applyMergedDuplicates(db, cluster, mergedDuplicates) {
       continue;
     }
 
+    const content = await fitToLimit(merged.content, maxChars, sources, 'merged_duplicate');
+    if (content == null) {
+      continue;
+    }
+
     const keepId = sources[0];
     db.prepare(
       `UPDATE memories
        SET content = ?, updated_at = ?, last_touched_at = ?
        WHERE id = ?`
-    ).run(merged.content.slice(0, 500), now, now, keepId);
+    ).run(content, now, now, keepId);
 
     for (const sourceId of sources.slice(1)) {
       db.prepare(
@@ -256,7 +262,7 @@ async function applyMergedDuplicates(db, cluster, mergedDuplicates) {
 
     writeAudit(db, 'synthesis_dedup_merged', keepId, {
       superseded_ids: sources.slice(1),
-      merged_content_excerpt: merged.content.slice(0, 80)
+      merged_content_excerpt: content.slice(0, 80)
     });
     mergedCount += 1;
   }
@@ -276,7 +282,7 @@ async function maybeEmbedSynthesis(provider, cfg, content) {
   };
 }
 
-async function applySynthesized(db, scope, cluster, synthesized, existing, provider, cfg) {
+async function applySynthesized(db, scope, cluster, synthesized, existing, provider, cfg, fitToLimit) {
   let proposed = 0;
   let accepted = 0;
   let rejected = 0;
@@ -288,6 +294,13 @@ async function applySynthesized(db, scope, cluster, synthesized, existing, provi
     if (!firstOutputType) {
       firstOutputType = item.output_type;
     }
+
+    const content = await fitToLimit(item.content, synthesisMaxChars(item.output_type), item.source_ids, 'synthesized');
+    if (content == null) {
+      rejected += 1;
+      continue;
+    }
+    item.content = content;
 
     const quality = scoreSynthesisOutput(db, item, cluster);
     if (!quality.pass) {
@@ -391,6 +404,28 @@ async function runScopeSynthesis(db, scope, payload, cfg, provider) {
   let mockConsumed = false;
   let hadClusterWork = false;
 
+  // Over-long LLM output is rewritten to the limit or rejected with its full
+  // text audited; it is never sliced to fit, and a rejected merge supersedes
+  // nothing (spec A2).
+  const fitToLimit = async (content, maxChars, sourceIds, kind) => {
+    const refined = await refineContentToLimit(content, {
+      enabled: cfg.summarize?.content_refiner?.enabled !== false,
+      maxChars,
+      taskType: 'weekly_synthesis',
+      mockOutputs: payload.refiner_llm_outputs
+    });
+    if (refined.ok) {
+      return refined.content;
+    }
+    writeAudit(db, 'weekly_synthesis_refine_rejected', null, {
+      kind,
+      reason: refined.reason,
+      content: refined.content,
+      source_ids: sourceIds
+    });
+    return null;
+  };
+
   for (const cluster of clusters) {
     if (cluster.length < 2) {
       continue;
@@ -421,8 +456,10 @@ async function runScopeSynthesis(db, scope, payload, cfg, provider) {
     }
 
     const verdict = parseSynthesisVerdict(raw);
-    dedupMerged += await applyMergedDuplicates(db, cluster, verdict.merged_duplicates);
-    const applied = await applySynthesized(db, scope, cluster, verdict.synthesized, existing, provider, cfg);
+    dedupMerged += await applyMergedDuplicates(
+      db, cluster, verdict.merged_duplicates, fitToLimit, Number(cfg.save?.max_chars_per_memory ?? 500)
+    );
+    const applied = await applySynthesized(db, scope, cluster, verdict.synthesized, existing, provider, cfg, fitToLimit);
     synthProposed += applied.proposed;
     synthAccepted += applied.accepted;
     synthRejected += applied.rejected;

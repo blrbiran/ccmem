@@ -17,6 +17,7 @@ import { cmdSave } from './lib/cmd/save.mjs';
 import { cmdShow } from './lib/cmd/show.mjs';
 import { cmdStats } from './lib/cmd/stats.mjs';
 import { getCodexHome, installCodex, REPO_ROOT, uninstallCodex } from './lib/install/codex.mjs';
+import { getOmpAgentDir, installOmp, uninstallOmp } from './lib/install/omp.mjs';
 import { getDataRoot } from './lib/paths.mjs';
 import { resolveProjectKey } from './lib/project-key.mjs';
 
@@ -52,8 +53,8 @@ function printHelp() {
     '  stats [--json|--buckets]\n' +
     '  promote <id> [--global]\n' +
     '  resurrect [--quarantined|--alerts|--revalidation|--contradictions|--promote-candidates] [--all]\n' +
-    '  install <codex>     add the ccmem hooks to the agent\'s config (backs up, shows the diff)\n' +
-    '  uninstall <codex>   remove exactly what install added\n'
+    '  install <codex|omp>     add the ccmem hooks (codex) or extension (omp) to the agent (backs up, shows the diff)\n' +
+    '  uninstall <codex|omp>   remove exactly what install added\n'
   );
 }
 
@@ -203,7 +204,7 @@ if (verb === 'import' && args.filter((arg) => !arg.startsWith('--')).length === 
 }
 
 // Agents the install/uninstall verbs know; each has its own installer module.
-const INSTALL_TARGETS = ['codex'];
+const INSTALL_TARGETS = ['codex', 'omp'];
 
 if ((verb === 'install' || verb === 'uninstall') && !INSTALL_TARGETS.includes(args[0])) {
   printHelp();
@@ -542,6 +543,46 @@ try {
       }
       if (result.changed) {
         process.stdout.write('Codex\'s own approval records for the removed hooks stay in its config.toml; ccmem never edits that file.\n');
+      }
+    }
+  } else if (verb === 'install' && args[0] === 'omp') {
+    let result;
+    try {
+      result = installOmp({ agentDir: getOmpAgentDir(), dataRoot: getDataRoot(), repoRoot: REPO_ROOT, execPath: process.execPath });
+    } catch (error) {
+      process.stderr.write(`ccmem: ${error.message}\n`);
+      process.exitCode = 1;
+    }
+    if (result) {
+      const target = `${getOmpAgentDir()}/extensions/ccmem.ts`;
+      if (result.changed) {
+        process.stdout.write(`ccmem: added the ccmem extension at ${target}\n`);
+        if (result.backup) {
+          process.stdout.write(`ccmem: the previous file is backed up at ${result.backup}\n`);
+        }
+        process.stdout.write(`\n${result.diff}\n`);
+        process.stdout.write('OMP loads it the next time it starts; ccmem skips subagents and print-mode runs.\n');
+      } else {
+        process.stdout.write(`ccmem: the ccmem extension is already installed; nothing changed (${target})\n`);
+      }
+    }
+  } else if (verb === 'uninstall' && args[0] === 'omp') {
+    let result;
+    try {
+      result = uninstallOmp({ agentDir: getOmpAgentDir(), dataRoot: getDataRoot() });
+    } catch (error) {
+      process.stderr.write(`ccmem: ${error.message}\n`);
+      process.exitCode = 1;
+    }
+    if (result) {
+      const target = `${getOmpAgentDir()}/extensions/ccmem.ts`;
+      if (!result.changed) {
+        process.stdout.write('ccmem: no ccmem extension to remove from OMP\n');
+      } else {
+        if (result.editedBackup) {
+          process.stdout.write(`ccmem: ${target} was changed since install; those bytes are saved at ${result.editedBackup}\n`);
+        }
+        process.stdout.write(`ccmem: removed the ccmem extension; ${target} is back to what it was before install\n`);
       }
     }
   } else if (verb === 'save') {

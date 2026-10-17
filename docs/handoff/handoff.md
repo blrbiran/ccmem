@@ -259,8 +259,8 @@ Orca 侧已有 Codex 与 OMP 的 agent 适配经验（见 §6 指向的 Orca 文
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-16（Orca 会话 `a852f96a`，「每个 agent 都能跑需求链」一轮）：Orca 入口为 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` 的 §3.3 与 §4（在 Orca 分支 `codex/every-agent-chain` 上，人合进 main 后可见）；改动只在 Orca 与 ccloop。
-**本轮不动本仓代码与配置**（上一轮的 `core.hooksPath` unset 仍是现状）。人的下一个项目「ccmem 适配 Codex／OMP」见 §5.3，仍未开始。
+2026-10-17（Orca 会话 `4de777f4`，「花了钱就一定要拿到能用的估算」一轮）：Orca 入口为 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` 的 §3.2a 与 §4（在 Orca 分支 `codex/round-20261017` 上，人合进 main 之后可见）。改动只在 Orca，**本仓的代码和配置都没动**，§6.1 的接口也没变。
+人的下一个项目「ccmem 适配 Codex／OMP」见 §5.3：人裁定放到下一会话做，先 brainstorming，**仍未开始**。embedding 额度（429）仍等人处理。
 
 ---
 

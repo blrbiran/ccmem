@@ -80,6 +80,9 @@ Default to surfacing uncertainty, not hiding it.
 | `~/.claude/ccmem/*.db-wal` / `*.db-shm` | SQLite 预写日志 —— **删了它就是删数据** |
 | `~/.claude/ccmem/config.json` | 运行配置 |
 | `~/.claude/ccmem/*.jsonl` | 指标与探针输出 |
+| `${CODEX_HOME:-~/.codex}/hooks.json` | `ccmem install codex` 写入；旁边 `hooks.json.bak.<ms>`。残留：写入失败时原文件不动或留 `.bak`；`uninstall codex` 还原／剥离 |
+| `<agent dir>/extensions/ccmem.ts`（默认 `~/.omp/agent/`） | `ccmem install omp` 写入。残留：失败时不留半写文件；`uninstall omp` 删除 |
+| `<dataRoot>/installs/{codex,omp}.json` | 上两项的安装清单（uninstall 靠它）。残留：清单在而目标文件缺失 ⇒ 重跑 install／uninstall 报错并指路 |
 
 ## 铁律
 
@@ -94,7 +97,9 @@ Default to surfacing uncertainty, not hiding it.
 5. **hooks 会在每次会话／每次 prompt 上跑**（`SessionStart` / `UserPromptSubmit` / `Stop`，超时 2–5s）。
    改 `hooks/**` 或 `scripts/handlers/**` 属于**影响每一次交互**的改动：
    **一个未捕获的异常或一次超时，会影响用户的每一个会话，而不只是本仓库。**
-6. **删记忆一律走 `forget` / 隔离流程，不许直接 `DELETE`**。
+6. **`install`／`uninstall` 只由人显式触发，开发与判据里不许对真实 `~/.codex`、`~/.omp` 跑** ——
+   判据一律设 `CODEX_HOME`／`CCMEM_OMP_AGENT_DIR`／`CCMEM_DATA_ROOT` 到临时目录。新建目录 `0700`、文件 `0600`，已存在文件保留原 mode。
+7. **删记忆一律走 `forget` / 隔离流程，不许直接 `DELETE`**。
    记忆有 `trust_score`、`decay_status`、`quarantined_at` 等状态机，绕过它会留下不一致的行。
 
 ## 证据纪律（与姊妹仓库一致）

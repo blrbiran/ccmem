@@ -1,12 +1,12 @@
 # ccmem
 
-Cross-session memory for Claude Code, backed by SQLite.
+Cross-session memory for Claude Code, Codex CLI, and oh-my-pi (OMP), backed by SQLite.
 
 ccmem stores reusable facts, rules, and episodes, injects relevant context into future sessions, and optionally runs a background daemon for heavier maintenance and synthesis tasks.
 
 ## Requirements
 
-- Claude Code
+- Claude Code (primary), and optionally Codex CLI or OMP (see below)
 - Node.js 22.5+ 
 - macOS if you want `ccmem admin daemon install` (the current daemon installer targets `launchd`)
 
@@ -97,6 +97,57 @@ ccmem resurrect
 ccmem resurrect --quarantined
 ccmem resurrect --alerts
 ```
+
+## Codex CLI and OMP
+
+Claude Code uses the plugin. Codex and OMP are wired in with an explicit install command; the data root stays `~/.claude/ccmem/` (or `CCMEM_DATA_ROOT`).
+
+The `node` binary recorded in the installed hooks/extension is the one that ran `ccmem install` (`process.execPath`), so run it with the Node you want them to use.
+
+### Codex
+
+```bash
+ccmem install codex
+ccmem uninstall codex
+```
+
+- `install` writes `${CODEX_HOME:-~/.codex}/hooks.json` (never `config.toml`), backs up an existing file to `hooks.json.bak.<ms>`, and records what it added in `<dataRoot>/installs/codex.json`. It refuses when `config.toml` defines `[hooks]`.
+- Then open Codex and approve the three ccmem hooks (SessionStart, UserPromptSubmit, Stop) with `/hooks`. ccmem never bypasses Codex's hook trust. Approval is needed again whenever the hook definitions change (for example after a reinstall with a different `node`).
+- `uninstall` restores the backup or strips exactly what install added. Removing an entry can shift hook indices and revoke trust of user hooks added after ccmem in the same event. Trust records stay in `config.toml`.
+
+### OMP
+
+```bash
+ccmem install omp
+ccmem uninstall omp
+```
+
+- `install` writes `<agent dir>/extensions/ccmem.ts` and records it in `<dataRoot>/installs/omp.json`. The agent dir is `CCMEM_OMP_AGENT_DIR`, else OMP's own rules (profile, `PI_CODING_AGENT_DIR`), else `~/.omp/agent`. Install prints the path it used.
+
+### Injection
+
+Session start injects one short instruction to read a per-session file, `.ccmem/context-<session>.md`. That file holds the stable rules and the retrieved memories, bounded (stable section 4096 bytes, of which 2048 for the project share; whole file 12288 bytes). This applies to Claude Code too.
+
+### Background LLM backend
+
+The daemon's summarization and synthesis tasks run through `llm.backend` (`claude`, `codex`, or `omp`). Related config: `llm.backend_order`, `llm.models` (codex defaults to `gpt-6-luna`; use `""`, not `null`, to drop `-m`), `llm.commands`.
+
+```bash
+ccmem admin llm status
+ccmem admin llm use codex
+ccmem admin llm order claude,codex,omp
+ccmem admin llm approve
+ccmem admin llm reject
+```
+
+- When a backend is exhausted (usage limit or a long retry-after), ccmem opens a failover proposal and shows a notice in the context file and at session start. It never switches backend without `ccmem admin llm approve`; returning to the preferred backend after its reset time is automatic. Short claude 429s are plain rate limits, not exhaustion.
+- After changing `llm.backend`, re-run `ccmem admin daemon install`; until then `daemon status` reports PATH as `benign_changed`.
+- Known gap: the Codex summarizer still loads `$CODEX_HOME/AGENTS.md`.
+
+### Notes
+
+- Summarized output is never silently truncated: an over-long result is rewritten by the refiner or rejected with an audit row (`summarize_refine_rejected`, `monthly_meta_refine_rejected`, `weekly_synthesis_refine_rejected`, `contradiction_merge_refine_rejected`).
+- `ccmem list` and `ccmem show` display each memory's `origin_agent`. `ccmem export` does not include it (Orca's export schema is strict).
 
 ## Daemon management
 

@@ -43,6 +43,12 @@ STUB
 test_home="$data_root/home"
 /bin/mkdir -m 0700 "$test_home" || exit 1
 
+# Every os.tmpdir() a test calls lands under the data root too, so a test that
+# forgets to remove its own mkdtemp dir is cleaned up above instead of piling
+# up in the real $TMPDIR (the suite itself can never see such a leak).
+test_tmp="$data_root/tmp"
+/bin/mkdir -m 0700 "$test_tmp" || exit 1
+
 env -u CCMEM_CONFIG_PATH -u CODEX_HOME -u CCMEM_OMP_AGENT_DIR -u PI_CODING_AGENT_DIR \
   -u OMP_PROFILE -u PI_PROFILE -u PI_CONFIG_DIR -u CCMEM_LAUNCHAGENT_DIR \
-  HOME="$test_home" CCMEM_DATA_ROOT="$data_root" PATH="$stub_bin:$PATH" /usr/local/bin/node --test "$@"
+  HOME="$test_home" TMPDIR="$test_tmp" CCMEM_DATA_ROOT="$data_root" PATH="$stub_bin:$PATH" /usr/local/bin/node --test "$@"

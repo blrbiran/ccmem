@@ -125,6 +125,23 @@ export const DEFAULT_CONFIG = {
     alert_retention_days: 60
   },
   llm: {
+    // Which agent CLI runs the daemon's LLM tasks: 'claude', 'codex' or 'omp'.
+    backend: 'claude',
+    // Failover order once a backend reports its quota exhausted (switching
+    // needs the human's approval).
+    backend_order: ['claude', 'codex', 'omp'],
+    // null = no --model flag: the CLI's own default (OMP: its default role).
+    models: {
+      claude: null,
+      codex: 'gpt-6-luna',
+      omp: null
+    },
+    // Executable per backend. CCMEM_CLAUDE_P_COMMAND still overrides claude.
+    commands: {
+      claude: 'claude',
+      codex: 'codex',
+      omp: 'omp'
+    },
     claude_p_timeout_per_task: {
       summarize_pending: 120000,
       l4_review: 90000,

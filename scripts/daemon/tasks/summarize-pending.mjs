@@ -64,13 +64,13 @@ function readTranscriptExcerpt(transcriptPath, lastMessageSeq, maxChars, agent) 
   };
 }
 
-function buildSummarizePrompt(transcript) {
+export function buildSummarizePrompt(transcript) {
   return [
     'You are a memory extraction assistant.',
     'Extract durable cross-session memories as JSON.',
     'Return an array or an object with a synthesized array.',
     'Before extracting each candidate, apply this cross-session test:',
-    '  "Would a FRESH Claude Code session (no prior context) benefit from knowing this?"',
+    '  "Would a FRESH coding-agent session (no prior context) benefit from knowing this?"',
     '  - YES -> extract: user preferences, project conventions, recurring patterns, architectural decisions, tool chain choices, workflow rules',
     '  - NO  -> skip: one-time commands, debugging steps that led to a fix, test run results, version/schema numbers, commit messages, file edit sequences, build output summaries',
     'Additional DO NOT extract rules:',

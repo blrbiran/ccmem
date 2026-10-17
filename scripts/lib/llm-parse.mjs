@@ -10,6 +10,9 @@ function tryParseJson(raw) {
   }
 }
 
+// Only claude -p wraps its answer in a result envelope. Codex and OMP backends
+// hand back the model's own text (claude-p.mjs readResult), which passes through
+// here unchanged, so this stays safe to apply to every backend's output.
 function unwrapClaudeEnvelope(parsed) {
   let value = parsed;
 

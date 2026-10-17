@@ -122,6 +122,18 @@
     "alert_retention_days": 60
   },
   "llm": {
+    "backend": "claude",
+    "backend_order": ["claude", "codex", "omp"],
+    "models": {
+      "claude": null,
+      "codex": "gpt-6-luna",
+      "omp": null
+    },
+    "commands": {
+      "claude": "claude",
+      "codex": "codex",
+      "omp": "omp"
+    },
     "claude_p_timeout_per_task": {
       "summarize_pending": 120000,
       "l4_review": 90000,

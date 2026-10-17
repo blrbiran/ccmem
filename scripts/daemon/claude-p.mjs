@@ -1,70 +1,77 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import path from 'node:path';
 
 import { openDb } from '../lib/db.mjs';
 import { loadConfig } from '../lib/config.mjs';
-import { argsSelectJson, extractUsage } from '../lib/claude-p-usage.mjs';
+import { getDataRoot } from '../lib/paths.mjs';
 import { recordDaemonCost } from '../lib/metrics.mjs';
+import { claudeBackend, RATE_LIMIT_PATTERN, resolveCommand } from './backends/claude.mjs';
+import { codexBackend } from './backends/codex.mjs';
+import { ompBackend } from './backends/omp.mjs';
 
 const BLACKLIST_TTL_MS = 30 * 60 * 1000;
 
+const BACKENDS = {
+  claude: claudeBackend,
+  codex: codexBackend,
+  omp: ompBackend
+};
+
 let tail = Promise.resolve();
 
-function parseArgsEnv(raw) {
-  if (!raw) {
+export { resolveCommand };
+
+// Task 9 replaces this with resolveActiveBackend(db, config), which adds the
+// exhaustion state and approved failover on top of the same setting.
+function resolveBackend(cfg) {
+  const id = cfg.llm?.backend ?? 'claude';
+  const backend = BACKENDS[id];
+  if (!backend) {
+    throw new Error(`llm.backend '${id}' is not one of ${Object.keys(BACKENDS).join(', ')}`);
+  }
+  return backend;
+}
+
+function configuredString(map, id) {
+  const value = map?.[id];
+  return typeof value === 'string' && value ? value : null;
+}
+
+// A fresh, private directory per call, used as the child's cwd: no repo, so
+// no AGENTS.md / CLAUDE.md / rules get loaded into a summarization, and a
+// place for per-call files (Codex's last.txt and schema.json).
+function makeWorkDir(backendId) {
+  const root = path.join(getDataRoot(), 'tmp');
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  return mkdtempSync(path.join(root, `llm-${backendId}-`));
+}
+
+function removeWorkDir(workDir) {
+  try {
+    rmSync(workDir, { recursive: true, force: true });
+  } catch (error) {
+    process.stderr.write(`ccmem: could not remove ${workDir} (${error?.code ?? error?.message})\n`);
+  }
+}
+
+function readOutputFile(file) {
+  if (!file) {
     return null;
   }
-
   try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map((arg) => String(arg)) : null;
+    return readFileSync(file, 'utf8');
   } catch {
     return null;
   }
 }
 
-function withStructuredOutputArgs(args, jsonSchema) {
-  if (!jsonSchema) {
-    return args;
-  }
-
-  const nextArgs = [];
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (arg === '--output-format' || arg === '--json-schema') {
-      i += 1;
-      continue;
-    }
-    nextArgs.push(arg);
-  }
-
-  nextArgs.push('--output-format', 'json', '--json-schema', JSON.stringify(jsonSchema));
-  return nextArgs;
-}
-
-function resolveExtraArgs(taskType) {
-  if (!taskType) {
-    return [];
-  }
-
-  const extra = loadConfig().llm?.claude_p_extra_args_per_task?.[taskType];
-  return Array.isArray(extra) ? extra.map((arg) => String(arg)) : [];
-}
-
-export function resolveCommand(opts) {
-  const envArgs = parseArgsEnv(process.env.CCMEM_CLAUDE_P_ARGS_JSON);
-  const suppliedArgs = Array.isArray(opts.args) ? opts.args : envArgs;
-
-  // Extra args ride on the built-in argv only. A caller that spells out argv --
-  // including every integration test, which substitutes a fake binary through
-  // CCMEM_CLAUDE_P_ARGS_JSON -- owns it completely and gets nothing added.
-  const baseArgs = suppliedArgs
-    ?? ['-p', ...resolveExtraArgs(opts.taskType), '--output-format', 'text'];
-
-  return {
-    command: opts.command ?? process.env.CCMEM_CLAUDE_P_COMMAND ?? 'claude',
-    args: withStructuredOutputArgs(baseArgs, opts.jsonSchema)
-  };
+// An exhausted backend's task waits until the reported reset (or a minute when
+// none was reported), the same way a Claude 429 waits out its retry-after.
+function retryAfterFromReset(resetAt) {
+  const wait = resetAt == null ? 0 : resetAt - Date.now();
+  return wait > 60000 ? wait : 60000;
 }
 
 function resolveTimeoutMs(opts) {
@@ -79,7 +86,7 @@ function resolveTimeoutMs(opts) {
 
 function parseRetryAfterMs(stderr) {
   const text = String(stderr ?? '').trim();
-  if (!/(rate limit|too many requests|\b429\b)/i.test(text)) {
+  if (!RATE_LIMIT_PATTERN.test(text)) {
     return null;
   }
 
@@ -128,7 +135,26 @@ function registerBlacklistedSession(sessionId) {
 }
 
 function runClaudeP(prompt, opts, queuedAt) {
-  const { command, args } = resolveCommand(opts);
+  const cfg = loadConfig();
+  const backend = resolveBackend(cfg);
+  const workDir = makeWorkDir(backend.id);
+  let invocation;
+  try {
+    invocation = backend.buildInvocation(prompt, {
+      jsonSchema: opts.jsonSchema,
+      taskType: opts.taskType,
+      model: configuredString(cfg.llm?.models, backend.id),
+      // Claude resolves its own command (caller, then CCMEM_CLAUDE_P_COMMAND,
+      // then llm.commands.claude); the others have no env override.
+      command: backend.id === 'claude' ? opts.command : (opts.command ?? configuredString(cfg.llm?.commands, backend.id)),
+      args: opts.args,
+      workDir
+    });
+  } catch (error) {
+    removeWorkDir(workDir);
+    throw error;
+  }
+  const { command, args, outputFormat } = invocation;
   const timeoutMs = resolveTimeoutMs(opts);
   const tStart = Date.now();
   // Same clock libuv schedules the timeout on, on both macOS and Linux, so the
@@ -137,19 +163,28 @@ function runClaudeP(prompt, opts, queuedAt) {
   // tests/integration/v015-timeout-cost-visibility.test.mjs for what the pair
   // of numbers is able to tell apart.
   const tStartMono = performance.now();
-  const outputFormat = argsSelectJson(args) ? 'json' : 'text';
-  const childSessionId = opts.env?.CLAUDE_CODE_SESSION_ID ?? randomUUID();
   const childEnv = {
     ...process.env,
     ...opts.env,
-    CLAUDE_CODE_SESSION_ID: childSessionId,
+    ...invocation.env,
     CCMEM_INTERNAL: '1'
   };
 
-  registerBlacklistedSession(childSessionId);
+  // Only a claude child is a Claude Code session whose own hooks could report
+  // back to ccmem; blacklisting its id is that backend's second guard.
+  if (backend.id === 'claude') {
+    const childSessionId = opts.env?.CLAUDE_CODE_SESSION_ID ?? randomUUID();
+    childEnv.CLAUDE_CODE_SESSION_ID = childSessionId;
+    registerBlacklistedSession(childSessionId);
+  } else {
+    // An id inherited from whatever Claude session launched this process
+    // (a CLI run, a test) is not this child's and must not travel with it.
+    delete childEnv.CLAUDE_CODE_SESSION_ID;
+  }
 
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
+      cwd: workDir,
       env: childEnv,
       stdio: ['pipe', 'pipe', 'pipe']
     });
@@ -165,11 +200,13 @@ function runClaudeP(prompt, opts, queuedAt) {
 
       settled = true;
       clearTimeout(timer);
+      removeWorkDir(workDir);
 
       // Telemetry must never change control flow: recordDaemonCost swallows its
       // own failures, and this call sits before fn() only so a throw here could
       // not skip settling.
       recordDaemonCost({
+        backend: backend.id,
         task_type: opts.taskType ?? null,
         output_format: outputFormat,
         queue_wait_ms: tStart - queuedAt,
@@ -191,9 +228,7 @@ function runClaudeP(prompt, opts, queuedAt) {
         stdout_chars: stdout.length,
         exit_code: outcome.exitCode,
         timed_out: outcome.timedOut,
-        ...(outputFormat === 'json'
-          ? extractUsage(stdout)
-          : { input_tokens: null, output_tokens: null, total_cost_usd: null })
+        ...backend.extractUsage({ stdout, outputFormat })
       });
 
       fn(value);
@@ -201,7 +236,7 @@ function runClaudeP(prompt, opts, queuedAt) {
 
     const timer = setTimeout(() => {
       child.kill('SIGTERM');
-      finish(reject, new Error(`claude -p timeout after ${timeoutMs}ms`), { exitCode: null, timedOut: true });
+      finish(reject, new Error(`${backend.label} timeout after ${timeoutMs}ms`), { exitCode: null, timedOut: true });
     }, timeoutMs);
 
     child.stdout.on('data', (chunk) => {
@@ -215,13 +250,29 @@ function runClaudeP(prompt, opts, queuedAt) {
     child.on('error', (error) => finish(reject, error, { exitCode: null, timedOut: false }));
     child.on('close', (code) => {
       if (code === 0) {
-        finish(resolve, stdout, { exitCode: 0, timedOut: false });
+        // Read before finish(): finish removes the work dir the file lives in.
+        let result;
+        try {
+          result = backend.readResult({ stdout, outputFileText: readOutputFile(invocation.outputFile) });
+        } catch (error) {
+          finish(reject, error, { exitCode: 0, timedOut: false });
+          return;
+        }
+        finish(resolve, result, { exitCode: 0, timedOut: false });
         return;
       }
 
       const excerpt = stderr.trim().slice(0, 200);
-      const error = new Error(`claude -p exit ${code}: ${excerpt}`);
-      const retryAfter = parseRetryAfterMs(stderr);
+      const error = new Error(`${backend.label} exit ${code}: ${excerpt}`);
+      const exhaustion = backend.classifyExhaustion({ stderr, stdout, exitCode: code });
+      if (exhaustion.exhausted) {
+        error.exhaustion = { backend: backend.id, resetAt: exhaustion.resetAt };
+      }
+      // Claude keeps its retry-after parsing exactly; the others wait for the
+      // reset they reported.
+      const retryAfter = backend.id === 'claude'
+        ? parseRetryAfterMs(stderr)
+        : (exhaustion.exhausted ? retryAfterFromReset(exhaustion.resetAt) : null);
       if (retryAfter != null) {
         error.retryAfter = retryAfter;
       }
@@ -246,7 +297,7 @@ function runClaudeP(prompt, opts, queuedAt) {
       finish(reject, error, { exitCode: null, timedOut: false });
     });
 
-    child.stdin.end(String(prompt ?? ''));
+    child.stdin.end(invocation.stdin);
   });
 }
 

@@ -230,7 +230,12 @@ test('getOmpAgentDir follows OMP: profile, then PI_CODING_AGENT_DIR, then ~/.omp
 
 test('ccmem install omp writes into PI_CODING_AGENT_DIR when CCMEM_OMP_AGENT_DIR is unset', () => {
   const dirs = freshDirs();
-  const env = { ...process.env, PI_CODING_AGENT_DIR: dirs.agentDir, CCMEM_DATA_ROOT: dirs.dataRoot };
+  // With CCMEM_OMP_AGENT_DIR gone, a regression that ignores
+  // PI_CODING_AGENT_DIR falls back to ~/.omp/agent. HOME is a temp dir so that
+  // fallback lands here (and is caught below), never in the real ~/.omp.
+  const home = path.join(path.dirname(dirs.agentDir), 'home');
+  mkdirSync(home);
+  const env = { ...process.env, HOME: home, PI_CODING_AGENT_DIR: dirs.agentDir, CCMEM_DATA_ROOT: dirs.dataRoot };
   for (const name of ['CCMEM_OMP_AGENT_DIR', 'OMP_PROFILE', 'PI_PROFILE', 'PI_CONFIG_DIR']) {
     delete env[name];
   }
@@ -240,6 +245,7 @@ test('ccmem install omp writes into PI_CODING_AGENT_DIR when CCMEM_OMP_AGENT_DIR
   assert.equal(installed.status, 0, installed.stderr);
   assert.ok(installed.stdout.includes(`OMP agent directory ${dirs.agentDir} `), installed.stdout);
   assert.equal(readFileSync(dirs.target, 'utf8'), ompLoaderSource({ repoRoot: ROOT, execPath: NODE }));
+  assert.deepEqual(readdirSync(home), [], 'nothing may be written under HOME');
 
   const removed = run('uninstall', 'omp');
   assert.equal(removed.status, 0, removed.stderr);

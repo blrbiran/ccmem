@@ -369,7 +369,10 @@ test('install writes through a symlinked hooks.json, keeping the link and the mo
   assert.ok(lstatSync(target).isSymbolicLink(), 'the dotfile link must survive');
   assert.equal(mode(real), 0o640);
   assert.deepEqual(JSON.parse(readFileSync(real, 'utf8')).hooks.Stop[1], ccmemGroup('stop'));
-  assert.deepEqual(readdirSync(dirs.codexHome).filter((name) => name.endsWith('.tmp')), []);
+  // The atomic write's temp file sits next to the link's target, not the link.
+  for (const dir of [dirs.codexHome, path.dirname(real)]) {
+    assert.deepEqual(readdirSync(dir).filter((name) => name.endsWith('.tmp')), [], dir);
+  }
 });
 
 test('install refuses a node or repo path that the shell would split', () => {

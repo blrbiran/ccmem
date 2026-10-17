@@ -34,4 +34,15 @@ exit 1
 STUB
 /bin/chmod 0700 "$stub_bin/claude" || exit 1
 
-env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$data_root" PATH="$stub_bin:$PATH" /usr/local/bin/node --test "$@"
+# No test may reach the human's real home either: every default that derives
+# from os.homedir() (~/.claude/ccmem, ~/.codex, ~/.omp/agent,
+# ~/Library/LaunchAgents) lands in a temp HOME instead, so a test that forgets
+# its own override writes into this dir, not into real user data. The
+# variables that point OMP or Codex elsewhere are dropped for the same reason:
+# an inherited one would outrank the temp HOME.
+test_home="$data_root/home"
+/bin/mkdir -m 0700 "$test_home" || exit 1
+
+env -u CCMEM_CONFIG_PATH -u CODEX_HOME -u CCMEM_OMP_AGENT_DIR -u PI_CODING_AGENT_DIR \
+  -u OMP_PROFILE -u PI_PROFILE -u PI_CONFIG_DIR -u CCMEM_LAUNCHAGENT_DIR \
+  HOME="$test_home" CCMEM_DATA_ROOT="$data_root" PATH="$stub_bin:$PATH" /usr/local/bin/node --test "$@"

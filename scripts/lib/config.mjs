@@ -333,10 +333,10 @@ function applyV08Compatibility(config) {
 export class ConfigError extends Error {}
 
 export function loadConfig() {
-  // CCMEM_CONFIG_PATH has no persistent source — it is in no shell rc, no
-  // launchctl environment and no Claude setting — so it is present only in
-  // shells where someone exported it by hand, and absent in every process
-  // launched any other way. Returning DEFAULT_CONFIG when it is missing meant
+  // Whether a process has CCMEM_CONFIG_PATH depends on how it was launched
+  // and on what this machine exports (a shell rc, the launchd environment, a
+  // Claude setting, a daemon plist), so processes on the same store can
+  // disagree. Returning DEFAULT_CONFIG when it is missing meant
   // those processes silently ran a different embedding provider against the
   // same store than the ones that had it (Finding 12): hooks embedded queries
   // with MiniLM, produced a signature no stored vector carried, and retrieval

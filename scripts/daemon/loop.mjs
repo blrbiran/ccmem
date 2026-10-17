@@ -2,6 +2,7 @@ import { loadConfig } from '../lib/config.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { RAN_BY, tryClaimLease } from '../lib/task-runs.mjs';
 import { wakeRecently } from './wake.mjs';
+import { EXHAUSTED_RETRY_MARK } from './backend-state.mjs';
 
 const ERROR_EXCERPT_MAX = 200;
 const RETRY_DELAY_BASE_MS = 60_000;
@@ -317,10 +318,16 @@ function scheduleRetry(db, task, error, currentAttempt) {
 
   const enqueuedAt = Date.now();
   const delayMs = resolveRetryDelayMs(task, error, currentAttempt);
+  // A retry waiting on an exhausted backend is marked with it, so approving
+  // a switch away from that backend can run it at once (approveProposal).
+  const backend = exhausted ? String(error.exhaustion.backend ?? '') : '';
+  const mark = backend
+    ? `${EXHAUSTED_RETRY_MARK}${backend}: ${errorMessage(error)}`.slice(0, ERROR_EXCERPT_MAX)
+    : null;
   db.prepare(
-    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status, attempts)
-     VALUES (?, ?, ?, ?, 'queued', ?)`
-  ).run(task.type, task.payload ?? null, enqueuedAt + delayMs, enqueuedAt, currentAttempt);
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status, attempts, error_excerpt)
+     VALUES (?, ?, ?, ?, 'queued', ?, ?)`
+  ).run(task.type, task.payload ?? null, enqueuedAt + delayMs, enqueuedAt, currentAttempt, mark);
 
   return true;
 }

@@ -257,7 +257,7 @@ test('approve switches the next call to codex and audits from, to and reason', a
     await exhaustClaude(db);
   });
 
-  const approved = cli('admin', 'llm', 'approve');
+  const approved = cli('admin', 'llm', 'approve', '--yes');
   assert.equal(approved.status, 0, approved.stderr);
   assert.match(approved.stdout, /approved switch claude -> codex/);
 
@@ -271,12 +271,64 @@ test('approve switches the next call to codex and audits from, to and reason', a
   });
 });
 
+test('approve from a shell without a terminal is refused unless --yes: the notice is read by agents', async () => {
+  reset({ claude: 'limit' });
+  await withDbAsync(async (db) => {
+    await exhaustClaude(db);
+  });
+
+  // spawnSync gives the CLI a pipe for stdin, as an agent's tool call does.
+  const refused = cli('admin', 'llm', 'approve');
+  assert.equal(refused.status, 77, refused.stderr);
+  assert.match(refused.stderr, /refusing to approve a backend switch without a terminal/);
+  withDb((db) => {
+    assert.equal(openProposals(db).length, 1, 'the question stays open for the user');
+    assert.deepEqual(auditRows(db, 'llm_backend_switch'), [], 'nothing was switched');
+  });
+
+  assert.equal(cli('admin', 'llm', 'approve', '--yes').status, 0);
+  withDb((db) => assert.equal(auditRows(db, 'llm_backend_switch').length, 1));
+});
+
+test('approve runs the tasks that were waiting for the reset now, and only those', async () => {
+  reset({ claude: 'limit' });
+  const unrelatedAt = Date.now() + 7_200_000;
+  await withDbAsync(async (db) => {
+    await exhaustClaude(db);
+    // A task scheduled for later on its own (a cron run, an ordinary backoff)
+    // is not the approval's business.
+    db.prepare(
+      `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+       VALUES ('security_audit', '{"own":1}', ?, ?, 'queued')`
+    ).run(unrelatedAt, Date.now());
+    // Nor is one waiting on another backend's reset.
+    db.prepare(
+      `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status, error_excerpt)
+       VALUES ('security_audit', '{"own":2}', ?, ?, 'queued', 'backend_exhausted:omp: llm backend omp quota exhausted')`
+    ).run(unrelatedAt, Date.now());
+    const [waiting] = queuedTasks(db);
+    assert.ok(waiting.scheduled_for > Date.now() + 60_000 - 5_000, 'precondition: spaced toward the reset');
+  });
+
+  const beforeApprove = Date.now();
+  const approved = cli('admin', 'llm', 'approve', '--yes');
+  assert.equal(approved.status, 0, approved.stderr);
+  assert.match(approved.stdout, /\(1 waiting task\(s\) run now\)/);
+  withDb((db) => {
+    const [retry, unrelated, otherBackend] = queuedTasks(db);
+    assert.ok(retry.scheduled_for >= beforeApprove && retry.scheduled_for <= Date.now(), 'the waiting retry is due now');
+    assert.equal(unrelated.scheduled_for, unrelatedAt, 'an unrelated queued task keeps its time');
+    assert.equal(otherBackend.scheduled_for, unrelatedAt, 'a task waiting on omp keeps its time');
+    assert.equal(auditRows(db, 'llm_backend_switch')[0].rescheduled_tasks, 1);
+  });
+});
+
 test('after the reset time passes, work goes back to claude with no approval', async () => {
   reset({ claude: 'limit' });
   await withDbAsync(async (db) => {
     await exhaustClaude(db);
   });
-  assert.equal(cli('admin', 'llm', 'approve').status, 0);
+  assert.equal(cli('admin', 'llm', 'approve', '--yes').status, 0);
 
   const until = withDb((db) => db.prepare(`SELECT exhausted_until FROM llm_backend_state WHERE backend = 'claude'`).get().exhausted_until);
   withDb((db) => {
@@ -333,7 +385,7 @@ test('an open proposal leads the session-start context file until it is answered
   assert.match(lines[0], /^<!-- content-hash: [a-f0-9]+ -->$/);
   assert.equal(
     lines[1],
-    `ccmem: claude quota exhausted until ${new Date(until).toISOString()}; run \`ccmem admin llm approve\` to switch background work to codex.`
+    `ccmem: claude quota exhausted until ${new Date(until).toISOString()}. Tell the user; only the user may switch background work to codex, by running \`ccmem admin llm approve\` themselves. Do not run it.`
   );
 
   assert.equal(cli('admin', 'llm', 'reject').status, 0);
@@ -558,7 +610,7 @@ test('approving a proposal whose backend recovered drops it instead of logging a
   });
   withDb((db) => db.prepare(`UPDATE llm_backend_state SET exhausted_until = ? WHERE backend = 'claude'`).run(Date.now() - 1));
 
-  const approved = cli('admin', 'llm', 'approve');
+  const approved = cli('admin', 'llm', 'approve', '--yes');
   assert.equal(approved.status, 1);
   assert.match(approved.stdout, /claude is no longer exhausted; the switch to codex was dropped, not approved/);
   withDb((db) => {
@@ -574,7 +626,7 @@ test('reject is audited, and an unknown reset reads as unknown', async () => {
   });
   withDb((db) => {
     db.prepare(`UPDATE llm_backend_state SET exhausted_until = NULL WHERE backend = 'claude'`).run();
-    assert.match(proposalNotice(db), /^ccmem: claude quota exhausted until unknown; run/);
+    assert.match(proposalNotice(db), /^ccmem: claude quota exhausted until unknown\. Tell the user;/);
   });
   assert.equal(cli('admin', 'llm', 'reject').status, 0);
   withDb((db) => {

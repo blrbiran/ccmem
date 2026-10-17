@@ -47,7 +47,7 @@ function printHelp() {
     '  audit show <id>\n' +
     '  admin daemon <status|start|stop|restart|install|uninstall>\n' +
     '  admin cron <list|run>\n' +
-    '  admin llm <status|use <claude|codex|omp>|order <a,b,c>|approve|reject>\n' +
+    '  admin llm <status|use <claude|codex|omp>|order <a,b,c>|approve [--yes]|reject>\n' +
     '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina>]\n' +
     '  admin retrieval-check [--corpus <path>] [--k 1,3,5]\n' +
     '  admin diagnose [--retrieval] [--embedding-circuit <open|close|status>] [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections|--context-history|--feedback|--cost|--config] [--session ID] [--hash HASH] [--days N]\n' +
@@ -784,11 +784,20 @@ try {
   } else if (verb === 'admin' && args[0] === 'llm') {
     const llmVerb = args[1];
     let result;
-    try {
-      result = cmdAdminLlm(getDb(), { verb: llmVerb, value: args[2] ?? null });
-    } catch (error) {
-      process.stderr.write(`ccmem: ${error.message}\n`);
-      process.exitCode = 1;
+    // Approving may move background work onto a paid backend. The notice that
+    // asks for it is read by agents with a shell, so a non-interactive run
+    // (an agent's tool call, a script) must say --yes to mean it.
+    const refused = llmVerb === 'approve' && !process.stdin.isTTY && !args.includes('--yes');
+    if (refused) {
+      process.stderr.write('ccmem: refusing to approve a backend switch without a terminal; the user runs `ccmem admin llm approve` themselves (a script may pass --yes)\n');
+      process.exitCode = 77;
+    } else {
+      try {
+        result = cmdAdminLlm(getDb(), { verb: llmVerb, value: args[2] ?? null });
+      } catch (error) {
+        process.stderr.write(`ccmem: ${error.message}\n`);
+        process.exitCode = 1;
+      }
     }
     if (!result) {
       // reported above
@@ -810,7 +819,8 @@ try {
     } else {
       const { from_backend: from, to_backend: to } = result.proposal;
       process.stdout.write(result.status === 'approved'
-        ? `ccmem: approved switch ${from} -> ${to}; background work runs on ${to} until ${from} resets\n`
+        ? `ccmem: approved switch ${from} -> ${to}; background work runs on ${to} until ${from} resets` +
+          (result.proposal.rescheduled ? ` (${result.proposal.rescheduled} waiting task(s) run now)` : '') + '\n'
         : `ccmem: rejected switch ${from} -> ${to}; tasks wait for ${from} to reset\n`);
     }
   } else if (verb === 'admin' && args[0] === 'cron' && args[1] === 'list') {

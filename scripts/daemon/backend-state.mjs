@@ -11,6 +11,10 @@ const DEFAULT_ORDER = ['claude', 'codex', 'omp'];
 // Used when a backend reports exhaustion without saying when it resets.
 const DEFAULT_EXHAUSTION_MS = 3_600_000;
 const MIN_RETRY_AFTER_MS = 60_000;
+// error_excerpt prefix on a queued retry that waits out a backend's
+// exhaustion (loop.mjs scheduleRetry), followed by `<backend>: `. Approving a
+// switch away from that backend runs those tasks now instead of at the reset.
+export const EXHAUSTED_RETRY_MARK = 'backend_exhausted:';
 
 export function preferredBackend(config) {
   return config?.llm?.backend ?? 'claude';
@@ -194,12 +198,20 @@ export function approveProposal(db, now = Date.now()) {
     return { ...proposal, superseded_at: now, stale: true };
   }
   db.prepare(`UPDATE llm_switch_proposals SET approved_at = ? WHERE id = ?`).run(now, proposal.id);
+  // Tasks already spaced to the reset time would otherwise sit out the wait
+  // the human just approved a switch to avoid.
+  const rescheduled = Number(db.prepare(
+    `UPDATE tasks
+     SET scheduled_for = ?
+     WHERE status = 'queued' AND scheduled_for > ? AND substr(error_excerpt, 1, ?) = ?`
+  ).run(now, now, EXHAUSTED_RETRY_MARK.length + proposal.from_backend.length + 1, `${EXHAUSTED_RETRY_MARK}${proposal.from_backend}:`).changes ?? 0);
   writeAudit(db, 'llm_backend_switch', null, {
     from: proposal.from_backend,
     to: proposal.to_backend,
-    reason: proposal.reason
+    reason: proposal.reason,
+    rescheduled_tasks: rescheduled
   });
-  return { ...proposal, approved_at: now };
+  return { ...proposal, approved_at: now, rescheduled };
 }
 
 export function rejectProposal(db, now = Date.now()) {
@@ -226,5 +238,7 @@ export function proposalNotice(db) {
     `SELECT exhausted_until FROM llm_backend_state WHERE backend = ?`
   ).get(proposal.from_backend)?.exhausted_until;
   const when = until == null ? 'unknown' : new Date(until).toISOString();
-  return `ccmem: ${proposal.from_backend} quota exhausted until ${when}; run \`ccmem admin llm approve\` to switch background work to ${proposal.to_backend}.`;
+  // Addressed to the agent that reads it, which may have a shell: switching
+  // to a backend that may cost money is the user's call, never the agent's.
+  return `ccmem: ${proposal.from_backend} quota exhausted until ${when}. Tell the user; only the user may switch background work to ${proposal.to_backend}, by running \`ccmem admin llm approve\` themselves. Do not run it.`;
 }

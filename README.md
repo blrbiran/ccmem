@@ -126,7 +126,7 @@ ccmem uninstall omp
 
 ### Injection
 
-Session start injects one short instruction to read a per-session file, `.ccmem/context-<session>.md`. That file holds the stable rules and the retrieved memories, bounded (stable section 4096 bytes, of which 2048 for the project share; whole file 12288 bytes). This applies to Claude Code too.
+Session start injects one short instruction to read a per-session file, `.ccmem/context-<hash of session id>.md` (the first 16 hex digits of the SHA-256 of the session id). That file holds the stable rules and the retrieved memories, bounded (stable section 4096 bytes, of which 2048 for the project share; whole file 12288 bytes). This applies to Claude Code too.
 
 ### Background LLM backend
 
@@ -136,11 +136,12 @@ The daemon's summarization and synthesis tasks run through `llm.backend` (`claud
 ccmem admin llm status
 ccmem admin llm use codex
 ccmem admin llm order claude,codex,omp
-ccmem admin llm approve
+ccmem admin llm approve        # in a terminal; a script must add --yes
 ccmem admin llm reject
 ```
 
-- When a backend is exhausted (usage limit or a long retry-after), ccmem opens a failover proposal and shows a notice in the context file and at session start. It never switches backend without `ccmem admin llm approve`; returning to the preferred backend after its reset time is automatic. Short claude 429s are plain rate limits, not exhaustion.
+- When a backend is exhausted (usage limit or a long retry-after), ccmem opens a failover proposal and shows a notice in the context file and at session start. The notice tells the agent to pass the question to you and not to approve it itself. It never switches backend without `ccmem admin llm approve`; returning to the preferred backend after its reset time is automatic. Short claude 429s are plain rate limits, not exhaustion.
+- `ccmem admin llm approve` refuses (exit 77) when stdin is not a terminal, so an agent's shell call cannot approve a possibly paid backend; pass `--yes` to approve from a script. Approving also runs at once the queued tasks that were waiting for the exhausted backend's reset.
 - After changing `llm.backend`, re-run `ccmem admin daemon install`; until then `daemon status` reports PATH as `benign_changed`.
 - Known gap: the Codex summarizer still loads `$CODEX_HOME/AGENTS.md`.
 

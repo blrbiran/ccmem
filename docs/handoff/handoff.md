@@ -149,7 +149,7 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
 
 ### 2.3 仍有效的禁令（原 7 条去掉已解除的第 1 条，剩 6 条）
 
-1. **那 7 个死键不删**（处置提案 `docs/superpowers/specs/2026-08-19-dead-key-disposition.md`，分三类，待人定）。
+1. ~~那 7 个死键不删~~ **人已裁（2026-10-18，Orca 会话 `a3b2a7a7`）**：控制器按提案 `docs/superpowers/specs/2026-08-19-dead-key-disposition.md` 给了建议，人原话「同意你上面所有的建议」。建议原文：`security.quarantine.hard_delete_days` **删键、不接线**（接线＝批量不可逆删除；删除走 `forget`；要自动清理另开设计并带预演）；`retrieval.like_fallback.max_terms` **接线、默认值改 10**（与现行为一致，零行为变更）；`llm.claude_p_timeout_per_task.l4_review` 删；`security.cross_scope.similarity_min`、`consolidation.minBatchSize`、`inject.max_chars`、`cron.dead_letter_alert` 四个打包删。**尚未实施**（要一轮代码改动，`config.mjs` 与 `config.default.json` 两侧同步，`block_user_explicit` 那笔是先例）。
 2. **不许改本机电源设置**（`pmset` 只可只读取证）。
 3. **push 由人做**（Orca Tier 0 闸门现在会在 agent 会话里机械拦下 push／合并进 main／删分支或 worktree）。
 4. **Task 5 读数不许重跑**。 5. **不要再挂 cron、不要再做巡检**。 6. **不要在代码里 pin 模型**。
@@ -243,7 +243,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 2. **embedding 通道：坏在账号额度**（同一会话现测）：`daemon.err.log` 里的 403／`Connection error.` 全部**早于重启**（plist 的 StandardErrorPath 就是它，mtime 2026-09-08，重启后零新行）；
    但 `metrics.jsonl` 里重启后 9 次 `prompt_submit` 全是 `B-fail`／`B-circuit`，`retrieval_embed_error` 为 `429 You have no credits remaining` ×3、`Request timed out.` ×3 ⇒ **语义检索当前不可用，要人给 embedding 账号充值或换 key**（agent 不改凭据）。
 3. **迁移备份新代码在真实库上**：代码已就绪且全量门过，但真实库**不作**修复后的迁移判据；下一次真实升级前仍须：先备份、只在副本演练、写清回退。
-4. **7 个死键处置**（待人定，见 §2.3）。 5. **v0.15 范围**（未定；输入 `docs/ccmem-v0.14-dogfood.md` §八）。
+4. **7 个死键处置**：已裁、待实施（§2.3 第 1 条）。 5. **v0.15 范围**：人 2026-10-18 同意控制器建议（同上原话）——**先做 `summarize_pending` 超时**（32–47% 会话没被整理＝记忆在丢）**和 L2.5 引用检测**（trust 正反馈主来源、命中 0.1%；v0.13 spec §0.5）；`credential_assignment`、revalidation 排水往后；记忆膨胀（4,251 条活跃全局）与 L2.5 一起看。`$TMPDIR` 存量：人同意「只删 `ccmem-*`、`tmp.*` 不动」，由人执行 `find "$TMPDIR" -maxdepth 1 -name 'ccmem-*' -mmin +60 -exec rm -rf {} +`（2026-10-18 记录时尚未执行，现数 577）。
 6. **hook embed 冷启动（B 线）**：~220ms TLS 握手，只剩"走常驻 daemon"或"不做"两条路（TLS 会话恢复已排除）；spec `docs/superpowers/specs/2026-08-10-hook-embed-cold-start.md`；设计改动，需人裁决。
 7. 登记未做：`tasks` 表清理；裸 `start`／`stop` 失败仍丢 `reason`（与 bug-063 同类）；回填永久性失败无退避；`@xenova/transformers` 已停维护（迁 `@huggingface/transformers`）；
    机器睡眠饿死定时器（现在只是可见，没修）；`8000` 档从未实测；Finding 13 深层解（hook 工作切段）；revalidation 覆盖索引（数已量好）。

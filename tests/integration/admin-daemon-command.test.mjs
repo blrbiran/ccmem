@@ -189,6 +189,23 @@ function setDefaultFakeLaunchctlScript() {
 
 setDefaultFakeLaunchctlScript();
 
+// Hermetic by default: codex / omp resolve to paths that do not exist, so the
+// install check never runs a real codex or omp found on the developer's PATH.
+// Tests that need them write their own config via writeBackendConfig().
+const ABSENT_BACKEND_COMMANDS = {
+  codex: path.join(dataRoot, 'absent-bin', 'codex'),
+  omp: path.join(dataRoot, 'absent-bin', 'omp')
+};
+
+function writeBackendConfig(llm = {}) {
+  writeFileSync(
+    path.join(dataRoot, 'config.json'),
+    JSON.stringify({ llm: { ...llm, commands: { ...ABSENT_BACKEND_COMMANDS, ...(llm.commands ?? {}) } } })
+  );
+}
+
+writeBackendConfig();
+
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = dataRoot;
 process.env.CCMEM_LAUNCHAGENT_DIR = launchAgentDir;
@@ -434,6 +451,93 @@ test('cmdAdminDaemon install and uninstall manage a launchd plist', async () => 
       }
     }
   });
+});
+
+function createFakeBackendBinary(dirName, name, helpText) {
+  const dir = path.join(dataRoot, dirName);
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, name);
+  // Answers --help only; any other call fails, so a probe that ran a prompt would show.
+  writeFileSync(file, `#!/bin/sh\nfor a in "$@"; do [ "$a" = "--help" ] && { printf %s\\n ${JSON.stringify(helpText)}; exit 0; }; done\nexit 1\n`);
+  chmodSync(file, 0o755);
+  return dir;
+}
+
+async function installWithBackends({ llm, codexHelp, ompHelp }) {
+  const { fakeClaudeDir } = createFakeClaudeBinary(`fake-backend-claude-${Math.random().toString(36).slice(2)}`);
+  const dirs = [fakeClaudeDir];
+  const commands = {};
+  if (codexHelp !== undefined) {
+    const dir = createFakeBackendBinary(`fake-codex-${Math.random().toString(36).slice(2)}`, 'codex', codexHelp);
+    dirs.push(dir);
+    // Absolute: the dir is deliberately not on the install shell PATH, so it can
+    // only reach the plist PATH through the backend resolution under test.
+    commands.codex = path.join(dir, 'codex');
+  }
+  if (ompHelp !== undefined) {
+    const dir = createFakeBackendBinary(`fake-omp-${Math.random().toString(36).slice(2)}`, 'omp', ompHelp);
+    dirs.push(dir);
+    commands.omp = path.join(dir, 'omp');
+  }
+  writeBackendConfig({ ...llm, commands });
+
+  return withFakeLaunchctl(async () => {
+    const savedEnv = saveDaemonInstallEnv();
+    const previousPath = process.env.PATH;
+    applyDaemonInstallEnv();
+    process.env.PATH = `${dirs[0]}${path.delimiter}${previousPath ?? ''}`;
+    const db = openDb();
+    resetAdminTables(db);
+    try {
+      const result = await cmdAdminDaemon(db, { verb: 'install' });
+      if (result.status === 'installed') await cmdAdminDaemon(db, { verb: 'uninstall' });
+      return { result, dirs };
+    } finally {
+      db.close();
+      process.env.PATH = previousPath;
+      restoreDaemonInstallEnv(savedEnv);
+      writeBackendConfig();
+    }
+  });
+}
+
+test('install fails when llm.backend=codex lacks --ephemeral', async () => {
+  const { result } = await installWithBackends({ llm: { backend: 'codex' }, codexHelp: 'usage: codex exec' });
+  assert.equal(result.status, 'version_check_failed');
+  assert.match(result.reason, /codex capability check failed/);
+  assert.match(result.reason, /--ephemeral/);
+});
+
+test('install fails when llm.backend=omp is missing', async () => {
+  const { result } = await installWithBackends({ llm: { backend: 'omp' } });
+  assert.equal(result.status, 'version_check_failed');
+  assert.match(result.reason, /llm\.backend=omp/);
+});
+
+test('install with every backend good puts each binary dir on the plist PATH', async () => {
+  const { result, dirs } = await installWithBackends({ llm: {}, codexHelp: '--ephemeral', ompHelp: '--no-extensions' });
+  assert.equal(result.status, 'installed');
+  assert.equal(result.warnings, undefined);
+  const pathValue = /<key>PATH<\/key><string>([^<]*)<\/string>/.exec(result.plist)[1].split(path.delimiter);
+  for (const dir of dirs) {
+    assert.ok(pathValue.includes(dir), `${dir} missing from plist PATH`);
+  }
+});
+
+test('a missing failover-only backend warns and is left off PATH instead of failing install', async () => {
+  const { result, dirs } = await installWithBackends({ llm: {}, ompHelp: '--no-extensions' });
+  assert.equal(result.status, 'installed');
+  assert.deepEqual(result.warnings, ['codex not found; failover to codex will not work']);
+  assert.equal(result.plist.includes('absent-bin'), false);
+  assert.match(result.plist, new RegExp(escapeRegExp(dirs[1])));
+});
+
+test('a failover-only backend failing its probe warns and names the backend', async () => {
+  const { result } = await installWithBackends({ llm: {}, codexHelp: 'usage: codex exec', ompHelp: '--no-extensions' });
+  assert.equal(result.status, 'installed');
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /codex capability check failed/);
+  assert.match(result.warnings[0], /--ephemeral/);
 });
 
 test('resolveInstallNodePath prefers explicit and configured existing node paths', () => {
@@ -905,7 +1009,8 @@ test('cli admin daemon install uses configured fallback node path in plist', () 
     JSON.stringify({
       daemon: {
         platform_install_fallback_node_paths: [fakeConfiguredNodePath]
-      }
+      },
+      llm: { commands: ABSENT_BACKEND_COMMANDS }
     })
   );
 

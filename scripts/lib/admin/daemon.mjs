@@ -42,6 +42,10 @@ export const DAEMON_ENV_PASSTHROUGH = [
 ];
 
 function resolveCommandFromPath(command, envPath) {
+  if (path.isAbsolute(command)) {
+    return existsSync(command) ? command : null;
+  }
+
   const pathValue = String(envPath ?? '').trim();
   if (!pathValue) {
     return null;
@@ -61,7 +65,17 @@ function resolveCommandFromPath(command, envPath) {
   return null;
 }
 
-export function buildDaemonEnv(baseEnv = process.env) {
+// Backends the daemon may run: the active one plus every failover candidate.
+// Only llm.backend is required at install; the rest are best effort.
+function configuredBackends(cfg) {
+  return uniq([cfg.llm?.backend ?? 'claude', ...(cfg.llm?.backend_order ?? [])]);
+}
+
+function backendCommandName(cfg, backend) {
+  return cfg.llm?.commands?.[backend] ?? backend;
+}
+
+export function buildDaemonEnv(baseEnv = process.env, cfg = loadConfig()) {
   const dataRoot = getDataRoot();
   const daemonEnv = {
     PATH: baseEnv.PATH ?? DEFAULT_PATH,
@@ -76,6 +90,19 @@ export function buildDaemonEnv(baseEnv = process.env) {
     const claudeBinDir = path.dirname(claudeCommand);
     if (!daemonEnv.PATH.split(path.delimiter).includes(claudeBinDir)) {
       daemonEnv.PATH = `${claudeBinDir}${path.delimiter}${daemonEnv.PATH}`;
+    }
+  }
+
+  // codex / omp are found by PATH, not by an env pointer: put the directory of
+  // each one that resolves on the daemon PATH. A missing one is left out here;
+  // the install check decides whether that is fatal.
+  for (const backend of configuredBackends(cfg)) {
+    if (backend === 'claude') continue;
+    const resolved = resolveCommandFromPath(backendCommandName(cfg, backend), daemonEnv.PATH);
+    if (!resolved) continue;
+    const binDir = path.dirname(resolved);
+    if (!daemonEnv.PATH.split(path.delimiter).includes(binDir)) {
+      daemonEnv.PATH = `${binDir}${path.delimiter}${daemonEnv.PATH}`;
     }
   }
 
@@ -316,6 +343,58 @@ function probeClaudeJsonSchemaSupport(command, daemonEnv, timeoutMs) {
   return { ok: true };
 }
 
+const BACKEND_PROBES = {
+  codex: { args: ['exec', '--help'], flag: '--ephemeral' },
+  omp: { args: ['--help'], flag: '--no-extensions' }
+};
+
+// `--help` only, never a prompt. Returns { ok } or { ok: false, reason }.
+function probeBackendCapability(backend, command, daemonEnv, timeoutMs) {
+  const { args, flag } = BACKEND_PROBES[backend];
+  const shown = `\`${backend} ${args.join(' ')}\``;
+  const result = spawnSync(command, args, {
+    encoding: 'utf8',
+    ...(timeoutMs ? { timeout: timeoutMs } : {}),
+    env: { ...process.env, ...daemonEnv }
+  });
+
+  if (result.error) {
+    return { ok: false, reason: `${backend} capability check failed: could not run ${shown} at ${command} (${result.error.message})` };
+  }
+  if (result.status !== 0) {
+    return { ok: false, reason: `${backend} capability check failed: ${shown} at ${command} exited ${result.status}` };
+  }
+  if (!`${result.stdout ?? ''}\n${result.stderr ?? ''}`.includes(flag)) {
+    return { ok: false, reason: `${backend} capability check failed: ${command} does not support ${flag}` };
+  }
+  return { ok: true };
+}
+
+// Checks codex / omp. Returns { error, warnings }: a problem with llm.backend is
+// the error, a problem with a failover-only backend is a warning.
+function checkOtherBackends(cfg, daemonEnv) {
+  const active = cfg.llm?.backend ?? 'claude';
+  const warnings = [];
+  for (const backend of configuredBackends(cfg)) {
+    if (backend === 'claude') continue;
+    const name = backendCommandName(cfg, backend);
+    const command = resolveCommandFromPath(name, daemonEnv.PATH);
+    let problem = null;
+    if (!command) {
+      problem = backend === active
+        ? `could not resolve \`${name}\` for llm.backend=${backend} from the install shell PATH; install from a shell where ${backend} is available`
+        : `${backend} not found; failover to ${backend} will not work`;
+    } else if (BACKEND_PROBES[backend]) {
+      const probed = probeBackendCapability(backend, command, daemonEnv);
+      if (!probed.ok) problem = probed.reason;
+    }
+    if (!problem) continue;
+    if (backend === active) return { error: problem, warnings };
+    warnings.push(problem);
+  }
+  return { error: null, warnings };
+}
+
 function buildSpawnDaemonEnv() {
   return buildDaemonEnv(process.env);
 }
@@ -524,8 +603,11 @@ function installDaemon() {
   const dataRoot = getDataRoot();
   const daemonEnv = buildLaunchdDaemonEnv(dataRoot);
   const claudeCommand = daemonEnv.CCMEM_CLAUDE_P_COMMAND;
+  const cfg = loadConfig();
+  const claudeRequired = (cfg.llm?.backend ?? 'claude') === 'claude';
+  const warnings = [];
 
-  if (!claudeCommand) {
+  if (!claudeCommand && claudeRequired) {
     return {
       status: 'version_check_failed',
       plist_path: plistPath,
@@ -533,14 +615,31 @@ function installDaemon() {
     };
   }
 
-  const capability = probeClaudeJsonSchemaSupport(claudeCommand, daemonEnv);
-  if (!capability.ok) {
+  if (!claudeCommand) {
+    warnings.push('claude not found; failover to claude will not work');
+  } else {
+    const capability = probeClaudeJsonSchemaSupport(claudeCommand, daemonEnv);
+    if (!capability.ok) {
+      if (claudeRequired) {
+        return {
+          status: 'version_check_failed',
+          plist_path: plistPath,
+          reason: capability.reason
+        };
+      }
+      warnings.push(capability.reason);
+    }
+  }
+
+  const others = checkOtherBackends(cfg, daemonEnv);
+  if (others.error) {
     return {
       status: 'version_check_failed',
       plist_path: plistPath,
-      reason: capability.reason
+      reason: others.error
     };
   }
+  warnings.push(...others.warnings);
 
   const nodePath = resolveInstallNodePath(process.env);
 
@@ -564,7 +663,8 @@ function installDaemon() {
       plist_path: plistPath,
       plist: readPlist(),
       variant: 'linux/container-fallback',
-      pid: child.pid
+      pid: child.pid,
+      ...(warnings.length ? { warnings } : {})
     };
   }
 
@@ -573,7 +673,8 @@ function installDaemon() {
   return {
     status: 'installed',
     plist_path: plistPath,
-    plist: readPlist()
+    plist: readPlist(),
+    ...(warnings.length ? { warnings } : {})
   };
 }
 

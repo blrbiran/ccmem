@@ -1,27 +1,62 @@
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { finiteOrNull, parseJsonLines } from './jsonl.mjs';
+
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
-function finiteOrNull(value) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+function nullable(schema) {
+  if (Array.isArray(schema.type)) {
+    return schema.type.includes('null') ? schema : { ...schema, type: [...schema.type, 'null'], ...(schema.enum ? { enum: withNull(schema.enum) } : {}) };
+  }
+  if (typeof schema.type === 'string') {
+    return { ...schema, type: [schema.type, 'null'], ...(schema.enum ? { enum: withNull(schema.enum) } : {}) };
+  }
+  if (Array.isArray(schema.enum)) {
+    return { ...schema, enum: withNull(schema.enum) };
+  }
+  return { anyOf: [schema, { type: 'null' }] };
 }
 
-function parseJsonLines(text) {
-  const events = [];
-  for (const line of String(text ?? '').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === 'object') {
-        events.push(parsed);
-      }
-    } catch {}
+function withNull(values) {
+  return values.includes(null) ? values : [...values, null];
+}
+
+/**
+ * Codex sends --output-schema to the Responses API with strict: true
+ * (codex-rs core/src/session/turn.rs output_schema_strict, codex-api
+ * src/common.rs create_text_param_for_request), and passes the file through
+ * unchanged (exec/src/lib.rs load_output_schema). Strict mode requires every
+ * object to list all of its properties in `required` and to set
+ * additionalProperties: false, so an optional property is expressed as a
+ * required, nullable one. Every consumer of these schemas already reads null
+ * as "absent". Length keywords (maxLength) are kept: OpenAI documents them as
+ * unsupported only for fine-tuned models.
+ */
+export function strictSchema(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    return schema;
   }
-  return events;
+
+  const next = { ...schema };
+  if (next.items) {
+    next.items = strictSchema(next.items);
+  }
+  if (Array.isArray(next.anyOf)) {
+    next.anyOf = next.anyOf.map(strictSchema);
+  }
+  if (next.properties && typeof next.properties === 'object') {
+    const required = new Set(Array.isArray(next.required) ? next.required : []);
+    next.properties = Object.fromEntries(
+      Object.entries(next.properties).map(([key, child]) => {
+        const strictChild = strictSchema(child);
+        return [key, required.has(key) ? strictChild : nullable(strictChild)];
+      })
+    );
+    next.required = Object.keys(next.properties);
+    next.additionalProperties = false;
+  }
+  return next;
 }
 
 function to24Hour(hour, meridiem) {
@@ -60,6 +95,9 @@ export function parseCodexResetAt(text, now = new Date()) {
 export const codexBackend = {
   id: 'codex',
   label: 'codex exec',
+  // Runs in a per-call dir: last.txt and schema.json live there, and no repo
+  // AGENTS.md is picked up from the daemon's cwd.
+  isolatedCwd: true,
 
   buildInvocation(prompt, { jsonSchema, model, command, workDir }) {
     const outputFile = path.join(workDir, 'last.txt');
@@ -71,6 +109,8 @@ export const codexBackend = {
       // Recursion guard: ccmem's Codex hooks must not fire inside a ccmem
       // summarization (spec §5.5). CCMEM_INTERNAL=1 is the second layer.
       '-c', 'features.hooks=false',
+      // The human's legacy notify program must not fire for a background turn.
+      '-c', 'notify=[]',
       '--json',
       '-o', outputFile
     ];
@@ -79,7 +119,7 @@ export const codexBackend = {
     }
     if (jsonSchema) {
       const schemaFile = path.join(workDir, 'schema.json');
-      writeFileSync(schemaFile, JSON.stringify(jsonSchema), { mode: 0o600 });
+      writeFileSync(schemaFile, JSON.stringify(strictSchema(jsonSchema)), { mode: 0o600 });
       args.push('--output-schema', schemaFile);
     }
     args.push('-');

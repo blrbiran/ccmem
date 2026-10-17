@@ -39,9 +39,9 @@ function configuredString(map, id) {
   return typeof value === 'string' && value ? value : null;
 }
 
-// A fresh, private directory per call, used as the child's cwd: no repo, so
-// no AGENTS.md / CLAUDE.md / rules get loaded into a summarization, and a
-// place for per-call files (Codex's last.txt and schema.json).
+// A fresh, private directory per call, used as an isolated backend's cwd: no
+// repo, so no AGENTS.md / rules get loaded into a summarization, and a place
+// for per-call files (Codex's last.txt and schema.json).
 function makeWorkDir(backendId) {
   const root = path.join(getDataRoot(), 'tmp');
   mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -49,6 +49,9 @@ function makeWorkDir(backendId) {
 }
 
 function removeWorkDir(workDir) {
+  if (!workDir) {
+    return;
+  }
   try {
     rmSync(workDir, { recursive: true, force: true });
   } catch (error) {
@@ -137,7 +140,7 @@ function registerBlacklistedSession(sessionId) {
 function runClaudeP(prompt, opts, queuedAt) {
   const cfg = loadConfig();
   const backend = resolveBackend(cfg);
-  const workDir = makeWorkDir(backend.id);
+  const workDir = backend.isolatedCwd ? makeWorkDir(backend.id) : null;
   let invocation;
   try {
     invocation = backend.buildInvocation(prompt, {
@@ -184,7 +187,7 @@ function runClaudeP(prompt, opts, queuedAt) {
 
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      cwd: workDir,
+      ...(workDir ? { cwd: workDir } : {}),
       env: childEnv,
       stdio: ['pipe', 'pipe', 'pipe']
     });
@@ -236,7 +239,10 @@ function runClaudeP(prompt, opts, queuedAt) {
 
     const timer = setTimeout(() => {
       child.kill('SIGTERM');
-      finish(reject, new Error(`${backend.label} timeout after ${timeoutMs}ms`), { exitCode: null, timedOut: true });
+      const error = new Error(`${backend.label} timeout after ${timeoutMs}ms`);
+      // loop.mjs retries on this flag, whichever backend timed out.
+      error.timedOut = true;
+      finish(reject, error, { exitCode: null, timedOut: true });
     }, timeoutMs);
 
     child.stdout.on('data', (chunk) => {

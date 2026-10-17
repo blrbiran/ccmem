@@ -288,8 +288,13 @@ function isRetryableTaskError(error) {
     return true;
   }
 
-  // Every backend's timeout reads '<label> timeout after Nms' (claude-p.mjs).
-  return /(?:claude -p|codex exec|omp -p) timeout after \d+ms/.test(errorMessage(error));
+  // claude-p.mjs flags every backend's timeout; the message match keeps
+  // errors that only carry the text retryable as before.
+  if (error?.timedOut === true) {
+    return true;
+  }
+
+  return /claude -p timeout after \d+ms/.test(errorMessage(error));
 }
 
 function resolveRetryDelayMs(task, error, currentAttempt) {

@@ -71,6 +71,10 @@ export function resolveCommand(opts) {
 export const claudeBackend = {
   id: 'claude',
   label: 'claude -p',
+  // Keeps the daemon's cwd: claude -p stores each session under a directory
+  // named after its cwd, so a per-call dir would create one per call in the
+  // human's ~/.claude/projects.
+  isolatedCwd: false,
 
   buildInvocation(prompt, { jsonSchema, taskType, model, command, args }) {
     const resolved = resolveCommand({ jsonSchema, taskType, model, command, args });

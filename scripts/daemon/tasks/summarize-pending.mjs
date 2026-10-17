@@ -12,7 +12,7 @@ import { loadConfig } from '../../lib/config.mjs';
 import { refineContentToLimit } from '../../lib/content-refiner.mjs';
 
 const TRANSCRIPT_EXCERPT_MAX_FALLBACK = 4000;
-const SUMMARIZE_PENDING_JSON_SCHEMA = {
+export const SUMMARIZE_PENDING_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['synthesized'],

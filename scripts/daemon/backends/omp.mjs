@@ -1,23 +1,4 @@
-function finiteOrNull(value) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function parseJsonLines(text) {
-  const events = [];
-  for (const line of String(text ?? '').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === 'object') {
-        events.push(parsed);
-      }
-    } catch {}
-  }
-  return events;
-}
+import { finiteOrNull, parseJsonLines } from './jsonl.mjs';
 
 // `--mode json` prints every message_end, the echoed user prompt included; the
 // answer is the last one the assistant produced.
@@ -30,6 +11,8 @@ function assistantMessages(stdout) {
 export const ompBackend = {
   id: 'omp',
   label: 'omp -p',
+  // Runs in a per-call dir so no repo rules/AGENTS.md are loaded.
+  isolatedCwd: true,
 
   buildInvocation(prompt, { jsonSchema, model, command }) {
     // Recursion guard: --no-extensions keeps ccmem's own OMP extension out of

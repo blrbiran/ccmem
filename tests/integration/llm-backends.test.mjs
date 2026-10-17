@@ -40,7 +40,14 @@ const { callClaudeP } = await import('../../scripts/daemon/claude-p.mjs');
 const { daemonCostFile } = await import('../../scripts/lib/metrics.mjs');
 const { codexBackend } = await import('../../scripts/daemon/backends/codex.mjs');
 const { ompBackend } = await import('../../scripts/daemon/backends/omp.mjs');
-const { buildSummarizePrompt } = await import('../../scripts/daemon/tasks/summarize-pending.mjs');
+const { buildSummarizePrompt, SUMMARIZE_PENDING_JSON_SCHEMA } = await import('../../scripts/daemon/tasks/summarize-pending.mjs');
+const { CONTRADICTION_SCHEMA } = await import('../../scripts/lib/llm-prompts/contradiction-audit.mjs');
+const { MONTHLY_META_SCHEMA } = await import('../../scripts/lib/llm-prompts/monthly-meta-synthesis.mjs');
+const { MERGE_SCHEMA } = await import('../../scripts/lib/llm-prompts/contradiction-merge.mjs');
+const { SYNTHESIS_V2_SCHEMA } = await import('../../scripts/lib/llm-prompts/weekly-synthesis-v2.mjs');
+const { STALE_CHECK_SCHEMA } = await import('../../scripts/lib/llm-prompts/stale-check.mjs');
+const { refineContentToLimit } = await import('../../scripts/lib/content-refiner.mjs');
+const { resolveCommand } = await import('../../scripts/daemon/claude-p.mjs');
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { mainLoop } = await import('../../scripts/daemon/loop.mjs');
 
@@ -172,6 +179,8 @@ test('codex and omp invocations carry recursion guards', async () => {
   const c = codex.args.indexOf('-c');
   assert.notEqual(c, -1);
   assert.equal(codex.args[c + 1], 'features.hooks=false', 'Codex must not run ccmem hooks inside a ccmem summarization');
+  const configOverrides = codex.args.filter((arg, i) => codex.args[i - 1] === '-c');
+  assert.ok(configOverrides.includes('notify=[]'), "the human's legacy notify program must not fire for a background turn");
   assert.equal(codex.args[codex.args.indexOf('-s') + 1], 'read-only');
   assert.ok(codex.args.includes('--skip-git-repo-check'));
   assert.ok(codex.args.includes('--json'));
@@ -339,7 +348,10 @@ test('claude stays the default backend and its row names it', async () => {
     assert.equal(costRows().at(-1).backend, 'claude');
     assert.equal(seen.internal, '1');
     assert.ok(seen.sid, 'claude keeps its blacklisted CLAUDE_CODE_SESSION_ID');
-    assertNeutralCwd(seen.cwd);
+    // No per-call cwd for claude: claude -p files each session under a
+    // directory named after its cwd, so a fresh dir per call would add one
+    // ~/.claude/projects entry per call.
+    assert.equal(seen.cwd, process.cwd(), 'the claude child inherits the daemon cwd');
   } finally {
     delete process.env.CCMEM_CLAUDE_P_COMMAND;
     delete process.env.CCMEM_CLAUDE_P_ARGS_JSON;
@@ -368,10 +380,9 @@ test('an unknown llm.backend fails loudly instead of silently running claude', a
 
 test('a non-claude timeout is retried like a claude timeout', async () => {
   useFakes('codex', 'hang');
-  await assert.rejects(
-    () => callClaudeP('p', { taskType: 'security_audit', timeoutMs: 300 }),
-    /^Error: codex exec timeout after 300ms$/
-  );
+  const timeoutError = await callClaudeP('p', { taskType: 'security_audit', timeoutMs: 300 }).then(() => null, (e) => e);
+  assert.equal(timeoutError?.message, 'codex exec timeout after 300ms');
+  assert.equal(timeoutError.timedOut, true, 'the loop retries on this flag, not on the backend label');
 
   const db = openDb();
   const now = Date.now();
@@ -383,7 +394,7 @@ test('a non-claude timeout is retried like a claude timeout', async () => {
   await Promise.race([
     mainLoop(db, () => stop, async () => {
       stop = true;
-      throw new Error('codex exec timeout after 300ms');
+      throw timeoutError;
     }),
     new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
   ]);
@@ -396,4 +407,66 @@ test('the summarize prompt does not tell a non-Claude model it is Claude Code', 
   const prompt = buildSummarizePrompt('transcript');
   assert.equal(prompt.includes('Claude Code'), false);
   assert.ok(prompt.includes('FRESH coding-agent session'));
+});
+
+// Every schema a daemon task sends, keyed by its consumer. The refiner's is
+// captured from a real refineContentToLimit call because it is built inline.
+const NAMED_SCHEMAS = {
+  SUMMARIZE_PENDING_JSON_SCHEMA,
+  CONTRADICTION_SCHEMA,
+  MONTHLY_META_SCHEMA,
+  MERGE_SCHEMA,
+  SYNTHESIS_V2_SCHEMA,
+  STALE_CHECK_SCHEMA
+};
+
+function acceptsNull(schema) {
+  return (Array.isArray(schema.type) && schema.type.includes('null'))
+    || (Array.isArray(schema.enum) && schema.enum.includes(null))
+    || (Array.isArray(schema.anyOf) && schema.anyOf.some((s) => s.type === 'null'));
+}
+
+// Walks the original and the written schema together. Strict mode (Codex
+// sends strict: true) rejects an object that leaves any property out of
+// `required`; an optional property must become required-and-nullable so the
+// model may still decline to give a value.
+function assertStrictShape(original, written, where) {
+  if (original.items) {
+    assertStrictShape(original.items, written.items, `${where}[]`);
+  }
+  if (!original.properties) {
+    return;
+  }
+  const keys = Object.keys(original.properties);
+  assert.deepEqual([...written.required].sort(), [...keys].sort(), `${where}: every property must be required`);
+  assert.equal(written.additionalProperties, false, `${where}: additionalProperties must be false`);
+  const wasRequired = new Set(original.required ?? []);
+  for (const key of keys) {
+    const before = original.properties[key];
+    const after = written.properties[key];
+    if (!wasRequired.has(key)) {
+      assert.ok(acceptsNull(after), `${where}.${key} was optional, so it must accept null`);
+    } else if (!acceptsNull(before)) {
+      assert.equal(acceptsNull(after), false, `${where}.${key} was required; it must not become nullable`);
+    }
+    assertStrictShape(before, after, `${where}.${key}`);
+  }
+}
+
+test('codex gets a strict-mode copy of every daemon schema; claude gets the original', async () => {
+  useFakes('codex');
+  for (const [name, schema] of Object.entries(NAMED_SCHEMAS)) {
+    await callClaudeP('p', { taskType: 'weekly_synthesis', jsonSchema: schema });
+    assertStrictShape(schema, JSON.parse(recorded().schema), name);
+
+    const { args } = resolveCommand({ jsonSchema: schema });
+    assert.equal(args[args.indexOf('--json-schema') + 1], JSON.stringify(schema), `${name}: claude receives the schema as written`);
+  }
+
+  // The refiner builds its schema inline; capture it through the fake.
+  await refineContentToLimit('x'.repeat(600), { maxChars: 500, taskType: 'summarize_pending' });
+  const refiner = JSON.parse(recorded().schema);
+  assert.deepEqual(refiner.required, ['content']);
+  assert.equal(refiner.additionalProperties, false);
+  assert.equal(refiner.properties.content.maxLength, 500, 'maxLength is supported in strict mode for non-fine-tuned models, so it stays');
 });

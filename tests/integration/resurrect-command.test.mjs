@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-resurrect-'));
 process.env.CCMEM_TEST_MODE = '1';
@@ -50,7 +51,7 @@ function seedGreyZoneMemories(db, now = Date.now()) {
 
 async function seedQuarantinedMemory(db, now = Date.now()) {
   const saved = await cmdSave(db, {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     content: 'Quarantined project note',
     scope: 'project'
   });
@@ -81,12 +82,12 @@ async function seedQuarantinedMemory(db, now = Date.now()) {
 
 async function seedCrossScopeAlert(db, now = Date.now()) {
   const globalMem = await cmdSave(db, {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     content: 'Global safety rule',
     scope: 'global'
   });
   const projectMem = await cmdSave(db, {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     content: 'Project shell alias note',
     scope: 'project'
   });
@@ -109,7 +110,7 @@ async function seedCrossScopeAlert(db, now = Date.now()) {
 
 async function seedRevalidationFlaggedMemory(db, now = Date.now()) {
   const saved = await cmdSave(db, {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     content: 'Potentially stale SSH note',
     scope: 'project',
     type: 'fact'
@@ -135,7 +136,7 @@ async function seedRevalidationFlaggedMemory(db, now = Date.now()) {
 }
 
 async function seedPromoteCandidate(db, { dangerous = false, candidateProjectKey = null, similarProjectKey = 'demo/other' } = {}) {
-  const cwd = '/Users/biran/code/skills/ccmem';
+  const cwd = REPO_ROOT;
   const saved = await cmdSave(db, {
     cwd,
     content: dangerous ? 'sudo rm -rf /tmp/cache' : 'Use feature folders across repos',
@@ -165,13 +166,13 @@ async function seedPromoteCandidate(db, { dangerous = false, candidateProjectKey
 
 async function seedContradictionAlert(db, now = Date.now()) {
   const memA = await cmdSave(db, {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     content: 'Use 4 spaces for indentation',
     scope: 'project',
     type: 'rule'
   });
   const memB = await cmdSave(db, {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     content: 'Use 2 spaces for indentation',
     scope: 'project',
     type: 'rule'
@@ -184,7 +185,7 @@ async function seedContradictionAlert(db, now = Date.now()) {
   ).run(
     memA.id,
     memB.id,
-    resolveProjectKey('/Users/biran/code/skills/ccmem'),
+    resolveProjectKey(REPO_ROOT),
     0.88,
     JSON.stringify({ llm_reason: 'indentation guidance conflicts' }),
     now - 1800000
@@ -299,7 +300,7 @@ test('cli resurrect --quarantined restores quarantined memories', async () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'resurrect', '--quarantined', '--limit', '1'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: 'k\n'
@@ -335,7 +336,7 @@ test('cli resurrect --alerts acknowledges alerts and keeps the global memory', a
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'resurrect', '--alerts', '--limit', '1'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: 'g\n'
@@ -377,7 +378,7 @@ test('cli resurrect prints prompts and applies typed decisions', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'resurrect', '--bottom', '2'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: 'k\nf\n'
@@ -405,7 +406,7 @@ test('cli resurrect prints no grey-zone memories when none match', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'resurrect'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: ''
@@ -421,7 +422,7 @@ test('cli resurrect --revalidation applies keep and quarantine decisions', async
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'resurrect', '--revalidation', '--limit', '1'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: 'q\n'
@@ -456,7 +457,7 @@ test('cli resurrect --revalidation prints no pending flags when empty', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'resurrect', '--revalidation'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: ''
@@ -472,7 +473,7 @@ test('cli resurrect --contradictions acknowledges contradictions and keeps memor
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'resurrect', '--contradictions', '--limit', '1'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: 'a\n'
@@ -514,7 +515,7 @@ test('cli resurrect --promote-candidates promotes a candidate to global', async 
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'resurrect', '--promote-candidates', '--limit', '1'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: 'p\n'
@@ -544,7 +545,7 @@ test('cli resurrect --promote-candidates blocks dangerous candidates', async () 
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'resurrect', '--promote-candidates', '--limit', '1'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: 'p\n'
@@ -572,7 +573,7 @@ test('cli resurrect --promote-candidates filters out unrelated current-project c
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'resurrect', '--promote-candidates', '--limit', '1'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: 'p\n'
@@ -591,7 +592,7 @@ test('cli resurrect --promote-candidates --all includes unrelated candidates', a
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'resurrect', '--promote-candidates', '--all', '--limit', '1'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: 's\n'

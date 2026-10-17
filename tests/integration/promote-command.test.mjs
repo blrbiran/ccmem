@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-promote-'));
 process.env.CCMEM_TEST_MODE = '1';
@@ -215,7 +216,7 @@ test('cli promote --global applies verbatim confirmation and preserves trust', (
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'promote', `m${id}`, '--global'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: 'PROMOTE GLOBAL\n'
@@ -241,7 +242,7 @@ test('cli promote cancels when confirmation does not match', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'promote', String(id)], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
     input: 'no\n'
@@ -271,7 +272,7 @@ test('cli promote --global blocks dangerous memories with exit 78', () => {
   assert.throws(
     () =>
       execFileSync(NODE, [CLI, 'promote', `m${id}`, '--global'], {
-        cwd: '/Users/biran/code/skills/ccmem',
+        cwd: REPO_ROOT,
         env,
         encoding: 'utf8',
         input: 'PROMOTE GLOBAL\n'

@@ -5,6 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-admin-daemon-'));
 const launchAgentDir = path.join(dataRoot, 'LaunchAgents');
@@ -462,7 +463,7 @@ test('cli admin daemon status prints live daemon summary', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'status'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -498,7 +499,7 @@ test('cli admin daemon start, restart, and stop manage a detached daemon', async
   db.close();
 
   const startOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'start'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -508,7 +509,7 @@ test('cli admin daemon start, restart, and stop manage a detached daemon', async
   assert.equal(typeof startedRow?.holder_pid, 'number');
 
   const restartOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'restart'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -518,7 +519,7 @@ test('cli admin daemon start, restart, and stop manage a detached daemon', async
   assert.equal(typeof restartedRow?.holder_pid, 'number');
 
   const stopOutput = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'stop'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -862,7 +863,7 @@ test('cli admin daemon status prints not running when daemon lock is absent', ()
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'status'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });

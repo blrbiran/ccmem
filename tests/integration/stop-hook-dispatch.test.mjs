@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-stop-hook-'));
 const transcript = path.join(dataRoot, 'session.jsonl');
@@ -87,13 +88,13 @@ function runStopHook({ sessionId, transcriptPath = transcript, extraEnv = env })
     NODE,
     [HOOK, 'stop'],
     {
-      cwd: '/Users/biran/code/skills/ccmem',
+      cwd: REPO_ROOT,
       env: extraEnv,
       encoding: 'utf8',
       input: JSON.stringify({
         session_id: sessionId,
         transcript_path: transcriptPath,
-        cwd: '/Users/biran/code/skills/ccmem'
+        cwd: REPO_ROOT
       })
     }
   );

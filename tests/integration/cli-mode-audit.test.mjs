@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-cli-'));
 process.env.CCMEM_TEST_MODE = '1';
@@ -22,7 +23,7 @@ const CLI = path.join(ROOT, 'scripts/cli.mjs');
 
 test('cli mode updates stored mode', () => {
   const output = execFileSync(NODE, [CLI, 'mode', 'shadow'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -40,7 +41,7 @@ test('cli audit show prints inserted audit row', async () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'audit', 'show', String(inserted.lastInsertRowid)], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });

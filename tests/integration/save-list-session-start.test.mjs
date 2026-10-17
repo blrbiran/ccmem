@@ -5,17 +5,18 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-flow-'));
 
 const NODE = '/usr/local/bin/node';
-const TEST_CWD = '/Users/biran/code/skills/ccmem';
+const TEST_CWD = REPO_ROOT;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const CLI = path.join(ROOT, 'scripts/cli.mjs');
 const HOOK = path.join(ROOT, 'scripts/hook.mjs');
-const TEST_REPO_CWD = '/Users/biran/code/skills/ccmem_paper/reference/ccmem';
-const PROJECT_CWD = '/Users/biran/code/skills/ccmem';
+const TEST_REPO_CWD = path.join(path.dirname(REPO_ROOT), 'ccmem_paper/reference/ccmem');
+const PROJECT_CWD = REPO_ROOT;
 const GLOBAL_CWD = TEST_REPO_CWD;
 
 function projectSave(db, content) {
@@ -93,8 +94,8 @@ function resetSaveListTables(db) {
 }
 
 async function seedQuarantinedListFixture(db, now = Date.now()) {
-  await cmdSave(db, { cwd: '/Users/biran/code/skills/ccmem', content: 'Visible list memory', scope: 'project' });
-  const quarantined = await cmdSave(db, { cwd: '/Users/biran/code/skills/ccmem', content: 'Quarantined list memory', scope: 'project' });
+  await cmdSave(db, { cwd: REPO_ROOT, content: 'Visible list memory', scope: 'project' });
+  const quarantined = await cmdSave(db, { cwd: REPO_ROOT, content: 'Quarantined list memory', scope: 'project' });
   const quarantinedAt = now - (26 * 86400000);
 
   db.prepare(
@@ -190,7 +191,7 @@ test('cli save prints saved memory id with m-prefix convention', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'save', 'CLI saved memory'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env: {
       ...process.env,
       CCMEM_TEST_MODE: '1',
@@ -209,7 +210,7 @@ test('cli list --quarantined prints quarantined memories with reason', async () 
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'list', '--quarantined', '--limit', '10'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env: {
       ...process.env,
       CCMEM_TEST_MODE: '1',
@@ -268,7 +269,7 @@ test('cli import reports embedding pending when semantic is enabled', async () =
   db.close();
 
   const output = spawnSync(NODE, [CLI, 'import', backupPath], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env: {
       ...process.env,
       CCMEM_TEST_MODE: '1',
@@ -299,17 +300,17 @@ test('cli admin semantic toggles runtime semantic state', () => {
   };
 
   const onOutput = execFileSync(NODE, [CLI, 'admin', 'semantic', 'on'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env: baseEnv,
     encoding: 'utf8'
   });
   const statusOutput = execFileSync(NODE, [CLI, 'admin', 'semantic', 'status'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env: baseEnv,
     encoding: 'utf8'
   });
   const offOutput = execFileSync(NODE, [CLI, 'admin', 'semantic', 'off'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env: baseEnv,
     encoding: 'utf8'
   });
@@ -327,11 +328,11 @@ test('cli list query --score prints score breakdown when semantic is enabled', a
      VALUES ('embedding.enabled', 'true', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
   ).run(Date.now());
-  await cmdSave(db, { cwd: '/Users/biran/code/skills/ccmem', content: 'Semantic score target memory', scope: 'project' });
+  await cmdSave(db, { cwd: REPO_ROOT, content: 'Semantic score target memory', scope: 'project' });
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'list', 'semantic', 'score', '--score', '--limit', '1'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env: {
       ...process.env,
       CCMEM_TEST_MODE: '1',
@@ -365,7 +366,7 @@ test('cli show prints recent injection history when scores are present', async (
   });
 
   const output = execFileSync(NODE, [CLI, 'show', `m${saved.id}`], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env: {
       ...process.env,
       CCMEM_TEST_MODE: '1',
@@ -393,7 +394,7 @@ test('cli list --never-injected prints only never-injected memories', async () =
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'list', '--never-injected', '--days', '30'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env: {
       ...process.env,
       CCMEM_TEST_MODE: '1',
@@ -415,7 +416,7 @@ test('session-start in off mode stays read-only and returns no injected context'
     NODE,
     [HOOK, 'session-start'],
     {
-      cwd: '/Users/biran/code/skills/ccmem',
+      cwd: REPO_ROOT,
       env: {
         ...process.env,
         CCMEM_TEST_MODE: '1',
@@ -457,7 +458,7 @@ test('session-start hook exits early under CCMEM_INTERNAL and stays read-only', 
     NODE,
     [HOOK, 'session-start'],
     {
-      cwd: '/Users/biran/code/skills/ccmem',
+      cwd: REPO_ROOT,
       env: {
         ...process.env,
         CCMEM_TEST_MODE: '1',
@@ -523,7 +524,7 @@ test('session-start hook in shadow mode stays read-only and emits diagnostic not
     NODE,
     [HOOK, 'session-start'],
     {
-      cwd: '/Users/biran/code/skills/ccmem',
+      cwd: REPO_ROOT,
       env: {
         ...process.env,
         CCMEM_TEST_MODE: '1',
@@ -670,7 +671,7 @@ test('session-start hook exits early for sessions blacklisted by daemon bridge c
     NODE,
     [HOOK, 'session-start'],
     {
-      cwd: '/Users/biran/code/skills/ccmem',
+      cwd: REPO_ROOT,
       env: {
         ...process.env,
         CCMEM_TEST_MODE: '1',
@@ -717,7 +718,7 @@ test('session-start hook ignores expired blacklisted sessions and proceeds norma
     NODE,
     [HOOK, 'session-start'],
     {
-      cwd: '/Users/biran/code/skills/ccmem',
+      cwd: REPO_ROOT,
       env: {
         ...process.env,
         CCMEM_TEST_MODE: '1',

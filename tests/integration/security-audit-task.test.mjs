@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-security-audit-'));
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = dataRoot;
 
-const TEST_CWD = '/Users/biran/code/skills/ccmem';
+const TEST_CWD = REPO_ROOT;
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { loadConfig } = await import('../../scripts/lib/config.mjs');

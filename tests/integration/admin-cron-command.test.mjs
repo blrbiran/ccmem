@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-admin-cron-'));
 process.env.CCMEM_TEST_MODE = '1';
@@ -1327,7 +1328,7 @@ test('cli admin cron list --history prints task history lines', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'list', '--history', '2', '--task', 'daily_maintenance'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -1349,7 +1350,7 @@ test('cli admin cron list --history prints security_audit history lines', () => 
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'list', '--history', '2', '--task', 'security_audit'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -1365,7 +1366,7 @@ test('cli admin cron list prints compact status lines', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'list'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -1383,7 +1384,7 @@ test('cli admin cron list --issues prints only unhealthy cron lines', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'list', '--issues'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -1401,7 +1402,7 @@ test('cli admin cron list --issues stays silent when cron is healthy', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'list', '--issues'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -1415,7 +1416,7 @@ test('cli admin cron list prints not running daemon state', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'list'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -1429,7 +1430,7 @@ test('cli admin cron run enqueues supported tasks', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'run', 'weekly_synthesis'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -1467,7 +1468,7 @@ test('cli admin cron run rejects summarize_pending as a manual task', () => {
   assert.throws(
     () =>
       execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'run', 'summarize_pending'], {
-        cwd: '/Users/biran/code/skills/ccmem',
+        cwd: REPO_ROOT,
         env,
         encoding: 'utf8'
       }),
@@ -1495,12 +1496,12 @@ test('cli admin cron run reports duplicate manual leases as skipped', () => {
   db.close();
 
   const first = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'run', 'daily_maintenance'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
   const second = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'run', 'daily_maintenance'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -1530,7 +1531,7 @@ test('cli admin cron run reports daemon-held daily leases as skipped', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'run', 'daily_maintenance'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -1559,7 +1560,7 @@ test('cli admin cron run reports daemon-held weekly leases as skipped', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'cron', 'run', 'weekly_synthesis'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -1893,7 +1894,7 @@ test('dispatchTask runs monthly_meta_synthesis and supersedes source consolidate
 
   try {
     const first = await insertMemory(db, {
-      cwd: '/Users/biran/code/skills/ccmem',
+      cwd: REPO_ROOT,
       content: 'Project patterns converge on strict API boundaries',
       scope: 'project',
       projectKey: 'demo/repo',
@@ -1902,7 +1903,7 @@ test('dispatchTask runs monthly_meta_synthesis and supersedes source consolidate
       embedSync: false
     });
     const second = await insertMemory(db, {
-      cwd: '/Users/biran/code/skills/ccmem',
+      cwd: REPO_ROOT,
       content: 'Project patterns converge on explicit service contracts',
       scope: 'project',
       projectKey: 'demo/repo',
@@ -2008,7 +2009,7 @@ test('daily maintenance on day one enqueues monthly_meta_synthesis when threshol
 
   try {
     await insertMemory(db, {
-      cwd: '/Users/biran/code/skills/ccmem',
+      cwd: REPO_ROOT,
       content: 'First consolidated source',
       scope: 'project',
       projectKey: 'demo/repo',
@@ -2017,7 +2018,7 @@ test('daily maintenance on day one enqueues monthly_meta_synthesis when threshol
       embedSync: false
     });
     await insertMemory(db, {
-      cwd: '/Users/biran/code/skills/ccmem',
+      cwd: REPO_ROOT,
       content: 'Second consolidated source',
       scope: 'project',
       projectKey: 'demo/repo',

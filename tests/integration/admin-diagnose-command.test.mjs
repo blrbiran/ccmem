@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, w
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-admin-diagnose-'));
 const diagnoseCwd = mkdtempSync(path.join(tmpdir(), 'ccmem-diagnose-cwd-'));
@@ -1110,7 +1111,7 @@ test('summarize-pending writes summary_meta into memories', async () => {
 });
 
 test('config default version is 0.14', () => {
-  const raw = readFileSync('/Users/biran/code/skills/ccmem/config.default.json', 'utf8');
+  const raw = readFileSync(path.join(REPO_ROOT, 'config.default.json'), 'utf8');
   assert.match(raw, /"version": "0\.14"/);
 });
 
@@ -1124,7 +1125,7 @@ test('config defaults include context_history and openai timeout settings', () =
 
 
 test('migration 013 exists', () => {
-  assert.equal(existsSync('/Users/biran/code/skills/ccmem/scripts/migrations/013_v011.sql'), true);
+  assert.equal(existsSync(path.join(REPO_ROOT, 'scripts/migrations/013_v011.sql')), true);
 });
 
 

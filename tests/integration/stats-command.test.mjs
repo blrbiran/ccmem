@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 
 const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-stats-'));
 process.env.CCMEM_TEST_MODE = '1';
@@ -17,7 +18,7 @@ const env = {
 };
 
 const NODE = '/usr/local/bin/node';
-const TEST_CWD = '/Users/biran/code/skills/ccmem';
+const TEST_CWD = REPO_ROOT;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const CLI = path.join(ROOT, 'scripts/cli.mjs');
 
@@ -310,7 +311,7 @@ test('cli stats prints human summary', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'stats'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -330,7 +331,7 @@ test('cli stats prints the security line when quarantine or alerts exist', () =>
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'stats'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -346,7 +347,7 @@ test('cli stats --json returns structured stats', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'stats', '--json', '--buckets'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -401,7 +402,7 @@ test('cli stats prints the tuning hint when suggestions are available', () => {
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'stats'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });
@@ -428,7 +429,7 @@ test('cli stats prints injection and promote hints when thresholds are exceeded'
   db.close();
 
   const output = execFileSync(NODE, [CLI, 'stats'], {
-    cwd: '/Users/biran/code/skills/ccmem',
+    cwd: REPO_ROOT,
     env,
     encoding: 'utf8'
   });

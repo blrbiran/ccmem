@@ -112,8 +112,8 @@ ccmem uninstall codex
 ```
 
 - `install` writes `${CODEX_HOME:-~/.codex}/hooks.json` (never `config.toml`), backs up an existing file to `hooks.json.bak.<ms>`, and records what it added in `<dataRoot>/installs/codex.json`. It refuses when `config.toml` defines `[hooks]`.
-- Then open Codex and approve the three ccmem hooks (SessionStart, UserPromptSubmit, Stop) with `/hooks`. ccmem never bypasses Codex's hook trust. Approval is needed again whenever the hook definitions change (for example after a reinstall with a different `node`).
-- `uninstall` restores the backup or strips exactly what install added. Removing an entry can shift hook indices and revoke trust of user hooks added after ccmem in the same event. Trust records stay in `config.toml`.
+- Then open Codex and approve the three ccmem hooks (SessionStart, UserPromptSubmit, Stop) with `/hooks`. ccmem never bypasses Codex's hook trust. Per Codex's source (ccmem code cannot show this), approval is needed again whenever the hook definitions change (for example after a reinstall with a different `node`).
+- `uninstall` restores the backup or strips exactly what install added. Removing an entry can shift hook indices and revoke trust of user hooks added after ccmem in the same event. Per Codex's source, trust records stay in `config.toml`. If the file was damaged or edited by hand, uninstall leaves a `hooks.json.bak.<ms>` of those bytes.
 
 ### OMP
 
@@ -122,7 +122,7 @@ ccmem install omp
 ccmem uninstall omp
 ```
 
-- `install` writes `<agent dir>/extensions/ccmem.ts` and records it in `<dataRoot>/installs/omp.json`. The agent dir is `CCMEM_OMP_AGENT_DIR`, else OMP's own rules (profile, `PI_CODING_AGENT_DIR`), else `~/.omp/agent`. Install prints the path it used.
+- `install` writes `<agent dir>/extensions/ccmem.ts` and records it in `<dataRoot>/installs/omp.json`. The agent dir is `CCMEM_OMP_AGENT_DIR`, else OMP's own rules (profile, `PI_CODING_AGENT_DIR`), else `~/.omp/agent`. Install prints the path it used. A previous `ccmem.ts` is backed up as `ccmem.ts.bak.<ms>` next to it, and uninstall can leave another `.bak` if the loader was hand-edited.
 
 ### Injection
 

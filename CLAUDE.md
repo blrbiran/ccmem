@@ -80,9 +80,9 @@ Default to surfacing uncertainty, not hiding it.
 | `~/.claude/ccmem/*.db-wal` / `*.db-shm` | SQLite 预写日志 —— **删了它就是删数据** |
 | `~/.claude/ccmem/config.json` | 运行配置 |
 | `~/.claude/ccmem/*.jsonl` | 指标与探针输出 |
-| `${CODEX_HOME:-~/.codex}/hooks.json` | `ccmem install codex` 写入；旁边 `hooks.json.bak.<ms>`。残留：写入失败时原文件不动或留 `.bak`；`uninstall codex` 还原／剥离 |
-| `<agent dir>/extensions/ccmem.ts`（默认 `~/.omp/agent/`） | `ccmem install omp` 写入。残留：失败时不留半写文件；`uninstall omp` 删除 |
-| `<dataRoot>/installs/{codex,omp}.json` | 上两项的安装清单（uninstall 靠它）。残留：清单在而目标文件缺失 ⇒ 重跑 install／uninstall 报错并指路 |
+| `${CODEX_HOME:-~/.codex}/hooks.json` | `ccmem install codex` 写入（原子替换，不会留半写文件）。先备份 `hooks.json.bak.<ms>`、再写清单、最后写本文件。残留：写本文件失败 ⇒ 清单 + `.bak` 留下，报错指路 `ccmem uninstall codex` 还原；`uninstall` 成功后，若文件损坏或被人手改过，还会留一份 `.bak`（损坏／手改前的字节） |
+| `<agent dir>/extensions/ccmem.ts`（默认 `~/.omp/agent/`） | `ccmem install omp` 写入（原子替换）。同序：备份 `ccmem.ts.bak.<ms>`（紧挨加载器，OMP 的 `*.ts` 扫描不会拾取）→ 清单 → 本文件。残留同上：写失败 ⇒ 清单 + `.bak`，指路 `ccmem uninstall omp`；`uninstall` 遇手改过的加载器会另留一份 `.bak` |
+| `<dataRoot>/installs/{codex,omp}.json` | 上两项的安装清单（uninstall 靠它），**先于目标文件写入**。残留：目标写失败时清单仍在（正是为了让 uninstall 能还原）。目标文件已不存在时，uninstall 会**静默**删清单并返回「未改动」（OMP 且有备份则还原备份） |
 
 ## 铁律
 

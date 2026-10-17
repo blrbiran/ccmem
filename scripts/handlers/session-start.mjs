@@ -16,12 +16,20 @@ const SCOPE_ISOLATION_NOTICE =
   'ccmem: WARNING — eval.disable_scope_isolation is ON. Cross-project memory isolation is DISABLED;\n'
   + 'ccmem: memories from every project on this machine are visible. Do not use on a real data root.\n';
 
-export function buildReadInstruction(sessionId) {
+// Compaction wording per calling agent: only Claude Code has /compact.
+const COMPACTION_WORDING = {
+  'claude-code': { after: 'each /compact', afterCap: 'After /compact' },
+  codex: { after: 'context compaction', afterCap: 'After context compaction' },
+  omp: { after: 'compaction', afterCap: 'After compaction' }
+};
+
+export function buildReadInstruction(sessionId, agent = 'claude-code') {
   const fileName = contextFileName(sessionId);
+  const wording = COMPACTION_WORDING[agent] ?? COMPACTION_WORDING['claude-code'];
   return [
     '## ccmem context',
-    `Read \`.ccmem/${fileName}\` at session start and after each /compact.`,
-    'After /compact, ALWAYS re-read regardless of compressed summary content.',
+    `Read \`.ccmem/${fileName}\` at session start and after ${wording.after}.`,
+    `${wording.afterCap}, ALWAYS re-read regardless of compressed summary content.`,
     "Re-read if you haven't read it in the last 5 turns or when switching to a different task.",
     "Context is session-scoped; prioritize the user's current prompt over cached context.",
     'If file contains only "<!-- ccmem: no relevant memories -->" or is missing, proceed normally.'
@@ -39,7 +47,7 @@ function parseMemberIds(memberIds) {
   }
 }
 
-function upsertSessionContext(db, sessionId, projectKey) {
+function upsertSessionContext(db, sessionId, projectKey, agent) {
   if (!sessionId) {
     return;
   }
@@ -52,15 +60,18 @@ function upsertSessionContext(db, sessionId, projectKey) {
       message_count,
       duration_ms,
       last_seq,
-      updated_at
-    ) VALUES (?, ?, 0, 0, 0, 0, ?)
+      updated_at,
+      agent
+    ) VALUES (?, ?, 0, 0, 0, 0, ?, ?)
     ON CONFLICT(session_id) DO UPDATE SET
       project_key = excluded.project_key,
-      updated_at = excluded.updated_at`
-  ).run(sessionId, projectKey, Date.now());
+      updated_at = excluded.updated_at,
+      agent = excluded.agent`
+  ).run(sessionId, projectKey, Date.now(), agent);
 }
 
 export async function handleSessionStart(hookData) {
+  const agent = hookData.ccmem_agent ?? 'claude-code';
   const db = openDb();
 
   try {
@@ -107,7 +118,7 @@ export async function handleSessionStart(hookData) {
       return { additionalContext: '' };
     }
 
-    upsertSessionContext(db, hookData.session_id, projectKey);
+    upsertSessionContext(db, hookData.session_id, projectKey, agent);
 
     if (useFileBased) {
       cleanupStaleContextFiles(hookData.cwd, hookData.session_id);
@@ -136,7 +147,7 @@ export async function handleSessionStart(hookData) {
     // File-based: the conversation gets the short, fixed read instruction
     // only, identical on every call of a session (stable cache prefix).
     const additionalContext = useFileBased
-      ? buildReadInstruction(hookData.session_id)
+      ? buildReadInstruction(hookData.session_id, agent)
       : stableContext;
     return { additionalContext };
   } finally {

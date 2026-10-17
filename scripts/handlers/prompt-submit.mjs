@@ -12,7 +12,7 @@ const SHADOW_NOTICE = 'ccmem: mode=shadow (read-only diagnostic — no writes, n
 
 export const sanitizeFtsQuery = sanitizePromptQuery;
 
-function upsertSessionContext(db, sessionId, projectKey) {
+function upsertSessionContext(db, sessionId, projectKey, agent) {
   if (!sessionId) {
     return;
   }
@@ -25,12 +25,14 @@ function upsertSessionContext(db, sessionId, projectKey) {
       message_count,
       duration_ms,
       last_seq,
-      updated_at
-    ) VALUES (?, ?, 0, 0, 0, 0, ?)
+      updated_at,
+      agent
+    ) VALUES (?, ?, 0, 0, 0, 0, ?, ?)
     ON CONFLICT(session_id) DO UPDATE SET
       project_key = excluded.project_key,
-      updated_at = excluded.updated_at`
-  ).run(sessionId, projectKey, Date.now());
+      updated_at = excluded.updated_at,
+      agent = excluded.agent`
+  ).run(sessionId, projectKey, Date.now(), agent);
 }
 
 export async function handlePromptSubmit(hookData) {
@@ -49,7 +51,7 @@ export async function handlePromptSubmit(hookData) {
 
     const config = loadConfig();
     const projectKey = resolveProjectKey(hookData.cwd);
-    upsertSessionContext(db, hookData.session_id, projectKey);
+    upsertSessionContext(db, hookData.session_id, projectKey, hookData.ccmem_agent ?? 'claude-code');
 
     const retrieval = await retrieveMemories(db, hookData.prompt ?? '', projectKey, config);
     const disableScopeIsolation = config?.eval?.disable_scope_isolation === true;

@@ -1,6 +1,26 @@
 const T_ENTRY = process.hrtime.bigint();
 const mode = process.argv[2];
 
+const KNOWN_AGENTS = ['claude-code', 'codex', 'omp'];
+
+// `--agent <id>` names the calling agent; absent means claude-code. An unknown
+// id must never break the session the hook runs inside, so it degrades to
+// claude-code with a stderr warning.
+function parseAgentArg(argv) {
+  const idx = argv.indexOf('--agent');
+  if (idx === -1) {
+    return 'claude-code';
+  }
+  const value = argv[idx + 1];
+  if (KNOWN_AGENTS.includes(value)) {
+    return value;
+  }
+  process.stderr.write(`ccmem: unknown --agent '${value ?? ''}', treating as claude-code\n`);
+  return 'claude-code';
+}
+
+const agent = parseAgentArg(process.argv.slice(3));
+
 function buildHookOutput(hookMode, additionalContext = '') {
   if (hookMode === 'stop' || hookMode === 'session-end') {
     return {};
@@ -28,6 +48,7 @@ const hookData = JSON.parse(
     process.stdin.on('end', () => resolve(raw || '{}'));
   })
 );
+hookData.ccmem_agent = agent;
 
 async function isBlacklistedSession(sessionId) {
   if (!sessionId) {

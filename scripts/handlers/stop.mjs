@@ -18,6 +18,7 @@ export async function handleStop(db, hookData) {
     return { additionalContext: '' };
   }
 
+  const agent = hookData.ccmem_agent ?? 'claude-code';
   const stats = computeSessionStats(hookData.transcript_path);
   const seq = countTranscriptLines(hookData.transcript_path);
 
@@ -29,15 +30,17 @@ export async function handleStop(db, hookData) {
       message_count,
       duration_ms,
       last_seq,
-      updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      updated_at,
+      agent
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(session_id) DO UPDATE SET
       project_key = excluded.project_key,
       tool_calls = excluded.tool_calls,
       message_count = excluded.message_count,
       duration_ms = excluded.duration_ms,
       last_seq = excluded.last_seq,
-      updated_at = excluded.updated_at`
+      updated_at = excluded.updated_at,
+      agent = excluded.agent`
   ).run(
     hookData.session_id,
     resolveProjectKey(hookData.cwd),
@@ -45,7 +48,8 @@ export async function handleStop(db, hookData) {
     stats.messageCount,
     stats.durationMs,
     seq,
-    Date.now()
+    Date.now(),
+    agent
   );
 
   db.prepare(
@@ -55,7 +59,8 @@ export async function handleStop(db, hookData) {
     JSON.stringify({
       session_id: hookData.session_id,
       transcript_path: hookData.transcript_path,
-      last_message_seq: seq
+      last_message_seq: seq,
+      agent
     }),
     Date.now(),
     Date.now()

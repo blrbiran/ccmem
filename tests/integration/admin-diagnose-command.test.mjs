@@ -1020,7 +1020,10 @@ test('summarize-pending accepts 500-char outputs under v0.11 parsing rules', asy
       last_message_seq: 2,
       llm_output: JSON.stringify({
         synthesized: [{
-          content: 'durable memory '.repeat(40),
+          // exactly max_chars_per_memory: stored whole, no refine needed.
+          // Over-limit content is never sliced to fit (spec A2); that path is
+          // covered by tests/integration/no-silent-truncation.test.mjs.
+          content: `${'durable memory '.repeat(40).slice(0, 499)}.`,
           type: 'fact',
           scope: 'project',
           tags: ['summary']
@@ -1034,7 +1037,8 @@ test('summarize-pending accepts 500-char outputs under v0.11 parsing rules', asy
     const saved = db.prepare(`SELECT content FROM memories ORDER BY id DESC LIMIT 1`).get();
 
     assert.equal(Boolean(saved), true);
-    assert.equal(saved.content.length <= 500, true);
+    assert.equal(saved.content, `${'durable memory '.repeat(40).slice(0, 499)}.`);
+    assert.equal(saved.content.length, 500);
   } finally {
     if (previousConfigPath == null) {
       delete process.env.CCMEM_CONFIG_PATH;

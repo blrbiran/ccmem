@@ -145,7 +145,7 @@ function buildSummaryMeta(item) {
     ['next_steps', item?.next_steps]
   ]) {
     if (typeof value === 'string' && value.trim()) {
-      meta[key] = value.trim().slice(0, 200);
+      meta[key] = value.trim();
     }
   }
 
@@ -273,12 +273,23 @@ export async function runSummarizePending(db, task) {
   const items = [];
 
   for (const item of parsedItems) {
-    const refinedContent = await refineContentToLimit(item.content, {
+    const refined = await refineContentToLimit(item.content, {
       enabled: cfg.summarize?.content_refiner?.enabled !== false,
       maxChars: Number(cfg.save?.max_chars_per_memory ?? 500),
-      taskType: 'summarize_pending'
+      taskType: 'summarize_pending',
+      mockOutputs: payload.refiner_llm_outputs
     });
-    const normalizedItem = { ...item, content: refinedContent };
+    if (!refined.ok) {
+      // Too long and not rewritable: keep it out of memory rather than store a
+      // slice, and keep the full text in the audit so nothing is lost (spec A2).
+      writeAudit(db, 'summarize_refine_rejected', null, {
+        session_id: sessionId,
+        reason: refined.reason,
+        content: refined.content
+      });
+      continue;
+    }
+    const normalizedItem = { ...item, content: refined.content };
 
     if (!gateEnabled) {
       items.push(normalizedItem);

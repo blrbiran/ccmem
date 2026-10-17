@@ -30,6 +30,24 @@ function unwrapClaudeEnvelope(parsed) {
   return value;
 }
 
+// Models sometimes return an item's content as the JSON text of an object,
+// e.g. '{"content":"Only clean up X"}'. Storing that shape verbatim puts raw
+// JSON into memory (spec A5), so take the inner string instead.
+function unwrapJsonStringContent(value) {
+  const text = String(value ?? '');
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) {
+    return text;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof parsed.content === 'string') {
+      return parsed.content;
+    }
+  } catch {}
+  return text;
+}
+
 function normalizeSynthesizedArray(parsed, { skipTruncate = false, maxContentChars = 500 } = {}) {
   const normalized = Array.isArray(parsed)
     ? parsed
@@ -40,15 +58,16 @@ function normalizeSynthesizedArray(parsed, { skipTruncate = false, maxContentCha
       const temporalType = ['permanent', 'temporary', 'time-bound'].includes(item?.temporal_type)
         ? item.temporal_type
         : null;
-      const investigated = item?.investigated == null ? null : String(item.investigated).slice(0, 200).trim();
-      const learned = item?.learned == null ? null : String(item.learned).slice(0, 200).trim();
-      const completed = item?.completed == null ? null : String(item.completed).slice(0, 200).trim();
-      const nextSteps = item?.next_steps == null ? null : String(item.next_steps).slice(0, 200).trim();
+      // Summary fields are kept whole: a silent cut here would store a fragment
+      // nobody can tell was cut (spec A2).
+      const investigated = item?.investigated == null ? null : String(item.investigated).trim();
+      const learned = item?.learned == null ? null : String(item.learned).trim();
+      const completed = item?.completed == null ? null : String(item.completed).trim();
+      const nextSteps = item?.next_steps == null ? null : String(item.next_steps).trim();
+      const content = unwrapJsonStringContent(item?.content);
 
       return {
-        content: skipTruncate
-          ? String(item?.content ?? '')
-          : String(item?.content ?? '').slice(0, maxContentChars),
+        content: skipTruncate ? content : content.slice(0, maxContentChars),
         type: ['rule', 'fact', 'episode'].includes(item?.type) ? item.type : 'fact',
         scope: item?.scope === 'global' ? 'global' : 'project',
         tags: Array.isArray(item?.tags) ? item.tags.slice(0, 10).map((tag) => String(tag)) : [],

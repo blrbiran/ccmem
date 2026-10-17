@@ -31,39 +31,57 @@ export function truncateAtWordBoundary(text, maxChars = 500) {
   return cut.trimEnd();
 }
 
+// Rewrites over-long content with the LLM. It never slices: when the rewrite
+// is disabled, fails, or is still too long after one re-ask, it returns
+// ok:false with the full original so the caller can keep it out of memory
+// and record why (spec A2). `mockOutputs` is a test seam, consumed in order.
 export async function refineContentToLimit(content, {
   enabled = true,
   maxChars = 500,
-  taskType = 'summarize_pending'
+  taskType = 'summarize_pending',
+  mockOutputs = null
 } = {}) {
   const source = String(content ?? '').trim();
   if (source.length <= maxChars) {
-    return source;
+    return { ok: true, content: source };
   }
 
   if (!enabled) {
-    return truncateAtWordBoundary(source, maxChars);
+    return { ok: false, reason: 'refiner_disabled', content: source };
   }
 
-  try {
+  const mocks = Array.isArray(mockOutputs) ? [...mockOutputs] : [];
+  const ask = async (instruction) => {
     const raw = await callClaudeP([
-      'Refine the following memory to fit within 500 characters while preserving the key durable information.',
+      instruction,
       'Return strict JSON only: {"content":"..."}',
       '',
       source
     ].join('\n'), {
       taskType,
-      jsonSchema: REFINER_SCHEMA
+      jsonSchema: REFINER_SCHEMA,
+      mockOutput: mocks.shift()
     });
-    const parsed = parseRawLlmOutput(raw);
-    const refined = String(parsed?.content ?? '').trim();
-    if (refined && refined.length <= (maxChars + 1)) {
-      return refined;
-    }
-    if (refined) {
-      return truncateAtWordBoundary(refined, maxChars);
-    }
-  } catch {}
+    return String(parseRawLlmOutput(raw)?.content ?? '').trim();
+  };
 
-  return truncateAtWordBoundary(source, maxChars);
+  try {
+    let refined = await ask(
+      `Refine the following memory to fit within ${maxChars} characters while preserving the key durable information.`
+    );
+    if (refined.length > maxChars) {
+      refined = await ask(
+        `Rewrite the following memory so it must be ≤ ${maxChars} characters, keeping only the key durable information. Your previous attempt was ${refined.length} characters, which is too long.`
+      );
+    }
+    if (!refined) {
+      return { ok: false, reason: 'refine_failed', content: source };
+    }
+    if (refined.length > maxChars) {
+      return { ok: false, reason: 'still_too_long', content: source };
+    }
+    return { ok: true, content: refined };
+  } catch {
+    return { ok: false, reason: 'refine_failed', content: source };
+  }
 }

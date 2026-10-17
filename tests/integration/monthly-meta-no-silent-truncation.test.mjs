@@ -116,3 +116,45 @@ test('a meta-rule of exactly 80 chars is stored whole without a rewrite', async 
     db.close();
   }
 });
+
+// A backend that answers every real call with a usage-limit error, the way
+// Claude reports an exhausted subscription. Only the refiner makes a real call
+// here (the task's own LLM output is mocked).
+async function withExhaustedLlm(fn) {
+  const stub = path.join(dataRoot, `exhausted-llm-${Math.random().toString(36).slice(2)}.mjs`);
+  writeFileSync(stub, "process.stderr.write('Claude usage limit reached. Your limit resets 5pm\\n');\nprocess.exit(1);\n");
+  const previous = { command: process.env.CCMEM_CLAUDE_P_COMMAND, args: process.env.CCMEM_CLAUDE_P_ARGS_JSON };
+  process.env.CCMEM_CLAUDE_P_COMMAND = process.execPath;
+  process.env.CCMEM_CLAUDE_P_ARGS_JSON = JSON.stringify([stub]);
+  try {
+    return await fn();
+  } finally {
+    process.env.CCMEM_CLAUDE_P_COMMAND = previous.command;
+    if (previous.args == null) delete process.env.CCMEM_CLAUDE_P_ARGS_JSON;
+    else process.env.CCMEM_CLAUDE_P_ARGS_JSON = previous.args;
+    const db = openDb();
+    try {
+      db.prepare('DELETE FROM llm_backend_state').run();
+      db.prepare('DELETE FROM llm_switch_proposals').run();
+    } finally {
+      db.close();
+    }
+  }
+}
+
+test('an exhausted backend during the refine is thrown for a retry, not audited as a rejection', async () => {
+  const db = openDb();
+  try {
+    db.prepare(`DELETE FROM audit_log WHERE action = 'monthly_meta_refine_rejected'`).run();
+    await withExhaustedLlm(async () => {
+      await assert.rejects(runWith(db, { content: text('marker-exhausted', 600) }), (error) => error.exhaustion != null);
+      const parents = db.prepare(`SELECT id FROM memories WHERE content LIKE 'parent %' ORDER BY id`).all().map((r) => r.id);
+      assert.deepEqual(rejectAudits(db), [], 'an unanswered refine is not a rejection');
+      assert.deepEqual(metaRows(db, 'marker-exhausted'), []);
+      const statuses = parents.map((id) => db.prepare('SELECT status FROM memories WHERE id = ?').get(id).status);
+      assert.deepEqual(statuses, ['active', 'active']);
+    });
+  } finally {
+    db.close();
+  }
+});

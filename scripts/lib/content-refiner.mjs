@@ -33,10 +33,20 @@ export function truncateAtWordBoundary(text, maxChars = 500) {
   return cut.trimEnd();
 }
 
+// True for a call that failed because the backend could not answer now --
+// exhausted (claude-p.mjs sets error.exhaustion), rate-limited (retryAfter) or
+// timed out -- as opposed to one that answered badly. Such a failure says
+// nothing about the content, so it is not a reason to reject it.
+export function isTransientLlmError(error) {
+  return error?.exhaustion != null || Number(error?.retryAfter) > 0 || error?.timedOut === true;
+}
+
 // Rewrites over-long content with the LLM. It never slices: when the rewrite
 // is disabled, fails, or is still too long after one re-ask, it returns
 // ok:false with the full original so the caller can keep it out of memory
-// and record why (spec A2). `mockOutputs` is a test seam, consumed in order.
+// and record why (spec A2). A transient failure (isTransientLlmError) is
+// thrown instead, so the daemon loop retries the task rather than reject the
+// memory for good (spec G5). `mockOutputs` is a test seam, consumed in order.
 export async function refineContentToLimit(content, {
   enabled = true,
   maxChars = 500,
@@ -91,7 +101,10 @@ export async function refineContentToLimit(content, {
       return { ok: false, reason: 'still_too_long', content: source };
     }
     return { ok: true, content: refined };
-  } catch {
+  } catch (error) {
+    if (isTransientLlmError(error)) {
+      throw error;
+    }
     return { ok: false, reason: 'refine_failed', content: source };
   }
 }

@@ -14,6 +14,7 @@ test.after(() => rmSync(dataRoot, { recursive: true, force: true }));
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { runSummarizePending } = await import('../../scripts/daemon/tasks/summarize-pending.mjs');
+const { runTask } = await import('../../scripts/daemon/loop.mjs');
 
 /**
  * Spec A2: what the summarizer produced must reach memory whole, or not at
@@ -101,6 +102,9 @@ test('summary fields are not sliced', async () => {
   try {
     await withConfig({}, async () => {
       const learned = longText('learned-field', 450);
+      // Precondition on the fixture only (it cannot fail on product code): the
+      // field must be longer than the old 200-char cut. What the product kept
+      // is measured after the run, on the stored row.
       assert.equal(learned.length, 450);
       const task = seedTask(db, {
         sessionId: 's-fields',
@@ -210,6 +214,59 @@ test('json-string content is unwrapped', async () => {
       assert.equal(rows[0].content, 'Only clean up X');
     });
   } finally {
+    db.close();
+  }
+});
+
+// A backend that answers every real call with a usage-limit error, the way
+// Claude reports an exhausted subscription. Only the refiner makes a real call
+// here (the task's own LLM output is mocked).
+async function withExhaustedLlm(fn) {
+  const stub = path.join(dataRoot, `exhausted-llm-${Math.random().toString(36).slice(2)}.mjs`);
+  writeFileSync(stub, "process.stderr.write('Claude usage limit reached. Your limit resets 5pm\\n');\nprocess.exit(1);\n");
+  const previous = { command: process.env.CCMEM_CLAUDE_P_COMMAND, args: process.env.CCMEM_CLAUDE_P_ARGS_JSON };
+  process.env.CCMEM_CLAUDE_P_COMMAND = process.execPath;
+  process.env.CCMEM_CLAUDE_P_ARGS_JSON = JSON.stringify([stub]);
+  try {
+    return await fn();
+  } finally {
+    process.env.CCMEM_CLAUDE_P_COMMAND = previous.command;
+    if (previous.args == null) delete process.env.CCMEM_CLAUDE_P_ARGS_JSON;
+    else process.env.CCMEM_CLAUDE_P_ARGS_JSON = previous.args;
+    const db = openDb();
+    try {
+      db.prepare('DELETE FROM llm_backend_state').run();
+      db.prepare('DELETE FROM llm_switch_proposals').run();
+    } finally {
+      db.close();
+    }
+  }
+}
+
+test('an exhausted backend during the refine leaves the task to be retried, not the memory rejected', async () => {
+  const db = openDb();
+  try {
+    await withConfig({ content_refiner: { enabled: true } }, async () => {
+      await withExhaustedLlm(async () => {
+        const content = longText('marker-exhausted', 900);
+        const task = seedTask(db, {
+          sessionId: 's-exhausted',
+          synthesized: [{ content, type: 'rule', scope: 'project', tags: [] }]
+        });
+        await runTask(db, task, runSummarizePending);
+
+        assert.deepEqual(rejectAudits(db, 's-exhausted'), [], 'an unanswered refine is not a rejection');
+        assert.deepEqual(rowsContaining(db, 'marker-exhausted'), []);
+        assert.equal(db.prepare('SELECT status FROM tasks WHERE id = ?').get(task.id).status, 'failed');
+        const retries = db.prepare(
+          `SELECT payload FROM tasks WHERE type = 'summarize_pending' AND status = 'queued' AND id > ?`
+        ).all(task.id);
+        assert.equal(retries.length, 1, 'the loop queues the same task again (spec G5)');
+        assert.equal(retries[0].payload, task.payload);
+      });
+    });
+  } finally {
+    db.prepare(`DELETE FROM tasks WHERE type = 'summarize_pending'`).run();
     db.close();
   }
 });

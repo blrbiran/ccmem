@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -19,12 +19,18 @@ process.env.CCMEM_CONFIG_PATH = configPath;
 const mergeFile = path.join(dataRoot, 'merge.json');
 const refineFile = path.join(dataRoot, 'refine.json');
 const stub = path.join(dataRoot, 'fake-claude.mjs');
+// While refine-exhausted exists, a refine prompt gets Claude's usage-limit error.
+const refineExhaustedFlag = path.join(dataRoot, 'refine-exhausted');
 writeFileSync(stub, `
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 let input = '';
 process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', () => {
   const isRefine = /^(Refine|Rewrite) the following memory/.test(input);
+  if (isRefine && existsSync(${JSON.stringify(refineExhaustedFlag)})) {
+    process.stderr.write('Claude usage limit reached. Your limit resets 5pm\\n');
+    process.exit(1);
+  }
   process.stdout.write(readFileSync(isRefine ? ${JSON.stringify(refineFile)} : ${JSON.stringify(mergeFile)}, 'utf8'));
 });
 `);
@@ -116,6 +122,33 @@ test('an over-long merge is rewritten before the human confirms it, and that tex
     const statuses = [a, b].map((id) => db.prepare('SELECT status FROM memories WHERE id = ?').get(id).status);
     assert.deepEqual(statuses, ['superseded', 'superseded']);
   } finally {
+    db.close();
+  }
+});
+
+test('an exhausted backend during the refine is shown to the human, not recorded as a rejected merge', async () => {
+  const db = openDb();
+  writeFileSync(refineExhaustedFlag, '');
+  try {
+    const { a, b } = seed(db);
+    db.prepare(`DELETE FROM audit_log WHERE action = 'contradiction_merge_refine_rejected'`).run();
+    const shown = await mergeWith(db, { merged: text('marker-merge-exhausted', 600), refined: 'unused' });
+
+    assert.equal(shown.length, 1);
+    assert.equal(shown[0].merge_possible, false);
+    assert.match(shown[0].error, /usage limit reached/, 'the human sees why the merge could not be finished');
+    assert.deepEqual(
+      db.prepare(`SELECT id FROM audit_log WHERE action = 'contradiction_merge_refine_rejected'`).all(),
+      [],
+      'an unanswered refine is not a rejection'
+    );
+    const statuses = [a, b].map((id) => db.prepare('SELECT status FROM memories WHERE id = ?').get(id).status);
+    assert.deepEqual(statuses, ['active', 'active']);
+    assert.equal(db.prepare('SELECT acknowledged_at FROM contradiction_alerts').get().acknowledged_at, null, 'the alert stays open');
+  } finally {
+    unlinkSync(refineExhaustedFlag);
+    db.prepare('DELETE FROM llm_backend_state').run();
+    db.prepare('DELETE FROM llm_switch_proposals').run();
     db.close();
   }
 });

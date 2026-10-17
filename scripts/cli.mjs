@@ -522,7 +522,8 @@ try {
         const neverSuffix = neverInjected
           ? ` | trust=${Number(row.trust_score ?? 0).toFixed(2)}`
           : '';
-        process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}${neverSuffix}${scoreSuffix}\n`);
+        const originSuffix = row.origin_agent ? ` | origin_agent=${row.origin_agent}` : '';
+        process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}${neverSuffix}${scoreSuffix}${originSuffix}\n`);
       }
     }
   } else if (verb === 'show') {

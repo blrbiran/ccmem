@@ -22,7 +22,7 @@ test('export rows keep exactly the 11 contract keys even when origin_agent is se
   await insertMemory(db, { cwd: ROOT, content: 'exported fact written by codex', scope: 'global', originAgent: 'codex', embedSync: false });
   db.close();
 
-  const out = spawnSync('/usr/local/bin/node', [path.join(ROOT, 'scripts/cli.mjs'), 'export', '--json', '--scope', 'global'], {
+  const out = spawnSync(process.execPath, [path.join(ROOT, 'scripts/cli.mjs'), 'export', '--json', '--scope', 'global'], {
     cwd: ROOT,
     encoding: 'utf8',
     env: { ...process.env, CCMEM_TEST_MODE: '1', CCMEM_DATA_ROOT: dataRoot }

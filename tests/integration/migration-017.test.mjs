@@ -20,7 +20,7 @@ test.after(() => rmSync(dataRoot, { recursive: true, force: true }));
 const cols = (db, table) => db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all().map((r) => r.name);
 
 function cli(...args) {
-  return spawnSync('/usr/local/bin/node', [CLI, ...args], {
+  return spawnSync(process.execPath, [CLI, ...args], {
     cwd: ROOT,
     encoding: 'utf8',
     env: { ...process.env, CCMEM_TEST_MODE: '1', CCMEM_DATA_ROOT: dataRoot }
@@ -98,4 +98,16 @@ test('ccmem show prints origin_agent for a tagged memory', async () => {
   const out = cli('show', String(m.id));
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /^origin_agent: codex$/m);
+});
+
+test('ccmem list marks codex-origin rows and leaves NULL-origin rows unchanged', async () => {
+  const db = openDb();
+  await insertMemory(db, { cwd: ROOT, content: 'list marker codex row delta', scope: 'global', originAgent: 'codex', embedSync: false });
+  await insertMemory(db, { cwd: ROOT, content: 'list marker plain row epsilon', scope: 'global', embedSync: false });
+  db.close();
+  const out = cli('list', '--limit', '200');
+  assert.equal(out.status, 0, out.stderr);
+  const lines = out.stdout.split('\n');
+  assert.match(lines.find((l) => l.includes('codex row delta')), / \| origin_agent=codex$/);
+  assert.doesNotMatch(lines.find((l) => l.includes('plain row epsilon')), /origin_agent/);
 });

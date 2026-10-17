@@ -39,7 +39,7 @@ export async function cmdList(db, { limit = 20, quarantined = false, neverInject
   }
 
   return db.prepare(
-    `SELECT id, scope, project_key, type, content, pinned, decay_status
+    `SELECT id, scope, project_key, type, content, pinned, decay_status, origin_agent
      FROM memories
      WHERE decay_status != 'quarantine'
      ORDER BY pinned DESC, last_touched_at DESC

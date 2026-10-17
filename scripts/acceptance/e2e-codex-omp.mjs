@@ -320,9 +320,8 @@ async function main() {
   note('omp');
   mkdirSync(path.join(agentDir, 'extensions'), { recursive: true });
   writeFileSync(path.join(agentDir, 'extensions/other.ts'), 'export default () => {};\n', { mode: 0o644 });
-  // Distinct 8-char prefixes: the context file is named after the first 8
-  // characters of the session id, so sharing the Codex session's prefix would
-  // let the Codex run's file stand in for the OMP one.
+  // UUIDv7-style ids; the OMP file must be its own, not the Codex run's
+  // (context files were once named by the id's first 8 chars, which collide).
   const ompA = '019b1111-0000-7000-8000-00000000e2ea';
   const ompB = '019b2222-0000-7000-8000-00000000e2eb';
   const sessionsDir = path.join(agentDir, 'sessions/e2e');

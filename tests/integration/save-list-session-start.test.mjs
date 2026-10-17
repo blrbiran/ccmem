@@ -76,7 +76,7 @@ const { cmdList } = await import('../../scripts/lib/cmd/list.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submit.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
-const { getContextFilePath } = await import('../../scripts/lib/context-file.mjs');
+const { contextFileName, getContextFilePath } = await import('../../scripts/lib/context-file.mjs');
 
 // Spec §5.2: stable rules are written to the session's context file; the
 // conversation only gets the read instruction.
@@ -654,7 +654,7 @@ test('handleSessionStart records the local calendar day mini-prelude lease at ea
     ).get();
 
     assert.match(readSessionContextFile('s-local-day'), /Prefer concise answers/);
-    assert.match(result.additionalContext, /Read `\.ccmem\/context-s-local-\.md`/);
+    assert.ok(result.additionalContext.includes(`Read \`.ccmem/${contextFileName('s-local-day')}\``), result.additionalContext);
     assert.equal(lease.date_key, '2026-06-08');
     assert.equal(lease.status, 'completed');
     assert.equal(typeof lease.completed_at, 'number');

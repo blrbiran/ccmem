@@ -110,8 +110,17 @@ function normalizeSessionId(sessionId) {
   return typeof sessionId === 'string' && sessionId.length >= 8 ? sessionId : 'unknown';
 }
 
+// Named from a hash of the whole session id, not its first characters: Codex
+// and OMP ids are UUIDv7, whose leading hex digits are a millisecond timestamp
+// that changes only about every 65 s, so two sessions started close together
+// in one project would share (and overwrite) a prefix-named file. An id too
+// short to be real still maps to the one shared `context-unknown.md`.
 export function contextFileName(sessionId) {
-  return `context-${normalizeSessionId(sessionId).slice(0, 8)}.md`;
+  const normalized = normalizeSessionId(sessionId);
+  if (normalized === 'unknown') {
+    return 'context-unknown.md';
+  }
+  return `context-${createHash('sha256').update(normalized).digest('hex').slice(0, 16)}.md`;
 }
 
 export function getContextFilePath(cwd, sessionId = null) {
@@ -380,6 +389,9 @@ export function cleanupStaleContextFiles(cwd, currentSessionId = null) {
     return;
   }
 
+  // Ages out every context-*.md alike, including the 8-character names written
+  // before files were named by hash, so a live session's fresh file of either
+  // form survives and only the current session's file is always kept.
   const currentFile = contextFileName(currentSessionId);
   const cutoffMs = Date.now() - STALE_CONTEXT_MAX_AGE_MS;
 

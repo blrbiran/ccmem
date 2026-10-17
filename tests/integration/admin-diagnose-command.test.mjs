@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,7 +29,7 @@ const { cmdAdminDiagnose } = await import('../../scripts/lib/admin/diagnose.mjs'
 const { fallbackProjectKey } = await import('../../scripts/lib/project-key.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
 const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submit.mjs');
-const { cleanupStaleContextFiles } = await import('../../scripts/lib/context-file.mjs');
+const { cleanupStaleContextFiles, contextFileName } = await import('../../scripts/lib/context-file.mjs');
 const { recordMetric } = await import('../../scripts/lib/metrics.mjs');
 const { writeMetricsDailyRollup } = await import('../../scripts/lib/metrics-rollup.mjs');
 const { probeFile } = await import('../../scripts/daemon/tasks/embed-latency-probe.mjs');
@@ -970,7 +970,7 @@ test('prompt-submit lexical fallback survives embedding provider errors and keep
     });
 
     assert.equal(result.additionalContext, '');
-    assert.equal(existsSync(path.join(diagnoseCwd, '.ccmem', 'context-s-embed-.md')), true);
+    assert.equal(existsSync(path.join(diagnoseCwd, '.ccmem', contextFileName('s-embed-fallback'))), true);
   } finally {
     if (previous == null) {
       delete process.env.CCMEM_CONFIG_PATH;
@@ -1156,7 +1156,45 @@ test('session-start read instruction uses session-scoped context filename builde
   db.close();
 
   const result = await handleSessionStart({ cwd: diagnoseCwd, session_id: 'abcdef12-3456-7890' });
-  assert.match(result.additionalContext, /Read `\.ccmem\/context-abcdef12\.md`/);
+  const name = contextFileName('abcdef12-3456-7890');
+  assert.match(name, /^context-[0-9a-f]{16}\.md$/);
+  assert.ok(result.additionalContext.includes(`Read \`.ccmem/${name}\``), result.additionalContext);
+  assert.ok(existsSync(path.join(diagnoseCwd, '.ccmem', name)));
+});
+
+// Codex and OMP session ids are UUIDv7: the first 8 hex digits are a
+// millisecond timestamp, shared by every session started within ~65 s. Named
+// by that prefix, two such sessions in one project wrote the same file and
+// each overwrote the other's context.
+test('two UUIDv7 session ids sharing their first 8 chars get separate context files', async () => {
+  const idA = '019a0000-1111-7000-8000-00000000000a';
+  const idB = '019a0000-2222-7000-8000-00000000000b';
+  assert.notEqual(contextFileName(idA), contextFileName(idB));
+
+  const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-ctx-v7-'));
+  const db = openDb();
+  resetDiagnoseTables(db);
+  await cmdSave(db, { cwd, content: 'Project rule only session A should see in its file', scope: 'project', type: 'rule' });
+  db.close();
+
+  const resultA = await handleSessionStart({ cwd, session_id: idA });
+  const fileA = path.join(cwd, '.ccmem', contextFileName(idA));
+  const contentA = readFileSync(fileA, 'utf8');
+  assert.match(contentA, /Project rule only session A should see/);
+
+  // Session B starts after the memories changed, so its file has other content.
+  const db2 = openDb();
+  resetDiagnoseTables(db2);
+  await cmdSave(db2, { cwd, content: 'Project rule only session B should see in its file', scope: 'project', type: 'rule' });
+  db2.close();
+  await handleSessionStart({ cwd, session_id: idB });
+  const fileB = path.join(cwd, '.ccmem', contextFileName(idB));
+
+  assert.deepEqual(readdirSync(path.join(cwd, '.ccmem')).sort(), [contextFileName(idA), contextFileName(idB)].sort());
+  assert.equal(readFileSync(fileA, 'utf8'), contentA, 'session B must not overwrite session A\'s file');
+  assert.match(readFileSync(fileB, 'utf8'), /Project rule only session B should see/);
+  assert.doesNotMatch(readFileSync(fileB, 'utf8'), /Project rule only session A should see/);
+  assert.ok(resultA.additionalContext.includes(contextFileName(idA)));
 });
 
 
@@ -1175,11 +1213,25 @@ test('cleanup removes legacy context.md but preserves fresh other-session files'
   const oldSeconds = (Date.now() - (48 * 60 * 60 * 1000)) / 1000;
   utimesSync(stale, oldSeconds, oldSeconds);
 
+  // Hash-named files age out by the same rule; the current session's file is
+  // kept however old it is.
+  const staleHashed = path.join(dir, contextFileName('old-session-hashed'));
+  const freshHashed = path.join(dir, contextFileName('fresh-session-hashed'));
+  const current = path.join(dir, contextFileName('current-session'));
+  for (const file of [staleHashed, freshHashed, current]) {
+    writeFileSync(file, 'x', 'utf8');
+  }
+  utimesSync(staleHashed, oldSeconds, oldSeconds);
+  utimesSync(current, oldSeconds, oldSeconds);
+
   cleanupStaleContextFiles(diagnoseCwd, 'current-session');
 
   assert.equal(existsSync(legacy), false);
   assert.equal(existsSync(stale), false);
   assert.equal(existsSync(fresh), true);
+  assert.equal(existsSync(staleHashed), false);
+  assert.equal(existsSync(freshHashed), true);
+  assert.equal(existsSync(current), true);
 });
 
 test('cmdAdminAlias updates project keys, cache, and audit', async () => {

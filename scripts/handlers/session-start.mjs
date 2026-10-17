@@ -124,12 +124,12 @@ export async function handleSessionStart(hookData) {
 
     upsertSessionContext(db, hookData.session_id, projectKey, agent);
 
+    let notice = null;
     if (useFileBased) {
       cleanupStaleContextFiles(hookData.cwd, hookData.session_id);
       let injectedIds = [];
       // A backend switch waiting for the human's approval leads the file: the
       // daemon is headless, so this is where the ask gets seen (spec §5.5).
-      let notice = null;
       try {
         notice = proposalNotice(db);
       } catch (error) {
@@ -160,8 +160,11 @@ export async function handleSessionStart(hookData) {
 
     // File-based: the conversation gets the short, fixed read instruction
     // only, identical on every call of a session (stable cache prefix).
+    // While a backend switch waits for approval, its one line rides along:
+    // the read instruction then changes only for as long as the question is
+    // open.
     const additionalContext = useFileBased
-      ? buildReadInstruction(hookData.session_id, agent)
+      ? [buildReadInstruction(hookData.session_id, agent), notice].filter(Boolean).join('\n')
       : stableContext;
     return { additionalContext };
   } finally {

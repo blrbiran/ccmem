@@ -162,10 +162,36 @@ export function clearExhaustion(db, backend, now = Date.now()) {
   ).run(now, backend);
 }
 
+// True when an approved switch would run the next call somewhere that is
+// not exhausted, so a retry should come as soon as the failing backend asks.
+export function hasUsableApproval(db, now = Date.now()) {
+  return approvedProposals(db).some((proposal) => exhaustedUntil(db, proposal.to_backend, now) == null);
+}
+
+// How long an exhausted call's task waits. With an approved switch usable,
+// the backend's own retry-after (the next call goes elsewhere); otherwise no
+// sooner than the earlier of that retry-after and the recorded reset, and
+// never under a minute -- nothing is gained by asking an exhausted backend
+// again sooner.
+export function exhaustedRetryDelay(db, until, retryAfter, now = Date.now()) {
+  if (retryAfter != null && hasUsableApproval(db, now)) {
+    return retryAfter;
+  }
+  const untilWait = until == null ? Infinity : until - now;
+  const wait = Math.min(untilWait, retryAfter ?? Infinity);
+  return Number.isFinite(wait) && wait > MIN_RETRY_AFTER_MS ? wait : MIN_RETRY_AFTER_MS;
+}
+
+// Approving a proposal whose backend has already recovered would log a
+// switch that never happens: it is dropped instead ({ stale: true }).
 export function approveProposal(db, now = Date.now()) {
   const proposal = openProposal(db);
   if (!proposal) {
     return null;
+  }
+  if (exhaustedUntil(db, proposal.from_backend, now) == null) {
+    db.prepare(`UPDATE llm_switch_proposals SET superseded_at = ? WHERE id = ?`).run(now, proposal.id);
+    return { ...proposal, superseded_at: now, stale: true };
   }
   db.prepare(`UPDATE llm_switch_proposals SET approved_at = ? WHERE id = ?`).run(now, proposal.id);
   writeAudit(db, 'llm_backend_switch', null, {
@@ -182,11 +208,15 @@ export function rejectProposal(db, now = Date.now()) {
     return null;
   }
   db.prepare(`UPDATE llm_switch_proposals SET superseded_at = ? WHERE id = ?`).run(now, proposal.id);
+  writeAudit(db, 'llm_backend_switch_rejected', null, {
+    from: proposal.from_backend,
+    to: proposal.to_backend
+  });
   return { ...proposal, superseded_at: now };
 }
 
-// The line session start puts at the top of the context file while a
-// proposal waits for the human; null when none does.
+// The line that leads the context file (and session start's read
+// instruction) while a proposal waits for the human; null when none does.
 export function proposalNotice(db) {
   const proposal = openProposal(db);
   if (!proposal) {
@@ -194,6 +224,7 @@ export function proposalNotice(db) {
   }
   const until = db.prepare(
     `SELECT exhausted_until FROM llm_backend_state WHERE backend = ?`
-  ).get(proposal.from_backend)?.exhausted_until ?? proposal.created_at;
-  return `ccmem: ${proposal.from_backend} quota exhausted until ${new Date(until).toISOString()}; run \`ccmem admin llm approve\` to switch background work to ${proposal.to_backend}.`;
+  ).get(proposal.from_backend)?.exhausted_until;
+  const when = until == null ? 'unknown' : new Date(until).toISOString();
+  return `ccmem: ${proposal.from_backend} quota exhausted until ${when}; run \`ccmem admin llm approve\` to switch background work to ${proposal.to_backend}.`;
 }

@@ -307,7 +307,11 @@ function resolveRetryDelayMs(task, error, currentAttempt) {
 }
 
 function scheduleRetry(db, task, error, currentAttempt) {
-  if (!isRetryableTaskError(error) || currentAttempt > RETRY_ATTEMPTS_MAX) {
+  // An exhausted backend (claude-p.mjs sets error.exhaustion) is not the
+  // task's fault: it waits for the reset or the human's approval however many
+  // times that takes (spec G5: no queued work lost), spaced by retryAfter.
+  const exhausted = error?.exhaustion != null;
+  if (!isRetryableTaskError(error) || (currentAttempt > RETRY_ATTEMPTS_MAX && !exhausted)) {
     return false;
   }
 

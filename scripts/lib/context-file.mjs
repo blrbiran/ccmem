@@ -140,7 +140,10 @@ function extractContentHash(text) {
 // line, e.g. a backend switch waiting for approval) leads the body and counts
 // against the whole-file cap only.
 function buildHashedContent(stableText, rows, notice = null) {
-  const sections = [notice, stableText, rows.length ? renderRetrievedBlock(rows) : ''].filter(Boolean);
+  const retrieved = rows.length ? renderRetrievedBlock(rows) : '';
+  // A notice alone still says there are no memories, in the sentinel's words.
+  const empty = notice && !stableText && !retrieved ? CONTEXT_EMPTY_SENTINEL.trimEnd() : '';
+  const sections = [notice, stableText, retrieved, empty].filter(Boolean);
   const body = sections.join('\n\n');
   const hash = createHash('sha256').update(body).digest('hex').slice(0, 8);
   return {

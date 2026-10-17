@@ -5,6 +5,42 @@ import { argsSelectJson, extractUsage as extractEnvelopeUsage } from '../../lib/
 // retry-after out of the same text.
 export const RATE_LIMIT_PATTERN = /(rate limit|too many requests|\b429\b)/i;
 
+// What claude prints when the subscription's usage limit is hit, e.g.
+// "Claude AI usage limit reached|1760000000" or "5-hour limit reached ∙ resets 3pm".
+const USAGE_LIMIT_PATTERN = /usage limit reached|limit reached.*resets/i;
+
+// The result envelope's text, only when the envelope says it is an error.
+function errorEnvelopeText(stdout) {
+  try {
+    const parsed = JSON.parse(String(stdout ?? '').trim());
+    return parsed && typeof parsed === 'object' && parsed.is_error === true ? String(parsed.result ?? '') : null;
+  } catch {
+    return null;
+  }
+}
+
+// The reset in a usage-limit message: a unix epoch after '|' (seconds), or a
+// local clock time after "resets" (the next such time from now). null when
+// neither is there.
+export function parseClaudeResetAt(text, now = new Date()) {
+  const source = String(text ?? '');
+  const epoch = source.match(/usage limit reached\|(\d{9,})/i);
+  if (epoch) {
+    return Number(epoch[1]) * 1000;
+  }
+  const clock = source.match(/resets(?: at)? (\d{1,2})(?::(\d{2}))? ?(am|pm)/i);
+  if (clock) {
+    const hour = Number(clock[1]) % 12 + (clock[3].toLowerCase() === 'pm' ? 12 : 0);
+    const reset = new Date(now);
+    reset.setHours(hour, Number(clock[2] ?? 0), 0, 0);
+    if (reset.getTime() <= now.getTime()) {
+      reset.setDate(reset.getDate() + 1);
+    }
+    return reset.getTime();
+  }
+  return null;
+}
+
 function parseArgsEnv(raw) {
   if (!raw) {
     return null;
@@ -101,8 +137,15 @@ export const claudeBackend = {
   },
 
   // A 429 carries a relative retry-after, not a reset time; claude-p.mjs turns
-  // it into error.retryAfter as before.
-  classifyExhaustion({ stderr }) {
-    return { exhausted: RATE_LIMIT_PATTERN.test(String(stderr ?? '')), resetAt: null };
+  // it into error.retryAfter as before. A subscription usage limit may carry
+  // its reset. Only stderr and an is_error result envelope are read: model
+  // text that merely mentions a limit is not an exhaustion.
+  classifyExhaustion({ stderr, stdout }) {
+    const errText = String(stderr ?? '');
+    const envelope = errorEnvelopeText(stdout);
+    if (USAGE_LIMIT_PATTERN.test(errText) || (envelope != null && USAGE_LIMIT_PATTERN.test(envelope))) {
+      return { exhausted: true, resetAt: parseClaudeResetAt(`${errText}\n${envelope ?? ''}`) };
+    }
+    return { exhausted: RATE_LIMIT_PATTERN.test(errText), resetAt: null };
   }
 };

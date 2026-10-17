@@ -73,7 +73,10 @@ export function cmdAdminLlm(db, { verb, value = null } = {}) {
 
   if (verb === 'approve') {
     const proposal = approveProposal(db);
-    return proposal ? { status: 'approved', proposal } : { status: 'no_proposal' };
+    if (!proposal) {
+      return { status: 'no_proposal' };
+    }
+    return { status: proposal.stale ? 'stale' : 'approved', proposal };
   }
 
   if (verb === 'reject') {

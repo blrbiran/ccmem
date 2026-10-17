@@ -7,7 +7,14 @@ import { openDb } from '../lib/db.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { getDataRoot } from '../lib/paths.mjs';
 import { recordDaemonCost } from '../lib/metrics.mjs';
-import { clearExhaustion, exhaustedError, exhaustedUntil, recordExhaustion, resolveActiveBackend } from './backend-state.mjs';
+import {
+  clearExhaustion,
+  exhaustedError,
+  exhaustedRetryDelay,
+  exhaustedUntil,
+  recordExhaustion,
+  resolveActiveBackend
+} from './backend-state.mjs';
 import { claudeBackend, RATE_LIMIT_PATTERN, resolveCommand } from './backends/claude.mjs';
 import { codexBackend } from './backends/codex.mjs';
 import { ompBackend } from './backends/omp.mjs';
@@ -310,18 +317,17 @@ function runClaudeP(prompt, opts, queuedAt) {
       if (exhaustion.exhausted) {
         error.exhaustion = { backend: backend.id, resetAt: exhaustion.resetAt };
       }
-      // Claude keeps its retry-after parsing exactly. Its exhaustion is
-      // recorded with no reset time (a 429 gives none), so it lasts
-      // backend-state's default: long enough for an approved switch to be
-      // worth making. The others wait until the recorded reset: the one they
-      // reported, or that same default.
+      // Claude keeps its retry-after parsing for an ordinary 429. An exhaustion
+      // (any backend) is recorded -- with the reset the tool reported, or
+      // backend-state's default -- and its task waits per exhaustedRetryDelay:
+      // at least a minute unless an approved switch can take the retry.
       let retryAfter = backend.id === 'claude' ? parseRetryAfterMs(stderr) : null;
       if (exhaustion.exhausted) {
-        // Records the exhaustion and opens a switch proposal.
-        const until = withDb((db) => recordExhaustion(db, backend.id, { resetAt: exhaustion.resetAt, error: excerpt, config: cfg }).exhaustedUntil);
-        if (backend.id !== 'claude') {
-          retryAfter = retryAfterFromReset(until ?? exhaustion.resetAt);
-        }
+        const delay = withDb((db) => {
+          const { exhaustedUntil: until } = recordExhaustion(db, backend.id, { resetAt: exhaustion.resetAt, error: excerpt, config: cfg });
+          return exhaustedRetryDelay(db, until, retryAfter);
+        });
+        retryAfter = delay ?? retryAfter ?? retryAfterFromReset(exhaustion.resetAt);
       }
       if (retryAfter != null) {
         error.retryAfter = retryAfter;

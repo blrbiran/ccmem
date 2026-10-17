@@ -1,3 +1,4 @@
+import { proposalNotice } from '../daemon/backend-state.mjs';
 import { openDb } from '../lib/db.mjs';
 import { inferPositiveFeedback, inferPrevTurnOutcome } from '../lib/feedback.mjs';
 import { loadConfig } from '../lib/config.mjs';
@@ -79,8 +80,16 @@ export async function handlePromptSubmit(hookData) {
         // The rewrite keeps the session's stable section; only when there is
         // neither stable nor retrieved content does the file get the sentinel.
         const stableRows = selectStableRows(db, projectKey, { disableScopeIsolation });
-        if (rows.length || stableRows.length) {
-          const result = writeContextFile(hookData.cwd, rows, hookData.session_id, db, { stableRows, projectKey });
+        // A backend switch waiting for approval stays at the top of the file
+        // on every rewrite, not only the session-start one (spec §5.5).
+        let notice = null;
+        try {
+          notice = proposalNotice(db);
+        } catch (error) {
+          process.stderr.write(`ccmem: llm proposal lookup failed (${error.message})\n`);
+        }
+        if (rows.length || stableRows.length || notice) {
+          const result = writeContextFile(hookData.cwd, rows, hookData.session_id, db, { stableRows, projectKey, notice });
           contextFileWritten = result.written;
           contextFileBytes = result.bytes;
         } else {

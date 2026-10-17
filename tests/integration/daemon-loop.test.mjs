@@ -1171,7 +1171,9 @@ test('dispatchTask schedules retry when configured claude bridge is rate limited
   assert.equal(tasks[1].status, 'queued');
   assert.equal(tasks[1].attempts, 1);
   assert.equal(tasks[1].error_excerpt, null);
-  assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 1234);
+  // A claude 429 is an exhaustion now: with no approved switch its sub-minute
+  // retry-after (1234 ms) is floored at a minute (backend-state exhaustedRetryDelay).
+  assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 60_000);
   assert.equal(memory.n, 0);
   db.close();
 });
@@ -1346,7 +1348,9 @@ test('dispatchTask supersedes a stale summarize_pending retry when a newer seq a
      LIMIT 1`
   ).get();
 
-  assert.equal(retryTask.scheduled_for - retryTask.enqueued_at, 1234);
+  // A claude 429 is an exhaustion now: with no approved switch its sub-minute
+  // retry-after (1234 ms) is floored at a minute (backend-state exhaustedRetryDelay).
+  assert.equal(retryTask.scheduled_for - retryTask.enqueued_at, 60_000);
 
   writeFileSync(
     transcript,
@@ -2225,7 +2229,9 @@ test('dispatchTask converts second-based retry-after into milliseconds', async (
   assert.equal(tasks[1].status, 'queued');
   assert.equal(tasks[1].attempts, 1);
   assert.equal(tasks[1].error_excerpt, null);
-  assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 2_000);
+  // A claude 429 is an exhaustion now: with no approved switch its sub-minute
+  // retry-after (2_000 ms) is floored at a minute (backend-state exhaustedRetryDelay).
+  assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 60_000);
   assert.equal(memory.n, 0);
   db.close();
 });
@@ -2400,7 +2406,9 @@ test('dispatchTask supersedes a stale second-based summarize_pending retry when 
      LIMIT 1`
   ).get();
 
-  assert.equal(retryTask.scheduled_for - retryTask.enqueued_at, 2_000);
+  // A claude 429 is an exhaustion now: with no approved switch its sub-minute
+  // retry-after (2_000 ms) is floored at a minute (backend-state exhaustedRetryDelay).
+  assert.equal(retryTask.scheduled_for - retryTask.enqueued_at, 60_000);
 
   writeFileSync(
     transcript,
@@ -4143,7 +4151,9 @@ test('dispatchTask schedules weekly_synthesis retry when configured claude bridg
   assert.equal(tasks[1].status, 'queued');
   assert.equal(tasks[1].attempts, 1);
   assert.equal(tasks[1].error_excerpt, null);
-  assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 1234);
+  // A claude 429 is an exhaustion now: with no approved switch its sub-minute
+  // retry-after (1234 ms) is floored at a minute (backend-state exhaustedRetryDelay).
+  assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 60_000);
   assert.equal(lease.status, 'running');
   assert.equal(lease.completed_at, null);
   assert.equal(auditCount.n, 0);
@@ -4650,7 +4660,9 @@ test('dispatchTask converts weekly_synthesis second-based retry-after into milli
   assert.equal(tasks[1].status, 'queued');
   assert.equal(tasks[1].attempts, 1);
   assert.equal(tasks[1].error_excerpt, null);
-  assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 2_000);
+  // A claude 429 is an exhaustion now: with no approved switch its sub-minute
+  // retry-after (2_000 ms) is floored at a minute (backend-state exhaustedRetryDelay).
+  assert.equal(tasks[1].scheduled_for - tasks[1].enqueued_at, 60_000);
   assert.equal(lease.status, 'running');
   assert.equal(lease.completed_at, null);
   assert.equal(auditCount.n, 0);

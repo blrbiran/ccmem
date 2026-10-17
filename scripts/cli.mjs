@@ -804,6 +804,9 @@ try {
     } else if (result.status === 'no_proposal') {
       process.stdout.write('ccmem: no open llm switch proposal\n');
       process.exitCode = 1;
+    } else if (result.status === 'stale') {
+      process.stdout.write(`ccmem: ${result.proposal.from_backend} is no longer exhausted; the switch to ${result.proposal.to_backend} was dropped, not approved\n`);
+      process.exitCode = 1;
     } else {
       const { from_backend: from, to_backend: to } = result.proposal;
       process.stdout.write(result.status === 'approved'

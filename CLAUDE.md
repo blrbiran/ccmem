@@ -107,3 +107,4 @@ Default to surfacing uncertainty, not hiding it.
 - *** **绝不过滤验证性跑**（管道会吞掉退出码）；重定向到文件再整份读回。 ***
 - *** **成本、耗时、条数只报工具给出的数。拿不到就说拿不到，不许自估。** ***
 - **push 需人单独授权。**
+- ✅ **合并与清理与 Orca Tier 0 闸门对齐**（人裁，2026-10-18，Orca 会话 `1710772d`；Orca CLAUDE.md Rule 15）：`git merge --ff-only` 合进 `main`、`git branch -d`（只删已合并的）、`git worktree remove`（不带 force）agent 可以直接做；强制形式（`branch -D`、`worktree remove --force`、`worktree prune`、非 fast-forward 合进 `main`）仍每次单独授权。

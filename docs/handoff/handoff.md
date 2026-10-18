@@ -134,7 +134,7 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
 
 1. ~~那 7 个死键不删~~ **人已裁（2026-10-18，Orca 会话 `a3b2a7a7`）**：控制器按提案 `docs/superpowers/specs/2026-08-19-dead-key-disposition.md` 给了建议，人原话「同意你上面所有的建议」。建议原文：`security.quarantine.hard_delete_days` **删键、不接线**（接线＝批量不可逆删除；删除走 `forget`；要自动清理另开设计并带预演）；`retrieval.like_fallback.max_terms` **接线、默认值改 10**（与现行为一致，零行为变更）；`llm.claude_p_timeout_per_task.l4_review` 删；`security.cross_scope.similarity_min`、`consolidation.minBatchSize`、`inject.max_chars`、`cron.dead_letter_alert` 四个打包删。**尚未实施**（要一轮代码改动，`config.mjs` 与 `config.default.json` 两侧同步，`block_user_explicit` 那笔是先例）。
 2. **不许改本机电源设置**（`pmset` 只可只读取证）。
-3. **push 由人做**（人统一择时推，不要提醒）。Orca 的 Tier 0 闸门 2026-10-18 起放行 `merge --ff-only`、`branch -d`、不带 force 的 `worktree remove`，但那只是不再机械拦——**本仓合并仍由人做**，除非人改本仓规则。
+3. **push 由人做**（人统一择时推，不要提醒）。合并已与 Orca 闸门对齐（人裁 2026-10-18，Orca 会话 `1710772d`，本仓 `CLAUDE.md` 证据纪律节）：`merge --ff-only` 合进 main、`branch -d`、不带 force 的 `worktree remove` agent 可以直接做；强制形式仍每次单独授权。
 4. **Task 5 读数不许重跑**。 5. **不要再挂 cron、不要再做巡检**。 6. **不要在代码里 pin 模型**。
 
 事故教训（不是编号禁令）：生产 daemon 常驻本机跑付费调用，曾有 92 个遗留忙循环 8 小时打瘫生产 ⇒ 别在这台机器上造 CPU 负载；清理后台进程用进程组，并用 `pgrep`／`ps` 谓词**确认为零**。
@@ -260,9 +260,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-18（Orca 会话 `a3b2a7a7`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.0、§4。**§6.1 的 export 接口没变**，Orca 侧无需改动。与本仓有关的 Orca 设计：Orca 派出去的 codex 阶段关 hooks（不写 ccmem）；「纠正写回 ccmem 给人自己的会话看」排在 Orca 的 debug task 之后，届时需要本仓提供外部引用（如 tag `orca:correction:<id>`）＋按它幂等的导入＋来源信任度（今天 `ccmem import` 无去重、`external` 初始信任 0.3）——**要在本仓走设计**。embedding 额度（429）仍等人。
-
----
+2026-10-18（Orca 会话 `1710772d`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.00、§4.2。Orca 的「控制 run 写决定」已合进 Orca main，**本仓代码零改动，§6.1 的 export 接口没变**。仍挂着、要在本仓走设计的：「纠正写回 ccmem 给人自己的会话看」（排在 Orca debug task 之后；需外部引用 tag 如 `orca:correction:<id>`＋按它幂等导入＋来源信任度；今天 `ccmem import` 无去重、`external` 初始信任 0.3）。embedding 额度（429）仍等人。
 
 ## 7. 怎么找回旧全文
 

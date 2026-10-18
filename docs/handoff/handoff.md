@@ -260,7 +260,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-18（Orca 会话 `1710772d`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.00、§4.2。Orca 的「控制 run 写决定」已合进 Orca main，**本仓代码零改动，§6.1 的 export 接口没变**。仍挂着、要在本仓走设计的：「纠正写回 ccmem 给人自己的会话看」（排在 Orca debug task 之后；需外部引用 tag 如 `orca:correction:<id>`＋按它幂等导入＋来源信任度；今天 `ccmem import` 无去重、`external` 初始信任 0.3）。embedding 额度（429）仍等人。
+2026-10-18（Orca 会话 `b304f167`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.00、§3.01、§4.2。Orca 合了「控制 run 写决定」（会话 `1710772d`）与「Decisions 页撤回审阅／纠正」（会话 `b304f167`）——**本仓代码零改动，§6.1 的 export 接口没变**。Orca 新增的用户数据文件 `~/.orca/correction-withdrawals.jsonl` 是 Orca 自己的，与本仓无关；将来「纠正写回 ccmem」要按撤回状态过滤（撤回的纠正不该写回）。仍挂着、要在本仓走设计的：「纠正写回 ccmem 给人自己的会话看」（排在 Orca debug task 之后；需外部引用 tag 如 `orca:correction:<id>`＋按它幂等导入＋来源信任度；今天 `ccmem import` 无去重、`external` 初始信任 0.3）。embedding 额度（429）仍等人。
 
 ## 7. 怎么找回旧全文
 

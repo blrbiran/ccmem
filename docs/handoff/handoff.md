@@ -64,7 +64,14 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.0 2026-10-18（Orca 会话 `a3b2a7a7`）—— **先读这一节**
+### 1.00 2026-10-20／21（Orca 会话 `308b874c`）—— **先读这一节，再读 1.0**
+
+- **已在 main**（人已推）：`fix(daemon): keep the installed CCMEM_CLAUDE_P_COMMAND on plist rewrite`——调用方没显式设 `CCMEM_CLAUDE_P_COMMAND` 时，install／restart 重写 plist 沿用已装的值（cmux 终端里 `which claude` 是会话级 shim，曾把它写进 plist、终端一关 daemon 的 `claude -p` 就断）。走 CLI 路径，不需要重启 daemon。npm test 936/936。
+- **生产 daemon（2026-10-20 现状）**：死键处置已生效（daemon 已重启）。过程：agent 在 Claude Code 沙箱里跑 `admin daemon restart` 报 `restarted pid=53925`，但 launchd 里已没有 job（agent 没核 `launchctl`——教训）；该进程 2 分钟后在 `scripts/daemon/loop.mjs:371` `runTask` 抛未捕获的 `database is locked` 退出，无人拉起；人随后在自己终端跑 `admin daemon install`（`restart` 因 job 不在而 `Boot-out failed: 5`）⇒ launchd 托管、心跳正常。plist 的 PATH 已去掉过期的 cmux 临时目录。重启前备份：`global.db.bak.1792499094655`（integrity ok）、`com.ccmem.daemon.plist.bak.20261020`。
+- **人裁「要修」、下一会话做**（本会话人叫停了实施，代码未动）：① `runTask` 那条 `UPDATE … status='running'` 在 try 外，锁冲突让整个 daemon 崩（判别只用 `error.errcode` 5／261／517）；② 沙箱里 `restart` 拿不到 launchd 时退回分离进程仍报 `restarted`，job 不在时只报 I/O error——要如实报、并指向 `admin daemon install`。登记（只建议、未批）：plist PATH 也照抄调用方 PATH（含 cmux shim 目录），可类似地保留已装值或滤掉非持久目录。
+- ⚠️ **在 Claude Code 沙箱里**：`ps`／`pgrep`／`launchctl` 看不全；判活看 `daemon_lock` 的心跳；要真 `launchctl` 的操作交人在自己终端跑。`daemon.err.log` 因 embedding 429 的 `vec_backfill` 刷屏已约 220 MB。
+
+### 1.0 2026-10-18（Orca 会话 `a3b2a7a7`）—— 已合、仍成立
 
 - **已在 main**（人已合推）：`fix(cli): name the keys behind an in_sync plist that still differs`（§5.2）；`fix(test): point TMPDIR under the suite's data root`（每跑漏 16 → 0，925/925）；handoff 两笔（含死键与 v0.15 的裁定）。
 - **人的裁定**（原话「同意你上面所有的建议」，2026-10-18）：死键处置见 §2.3 第 1 条（**已实施**，2026-10-20）；v0.15 范围见 §5.1 第 5 条（**未实施**）。
@@ -132,7 +139,7 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
 
 ### 2.3 仍有效的禁令（原 7 条去掉已解除的第 1 条，剩 6 条）
 
-1. ~~那 7 个死键不删~~ **人已裁（2026-10-18，Orca 会话 `a3b2a7a7`）**：控制器按提案 `docs/superpowers/specs/2026-08-19-dead-key-disposition.md` 给了建议，人原话「同意你上面所有的建议」。建议原文：`security.quarantine.hard_delete_days` **删键、不接线**（接线＝批量不可逆删除；删除走 `forget`；要自动清理另开设计并带预演）；`retrieval.like_fallback.max_terms` **接线、默认值改 10**（与现行为一致，零行为变更）；`llm.claude_p_timeout_per_task.l4_review` 删；`security.cross_scope.similarity_min`、`consolidation.minBatchSize`、`inject.max_chars`、`cron.dead_letter_alert` 四个打包删。**已实施（2026-10-20，Orca 会话 `3d229487`）**：提交 `feat(retrieval): wire like_fallback.max_terms, default 10` 与 `chore(config): delete the six dead keys`，两侧同步；明细、判据与残余风险（拷过旧 `config.default.json` 的用户 `max_terms: 5` 会从死值变活值）见提案文末「🆕 2026-10-20 实施记录」。用户配置里的残留键无需迁移，`admin diagnose` 列为 unknown。⚠️ 生效：钩子（`retrieval.mjs` 在 prompt 钩子里跑）合进 main 后下一次会话即用新代码；`config.mjs` 属 daemon 路径（§0.2 第 2 条）⇒ **daemon 重启前仍跑旧代码**（本机两边都无行为差异：真实配置只读核查不含这 7 个键，且 10 即旧写死值）。
+1. ~~那 7 个死键不删~~ **人已裁（2026-10-18，Orca 会话 `a3b2a7a7`）**：控制器按提案 `docs/superpowers/specs/2026-08-19-dead-key-disposition.md` 给了建议，人原话「同意你上面所有的建议」。建议原文：`security.quarantine.hard_delete_days` **删键、不接线**（接线＝批量不可逆删除；删除走 `forget`；要自动清理另开设计并带预演）；`retrieval.like_fallback.max_terms` **接线、默认值改 10**（与现行为一致，零行为变更）；`llm.claude_p_timeout_per_task.l4_review` 删；`security.cross_scope.similarity_min`、`consolidation.minBatchSize`、`inject.max_chars`、`cron.dead_letter_alert` 四个打包删。**已实施（2026-10-20，Orca 会话 `3d229487`）**：提交 `feat(retrieval): wire like_fallback.max_terms, default 10` 与 `chore(config): delete the six dead keys`，两侧同步；明细、判据与残余风险（拷过旧 `config.default.json` 的用户 `max_terms: 5` 会从死值变活值）见提案文末「🆕 2026-10-20 实施记录」。用户配置里的残留键无需迁移，`admin diagnose` 列为 unknown。生效：钩子即时生效；daemon 已于 2026-10-20 重启（§1.00），两边都在跑新代码（本机无行为差异：真实配置不含这 7 个键，且 10 即旧写死值）。
 2. **不许改本机电源设置**（`pmset` 只可只读取证）。
 3. **push 由人做**（人统一择时推，不要提醒）。合并已与 Orca 闸门对齐（人裁 2026-10-18，Orca 会话 `1710772d`，本仓 `CLAUDE.md` 证据纪律节）：`merge --ff-only` 合进 main、`branch -d`、不带 force 的 `worktree remove` agent 可以直接做；强制形式仍每次单独授权。
 4. **Task 5 读数不许重跑**。 5. **不要再挂 cron、不要再做巡检**。 6. **不要在代码里 pin 模型**。
@@ -226,7 +233,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 2. **embedding 通道：坏在账号额度**（同一会话现测）：`daemon.err.log` 里的 403／`Connection error.` 全部**早于重启**（plist 的 StandardErrorPath 就是它，mtime 2026-09-08，重启后零新行）；
    但 `metrics.jsonl` 里重启后 9 次 `prompt_submit` 全是 `B-fail`／`B-circuit`，`retrieval_embed_error` 为 `429 You have no credits remaining` ×3、`Request timed out.` ×3 ⇒ **语义检索当前不可用，要人给 embedding 账号充值或换 key**（agent 不改凭据）。
 3. **迁移备份新代码在真实库上**：代码已就绪且全量门过，但真实库**不作**修复后的迁移判据；下一次真实升级前仍须：先备份、只在副本演练、写清回退。
-4. **7 个死键处置**：已裁、待实施（§2.3 第 1 条）。 5. **v0.15 范围**：人 2026-10-18 同意控制器建议（同上原话）——**先做 `summarize_pending` 超时**（32–47% 会话没被整理＝记忆在丢）**和 L2.5 引用检测**（trust 正反馈主来源、命中 0.1%；v0.13 spec §0.5）；`credential_assignment`、revalidation 排水往后；记忆膨胀（4,251 条活跃全局）与 L2.5 一起看。`$TMPDIR` 存量见 §4。
+4. **7 个死键处置**：已实施并生效（§2.3 第 1 条、§1.00）。 5. **v0.15 范围**：人 2026-10-18 同意控制器建议（同上原话）——**先做 `summarize_pending` 超时**（32–47% 会话没被整理＝记忆在丢）**和 L2.5 引用检测**（trust 正反馈主来源、命中 0.1%；v0.13 spec §0.5）；`credential_assignment`、revalidation 排水往后；记忆膨胀（4,251 条活跃全局）与 L2.5 一起看。`$TMPDIR` 存量见 §4。
 6. **hook embed 冷启动（B 线）**：~220ms TLS 握手，只剩"走常驻 daemon"或"不做"两条路（TLS 会话恢复已排除）；spec `docs/superpowers/specs/2026-08-10-hook-embed-cold-start.md`；设计改动，需人裁决。
 7. 登记未做：`tasks` 表清理；裸 `start`／`stop` 失败仍丢 `reason`（与 bug-063 同类）；回填永久性失败无退避；`@xenova/transformers` 已停维护（迁 `@huggingface/transformers`）；
    机器睡眠饿死定时器（现在只是可见，没修）；`8000` 档从未实测；Finding 13 深层解（hook 工作切段）；revalidation 覆盖索引（数已量好）。
@@ -260,7 +267,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-20（Orca 会话 `3d229487`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.000、§4.2。本轮在本仓做了**死键处置**（§2.3 第 1 条，Orca 会话派的实施席；`max_terms` 接线、六个死键删除；**daemon 重启后才生效**）；**§6.1 的 export 接口没变**。Orca 侧本轮：repin ccloop、决定对真 ccloop 输出接通、真 agent 报决定的付费验收（claude／omp）、估算 `withdrawn`——都与本仓无关。仍挂着、要在本仓走设计的：「纠正写回 ccmem 给人自己的会话看」（Orca `src/memory/adapter.ts` 的 `recordCorrection` 仍是 `false`；只写回**已关闭、未撤回**的纠正——关闭判据＝目标 ref 的树里有关闭行，Orca `src/control/correctionState.ts`；需外部引用 tag 如 `orca:correction:<id>`＋按它幂等导入＋来源信任度；今天 `ccmem import` 无去重、`external` 初始信任 0.3）。Codex 阶段隔离已在 ccloop main：Orca 派出去的 codex 阶段**关掉 hooks**，不会写本仓（付费验收的判据之一就是 `session_context` 对该 thread 0 行）。embedding 额度（429）仍等人。
+2026-10-21（Orca 会话 `308b874c`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.0000、§4.2。本仓本轮：`afd8237` 与 daemon 重启（§1.00）；两个 daemon 缺陷人裁要修、下一会话做。**§6.1 的 export 接口没变。** Orca 侧新写了 `Orca/docs/superpowers/specs/2026-10-21-corrections-to-ccmem-design.md`（纠正写回本仓）：只写回人做的、已关闭未撤回的纠正，进**项目**记忆，**只走每次 prompt 的检索、不进会话开局的稳定上下文**（人裁「只在文档相关内容时才被检索出来」）；本仓要配一份 spec：外部引用 tag `orca:correction:<id>`＋按它幂等导入（今天 `ccmem import` 无去重）＋这类来源的初始信任度（今天 `external` 0.3）＋撤回时走 forget／隔离。Orca 派出去的 codex 阶段关掉 hooks，不写本仓（付费验收实测 `session_context` 对该 thread 0 行）。embedding 额度（429）仍等人。
 
 ## 7. 怎么找回旧全文
 

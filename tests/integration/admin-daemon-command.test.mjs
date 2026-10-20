@@ -757,7 +757,7 @@ function launchdJobAbsentScript({ bootoutFails, launchdPid = null }) {
   ].join('\n');
 }
 
-function runRestartAgainst(script, claudeDirName) {
+function runRestartAgainst(script, claudeDirName, verbs = ['restart']) {
   clearLaunchctlLog();
   writeFakeLaunchctlScript(launchdLifecycleScript());
   const { fakeClaudeDir } = createFakeClaudeBinary(claudeDirName);
@@ -773,7 +773,11 @@ function runRestartAgainst(script, claudeDirName) {
   execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'install'], { cwd: ROOT, env: cliEnv, encoding: 'utf8' });
   writeFakeLaunchctlScript(script);
   try {
-    return spawnSync(NODE, [CLI, 'admin', '--', 'daemon', 'restart'], { cwd: ROOT, env: cliEnv, encoding: 'utf8' });
+    let result;
+    for (const verb of verbs) {
+      result = spawnSync(NODE, [CLI, 'admin', '--', 'daemon', verb], { cwd: ROOT, env: cliEnv, encoding: 'utf8' });
+    }
+    return result;
   } finally {
     resetFakeLaunchctlScript();
   }
@@ -795,6 +799,15 @@ test('cli admin daemon restart does not claim success when launchd runs a differ
   assert.doesNotMatch(result.stdout, /daemon restarted/, 'launchd keeping some other process alive does not manage this daemon');
   assert.equal(result.status, 1);
   assert.match(result.stderr, /launchd runs pid=4242/);
+});
+
+test('cli admin daemon start says a daemon launchd does not manage is not a clean start', () => {
+  const result = runRestartAgainst(launchdJobAbsentScript({ bootoutFails: false }), 'fake-start-unmanaged-claude-bin', ['stop', 'start']);
+
+  assert.doesNotMatch(result.stdout, /daemon started/);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /pid=5555 is running but nothing will restart it/);
+  assert.match(result.stderr, /ccmem admin daemon install/);
 });
 
 test('cli admin daemon restart names the absent launchd job instead of only the bootout I/O error', () => {

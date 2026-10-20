@@ -260,7 +260,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-20（Orca 会话 `3831d12f`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.000、§4.2。本轮 Orca 做了 repin、W2、「全量门只在打 tag 前」（Orca `CLAUDE.md` Rule 18——**不外溢到本仓**，本仓测试按本仓规则）、agent 报分级决定（Orca 账本 decision 行多了可选 `importance`、新 kind `implementation`——都在目标仓 `.decisions/`，与本仓无关）。**本仓代码零改动，§6.1 的 export 接口没变**。仍挂着、要在本仓走设计的：「纠正写回 ccmem 给人自己的会话看」（Orca `src/memory/adapter.ts` 的 `recordCorrection` 仍是 `false`；只写回**已关闭、未撤回**的纠正——关闭判据＝目标 ref 的树里有关闭行，Orca `src/control/correctionState.ts`；需外部引用 tag 如 `orca:correction:<id>`＋按它幂等导入＋来源信任度；今天 `ccmem import` 无去重、`external` 初始信任 0.3）。Orca 下一轮先 repin ccloop（带 decisions）与做契约测试，写回排在其后。embedding 额度（429）仍等人。
+2026-10-20（Orca 会话 `3d229487`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.000、§4.2。本轮在本仓做了**死键处置**（§2.3 第 1 条，Orca 会话派的实施席；`max_terms` 接线、六个死键删除；**daemon 重启后才生效**）；**§6.1 的 export 接口没变**。Orca 侧本轮：repin ccloop、决定对真 ccloop 输出接通、真 agent 报决定的付费验收（claude／omp）、估算 `withdrawn`——都与本仓无关。仍挂着、要在本仓走设计的：「纠正写回 ccmem 给人自己的会话看」（Orca `src/memory/adapter.ts` 的 `recordCorrection` 仍是 `false`；只写回**已关闭、未撤回**的纠正——关闭判据＝目标 ref 的树里有关闭行，Orca `src/control/correctionState.ts`；需外部引用 tag 如 `orca:correction:<id>`＋按它幂等导入＋来源信任度；今天 `ccmem import` 无去重、`external` 初始信任 0.3）。Codex 阶段隔离已在 ccloop main：Orca 派出去的 codex 阶段**关掉 hooks**，不会写本仓（付费验收的判据之一就是 `session_context` 对该 thread 0 行）。embedding 额度（429）仍等人。
 
 ## 7. 怎么找回旧全文
 

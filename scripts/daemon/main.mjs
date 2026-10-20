@@ -75,6 +75,22 @@ try {
 }
 
 const db = openDb();
+let currentTask = null;
+let stop = false;
+let timer = null;
+
+// Installed before the lock is taken: stop/restart signal as soon as the lock
+// row appears, and a daemon killed by SIGTERM's default action in between kept
+// its lock row, so stop waited out its budget and reported stop_timeout.
+// releaseDaemonLock deletes only this pid's row, so an early signal is safe.
+process.on('SIGTERM', () => {
+  stop = true;
+  clearInterval(timer);
+  releaseDaemonLock(db);
+  db.close();
+  process.exit(0);
+});
+
 acquireDaemonLock(db);
 // Must run before warmSemanticProvider: its vec_backfill re-queue guard counts
 // 'running' rows, so a leftover orphan would suppress the queue for good.
@@ -86,11 +102,9 @@ const startedAt = Date.now();
 const startupVersion = getStartupSchemaVersion(db);
 writeDaemonStartupState(db, startupVersion, process.pid);
 await warmSemanticProvider(db);
-let currentTask = null;
-let stop = false;
 
 const heartbeatIntervalMs = Number(loadConfig().daemon?.self_restart_check_interval_ms ?? 20000);
-const timer = setInterval(() => {
+timer = setInterval(() => {
   refreshHeartbeat(db);
   const stale = checkSchemaStaleness(db, startupVersion);
   if (!stale.stale) {
@@ -104,14 +118,6 @@ const timer = setInterval(() => {
     currentTaskType: currentTask?.type ?? null
   });
 }, heartbeatIntervalMs);
-
-process.on('SIGTERM', () => {
-  stop = true;
-  clearInterval(timer);
-  releaseDaemonLock(db);
-  db.close();
-  process.exit(0);
-});
 
 try {
   await mainLoop(

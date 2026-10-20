@@ -30,6 +30,7 @@ const { selectStableRows } = await import('../../scripts/lib/context-file.mjs');
 const { ftsSearch } = await import('../../scripts/lib/retrieval.mjs');
 const { selectBatch } = await import('../../scripts/daemon/tasks/weekly-synthesis.mjs');
 const { loadProjectRows } = await import('../../scripts/daemon/tasks/cross-project-patterns.mjs');
+const { rebuildInjectionCache } = await import('../../scripts/lib/injection-cache.mjs');
 
 process.on('exit', () => {
   rmSync(process.env.CCMEM_DATA_ROOT, { recursive: true, force: true });
@@ -202,4 +203,16 @@ test('input refusals exit 64 and write nothing; the refusal names the problem', 
   assert.equal(withdrawBad.status, 64);
   const unknownSub = runCorrection('frobnicate', { version: 1, id: 'w-2' });
   assert.equal(unknownSub.status, 64);
+});
+
+test('a legacy row with malformed tags is not treated as retrieval_only and does not break the cache rebuild', async () => {
+  const db = openDb();
+  try {
+    const legacy = await cmdSave(db, { cwd: repo, content: 'legacy malformed tags memory.', scope: 'project' });
+    db.prepare(`UPDATE memories SET tags = 'not json' WHERE id = ?`).run(legacy.id);
+    rebuildInjectionCache(db, PROJECT_KEY);
+    assert.ok(selectStableRows(db, PROJECT_KEY).map((row) => row.id).includes(legacy.id));
+  } finally {
+    db.close();
+  }
 });

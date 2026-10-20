@@ -723,6 +723,81 @@ test('cli admin daemon restart reboots a launchd service after bootout unloads i
   assert.match(log, /bootstrap/);
 });
 
+// launchd's view of the job, scripted per test: `print` fails (job absent) and,
+// optionally, `bootout` fails the way launchctl does for an absent job.
+function launchdJobAbsentScript({ bootoutFails }) {
+  return [
+    '#!/bin/sh',
+    'printf \'%s\\n\' "$@" >> "$CCMEM_LAUNCHCTL_LOG"',
+    'DB="$CCMEM_DATA_ROOT/global.db"',
+    'NOW=$(($(date +%s) * 1000))',
+    'case "$1" in',
+    '  print)',
+    '    echo "Could not find service com.ccmem.daemon in domain for user gui: 501" >&2',
+    '    exit 113',
+    '    ;;',
+    '  bootout)',
+    bootoutFails
+      ? '    echo "Boot-out failed: 5: Input/output error" >&2; exit 5'
+      : '    sqlite3 "$DB" "DELETE FROM daemon_lock;" >/dev/null 2>&1',
+    '    ;;',
+    '  kickstart)',
+    '    printf %s\\n "service not loaded" >&2',
+    '    exit 1',
+    '    ;;',
+    '  bootstrap)',
+    // Starts a process (the lock appears) but leaves no job launchd will keep —
+    // the shape seen from a sandbox on 2026-10-20.
+    '    sqlite3 "$DB" "INSERT OR REPLACE INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive) VALUES (1, 5555, \'unmanaged-host\', $NOW, $NOW, 1);" >/dev/null 2>&1',
+    '    ;;',
+    'esac',
+    'exit 0',
+    ''
+  ].join('\n');
+}
+
+function runRestartAgainst(script, claudeDirName) {
+  clearLaunchctlLog();
+  writeFakeLaunchctlScript(launchdLifecycleScript());
+  const { fakeClaudeDir } = createFakeClaudeBinary(claudeDirName);
+  const cliEnv = {
+    ...env,
+    PATH: `${fakeClaudeDir}:${env.PATH ?? process.env.PATH ?? ''}`,
+    ANTHROPIC_API_KEY: 'test-api-key',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-test',
+    CLAUDE_CODE_USE_FOUNDRY: '1',
+    CCMEM_LAUNCHCTL_BIN: fakeLaunchctlPath,
+    CCMEM_LAUNCHCTL_LOG: fakeLaunchctlLog
+  };
+  execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'install'], { cwd: ROOT, env: cliEnv, encoding: 'utf8' });
+  writeFakeLaunchctlScript(script);
+  try {
+    return spawnSync(NODE, [CLI, 'admin', '--', 'daemon', 'restart'], { cwd: ROOT, env: cliEnv, encoding: 'utf8' });
+  } finally {
+    resetFakeLaunchctlScript();
+  }
+}
+
+test('cli admin daemon restart does not claim success when the started daemon has no launchd job', () => {
+  const result = runRestartAgainst(launchdJobAbsentScript({ bootoutFails: false }), 'fake-unmanaged-claude-bin');
+
+  assert.doesNotMatch(result.stdout, /daemon restarted/, 'a daemon nothing will restart is not "restarted"');
+  assert.match(readLaunchctlLog(), /^print$/m, 'the job was looked up in launchd');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /no com\.ccmem\.daemon job/);
+  assert.match(result.stderr, /ccmem admin daemon install/);
+});
+
+test('cli admin daemon restart names the absent launchd job instead of only the bootout I/O error', () => {
+  const result = runRestartAgainst(launchdJobAbsentScript({ bootoutFails: true }), 'fake-absent-claude-bin');
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /phase=stop/);
+  assert.match(result.stderr, /Input\/output error/, 'launchctl\'s own words are kept');
+  assert.match(result.stderr, /no com\.ccmem\.daemon job/);
+  assert.match(result.stderr, /ccmem admin daemon install/);
+});
+
 test('cli admin daemon install falls back when launchctl bus is unavailable', async () => {
   clearLaunchctlLog();
   writeFakeLaunchctlScript([

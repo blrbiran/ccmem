@@ -746,6 +746,9 @@ try {
       process.stdout.write(`ccmem: daemon already running pid=${result.pid}\n`);
     } else if (result.status === 'started') {
       process.stdout.write(`ccmem: daemon started pid=${result.pid}\n`);
+    } else if (result.status === 'started_unmanaged') {
+      process.stderr.write(`ccmem: daemon pid=${result.pid} is running but nothing will restart it if it exits — ${result.reason}\n`);
+      process.exitCode = 1;
     } else if (result.status === 'stopped') {
       process.stdout.write(`ccmem: daemon stopped pid=${result.pid}\n`);
     } else if (result.status === 'not_running') {
@@ -780,9 +783,11 @@ try {
       const detail = result.reason ? ` — ${result.reason}` : '';
       process.stderr.write(
         `ccmem: daemon restart failed phase=${result.phase} (${result.failed_status}) previous_pid=${result.previous_pid ?? 'unknown'}${detail}\n` +
-          (timedOut
-            ? 'ccmem: this timed out, not a diagnosed failure — the daemon may still be coming up; run `ccmem admin daemon status`\n'
-            : 'ccmem: this does not prove the daemon is down — run `ccmem admin daemon status` before restarting again\n')
+          (result.launchd_job === 'absent'
+            ? ''
+            : timedOut
+              ? 'ccmem: this timed out, not a diagnosed failure — the daemon may still be coming up; run `ccmem admin daemon status`\n'
+              : 'ccmem: this does not prove the daemon is down — run `ccmem admin daemon status` before restarting again\n')
       );
       process.exitCode = 1;
     } else if (result.status === 'start_timeout' || result.status === 'stop_timeout') {

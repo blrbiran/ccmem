@@ -493,6 +493,21 @@ function launchctlError(result) {
   return (result.stderr || result.stdout || '').trim() || `launchctl ${result.status}`;
 }
 
+// What launchd itself says about the job. An installed plist and a live lock
+// do not prove launchd manages the process: from a sandbox (2026-10-20) a
+// restart started a daemon launchd had no job for, reported "restarted", and
+// nothing brought it back when it exited.
+function readLaunchdJob() {
+  const result = runLaunchctl(['print', `${getLaunchDomain()}/${LAUNCHD_LABEL}`]);
+  if (result.status !== 0) {
+    return { loaded: false, pid: null, reason: launchctlError(result) };
+  }
+  const match = /^\s*pid = (\d+)\s*$/m.exec(result.stdout ?? '');
+  return { loaded: true, pid: match ? Number(match[1]) : null, reason: null };
+}
+
+const LAUNCHD_JOB_ABSENT_HINT = `no ${LAUNCHD_LABEL} job in launchd; run \`ccmem admin daemon install\` from a normal terminal (not a sandbox)`;
+
 function isLaunchdInstalled() {
   return existsSync(getLaunchAgentPath());
 }
@@ -764,7 +779,17 @@ async function startDaemon(db) {
       return next.alive ? next : null;
     }, START_WAIT_TIMEOUT_MS);
 
-    return started ? { status: 'started', via: 'launchctl', ...started } : { status: 'start_timeout', via: 'launchctl' };
+    if (!started) {
+      return { status: 'start_timeout', via: 'launchctl' };
+    }
+
+    const job = readLaunchdJob();
+    if (!job.loaded || (job.pid != null && job.pid !== started.pid)) {
+      const seen = job.loaded ? `launchd runs pid=${job.pid}` : job.reason;
+      return { ...started, status: 'started_unmanaged', via: 'launchctl', launchd_job: 'absent', reason: `${LAUNCHD_JOB_ABSENT_HINT} (${seen})` };
+    }
+
+    return { status: 'started', via: 'launchctl', ...started };
   }
 
   const child = spawnDetachedDaemon(process.execPath);
@@ -800,6 +825,9 @@ async function stopDaemon(db) {
   if (isLaunchdInstalled()) {
     const error = bootoutDaemon();
     if (error) {
+      if (!readLaunchdJob().loaded) {
+        return { ...current, ...error, launchd_job: 'absent', reason: `${LAUNCHD_JOB_ABSENT_HINT} (bootout: ${error.reason})` };
+      }
       return { ...current, ...error };
     }
 

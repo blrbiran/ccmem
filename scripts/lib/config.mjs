@@ -47,7 +47,7 @@ export const DEFAULT_CONFIG = {
     like_fallback: {
       enabled: true,
       trigger_when_fts_below: 3,
-      max_terms: 5
+      max_terms: 10
     },
     weights: {
       fts: 0.4,

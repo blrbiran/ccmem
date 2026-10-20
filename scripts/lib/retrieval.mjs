@@ -139,8 +139,8 @@ export function ftsSearch(db, ftsQuery, projectKey, limit, disableScopeIsolation
   ).all(ftsQuery, ...scopeParams, limit);
 }
 
-export function likeSearch(db, prompt, projectKey, limit, disableScopeIsolation = false) {
-  const tokens = extractShortTokens(prompt, 10);
+export function likeSearch(db, prompt, projectKey, limit, disableScopeIsolation = false, maxTerms = 10) {
+  const tokens = extractShortTokens(prompt, maxTerms);
   if (!tokens.length || limit <= 0) {
     return [];
   }
@@ -290,7 +290,8 @@ function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit
       promptText,
       projectKey,
       useFts ? Math.max((limit * 3) - candidateRows.length, limit) : (limit * 3),
-      disableScopeIsolation
+      disableScopeIsolation,
+      config?.retrieval?.like_fallback?.max_terms ?? 10
     );
     candidateRows = dedupeMerge(candidateRows, likeRows);
   }
@@ -432,7 +433,8 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
       promptText,
       projectKey,
       useFts ? Math.max((limit * 3) - candidateRows.length, limit) : (limit * 3),
-      disableScopeIsolation
+      disableScopeIsolation,
+      config?.retrieval?.like_fallback?.max_terms ?? 10
     );
     candidateRows = dedupeMerge(candidateRows, likeRows);
   }

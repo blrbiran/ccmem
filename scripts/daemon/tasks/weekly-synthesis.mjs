@@ -6,6 +6,7 @@ import { insertMemory } from '../../lib/cmd/save.mjs';
 import { blobToVec, cosineSimilarity, vecToBlob } from '../../lib/embedding/cosine.mjs';
 import { getProvider } from '../../lib/embedding/provider.mjs';
 import { rebuildInjectionCache } from '../../lib/injection-cache.mjs';
+import { notRetrievalOnlySql } from '../../lib/retrieval-only.mjs';
 import { parseRawLlmOutput } from '../../lib/llm-parse.mjs';
 import { buildStaleCheckPrompt, STALE_CHECK_SCHEMA } from '../../lib/llm-prompts/stale-check.mjs';
 import { buildSynthesisPromptV2, SYNTHESIS_V2_SCHEMA } from '../../lib/llm-prompts/weekly-synthesis-v2.mjs';
@@ -40,7 +41,8 @@ function projectScopes(db) {
   ).all().map((row) => row.project_key);
 }
 
-function selectBatch(db, scope, limit) {
+// Exported for its criterion (retrieval_only rows never enter a batch).
+export function selectBatch(db, scope, limit) {
   if (scope === 'global') {
     return db.prepare(
       `SELECT id, type, content, consolidation_depth, created_at, last_touched_at, trust_score, embedding
@@ -61,6 +63,7 @@ function selectBatch(db, scope, limit) {
        AND type != 'consolidated'
        AND status = 'active'
        AND decay_status IN ('active', 'probation')
+       AND ${notRetrievalOnlySql()}
      ORDER BY last_touched_at DESC, id DESC
      LIMIT ?`
   ).all(scope, limit);

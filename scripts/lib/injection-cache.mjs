@@ -1,5 +1,6 @@
 import { computePriority } from './priority.mjs';
 import { renderStableContext } from './render.mjs';
+import { notRetrievalOnlySql } from './retrieval-only.mjs';
 
 function rankRows(rows) {
   return [...rows].sort((a, b) =>
@@ -16,7 +17,8 @@ export function rebuildInjectionCache(db, projectKey = null) {
      FROM memories
      WHERE scope = 'global'
        AND status = 'active'
-       AND decay_status IN ('active', 'probation')`
+       AND decay_status IN ('active', 'probation')
+       AND ${notRetrievalOnlySql()}`
   ).all();
 
   const rankedGlobalRows = rankRows(globalRows);
@@ -41,7 +43,8 @@ export function rebuildInjectionCache(db, projectKey = null) {
      WHERE scope = 'project'
        AND project_key = ?
        AND status = 'active'
-       AND decay_status IN ('active', 'probation')`
+       AND decay_status IN ('active', 'probation')
+       AND ${notRetrievalOnlySql()}`
   ).all(projectKey);
 
   const rankedProjectRows = rankRows(projectRows);

@@ -12,6 +12,7 @@ import { cmdExport } from './lib/cmd/export.mjs';
 import { cmdImport } from './lib/cmd/import.mjs';
 import { cmdList } from './lib/cmd/list.mjs';
 import { cmdMode } from './lib/cmd/mode.mjs';
+import { cmdOrcaCorrectionUpsert, cmdOrcaCorrectionWithdraw, OrcaCorrectionInputError, parseOrcaCorrectionInput } from './lib/cmd/orca-correction.mjs';
 import { cmdPromote } from './lib/cmd/promote.mjs';
 import { cmdResurrect } from './lib/cmd/resurrect.mjs';
 import { cmdSave } from './lib/cmd/save.mjs';
@@ -43,6 +44,7 @@ function printHelp() {
     '  show <id>\n' +
     '  export --json [--scope global|project]\n' +
     '  import <file>\n' +
+    '  orca-correction <upsert|withdraw>   (JSON on stdin; cwd = the target repository)\n' +
     '  mode [active|shadow|off]\n' +
     '  audit show <id>\n' +
     '  admin daemon <status|start|stop|restart|install|uninstall>\n' +
@@ -274,7 +276,7 @@ if (verb === 'admin' && args[0] === 'diagnose') {
   // handled below.
 }
 
-if (!['save', 'list', 'show', 'export', 'import', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect', 'install', 'uninstall'].includes(verb)) {
+if (!['save', 'list', 'show', 'export', 'import', 'orca-correction', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect', 'install', 'uninstall'].includes(verb)) {
   printHelp();
   process.exit(64);
 }
@@ -680,6 +682,23 @@ try {
       process.stderr.write(
         `ccmem: ${result.pending_embeddings} memories imported without embeddings (vec_backfill will process them)\n`
       );
+    }
+  } else if (verb === 'orca-correction') {
+    // Exit 64: the input is refused and re-sending it will not help; exit 1:
+    // anything else (e.g. a busy database), retry later. Spec
+    // docs/superpowers/specs/2026-10-21-orca-correction-import-design.md §2.
+    const subcommand = args[0];
+    try {
+      if (subcommand !== 'upsert' && subcommand !== 'withdraw') {
+        throw new OrcaCorrectionInputError('subcommand must be upsert or withdraw');
+      }
+      const input = parseOrcaCorrectionInput(readFileSync(0, 'utf8'), subcommand);
+      const run = subcommand === 'upsert' ? cmdOrcaCorrectionUpsert : cmdOrcaCorrectionWithdraw;
+      const result = await run(getDb(), { cwd: process.cwd(), input });
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    } catch (error) {
+      process.stderr.write(`ccmem: orca-correction: ${error.message}\n`);
+      process.exitCode = error instanceof OrcaCorrectionInputError || error.exitCode === 64 ? 64 : 1;
     }
   } else if (verb === 'mode') {
     const result = await cmdMode(getDb(), { mode: args[0] ?? null });

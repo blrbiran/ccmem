@@ -4,6 +4,7 @@ import { loadConfig } from '../../lib/config.mjs';
 import { blobToVec, cosineSimilarity } from '../../lib/embedding/cosine.mjs';
 import { getProvider } from '../../lib/embedding/provider.mjs';
 import { markLeaseComplete } from '../../lib/task-runs.mjs';
+import { notRetrievalOnlySql } from '../../lib/retrieval-only.mjs';
 
 function round3(value) {
   return Math.round(Number(value ?? 0) * 1000) / 1000;
@@ -23,7 +24,8 @@ function distinctProjectKeys(db, minTrust) {
   ).all(minTrust).map((row) => row.project_key);
 }
 
-function loadProjectRows(db, projectKey, minTrust) {
+// Exported for its criterion (retrieval_only rows are never promotion inputs).
+export function loadProjectRows(db, projectKey, minTrust) {
   return db.prepare(
     `SELECT id, project_key, content, trust_score, embedding
      FROM memories
@@ -33,6 +35,7 @@ function loadProjectRows(db, projectKey, minTrust) {
        AND decay_status IN ('active', 'probation')
        AND embedding IS NOT NULL
        AND trust_score >= ?
+       AND ${notRetrievalOnlySql()}
      ORDER BY id ASC`
   ).all(projectKey, minTrust).map((row) => ({
     ...row,

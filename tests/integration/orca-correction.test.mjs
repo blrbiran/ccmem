@@ -216,3 +216,18 @@ test('a legacy row with malformed tags is not treated as retrieval_only and does
     db.close();
   }
 });
+
+test('a retrieval_only row promoted to global scope stays out of the global stable section', async () => {
+  const db = openDb();
+  try {
+    const globalRow = await cmdSave(db, { cwd: repo, content: 'global retrieval only probe.', scope: 'global' });
+    const control = await cmdSave(db, { cwd: repo, content: 'global ordinary probe.', scope: 'global' });
+    db.prepare(`UPDATE memories SET tags = '["retrieval_only"]' WHERE id = ?`).run(globalRow.id);
+    rebuildInjectionCache(db, PROJECT_KEY);
+    const stableIds = selectStableRows(db, PROJECT_KEY).map((row) => row.id);
+    assert.ok(stableIds.includes(control.id));
+    assert.ok(!stableIds.includes(globalRow.id));
+  } finally {
+    db.close();
+  }
+});

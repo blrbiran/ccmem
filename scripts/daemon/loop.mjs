@@ -1,4 +1,5 @@
 import { loadConfig } from '../lib/config.mjs';
+import { isDatabaseBusy } from '../lib/db.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { RAN_BY, tryClaimLease } from '../lib/task-runs.mjs';
 import { wakeRecently } from './wake.mjs';
@@ -7,6 +8,9 @@ import { EXHAUSTED_RETRY_MARK } from './backend-state.mjs';
 const ERROR_EXCERPT_MAX = 200;
 const RETRY_DELAY_BASE_MS = 60_000;
 const RETRY_ATTEMPTS_MAX = 3;
+// Pause after a tick lost to another connection's write lock, so codes that
+// return without waiting (BUSY_RECOVERY, BUSY_SNAPSHOT) cannot spin the loop.
+const BUSY_BACKOFF_MS = 1000;
 
 function dayKey(date) {
   return [
@@ -363,12 +367,25 @@ export function reclaimOrphanedTasks(db) {
   return Number(result?.changes ?? 0);
 }
 
+/**
+ * Returns false, without dispatching, when another connection holds the write
+ * lock at the start: the row stays 'queued' with its attempts unchanged, so a
+ * later tick picks it up. Live 2026-10-20, this UPDATE threw an uncaught
+ * `database is locked` and the daemon process exited with nothing to restart it.
+ */
 export async function runTask(db, task, dispatch, { afterTask } = {}) {
-  db.prepare(
-    `UPDATE tasks
-     SET status = 'running', started_at = ?, attempts = attempts + 1
-     WHERE id = ?`
-  ).run(Date.now(), task.id);
+  try {
+    db.prepare(
+      `UPDATE tasks
+       SET status = 'running', started_at = ?, attempts = attempts + 1
+       WHERE id = ?`
+    ).run(Date.now(), task.id);
+  } catch (error) {
+    if (isDatabaseBusy(error)) {
+      return false;
+    }
+    throw error;
+  }
 
   try {
     await dispatch(db, task);
@@ -405,6 +422,7 @@ export async function runTask(db, task, dispatch, { afterTask } = {}) {
   } finally {
     await afterTask?.(task);
   }
+  return true;
 }
 
 export async function mainLoop(db, shouldStop, dispatch, { afterTask } = {}) {
@@ -414,14 +432,24 @@ export async function mainLoop(db, shouldStop, dispatch, { afterTask } = {}) {
       continue;
     }
 
-    scheduleCronTasks(db);
+    let due;
+    try {
+      scheduleCronTasks(db);
 
-    const due = db.prepare(
-      `SELECT *
-       FROM tasks
-       WHERE status = 'queued' AND scheduled_for <= ?
-       ORDER BY scheduled_for ASC`
-    ).all(Date.now());
+      due = db.prepare(
+        `SELECT *
+         FROM tasks
+         WHERE status = 'queued' AND scheduled_for <= ?
+         ORDER BY scheduled_for ASC`
+      ).all(Date.now());
+    } catch (error) {
+      if (!isDatabaseBusy(error)) {
+        throw error;
+      }
+      // Busy is another connection's write; this tick's work waits for the next.
+      await new Promise((resolve) => setTimeout(resolve, BUSY_BACKOFF_MS));
+      continue;
+    }
 
     if (!due.length) {
       await new Promise((resolve) => setTimeout(resolve, wakeRecently() ? 30000 : 300000));
@@ -433,7 +461,11 @@ export async function mainLoop(db, shouldStop, dispatch, { afterTask } = {}) {
         break;
       }
 
-      await runTask(db, task, dispatch, { afterTask });
+      if (!(await runTask(db, task, dispatch, { afterTask }))) {
+        // The lock is someone else's; the rest of this batch waits a tick.
+        await new Promise((resolve) => setTimeout(resolve, BUSY_BACKOFF_MS));
+        break;
+      }
     }
   }
 }

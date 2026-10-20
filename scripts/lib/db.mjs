@@ -640,6 +640,16 @@ export function ensureSchema(db) {
 // 占满这里的 5000ms，而 stop 曾经只等 2000ms（见 admin/daemon.mjs 的 STOP_WAIT_TIMEOUT_MS）。
 export const DB_BUSY_TIMEOUT_MS = 5000;
 
+// Another connection holds the lock: SQLITE_BUSY (5), BUSY_RECOVERY (261) or
+// BUSY_SNAPSHOT (517). `errcode` is the only discriminator — node:sqlite sets
+// `.code` to ERR_SQLITE_ERROR for every failure, and elapsed time cannot tell
+// a busy wait from a slow statement.
+const BUSY_ERRCODES = new Set([5, 261, 517]);
+
+export function isDatabaseBusy(error) {
+  return BUSY_ERRCODES.has(error?.errcode);
+}
+
 export function openDb() {
   mkdirSync(getDataRoot(), { recursive: true });
   const db = new DatabaseSync(getDbPath());

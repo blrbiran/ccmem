@@ -3,6 +3,14 @@
 > 🆕 **2026-08-27 更新**：标题与下方"8 个"是 2026-08-19 调查时点的历史计数，**保留不改**。
 > 其中第 8 个 —— `security.tier3.block_user_explicit` —— 已于 2026-08-27 随 W1 处置（删除），
 > 详见下方 §8。**当前未处置的死键计数为 7 个**，与 `2026-08-14-default-config-dead-keys.md` 的更新一致。
+>
+> 🆕 **2026-10-20 更新（Orca 会话 `3d229487` 实施；人裁 2026-10-18，Orca 会话 `a3b2a7a7`，原话「同意你上面所有的建议」）**：
+> 余下 7 个已全部处置 —— `retrieval.like_fallback.max_terms` **接线、默认值 5 → 10**（与原写死的 10 一致，零行为变更；
+> 提交 `feat(retrieval): wire like_fallback.max_terms, default 10`）；其余 6 个（`inject.max_chars`、
+> `llm.claude_p_timeout_per_task.l4_review`、`cron.dead_letter_alert`、`security.cross_scope.similarity_min`、
+> `security.quarantine.hard_delete_days`、`consolidation.minBatchSize`）在 `scripts/lib/config.mjs` 与 `config.default.json`
+> 两侧同步**删除**（提交 `chore(config): delete the six dead keys`）。下方正文仍是 2026-08-19 的提案原文、保留不改；**当前未处置的死键计数为 0**。
+> 处置明细与用户残留键的处理见文末「🆕 2026-10-20 实施记录」。
 
 > 输入是 `specs/2026-08-14-default-config-dead-keys.md`（那份只回答"有没有消费者"）。
 > **本文件回答的是它明确不回答的那个问题："这个键该不该存在"** —— 但**只给依据和风险，不做决定**。
@@ -127,3 +135,26 @@ quarantine；新键为 `true` 时才把它 quarantine）。提交
 - **逐条复核过的是这 8 个键**，**没有复核"其余 143 个都真的活"** —— 那个方向原清单就说了没做，**本文件同样没做。**
 - Ⅰ/Ⅱ 类的判定依赖"我读到的调用点就是全部" —— 用的是全词 grep + 逐个读调用点，
   **对动态取键仍可能假阴**；已知的唯一动态取键处（`claude-p.mjs:58`）已单独论证。
+
+---
+
+## 🆕 2026-10-20 实施记录（Orca 会话 `3d229487`；本节是追加，上文提案原文一字未改）
+
+人裁（2026-10-18）采纳的是控制器按本提案给的建议，逐键：
+
+| 键 | 处置 | 依据 |
+|---|---|---|
+| `security.quarantine.hard_delete_days` | **删键、不接线** | 接线＝批量不可逆删除；删除走 `forget`；要自动清理另开设计并带预演 |
+| `retrieval.like_fallback.max_terms` | **接线、默认值 5 → 10** | 10 就是原来写死的值 ⇒ 零行为变更；两处调用点（`lexicalRetrieve` 与 `retrieveMemories` 自己那份词法块）都传 `max_terms ?? 10` |
+| `llm.claude_p_timeout_per_task.l4_review` | 删 | Ⅲ 类纯孤儿 |
+| `security.cross_scope.similarity_min`、`consolidation.minBatchSize`、`inject.max_chars`、`cron.dead_letter_alert` | 打包删 | Ⅱ 类，承诺从未实现 |
+
+- **判据**：`tests/integration/like-fallback-max-terms.test.mjs`（默认值＝10、两条路径各自取满且只取前 10 个词、`max_terms=2` 两条路径都收窄）；
+  `tests/integration/deleted-config-keys.test.mjs`（6 个键不在 `DEFAULT_CONFIG`；仍带这些键的用户配置能加载、邻居键不受影响、diagnose 恰好把这 6 个列为 unknown）。
+  两侧同步由既有的 `tests/unit/v013-config-sync.test.mjs`／`v014-config-value-parity.test.mjs` 守。
+- **用户配置里的残留键**：同 `block_user_explicit` 先例 —— `loadConfig()` 把用户配置深合并到默认值上，残留键只是被忽略的多余键，
+  **不需要迁移**；W0 的 `ccmem admin diagnose` 会把它们列在 unknown 下，这是预期行为。
+- ⚠️ **接线的残余风险**：若某个用户把旧 `config.default.json` 整份拷进了自己的 `config.json`，那份里写的是 `max_terms: 5`，
+  接线后他的 LIKE 回退会**从 10 收窄到 5**（之前那个 5 是死的）。本机真实配置只读核查过：**不含 `retrieval.like_fallback` 整块**，不受影响。
+- 未改的地方：历次版本 spec（v0.1／v0.2／v0.5／v0.7／v0.8、design 文档）里出现的这些键是当时的设计原文，**不改**。
+

@@ -14,6 +14,13 @@
 > （提交 `chore(config): delete the dead block_user_explicit switch, superseded by
 > quarantine_all_sources_at_write`，出处 `docs/superpowers/specs/2026-08-19-dead-key-disposition.md` §8）。
 > 本文件下方表格是 2026-08-14 的历史快照，**保留不改**；当前未处置的死键计数为 **7 个**。
+>
+> 🆕 **2026-10-20 更新（Orca 会话 `3d229487` 实施；人裁 2026-10-18，Orca 会话 `a3b2a7a7`，原话「同意你上面所有的建议」）**：
+> 余下 7 个已全部处置 —— `retrieval.like_fallback.max_terms` **接线、默认值 5 → 10**（与原写死的 10 一致，零行为变更；
+> 提交 `feat(retrieval): wire like_fallback.max_terms, default 10`）；其余 6 个（`inject.max_chars`、
+> `llm.claude_p_timeout_per_task.l4_review`、`cron.dead_letter_alert`、`security.cross_scope.similarity_min`、
+> `security.quarantine.hard_delete_days`、`consolidation.minBatchSize`）在 `scripts/lib/config.mjs` 与 `config.default.json`
+> 两侧同步**删除**（提交 `chore(config): delete the six dead keys`）。上方表格仍是历史快照、保留不改；**当前未处置的死键计数为 0**。
 
 | # | 键 | 备注 |
 |---|---|---|

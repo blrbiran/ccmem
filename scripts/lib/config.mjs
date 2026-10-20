@@ -3,7 +3,7 @@ import { getConfigPath } from './paths.mjs';
 
 export const DEFAULT_CONFIG = {
   version: '0.14',
-  inject: { max_chars: 4000, max_per_prompt: 6 },
+  inject: { max_per_prompt: 6 },
   save: { max_chars_per_memory: 500 },
   injection: { file_based: true },
   eval: {
@@ -144,7 +144,6 @@ export const DEFAULT_CONFIG = {
     },
     claude_p_timeout_per_task: {
       summarize_pending: 120000,
-      l4_review: 90000,
       weekly_synthesis: 180000,
       security_audit: 180000,
       contradiction_audit: 180000,
@@ -162,8 +161,7 @@ export const DEFAULT_CONFIG = {
   },
   cron: {
     daily_at: '02:17',
-    weekly_at: 'Sun 03:17',
-    dead_letter_alert: 5
+    weekly_at: 'Sun 03:17'
   },
   contradiction: {
     audit: {
@@ -219,13 +217,11 @@ export const DEFAULT_CONFIG = {
       }
     },
     cross_scope: {
-      similarity_min: 0.6,
       dedup_window_days: 30,
       alert_retention_days: 60
     },
     quarantine: {
       sunset_days: 30,
-      hard_delete_days: 14,
       resurrect_trust: 0.4
     },
     revalidation: {
@@ -248,7 +244,6 @@ export const DEFAULT_CONFIG = {
     }
   },
   consolidation: {
-    minBatchSize: 5,
     maxClusterSize: 15,
     cluster_tight_threshold: 0.75,
     cluster_loose_threshold: 0.5,

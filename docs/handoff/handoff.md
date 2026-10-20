@@ -67,7 +67,7 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
 ### 1.0 2026-10-18（Orca 会话 `a3b2a7a7`）—— **先读这一节**
 
 - **已在 main**（人已合推）：`fix(cli): name the keys behind an in_sync plist that still differs`（§5.2）；`fix(test): point TMPDIR under the suite's data root`（每跑漏 16 → 0，925/925）；handoff 两笔（含死键与 v0.15 的裁定）。
-- **人的裁定**（原话「同意你上面所有的建议」，2026-10-18）：死键处置见 §2.3 第 1 条；v0.15 范围见 §5.1 第 5 条。**都未实施**。
+- **人的裁定**（原话「同意你上面所有的建议」，2026-10-18）：死键处置见 §2.3 第 1 条（**已实施**，2026-10-20）；v0.15 范围见 §5.1 第 5 条（**未实施**）。
 - **付费对照 A**（人批「先跑 claude 和 omp」）：报告 `~/ccmem-compare-20261018.md`（五列等人填）。Claude 那份转录：claude 5 条、工具报 `$0.519852`；omp 10 条、in 3439／out 2964 token。Codex 那份 `short_session`、OMP 那份 `empty_after_clean` ⇒ **Codex／OMP 转录的整理质量仍未测**，要等有实质内容的会话（本机 10-12 有 2–17 MB 的 Codex 转录）。
 - Orca 侧本会话的设计与本仓的关系：Codex 阶段派活**关掉 hooks**（含 ccmem 的），所以 Orca 派出去的 codex 阶段**不会**写 ccmem；Orca 的纠正写回 ccmem 是以后单独的一件（§6.2）。
 
@@ -132,7 +132,7 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
 
 ### 2.3 仍有效的禁令（原 7 条去掉已解除的第 1 条，剩 6 条）
 
-1. ~~那 7 个死键不删~~ **人已裁（2026-10-18，Orca 会话 `a3b2a7a7`）**：控制器按提案 `docs/superpowers/specs/2026-08-19-dead-key-disposition.md` 给了建议，人原话「同意你上面所有的建议」。建议原文：`security.quarantine.hard_delete_days` **删键、不接线**（接线＝批量不可逆删除；删除走 `forget`；要自动清理另开设计并带预演）；`retrieval.like_fallback.max_terms` **接线、默认值改 10**（与现行为一致，零行为变更）；`llm.claude_p_timeout_per_task.l4_review` 删；`security.cross_scope.similarity_min`、`consolidation.minBatchSize`、`inject.max_chars`、`cron.dead_letter_alert` 四个打包删。**尚未实施**（要一轮代码改动，`config.mjs` 与 `config.default.json` 两侧同步，`block_user_explicit` 那笔是先例）。
+1. ~~那 7 个死键不删~~ **人已裁（2026-10-18，Orca 会话 `a3b2a7a7`）**：控制器按提案 `docs/superpowers/specs/2026-08-19-dead-key-disposition.md` 给了建议，人原话「同意你上面所有的建议」。建议原文：`security.quarantine.hard_delete_days` **删键、不接线**（接线＝批量不可逆删除；删除走 `forget`；要自动清理另开设计并带预演）；`retrieval.like_fallback.max_terms` **接线、默认值改 10**（与现行为一致，零行为变更）；`llm.claude_p_timeout_per_task.l4_review` 删；`security.cross_scope.similarity_min`、`consolidation.minBatchSize`、`inject.max_chars`、`cron.dead_letter_alert` 四个打包删。**已实施（2026-10-20，Orca 会话 `3d229487`）**：提交 `feat(retrieval): wire like_fallback.max_terms, default 10` 与 `chore(config): delete the six dead keys`，两侧同步；明细、判据与残余风险（拷过旧 `config.default.json` 的用户 `max_terms: 5` 会从死值变活值）见提案文末「🆕 2026-10-20 实施记录」。用户配置里的残留键无需迁移，`admin diagnose` 列为 unknown。⚠️ 生效：钩子（`retrieval.mjs` 在 prompt 钩子里跑）合进 main 后下一次会话即用新代码；`config.mjs` 属 daemon 路径（§0.2 第 2 条）⇒ **daemon 重启前仍跑旧代码**（本机两边都无行为差异：真实配置只读核查不含这 7 个键，且 10 即旧写死值）。
 2. **不许改本机电源设置**（`pmset` 只可只读取证）。
 3. **push 由人做**（人统一择时推，不要提醒）。合并已与 Orca 闸门对齐（人裁 2026-10-18，Orca 会话 `1710772d`，本仓 `CLAUDE.md` 证据纪律节）：`merge --ff-only` 合进 main、`branch -d`、不带 force 的 `worktree remove` agent 可以直接做；强制形式仍每次单独授权。
 4. **Task 5 读数不许重跑**。 5. **不要再挂 cron、不要再做巡检**。 6. **不要在代码里 pin 模型**。

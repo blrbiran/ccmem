@@ -725,7 +725,7 @@ test('cli admin daemon restart reboots a launchd service after bootout unloads i
 
 // launchd's view of the job, scripted per test: `print` fails (job absent) and,
 // optionally, `bootout` fails the way launchctl does for an absent job.
-function launchdJobAbsentScript({ bootoutFails }) {
+function launchdJobAbsentScript({ bootoutFails, launchdPid = null }) {
   return [
     '#!/bin/sh',
     'printf \'%s\\n\' "$@" >> "$CCMEM_LAUNCHCTL_LOG"',
@@ -733,8 +733,9 @@ function launchdJobAbsentScript({ bootoutFails }) {
     'NOW=$(($(date +%s) * 1000))',
     'case "$1" in',
     '  print)',
-    '    echo "Could not find service com.ccmem.daemon in domain for user gui: 501" >&2',
-    '    exit 113',
+    ...(launchdPid == null
+      ? ['    echo "Could not find service com.ccmem.daemon in domain for user gui: 501" >&2', '    exit 113']
+      : [`    printf '%s\\n' "gui/501/com.ccmem.daemon = {" "	state = running" "	pid = ${launchdPid}" "}"`, '    exit 0']),
     '    ;;',
     '  bootout)',
     bootoutFails
@@ -786,6 +787,14 @@ test('cli admin daemon restart does not claim success when the started daemon ha
   assert.equal(result.status, 1);
   assert.match(result.stderr, /no com\.ccmem\.daemon job/);
   assert.match(result.stderr, /ccmem admin daemon install/);
+});
+
+test('cli admin daemon restart does not claim success when launchd runs a different process than the lock holder', () => {
+  const result = runRestartAgainst(launchdJobAbsentScript({ bootoutFails: false, launchdPid: 4242 }), 'fake-otherpid-claude-bin');
+
+  assert.doesNotMatch(result.stdout, /daemon restarted/, 'launchd keeping some other process alive does not manage this daemon');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /launchd runs pid=4242/);
 });
 
 test('cli admin daemon restart names the absent launchd job instead of only the bootout I/O error', () => {

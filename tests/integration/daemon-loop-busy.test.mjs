@@ -92,8 +92,28 @@ test('runTask still throws errors that are not a busy database', async () => {
   await assert.rejects(runTask(db, { id: 1 }, async () => {}), (error) => error === boom);
 });
 
+// Counts the start UPDATEs the loop issues, so a loop that retries a busy
+// start without pausing (hundreds of tries in the lock window) is visible.
+function countingStarts(db) {
+  const counter = { starts: 0 };
+  const proxy = new Proxy(db, {
+    get(target, prop) {
+      if (prop === 'prepare') {
+        return (sql) => {
+          if (/SET status = 'running'/.test(sql)) counter.starts += 1;
+          return target.prepare(sql);
+        };
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    }
+  });
+  return { proxy, counter };
+}
+
 test('mainLoop survives a locked database at the task start and runs the task after the lock is released', async () => {
   const db = openDb();
+  const { proxy, counter } = countingStarts(db);
   resetTables(db);
   enqueue(db);
   const dispatched = [];
@@ -105,7 +125,7 @@ test('mainLoop survives a locked database at the task start and runs the task af
   try {
     assertLockApplied(db);
     timer = setTimeout(() => { release(); released = true; }, 200);
-    await mainLoop(db, () => stop, async (_loopDb, task) => {
+    await mainLoop(proxy, () => stop, async (_loopDb, task) => {
       dispatched.push(task.type);
       stop = true;
     });
@@ -116,6 +136,7 @@ test('mainLoop survives a locked database at the task start and runs the task af
 
   try {
     assert.deepEqual(dispatched, ['noop_test']);
+    assert.ok(counter.starts <= 3, `a busy start pauses before the next try (got ${counter.starts} start attempts in a 200 ms lock)`);
   } finally {
     db.close();
   }

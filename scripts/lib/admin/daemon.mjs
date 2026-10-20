@@ -134,10 +134,26 @@ export function buildDaemonEnv(baseEnv = process.env, cfg = loadConfig()) {
   return daemonEnv;
 }
 
+// The caller's `claude` can be a session-scoped shim (cmux puts one first on
+// PATH) that disappears with the terminal; writing it into the plist broke the
+// daemon's claude -p on 2026-10-13. So an installed plist's command is kept
+// unless the caller sets CCMEM_CLAUDE_P_COMMAND on purpose. Human ruling, Orca
+// session 308b874c, 2026-10-20.
+function installedClaudeCommand() {
+  if (process.env.CCMEM_CLAUDE_P_COMMAND !== undefined || !isLaunchdInstalled()) {
+    return {};
+  }
+
+  const parsed = parseEnvDict(splitPlist(readPlist()).envText);
+  const command = parsed.ok ? parsed.env.CCMEM_CLAUDE_P_COMMAND : undefined;
+  return command ? { CCMEM_CLAUDE_P_COMMAND: command } : {};
+}
+
 function buildLaunchdDaemonEnv(dataRoot) {
   return buildDaemonEnv({
     ...process.env,
-    CCMEM_DATA_ROOT: dataRoot
+    CCMEM_DATA_ROOT: dataRoot,
+    ...installedClaudeCommand()
   });
 }
 

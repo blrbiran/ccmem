@@ -969,3 +969,65 @@ test('install writes exactly what renderPlist produces', async () => {
   assert.equal(callSites.length, 1, 'renderDaemonPlist must have exactly one caller: renderPlist');
   assert.match(source, /writeFileSync\(plistPath, renderPlist\(\)\)/);
 });
+
+// 2026-10-13 生产事故的形状：restart 从 cmux 终端里跑，`claude` 在 PATH 上解析到一个
+// 会话级 shim（…/cmux-cli-shims/<uuid>/claude），它被写进 CCMEM_CLAUDE_P_COMMAND，
+// 终端一关就没了，daemon 的 claude -p 全部失败。CCMEM_CLAUDE_P_COMMAND 是自由变 key，
+// 四道门都不拦它的值变化（G4 探针此刻还能跑通 shim）——所以只能在求值处堵：
+// 已装 plist 里有这个 key、调用方又没显式给，就沿用已装的值。
+// 人裁：Orca 会话 308b874c，2026-10-20，「同意这样改」。
+function writeFakeClaude(dir) {
+  const file = join(dir, 'claude');
+  writeFileSync(file, '#!/bin/sh\nif [ "$1" = "-p" ] && [ "$2" = "--help" ]; then\n  printf %s\\n "--json-schema"\n  exit 0\nfi\nexit 1\n');
+  chmodSync(file, 0o755);
+  return file;
+}
+
+async function restartWithInstalledClaude({ explicitCommand }) {
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+  const installedClaude = writeFakeClaude(trackedMkdtemp('ccmem-installed-claude-'));
+  const shimClaude = writeFakeClaude(trackedMkdtemp('ccmem-cmux-shim-'));
+
+  const previousCommand = process.env.CCMEM_CLAUDE_P_COMMAND;
+  const previousPath = process.env.PATH;
+  let result;
+  try {
+    // 已装的那份：当初从一个好 shell 装的，命令指向 installedClaude。PATH 换成旧值，
+    // 保证这次重写一定发生（written=true），否则"没变"可能只是因为根本没写。
+    process.env.CCMEM_CLAUDE_P_COMMAND = installedClaude;
+    const installed = (await import('../../scripts/lib/admin/daemon.mjs')).renderPlist();
+    writeFileSync(plistPath, installed.replace(/<key>PATH<\/key><string>[^<]*<\/string>/, '<key>PATH</key><string>/stale/bin</string>'));
+
+    // 现在的调用方：PATH 上第一个 claude 是 shim。
+    if (explicitCommand) process.env.CCMEM_CLAUDE_P_COMMAND = shimClaude;
+    else delete process.env.CCMEM_CLAUDE_P_COMMAND;
+    process.env.PATH = `${join(shimClaude, '..')}:${previousPath}`;
+
+    const db = openDb();
+    result = await cmdAdminDaemon(db, { verb: 'restart' });
+  } finally {
+    process.env.PATH = previousPath;
+    if (previousCommand === undefined) delete process.env.CCMEM_CLAUDE_P_COMMAND;
+    else process.env.CCMEM_CLAUDE_P_COMMAND = previousCommand;
+  }
+
+  const env = parseEnvDict(splitPlist(readFileSync(plistPath, 'utf8')).envText).env;
+  return { result, env, installedClaude, shimClaude };
+}
+
+test('restart keeps the installed CCMEM_CLAUDE_P_COMMAND instead of the caller PATH claude', () => withFakeLaunchctl(async () => {
+  const { result, env, installedClaude } = await restartWithInstalledClaude({ explicitCommand: false });
+
+  assert.equal(result.plist_rewrite.written, true, 'the rewrite must have happened, or keeping the value proves nothing');
+  assert.doesNotMatch(readFileSync(join(process.env.CCMEM_LAUNCHAGENT_DIR, 'com.ccmem.daemon.plist'), 'utf8'), /\/stale\/bin/);
+  assert.equal(env.CCMEM_CLAUDE_P_COMMAND, installedClaude, 'a session-scoped claude on the caller PATH must not replace the installed command');
+}));
+
+test('restart control: an explicit CCMEM_CLAUDE_P_COMMAND still replaces the installed one', () => withFakeLaunchctl(async () => {
+  const { result, env, shimClaude } = await restartWithInstalledClaude({ explicitCommand: true });
+
+  assert.equal(result.plist_rewrite.written, true);
+  assert.equal(env.CCMEM_CLAUDE_P_COMMAND, shimClaude, 'a value the caller passes on purpose must win');
+}));

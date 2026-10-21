@@ -64,11 +64,23 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.00 2026-10-20／21（Orca 会话 `308b874c`）—— **先读这一节，再读 1.0**
+### 1.000 2026-10-21（Orca 会话 `9ec98639`）—— **先读这一节**
+
+- **已在 main（`--ff-only`，未推——以 `ls-remote` 现测）**，按主题行 `git log --grep` 取：
+  - `fix(daemon): a locked database no longer kills the daemon`：新 `isDatabaseBusy`（`scripts/lib/db.mjs`，只看 `error.errcode` 5／261／517）；`runTask` 开头那条 `UPDATE … status='running'` 撞锁 ⇒ 任务留 `queued`、attempt 不变、下一轮再来；tick 的 `scheduleCronTasks` 与到期任务 `SELECT` 同样护住，忙的一轮后停 1 s。其它错误行为不变。
+  - `fix(cli): restart/start check what launchd actually manages`：launchctl 启动后跑 `launchctl print gui/<uid>/com.ccmem.daemon`；没有 job 或 job 的 pid ≠ 锁持有者 ⇒ `start` 报 `started_unmanaged`（exit 1）、`restart` 以 phase=start 失败，都指向 `ccmem admin daemon install`；bootout 失败且无 job 时如实说没有 job。⚠️ `launchctl print` 的 pid 解析只对 fake 跑过。
+  - `fix(daemon): …SIGTERM handler before the lock`（**超出人裁，待人审**）：原来先拿锁、后装 SIGTERM 处理，`stop` 落在间隙里 daemon 带着锁行死、`stop` 等满预算报 `stop_timeout`。探针：main 上 25/40 留锁行，修后 0/40；它让生命周期测试时红时绿。
+  - **Orca 纠正导入**（spec `docs/superpowers/specs/2026-10-21-orca-correction-import-design.md`）：新 CLI `ccmem orca-correction upsert|withdraw`（cwd＝目标仓、stdin 一个 JSON v1、stdout 一个 JSON；退出码 0 完成／64 输入被拒不要重试／1 其它稍后重试）；幂等键＝项目＋tag `orca:correction:<id>`（一个 `BEGIN IMMEDIATE` 事务内判定），同内容 ⇒ `unchanged`，内容变 ⇒ 旧行归档（audit `orca_correction_superseded`）再插新行，撤回 ⇒ 归档（`orca_correction_withdrawn`），**从不删**。行：`source='external'`、`type='rule'`、trust 0.8、tags `orca-correction`／`orca:correction:<id>`／`retrieval_only`。**无 schema 迁移；export v0.7 不变**（Orca 读取端不用改）。`retrieval_only` 行不进注入缓存（会话开局稳定段的唯一来源，全局与项目都排除）、周汇总批次、跨项目提升输入；每次 prompt 的检索照常能取到（人裁「只在文档相关内容时才被检索出来」）。
+  - npm test 最后一次 956/956；没改既有判据；变异 M1–M14（导入）、M1–M9（daemon，M3 挂死被 300 s 闹钟杀、没红在它自己的断言上）。
+- ⚠️ **daemon 侧要重启才生效**（锁冲突护栏、SIGTERM 次序、`retrieval_only` 在 daemon 自己的缓存重建与汇总里被排除）。在人自己的终端：`cd /Users/biran/code/skills/orca/ccmem && /usr/local/bin/node --no-warnings --experimental-sqlite scripts/cli.mjs admin daemon restart`；判别：输出的 `daemon restarted pid=N` 与 `launchctl print gui/$(id -u)/com.ccmem.daemon` 的 pid 一致，`daemon_lock.acquired_at` 晚于重启。**Orca 那边开「纠正写回」必须在这次重启之后**（Orca 侧默认关）。CLI 与钩子路径已即时生效。
+- **残余（登记未修）**：派活之后那几笔写入（标记 completed／failed）仍没护锁冲突，撞锁仍可能让 daemon 崩、行留 `running` 到下次启动回收；`scheduleCronTasks` 拿到租约后插入时库忙会丢这一期（main 上原来就如此）；两个并发 upsert 的事务保护没有测试；`contradiction-audit` 仍读这些行；有人手动 `promote` 一行的话，它照样不进稳定段；10-20 沙箱里 `restart` 打印「restarted」的确切原因仍未证成（新检查只盖住了症状）。
+- `$TMPDIR` 存量 `ccmem-*` 2026-10-21 现数 753（删法见 §4）。
+
+### 1.00 2026-10-20／21（Orca 会话 `308b874c`）—— 已被 1.000 接手
 
 - **已在 main**（人已推）：`fix(daemon): keep the installed CCMEM_CLAUDE_P_COMMAND on plist rewrite`——调用方没显式设 `CCMEM_CLAUDE_P_COMMAND` 时，install／restart 重写 plist 沿用已装的值（cmux 终端里 `which claude` 是会话级 shim，曾把它写进 plist、终端一关 daemon 的 `claude -p` 就断）。走 CLI 路径，不需要重启 daemon。npm test 936/936。
 - **生产 daemon（2026-10-20 现状）**：死键处置已生效（daemon 已重启）。过程：agent 在 Claude Code 沙箱里跑 `admin daemon restart` 报 `restarted pid=53925`，但 launchd 里已没有 job（agent 没核 `launchctl`——教训）；该进程 2 分钟后在 `scripts/daemon/loop.mjs:371` `runTask` 抛未捕获的 `database is locked` 退出，无人拉起；人随后在自己终端跑 `admin daemon install`（`restart` 因 job 不在而 `Boot-out failed: 5`）⇒ launchd 托管、心跳正常。plist 的 PATH 已去掉过期的 cmux 临时目录。重启前备份：`global.db.bak.1792499094655`（integrity ok）、`com.ccmem.daemon.plist.bak.20261020`。
-- **人裁「要修」、下一会话做**（本会话人叫停了实施，代码未动）：① `runTask` 那条 `UPDATE … status='running'` 在 try 外，锁冲突让整个 daemon 崩（判别只用 `error.errcode` 5／261／517）；② 沙箱里 `restart` 拿不到 launchd 时退回分离进程仍报 `restarted`，job 不在时只报 I/O error——要如实报、并指向 `admin daemon install`。登记（只建议、未批）：plist PATH 也照抄调用方 PATH（含 cmux shim 目录），可类似地保留已装值或滤掉非持久目录。
+- **人裁「要修」——已在会话 `9ec98639` 修完（§1.000）**；原文：① `runTask` 那条 `UPDATE … status='running'` 在 try 外，锁冲突让整个 daemon 崩（判别只用 `error.errcode` 5／261／517）；② 沙箱里 `restart` 拿不到 launchd 时退回分离进程仍报 `restarted`，job 不在时只报 I/O error——要如实报、并指向 `admin daemon install`。登记（只建议、未批）：plist PATH 也照抄调用方 PATH（含 cmux shim 目录），可类似地保留已装值或滤掉非持久目录。
 - ⚠️ **在 Claude Code 沙箱里**：`ps`／`pgrep`／`launchctl` 看不全；判活看 `daemon_lock` 的心跳；要真 `launchctl` 的操作交人在自己终端跑。`daemon.err.log` 因 embedding 429 的 `vec_backfill` 刷屏已约 220 MB。
 
 ### 1.0 2026-10-18（Orca 会话 `a3b2a7a7`）—— 已合、仍成立
@@ -262,12 +274,12 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
   `type` ∈ rule/fact/episode/consolidated，`source` 六个既有值，`tags` 为字符串数组 JSON 文本或 null，时间为 0..8.64e15 整数毫秒，`project_key` 非空。
   **列／枚举／version／projectKey 规则一变，Orca 整区报 `ccmem-output-invalid`。**
 - 已知缺口（登记，不立项）：export 不校验 scope；list/show 缺 json／project-key；无 remote 时 cwd 与 realpath 可能得到不同 path 键；Q7 不立项 ccmem→Orca 字段；
-  Orca 自动 decision／correction 写回**未实现**（面板只读不代表自动记忆链已运行）。Orca 的真实 ccmem 测试必须去掉 `CCMEM_CONFIG_PATH` 并改道 HOME／data root。
+  Orca 自动 decision 写回**未实现**；correction 写回已实现但**默认关**（§6.2，会话 `9ec98639`；面板只读不代表自动记忆链已运行）。Orca 的真实 ccmem 测试必须去掉 `CCMEM_CONFIG_PATH` 并改道 HOME／data root。
   不关 auto memory 时，真 claude 启动可在真实 `~/.claude/projects` 下建空 memory。
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-21（Orca 会话 `308b874c`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.0000、§4.2。本仓本轮：`afd8237` 与 daemon 重启（§1.00）；两个 daemon 缺陷人裁要修、下一会话做。**§6.1 的 export 接口没变。** Orca 侧新写了 `Orca/docs/superpowers/specs/2026-10-21-corrections-to-ccmem-design.md`（纠正写回本仓）：只写回人做的、已关闭未撤回的纠正，进**项目**记忆，**只走每次 prompt 的检索、不进会话开局的稳定上下文**（人裁「只在文档相关内容时才被检索出来」）；本仓要配一份 spec：外部引用 tag `orca:correction:<id>`＋按它幂等导入（今天 `ccmem import` 无去重）＋这类来源的初始信任度（今天 `external` 0.3）＋撤回时走 forget／隔离。Orca 派出去的 codex 阶段关掉 hooks，不写本仓（付费验收实测 `session_context` 对该 thread 0 行）。embedding 额度（429）仍等人。
+2026-10-21（Orca 会话 `9ec98639`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.00000、§4。本仓本轮见 §1.000（daemon 两缺陷＋SIGTERM 次序、`orca-correction` 导入）。**§6.1 的 export 接口没变。** Orca 侧已实现纠正写回（`src/memory/correctionExport.ts`，面板 flag `--ccmem-corrections`，**默认关**）：只写回人做的、已关闭未撤回的纠正，≤500 字符，按本仓 `orca-correction upsert|withdraw` 的契约调用；**改这条 CLI 的输入 schema、退出码、幂等语义前先同步 Orca**。开启顺序：人重启本仓 daemon → 再给面板加 flag 重装。Orca 派出去的 codex 阶段关掉 hooks，不写本仓。embedding 额度（429）仍等人。
 
 ## 7. 怎么找回旧全文
 

@@ -279,7 +279,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-21（Orca 会话 `9ec98639`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.00000、§4。本仓本轮见 §1.000（daemon 两缺陷＋SIGTERM 次序、`orca-correction` 导入）。**§6.1 的 export 接口没变。** Orca 侧已实现纠正写回（`src/memory/correctionExport.ts`，面板 flag `--ccmem-corrections`，**默认关**）：只写回人做的、已关闭未撤回的纠正，≤500 字符，按本仓 `orca-correction upsert|withdraw` 的契约调用；**改这条 CLI 的输入 schema、退出码、幂等语义前先同步 Orca**。开启顺序：人重启本仓 daemon → 再给面板加 flag 重装。Orca 派出去的 codex 阶段关掉 hooks，不写本仓。embedding 额度（429）仍等人。
+2026-10-22（Orca 会话 `8b1469ea`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3.000000、§4。**本仓本轮没有代码改动。** 人已在自己终端重启 daemon；Orca 会话只读核过 `daemon_lock`：`acquired_at` 2026-10-21 20:13（晚于 §1.000 的修复提交）、心跳正常 ⇒ §1.000 的「daemon 侧要重启才生效」已满足。**§6.1 的 export 接口没变。** Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）。Orca 新 spec 里与本仓有关的只有一处、且推迟：流程引擎给普通目录项目的纠正用 `projectKey = dir:<project id>`，第一期**不导出**到本仓；以后要导出需要先改 §6.1 的契约（Rule 16，先同步本仓）。embedding 额度（429）仍等人。
 
 ## 7. 怎么找回旧全文
 

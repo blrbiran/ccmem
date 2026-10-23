@@ -279,7 +279,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-22（Orca 会话 `b37f7ce9`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4。**本仓本轮没有代码改动。** **§6.1 的 export 接口没变。** Orca 本轮落了流程引擎第一期：粗粒度纠正（只给仓库＋一句话、或只给一个 run）照旧经 `ccmem orca-correction upsert` 写回（文本里点名目标）；普通目录项目的纠正用 `projectKey = dir:<project id>`，**Orca 的导出按前缀跳过、不送进本仓**（以后要送需先改 §6.1 契约，Rule 16）。Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）。embedding 额度（429）仍等人。
+2026-10-23（Orca 会话 `0e13a9b7`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4。**本仓本轮没有改动；§6.1 的 export 接口没变。** 经人要求在 `~/.zshrc` 设了 `ORCA_CCMEM_BIN="/usr/local/bin/ccmem"`（备份 `~/.zshrc.bak-20261023-orca`；面板服务早已带这个变量，`orca status` 看的是调用者 shell）。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。
 
 ## 7. 怎么找回旧全文
 

@@ -279,7 +279,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-23（Orca 会话 `0e13a9b7`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4。**本仓本轮没有改动；§6.1 的 export 接口没变。** 经人要求在 `~/.zshrc` 设了 `ORCA_CCMEM_BIN="/usr/local/bin/ccmem"`（备份 `~/.zshrc.bak-20261023-orca`；面板服务早已带这个变量，`orca status` 看的是调用者 shell）。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。
+2026-10-24（Orca 会话 `ffec7b28`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4。**本仓本轮没有改动；§6.1 的 export 接口没变。** 仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；Orca 新 spec 里 dir 项目的决定留在 Orca 的 vault 里、没有 git remote ⇒ 本仓不索引它们（Orca dir spec O6）；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。观察：Orca 会话的付费 codex 探针在被测目录里生成了 `.ccmem/context-*.md`（本仓的 Codex 钩子照常工作，文件被 gitignore）。
 
 ## 7. 怎么找回旧全文
 

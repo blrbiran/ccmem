@@ -286,7 +286,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-26（Orca 会话 `ffec7b28` 收尾）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4。**本仓本轮有改动**：`forget`／`pin` 接线（§1.0000），但 §6.1 的 export 契约没变，Orca 读取端不用改。Orca 侧：多目录项目（H7）已合入并装上，O9 真 agent 验收 codex 与 omp 过、claude 等额度；三仓 README 重写；Orca 的 `orca-control` skill 已按当前 CLI 重写（`~/.claude/skills` 是软链，改仓即生效）。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；dir 项目的决定留在 Orca 的 vault 里、没有 git remote ⇒ 本仓不索引它们（Orca dir spec O6）；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。观察：Orca 付费 codex 探针仍会在被测目录里生成 `.ccmem/context-*.md`（本仓的 Codex 钩子照常工作，文件被 gitignore）。
+2026-10-27（Orca 会话 `a98b77d2`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4。**本仓本轮无改动**，§6.1 的 export 契约未变，Orca 读取端不用改。Orca 侧：多目录项目（H7）已合入并装上，O9 真 agent 验收 codex 与 omp 过、claude 等额度；面板小缺口批已合入并装上（loop 卡计数含 document checks）；三仓 README 重写；Orca 的 `orca-control` skill 已按当前 CLI 重写（`~/.claude/skills` 是软链，改仓即生效）；`forget`／`pin` 接线见 §1.0000。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；dir 项目的决定留在 Orca 的 vault 里、没有 git remote ⇒ 本仓不索引它们（Orca dir spec O6）；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。观察：Orca 付费 codex 探针仍会在被测目录里生成 `.ccmem/context-*.md`（本仓的 Codex 钩子照常工作，文件被 gitignore）。
 
 ## 7. 怎么找回旧全文
 

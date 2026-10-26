@@ -7,7 +7,7 @@ ccmem stores reusable facts, rules, and episodes, injects relevant context into 
 ## Requirements
 
 - Claude Code (primary), and optionally Codex CLI or OMP (see below)
-- Node.js 22.5+ 
+- Node.js 22.5+
 - macOS if you want `ccmem admin daemon install` (the current daemon installer targets `launchd`)
 
 ccmem uses Node's built-in `node:sqlite`. The required Node flags are handled by the launcher, hooks, and daemon startup paths.
@@ -53,7 +53,9 @@ The launcher supports symlink-based installs.
 - CLI launcher: `bin/ccmem`
 - Runtime code: `scripts/**`
 
-User data lives outside the plugin directory under `~/.claude/ccmem/`.
+User data lives outside the plugin directory under `~/.claude/ccmem/` (or `CCMEM_DATA_ROOT`). Its configuration is
+`<data root>/config.json`, merged over the defaults in `config.default.json`; `CCMEM_CONFIG_PATH` names a different file
+when it exists.
 
 ## Basic usage
 
@@ -68,7 +70,9 @@ ccmem save "Always verify prod SQL against a real database" --global
 
 ```bash
 ccmem list
+ccmem list "deploy" --score --limit 10
 ccmem list --quarantined
+ccmem show 12
 ```
 
 ### Change mode
@@ -94,9 +98,45 @@ ccmem admin diagnose
 ccmem promote 12
 ccmem promote 12 --global
 ccmem resurrect
-ccmem resurrect --quarantined
-ccmem resurrect --alerts
+ccmem resurrect --quarantined | --alerts | --revalidation | --contradictions | --promote-candidates
 ```
+
+### Export, import and audit
+
+```bash
+ccmem export --json --scope global > memories.json
+ccmem import memories.json          # inserts what it accepts, skips the rest
+ccmem audit show 42                 # one audit row
+ccmem admin alias old-key new-key   # move every memory between project keys; type ALIAS to confirm
+```
+
+### Semantic search
+
+Retrieval is lexical by default. Turning embeddings on adds a semantic score to the ranking:
+
+```bash
+ccmem admin semantic status
+ccmem admin semantic on             # the provider config.json declares
+ccmem admin semantic on --provider transformers-local|openai|jina
+ccmem admin semantic off
+```
+
+`status` reports the provider, model, dimensions, how many memories are embedded and how many still need backfill.
+Changing the provider or model leaves old vectors stale until the daemon's `vec_backfill` task re-embeds them. If an
+embedding call fails, retrieval falls back to lexical and says so on stderr.
+
+### Scheduled maintenance
+
+```bash
+ccmem admin cron list [--issues] [--history <task>] [--limit N]
+ccmem admin cron run daily_maintenance   # queue one task now
+ccmem admin retrieval-check [--corpus <path>] [--k 1,3,5]
+```
+
+`admin cron run` accepts `daily_maintenance`, `weekly_synthesis`, `security_audit`, `contradiction_audit`,
+`cross_project_patterns`, `monthly_meta_synthesis`, `revalidation_audit` and `vec_backfill`.
+`retrieval-check` runs lexical retrieval against a corpus and reports recall and precision at the given cutoffs; it
+writes an audit row.
 
 ## Codex CLI and OMP
 
@@ -122,7 +162,7 @@ ccmem install omp
 ccmem uninstall omp
 ```
 
-- `install` writes `<agent dir>/extensions/ccmem.ts` and records it in `<dataRoot>/installs/omp.json`. The agent dir is `CCMEM_OMP_AGENT_DIR`, else OMP's own rules (profile, `PI_CODING_AGENT_DIR`), else `~/.omp/agent`. Install prints the path it used. A previous `ccmem.ts` is backed up as `ccmem.ts.bak.<ms>` next to it, and uninstall can leave another `.bak` if the loader was hand-edited.
+- `install` writes `<agent dir>/extensions/ccmem.ts` and records it in `<dataRoot>/installs/omp.json`. The agent dir is `CCMEM_OMP_AGENT_DIR`, else OMP's own rules (a named `OMP_PROFILE`/`PI_PROFILE`, else `PI_CODING_AGENT_DIR`, else `~/<PI_CONFIG_DIR|.omp>/agent`). Install prints the path it used. A previous `ccmem.ts` is backed up as `ccmem.ts.bak.<ms>` next to it, and uninstall can leave another `.bak` if the loader was hand-edited.
 
 ### Injection
 
@@ -130,7 +170,9 @@ Session start injects one short instruction to read a per-session file, `.ccmem/
 
 ### Background LLM backend
 
-The daemon's summarization and synthesis tasks run through `llm.backend` (`claude`, `codex`, or `omp`). Related config: `llm.backend_order`, `llm.models` (codex defaults to `gpt-6-luna`; use `""`, not `null`, to drop `-m`), `llm.commands`.
+The daemon's summarization and synthesis tasks run through `llm.backend` (`claude`, `codex`, or `omp`). Related config:
+`llm.backend_order`, `llm.models` (codex defaults to `gpt-6-luna`; `null` or `""` omits `-m`, leaving that CLI's own
+default), `llm.commands` (the executable per backend; `CCMEM_CLAUDE_P_COMMAND` also overrides `claude`).
 
 ```bash
 ccmem admin llm status

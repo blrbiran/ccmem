@@ -1,23 +1,34 @@
 import { rebuildInjectionCache } from '../injection-cache.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
 
+function parseMemoryId(id) {
+  return Number.parseInt(String(id ?? '').replace(/^m/, ''), 10);
+}
+
 export async function cmdPin(db, { id, remove = false }) {
   try {
     maybeRunTier15(db);
   } catch {}
 
-  const row = db.prepare(`SELECT project_key FROM memories WHERE id = ?`).get(id);
+  const memId = parseMemoryId(id);
+  const row = Number.isFinite(memId)
+    ? db.prepare(`SELECT id, project_key FROM memories WHERE id = ?`).get(memId)
+    : null;
+
+  if (!row) {
+    return null;
+  }
 
   db.prepare(`UPDATE memories SET pinned = ?, updated_at = ? WHERE id = ?`).run(
     remove ? 0 : 1,
     Date.now(),
-    id
+    row.id
   );
 
-  rebuildInjectionCache(db, row?.project_key ?? null);
+  rebuildInjectionCache(db, row.project_key ?? null);
 
   return {
-    id,
+    id: row.id,
     pinned: remove ? 0 : 1
   };
 }

@@ -9,10 +9,12 @@ import { openDb } from './lib/db.mjs';
 import { readFileSync } from 'node:fs';
 import { cmdAuditShow } from './lib/cmd/audit.mjs';
 import { cmdExport } from './lib/cmd/export.mjs';
+import { cmdForget } from './lib/cmd/forget.mjs';
 import { cmdImport } from './lib/cmd/import.mjs';
 import { cmdList } from './lib/cmd/list.mjs';
 import { cmdMode } from './lib/cmd/mode.mjs';
 import { cmdOrcaCorrectionUpsert, cmdOrcaCorrectionWithdraw, OrcaCorrectionInputError, parseOrcaCorrectionInput } from './lib/cmd/orca-correction.mjs';
+import { cmdPin } from './lib/cmd/pin.mjs';
 import { cmdPromote } from './lib/cmd/promote.mjs';
 import { cmdResurrect } from './lib/cmd/resurrect.mjs';
 import { cmdSave } from './lib/cmd/save.mjs';
@@ -42,6 +44,8 @@ function printHelp() {
     '  save <content> [--global]\n' +
     '  list [query] [--limit N] [--quarantined] [--never-injected] [--days N] [--score]\n' +
     '  show <id>\n' +
+    '  forget <id>             delete a memory (a copy is kept under <data root>/trash)\n' +
+    '  pin <id> [--remove]     pin a memory so decay never takes it\n' +
     '  export --json [--scope global|project]\n' +
     '  import <file>\n' +
     '  orca-correction <upsert|withdraw>   (JSON on stdin; cwd = the target repository)\n' +
@@ -200,6 +204,11 @@ if (verb === 'show' && args.find((arg) => !arg.startsWith('--')) == null) {
   process.exit(0);
 }
 
+if ((verb === 'forget' || verb === 'pin') && args.find((arg) => !arg.startsWith('--')) == null) {
+  printHelp();
+  process.exit(0);
+}
+
 if (verb === 'promote' && args.find((arg) => !arg.startsWith('--')) == null) {
   printHelp();
   process.exit(0);
@@ -276,7 +285,7 @@ if (verb === 'admin' && args[0] === 'diagnose') {
   // handled below.
 }
 
-if (!['save', 'list', 'show', 'export', 'import', 'orca-correction', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect', 'install', 'uninstall'].includes(verb)) {
+if (!['save', 'list', 'show', 'forget', 'pin', 'export', 'import', 'orca-correction', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect', 'install', 'uninstall'].includes(verb)) {
   printHelp();
   process.exit(64);
 }
@@ -666,6 +675,22 @@ try {
         }
         process.stdout.write(`  (${row.injection_history.length} times in 14d)\n`);
       }
+    }
+  } else if (verb === 'forget') {
+    const result = await cmdForget(getDb(), { id: positionalArgs()[0] });
+    if (!result) {
+      process.stderr.write('ccmem: memory not found\n');
+      process.exitCode = 2;
+    } else {
+      process.stdout.write(`ccmem: forgot memory #m${result.id} (${result.scope} ${result.type}; copy in trash)\n`);
+    }
+  } else if (verb === 'pin') {
+    const result = await cmdPin(getDb(), { id: positionalArgs()[0], remove: args.includes('--remove') });
+    if (!result) {
+      process.stderr.write('ccmem: memory not found\n');
+      process.exitCode = 2;
+    } else {
+      process.stdout.write(`ccmem: ${result.pinned ? 'pinned' : 'unpinned'} memory #m${result.id}\n`);
     }
   } else if (verb === 'export') {
     const scope = getOptionValue('--scope');

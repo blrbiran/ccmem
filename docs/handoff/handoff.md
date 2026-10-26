@@ -44,7 +44,7 @@ embedding 回填、revalidation、每日维护。存储是 SQLite（`node:sqlite
 | daemon 状态 | `/Users/biran/code/skills/orca/ccmem/bin/ccmem admin daemon status` **＋** `daemon_lock` 的 `holder_pid`／`heartbeat_at` 年龄（`sqlite3 "file:$HOME/.claude/ccmem/global.db?mode=ro"`） | 单次 CLI 读数在负载下有假阴性；`plist=in_sync` **只是报警轴，不等于字节相等**（§5.2）——差异的 key 名打在 stderr 那行 `plist differs …`（只打 key 名、不打值） |
 | daemon 进程数 | `pgrep -f 'scripts/daemon/main.mjs'` | 🔴 **Claude Code 沙箱里 `ps -e` 是残的，会把泄漏数成 0**；`pgrep -f ccmem` 会把带 `--plugin-dir …/ccmem` 的会话数进来 |
 | 机器忙不忙 | `uptime` **加** `top -l 1 \| grep "CPU usage"` | load average 残留极久，单看 load 会误判 |
-| 套件 | `npm test`（= `scripts/run-tests.sh`：`/usr/local/bin/node --test`、隔离 data root、`-u CCMEM_CONFIG_PATH`、收尾删目录） | 最近记录 **925/925**（2026-10-18，`fix(test): point TMPDIR under the suite's data root` 之上，临时 HOME）。**不是稳定绿**，见 §4 |
+| 套件 | `npm test`（= `scripts/run-tests.sh`：`/usr/local/bin/node --test`、隔离 data root、`-u CCMEM_CONFIG_PATH`、收尾删目录） | 最近记录 **963/963**（2026-10-26，`fix(cli): wire the forget and pin verbs` 之上；**PATH 最前必须是 nvm 22.13.1**，否则 `bin ccmem` 的 `exec node` 撞坏的 homebrew node）。**不是稳定绿**，见 §4 |
 | 单文件隔离跑 | `env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test <文件>` | 两个变量缺一不可；**必须显式 `/usr/local/bin/node`** |
 | 插件链接 | `ls -la ~/.claude/plugins/ \| grep ccmem` | 应指向 `/Users/biran/code/skills/orca/ccmem` |
 | LLM 任务有没有在成功 | 只读 `~/.claude/ccmem/daemon-cost.jsonl`（`timed_out`、`exit_code`、`timeout_ms`、`monotonic_ms`） | **别直接数 `timed_out`**：机器睡眠会饿死定时器，产生 `1974s` 这种"超时" |
@@ -64,7 +64,14 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.000 2026-10-21（Orca 会话 `9ec98639`）—— **先读这一节**
+### 1.0000 2026-10-26（Orca 会话 `ffec7b28` 收尾）—— **先读这一节**
+
+- **已修：`forget`／`pin` 两个 verb 从未接线**（主题行 `fix(cli): wire the forget and pin verbs`，已在 main 并已推）：`scripts/lib/cmd/{forget,pin}.mjs` 与 `commands/{forget,pin}.md` 本来就有，但 `scripts/cli.mjs` 没 import、没进 verb 白名单、没 dispatch ⇒ 两条命令都只打帮助并以 64 退出。现在接线并补帮助行；两个模块接受其余 CLI 打印的 `m<id>`；记忆不存在时返回 not-found（CLI 报 `ccmem: memory not found`、exit 2），不再对缺行 `row.content` 崩（原实现会）。
+- 判据：新增 `tests/integration/forget-pin-command.test.mjs` 7 条（模块层与 CLI 层、trash 副本、缺 id）；全量 `scripts/run-tests.sh` 963/963。**没改既有判据。**
+- **生效面**：只动 CLI 入口与两个 CLI-only 模块（`grep` 现测只有 `scripts/cli.mjs` 引它们）⇒ 钩子与 daemon 都**不需要**重启；`~/.claude/plugins/ccmem` 仍是本工作树的软链。
+- README 以英文重写并已推（主题行 `docs(readme): cover the config file, semantic search and maintenance`），只动文档；三仓 main 均已推（`ls-remote` 现测）。下面 §1.000 及更早的结论仍成立。
+
+### 1.000 2026-10-21（Orca 会话 `9ec98639`）—— 先读 §1.0000 之后再看这节
 
 - **已在 main（`--ff-only`，未推——以 `ls-remote` 现测）**，按主题行 `git log --grep` 取：
   - `fix(daemon): a locked database no longer kills the daemon`：新 `isDatabaseBusy`（`scripts/lib/db.mjs`，只看 `error.errcode` 5／261／517）；`runTask` 开头那条 `UPDATE … status='running'` 撞锁 ⇒ 任务留 `queued`、attempt 不变、下一轮再来；tick 的 `scheduleCronTasks` 与到期任务 `SELECT` 同样护住，忙的一轮后停 1 s。其它错误行为不变。
@@ -279,7 +286,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-26（Orca 会话 `ffec7b28`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4。**本仓本轮仍无改动；§6.1 的 export 接口没变。** Orca 已把多目录项目（H7）合入并装上，O9 真 agent 验收 codex 与 omp 过、claude 等额度——这些都不触碰本仓契约。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；Orca 新 spec 里 dir 项目的决定留在 Orca 的 vault 里、没有 git remote ⇒ 本仓不索引它们（Orca dir spec O6）；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。观察：Orca 付费 codex 探针仍会在被测目录里生成 `.ccmem/context-*.md`（本仓的 Codex 钩子照常工作，文件被 gitignore）。
+2026-10-26（Orca 会话 `ffec7b28` 收尾）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4。**本仓本轮有改动**：`forget`／`pin` 接线（§1.0000），但 §6.1 的 export 契约没变，Orca 读取端不用改。Orca 侧：多目录项目（H7）已合入并装上，O9 真 agent 验收 codex 与 omp 过、claude 等额度；三仓 README 重写；Orca 的 `orca-control` skill 已按当前 CLI 重写（`~/.claude/skills` 是软链，改仓即生效）。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；dir 项目的决定留在 Orca 的 vault 里、没有 git remote ⇒ 本仓不索引它们（Orca dir spec O6）；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。观察：Orca 付费 codex 探针仍会在被测目录里生成 `.ccmem/context-*.md`（本仓的 Codex 钩子照常工作，文件被 gitignore）。
 
 ## 7. 怎么找回旧全文
 

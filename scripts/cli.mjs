@@ -44,7 +44,7 @@ function printHelp() {
     '  save <content> [--global]\n' +
     '  list [query] [--limit N] [--quarantined] [--never-injected] [--days N] [--score]\n' +
     '  show <id>\n' +
-    '  forget <id>             delete a memory (a copy is kept under <data root>/trash)\n' +
+    '  forget <id>             archive a memory: never retrieved or injected again; audited\n' +
     '  pin <id> [--remove]     pin a memory so decay never takes it\n' +
     '  export --json [--scope global|project]\n' +
     '  import <file>\n' +
@@ -682,7 +682,7 @@ try {
       process.stderr.write('ccmem: memory not found\n');
       process.exitCode = 2;
     } else {
-      process.stdout.write(`ccmem: forgot memory #m${result.id} (${result.scope} ${result.type}; copy in trash)\n`);
+      process.stdout.write(`ccmem: forgot memory #m${result.id} (${result.scope} ${result.type}; archived, see ccmem audit show ${result.audit_id})\n`);
     }
   } else if (verb === 'pin') {
     const result = await cmdPin(getDb(), { id: positionalArgs()[0], remove: args.includes('--remove') });

@@ -1,5 +1,5 @@
 ---
-description: Delete a memory (backed up to trash)
+description: Forget a memory (archived and audited; no longer retrieved or injected)
 command: true
 disable-model-invocation: true
 argument-hint: "<id>"

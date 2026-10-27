@@ -3371,3 +3371,20 @@ spec §4.3 V-1 与附录 B 的论断"不保证继承"是否真实。
 **事后清理**:`.claude/commands/ccmem-poc-env.md` 在 v0.1 实现工作开始前由用户
 手动 `rm -rf .claude/commands/ccmem-poc-env.md` 删除。本附录 E 是 PoC 结论的
 唯一长期记录。
+
+---
+
+## 附录 F：更正 —— §5.4 `forget` 改为归档（2026-10-27）
+
+归属：Orca 会话 `7753e97d` 的 ccmem 实施者，分支 `fix/forget-archives`，基于 ccmem main `639b521`。
+人裁（原文）：「forget 同意改成归档」。§5.4 原文逐字保留，本附录覆盖其**实现**部分：
+
+1. `ccmem forget <id>` 不再 `DELETE FROM memories`，改为 `decay_status = 'archived'`（与 `resurrect` 的 forget
+   路径同一形状）。检索（`retrieval.mjs`）、注入缓存（`injection-cache.mjs`）、`export` 都只取
+   `decay_status IN ('active','probation')`，所以归档行不再被检索或注入。
+2. 写一条审计：`writeAudit(db, 'forget', id, { user_action, scope, type, previous_decay_status })`。
+   还原 = 把该行 `decay_status` 改回 `previous_decay_status`；CLI stdout 给出 `ccmem audit show <audit id>`。
+3. **不再写 `trash/<id>.md`**。理由：归档行本身就是备份（代码里没有任何路径硬删 archived 行，
+   2026-10-27 在 `639b521` 上 `grep -rniE "delete\s+from\s+memories" scripts` 只命中旧 forget 自己）；
+   `ccmem show <id>` 仍能打出内容；再落一份明文副本只会多一处可能含 secret 的拷贝。
+   §5.4 里的 `trash_path`／`restore_command` 字段因此不写。

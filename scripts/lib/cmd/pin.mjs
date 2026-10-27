@@ -1,9 +1,6 @@
 import { rebuildInjectionCache } from '../injection-cache.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
-
-function parseMemoryId(id) {
-  return Number.parseInt(String(id ?? '').replace(/^m/, ''), 10);
-}
+import { parseMemoryId } from '../memory-id.mjs';
 
 export async function cmdPin(db, { id, remove = false }) {
   try {
@@ -11,7 +8,7 @@ export async function cmdPin(db, { id, remove = false }) {
   } catch {}
 
   const memId = parseMemoryId(id);
-  const row = Number.isFinite(memId)
+  const row = memId != null
     ? db.prepare(`SELECT id, project_key FROM memories WHERE id = ?`).get(memId)
     : null;
 

@@ -3388,3 +3388,5 @@ spec §4.3 V-1 与附录 B 的论断"不保证继承"是否真实。
    2026-10-27 在 `639b521` 上 `grep -rniE "delete\s+from\s+memories" scripts` 只命中旧 forget 自己）；
    `ccmem show <id>` 仍能打出内容；再落一份明文副本只会多一处可能含 secret 的拷贝。
    §5.4 里的 `trash_path`／`restore_command` 字段因此不写。
+4. id 解析收紧为 `/^m?(\d+)$/`（`scripts/lib/memory-id.mjs`，forget／pin／show／promote 共用），
+   CLI 对畸形 id 以 exit 64 拒绝；不再被 `parseInt` 截成别的 id（`forget 1abc` 曾忘掉 #1）。

@@ -25,6 +25,7 @@ const CLI = path.join(REPO_ROOT, 'scripts/cli.mjs');
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { cmdForget } = await import('../../scripts/lib/cmd/forget.mjs');
 const { cmdPin } = await import('../../scripts/lib/cmd/pin.mjs');
+const { parseMemoryId } = await import('../../scripts/lib/memory-id.mjs');
 const { loadConfig } = await import('../../scripts/lib/config.mjs');
 const { rebuildInjectionCache } = await import('../../scripts/lib/injection-cache.mjs');
 const { retrieveMemories } = await import('../../scripts/lib/retrieval.mjs');
@@ -204,6 +205,79 @@ test('cli forget exits 2 for a missing memory', () => {
       return true;
     }
   );
+});
+
+function runCli(argv) {
+  try {
+    const stdout = execFileSync(NODE, [CLI, ...argv], { cwd: REPO_ROOT, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return { status: 0, stdout, stderr: '' };
+  } catch (error) {
+    return { status: error.status, stdout: String(error.stdout), stderr: String(error.stderr) };
+  }
+}
+
+// parseInt used to read a typo as a different, existing id; only "123" / "m123" may name a memory.
+test('parseMemoryId accepts only 123 or m123', () => {
+  assert.equal(parseMemoryId('12'), 12);
+  assert.equal(parseMemoryId('m12'), 12);
+  assert.equal(parseMemoryId(12), 12);
+  for (const bad of ['1abc', '1.9', 'm12x', '', 'm', 'mm1', ' 1', '-1', '1e3', '99999999999999999999', undefined, null]) {
+    assert.equal(parseMemoryId(bad), null, `accepted ${JSON.stringify(bad)}`);
+  }
+});
+
+test('cmdForget and cmdPin treat a malformed id as not found, not as its numeric prefix', async () => {
+  const db = openDb();
+  resetTables(db);
+  const id = insertMemory(db, { content: 'library typo target' });
+
+  assert.equal(await cmdForget(db, { id: `${id}abc` }), null);
+  assert.equal(await cmdPin(db, { id: `m${id}x` }), null);
+  const row = db.prepare(`SELECT decay_status, pinned FROM memories WHERE id = ?`).get(id);
+  assert.deepEqual({ ...row }, { decay_status: 'active', pinned: 0 });
+  db.close();
+});
+
+test('cli forget and pin refuse a malformed id with exit 64 and leave the memory alone', () => {
+  const db = openDb();
+  resetTables(db);
+  const id = insertMemory(db, { content: 'typo target' });
+  db.close();
+
+  const forgetRun = runCli(['forget', `${id}abc`]);
+  const pinRun = runCli(['pin', `${id}.9`]);
+
+  const verifyDb = openDb();
+  const row = verifyDb.prepare(`SELECT decay_status, pinned FROM memories WHERE id = ?`).get(id);
+  const audits = forgetAuditRows(verifyDb, id);
+  verifyDb.close();
+
+  assert.equal(forgetRun.status, 64);
+  assert.match(forgetRun.stderr, new RegExp(`ccmem: invalid memory id '${id}abc' \\(expected 123 or m123\\)`));
+  assert.equal(pinRun.status, 64);
+  assert.match(pinRun.stderr, /ccmem: invalid memory id/);
+  // The memory whose id is the numeric prefix of the typo is untouched.
+  assert.deepEqual({ ...row }, { decay_status: 'active', pinned: 0 });
+  assert.equal(audits.length, 0);
+});
+
+test('cli show and promote refuse a malformed id with exit 64', () => {
+  const db = openDb();
+  resetTables(db);
+  const id = insertMemory(db, { content: 'typo target' });
+  db.close();
+
+  for (const verb of ['show', 'promote']) {
+    const run = runCli([verb, `m${id}x`]);
+    assert.equal(run.status, 64, verb);
+    assert.match(run.stderr, /ccmem: invalid memory id/, verb);
+  }
+});
+
+test('cli pin exits 2 for a missing memory', () => {
+  const run = runCli(['pin', 'm999999']);
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /ccmem: memory not found/);
 });
 
 test.after(() => rmSync(dataRoot, { recursive: true, force: true }));

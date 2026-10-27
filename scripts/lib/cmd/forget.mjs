@@ -1,10 +1,7 @@
 import { writeAudit } from '../audit.mjs';
 import { rebuildInjectionCache } from '../injection-cache.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
-
-function parseMemoryId(id) {
-  return Number.parseInt(String(id ?? '').replace(/^m/, ''), 10);
-}
+import { parseMemoryId } from '../memory-id.mjs';
 
 // Forget archives instead of deleting (human ruling 2026-10-27): the row keeps
 // its content and state, retrieval and injection skip decay_status='archived',
@@ -18,7 +15,7 @@ export async function cmdForget(db, { id }) {
   } catch {}
 
   const memId = parseMemoryId(id);
-  const row = Number.isFinite(memId)
+  const row = memId != null
     ? db.prepare(`SELECT * FROM memories WHERE id = ?`).get(memId)
     : null;
 

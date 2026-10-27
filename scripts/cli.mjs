@@ -22,6 +22,7 @@ import { cmdShow } from './lib/cmd/show.mjs';
 import { cmdStats } from './lib/cmd/stats.mjs';
 import { getCodexHome, installCodex, REPO_ROOT, uninstallCodex } from './lib/install/codex.mjs';
 import { getOmpAgentDir, installOmp, uninstallOmp } from './lib/install/omp.mjs';
+import { parseMemoryId } from './lib/memory-id.mjs';
 import { getDataRoot } from './lib/paths.mjs';
 import { resolveProjectKey } from './lib/project-key.mjs';
 
@@ -212,6 +213,14 @@ if ((verb === 'forget' || verb === 'pin') && args.find((arg) => !arg.startsWith(
 if (verb === 'promote' && args.find((arg) => !arg.startsWith('--')) == null) {
   printHelp();
   process.exit(0);
+}
+
+if (['show', 'forget', 'pin', 'promote'].includes(verb)) {
+  const rawId = args.find((arg) => !arg.startsWith('--'));
+  if (parseMemoryId(rawId) == null) {
+    process.stderr.write(`ccmem: invalid memory id '${rawId}' (expected 123 or m123)\n`);
+    process.exit(64);
+  }
 }
 
 if (verb === 'save' && args.filter((arg) => !arg.startsWith('--')).length === 0) {

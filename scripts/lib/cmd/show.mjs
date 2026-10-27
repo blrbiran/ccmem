@@ -1,9 +1,6 @@
 import { recentInjectionHistoryForMemory } from '../recent-injections.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
-
-function parseMemoryId(id) {
-  return Number.parseInt(String(id ?? '').replace(/^m/, ''), 10);
-}
+import { parseMemoryId } from '../memory-id.mjs';
 
 export async function cmdShow(db, { id }) {
   try {
@@ -11,7 +8,7 @@ export async function cmdShow(db, { id }) {
   } catch {}
 
   const memId = parseMemoryId(id);
-  const row = Number.isFinite(memId)
+  const row = memId != null
     ? db.prepare(`SELECT * FROM memories WHERE id = ?`).get(memId)
     : null;
 

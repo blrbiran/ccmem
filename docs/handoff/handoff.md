@@ -292,7 +292,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-27 晚（Orca 会话 `3cd8fb02`：只做了 ccloop repin、测试者分诊与 #62 spec，本仓无改动、§6.1 契约不变）。此前 2026-10-27（Orca 会话 `7753e97d`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4。本仓本轮只改了 `forget`（归档）与 id 解析（见 §1.00000），§6.1 的 export 契约未变，Orca 读取端不用改。Orca 侧：审阅并修了接手 agent 的六条线、导航改成三段＋设置合一页、拆分指令 v2，O9 多仓真 agent 验收 codex／omp／claude 都已通过。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；dir 项目的决定留在 Orca 的 vault；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。
+2026-10-28（Orca 会话 `3cd8fb02`：ccloop repin、测试者 #62／#63／#64–#69、#15，本仓无改动、§6.1 契约不变）。此前 2026-10-27（Orca 会话 `7753e97d`）：入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4。本仓本轮只改了 `forget`（归档）与 id 解析（见 §1.00000），§6.1 的 export 契约未变，Orca 读取端不用改。Orca 侧：审阅并修了接手 agent 的六条线、导航改成三段＋设置合一页、拆分指令 v2，O9 多仓真 agent 验收 codex／omp／claude 都已通过。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；dir 项目的决定留在 Orca 的 vault；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。
 
 ## 7. 怎么找回旧全文
 

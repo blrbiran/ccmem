@@ -292,7 +292,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-28（Orca 测试者反馈轮的规划会话：只定计划与人裁，**本仓无改动、§6.1 契约不变**，Orca 下一轮计划里也没有要改本仓的项）。入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4。本仓最近一次代码改动仍是 §1.00000（`forget` 归档、id 严格解析），Orca 读取端不用改。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；dir 项目的决定留在 Orca 的 vault；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；Orca 导航会把 memory 页收进「更多」（只是 UI 位置，读取契约不变）；embedding 额度（429）仍等人。
+2026-10-29（Orca 测试者反馈轮实施会话 `a9f9d6de`：**本仓无改动、§6.1 契约不变**）。入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。本仓最近一次代码改动仍是 §1.00000（`forget` 归档、id 严格解析），Orca 读取端不用改。本轮 Orca 侧与本仓有关的只有 UI：Memory 页迁到 Tailwind（看起来不变）、导航收进「更多」——读取契约（只调 `ccmem export --json`）不变。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；dir 项目的决定留在 Orca 的 vault；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。
 
 ## 7. 怎么找回旧全文
 

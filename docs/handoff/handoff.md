@@ -292,7 +292,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-10-29（Orca 会话 `3ea8a21e`：**本仓无改动、§6.1 契约不变**；收尾按人临时授权把本仓 main 推到 origin，只含 handoff 提交）。入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。本仓最近一次代码改动仍是 §1.00000（`forget` 归档、id 严格解析），Orca 读取端不用改。Orca 本轮：主题删减、`orca task settle-usage` 走 person token（Orca 控制库 schema 21，与本仓无关）、Radix Select 试样；读取契约（只调 `ccmem export --json`）不变。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；dir 项目的决定留在 Orca 的 vault；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。
+2026-10-30（Orca 会话 `b999cc81`：**本仓无改动、§6.1 契约不变**）。入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。本仓最近一次代码改动仍是 §1.00000（`forget` 归档、id 严格解析），Orca 读取端不用改。Orca 本轮：socket 结算的已存结果收据修复（Orca＋ccloop 两仓）、Radix Select 全量换（分支，等人看）；读取契约（只调 `ccmem export --json`）不变。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；dir 项目的决定留在 Orca 的 vault；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。⚠️ 会话 `b999cc81` 开工时本地 main 比 origin 多一笔 handoff 提交（主题行 `docs(handoff): Orca session 3ea8a21e pointer …`），推不推归人（以 `ls-remote` 现测为准）。
 
 ## 7. 怎么找回旧全文
 

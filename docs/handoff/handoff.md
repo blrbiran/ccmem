@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-07（Orca 会话 `b5e3c5a8`：环境轮，**本仓无改动、§6.1 契约不变**；daemon plist 改指 22.23.4 的 claude，见 §1.000000）。2026-11-06（Orca 会话 `86352010`：**本仓无改动、§6.1 契约不变**）。入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8（本轮是 repin、soft loop 自动结算、额度探针、retry-task 追加额度、dogfood 摩擦修复与两次付费自举；都不经过本仓）。本仓最近一次代码改动仍是 §1.00000（`forget` 归档、id 严格解析），Orca 读取端不用改。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；dir 项目的决定留在 Orca 的 vault；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。Orca 的测试面板不设 `ORCA_CCMEM_BIN`；⚠️ 人的 shell 导出了 `ORCA_CCMEM_BIN` 与 `CCMEM_CONFIG_PATH`，Orca 的隔离面板要先 unset（本轮自举实测）。本仓本地 main 与 origin 是否一致以 `ls-remote` 现测为准。
+2026-11-07 Orca D1–D5／O19、ccloop repin、CLI＋skill 付费 dogfood 这一轮**没有改 ccmem 代码，§6.1 契约不变**；先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，因此两次 dogfood 都不经过本仓。本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；普通目录纠正的 `dir:<project id>`、Orca 纠正写回默认关、embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
 
 ## 7. 怎么找回旧全文
 

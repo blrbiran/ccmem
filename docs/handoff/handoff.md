@@ -44,14 +44,14 @@ embedding 回填、revalidation、每日维护。存储是 SQLite（`node:sqlite
 | daemon 状态 | `/Users/biran/code/skills/orca/ccmem/bin/ccmem admin daemon status` **＋** `daemon_lock` 的 `holder_pid`／`heartbeat_at` 年龄（`sqlite3 "file:$HOME/.claude/ccmem/global.db?mode=ro"`） | 单次 CLI 读数在负载下有假阴性；`plist=in_sync` **只是报警轴，不等于字节相等**（§5.2）——差异的 key 名打在 stderr 那行 `plist differs …`（只打 key 名、不打值） |
 | daemon 进程数 | `pgrep -f 'scripts/daemon/main.mjs'` | 🔴 **Claude Code 沙箱里 `ps -e` 是残的，会把泄漏数成 0**；`pgrep -f ccmem` 会把带 `--plugin-dir …/ccmem` 的会话数进来 |
 | 机器忙不忙 | `uptime` **加** `top -l 1 \| grep "CPU usage"` | load average 残留极久，单看 load 会误判 |
-| 套件 | `npm test`（= `scripts/run-tests.sh`：`/usr/local/bin/node --test`、隔离 data root、`-u CCMEM_CONFIG_PATH`、收尾删目录） | 最近记录 **968/968**（2026-10-27，`fix(cli): parse memory ids strictly…` 之上；**PATH 最前必须是 nvm 22.13.1**，否则 `bin ccmem` 的 `exec node` 撞坏的 homebrew node）。**不是稳定绿**，见 §4 |
+| 套件 | `npm test`（= `scripts/run-tests.sh`：`/usr/local/bin/node --test`、隔离 data root、`-u CCMEM_CONFIG_PATH`、收尾删目录） | 最近记录 **968/968**（2026-10-27，`fix(cli): parse memory ids strictly…` 之上；**PATH 最前必须是一个能用的 nvm node**——当时是 22.13.1，2026-11-07 起 nvm default 是 22.23.4——否则 `bin ccmem` 的 `exec node` 撞坏的 homebrew node）。**不是稳定绿**，见 §4 |
 | 单文件隔离跑 | `env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test <文件>` | 两个变量缺一不可；**必须显式 `/usr/local/bin/node`** |
 | 插件链接 | `ls -la ~/.claude/plugins/ \| grep ccmem` | 应指向 `/Users/biran/code/skills/orca/ccmem` |
 | LLM 任务有没有在成功 | 只读 `~/.claude/ccmem/daemon-cost.jsonl`（`timed_out`、`exit_code`、`timeout_ms`、`monotonic_ms`） | **别直接数 `timed_out`**：机器睡眠会饿死定时器，产生 `1974s` 这种"超时" |
 | `$TMPDIR` 泄漏 | 跑批前后各 `ls -A "$TMPDIR"` 一次，`comm -13` 取新增 | 套件本身看不见这类泄漏；`run-tests.sh` 已把 `TMPDIR` 放进自己的 data root（收尾即删），应为 0 |
 
 **这台机器上的 node（别混用）**：`/usr/local/bin/node` v24.13.0（**有 fts5**；`npm test` 与 daemon 用它）；
-PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` 解析到它）；`/opt/homebrew/bin/node` **坏的**（缺 libsimdjson，2026-10-13 实测）。
+nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca 会话 `b5e3c5a8` 现测），新终端里 `bin/ccmem` 的 `exec node` 解析到它；v22.13.1（**无 fts5**）仍装着，旧终端开的会话里它仍在 PATH 最前，`exec node` 照旧解析到它；`/opt/homebrew/bin/node` **坏的**（缺 libsimdjson，2026-10-13 实测，2026-11-07 复测仍坏）。
 同一份代码在 v22／v24 下走不同分支，曾因此把活缺陷判成"潜伏"。
 
 **本机工具坑**：`cp`／`mv`／`rm` 是 `-i` 别名（脚本里会挂到超时）⇒ 用 `/bin/cp -f` 等并 `shasum` 读回；
@@ -64,7 +64,20 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.00000 2026-10-27（Orca 会话 `7753e97d`）—— **先读这一节**
+### 1.000000 2026-11-07（Orca 会话 `b5e3c5a8`）—— 环境轮，代码无改动；代码状态仍看 §1.00000
+
+- 人把 nvm default 升到 22.23.4。daemon 本身跑 `/usr/local/bin/node`，不受影响；但它 plist 里的 `CCMEM_CLAUDE_P_COMMAND` 仍指向 22.13.1 下的 claude。人让改配置后，在 agent 会话里跑了 `admin daemon restart` 重写 plist，过程：
+  - 先等 `running=none`；备份 `global.db.bak.1793982395154`（integrity ok）与 `~/Library/LaunchAgents/com.ccmem.daemon.plist.bak.20261107`；
+  - **显式 unset 了 shell 里的 `ANTHROPIC_*`**：agent 会话带着它自己的端点，不 unset 就会被复制进 plist（§0.1）或被 G2 拦下。
+- 结果：
+  - `CCMEM_CLAUDE_P_COMMAND`＝`~/.nvm/versions/node/v22.23.4/bin/claude`；`PATH` 里的 22.13.1 换成 22.23.4，并去掉了 cmux 的会话级 shim 目录；
+  - plist 只剩 4 个键（`CCMEM_CLAUDE_P_COMMAND`、`CCMEM_CONFIG_PATH`、`CCMEM_DATA_ROOT`、`PATH`），`ProgramArguments` 未改。
+- 判别：
+  - launchd pid、锁行 holder 和重启输出三者一致；`acquired_at` 1793982432270 晚于备份；
+  - **重启后 `daemon-cost.jsonl` 有 3 条 `summarize_pending`，都是 `exit_code=0`**（2026-11-06T16:29Z，按 `ts` 晚于 `acquired_at` 取），说明新 claude 的 `claude -p` 能用。
+- ⚠️ 之后在任何带 `ANTHROPIC_*` 的 shell 里跑 `admin daemon status`，都会报 `plist=drifted`（`ANTHROPIC_BASE_URL` 与四个 model 键）：比的是 shell 和 plist，属预期，不要照着去同步。
+
+### 1.00000 2026-10-27（Orca 会话 `7753e97d`）—— 代码状态**先读这一节**（上面 §1.000000 只是环境轮）
 
 - **`forget` 改为归档**（人裁原话「forget 同意改成归档」；主题行 `fix(forget): archive the memory instead of deleting it, and audit it`，已在本地 main、**未推**）：不再 `DELETE`，改设 `decay_status='archived'`＋`updated_at`，写 `writeAudit(db,'forget',id,{user_action,scope,type,previous_decay_status})`，重建注入缓存；CLI 打印 `forgot memory #mN (…; archived, see ccmem audit show K)`。检索、注入缓存、export 只读 `active`/`probation` ⇒ 归档行不再出现。**不再写 trash 文件**（归档行就是备份；实现席判断，可逆）。⚠️ 实测：**代码里没有任何地方硬删归档行**（原以为维护会删），所以归档行永久保留；**没有 un-archive 的 CLI**，恢复＝按审计行的 `previous_decay_status` 手工 SQL。规格更正追加在 `docs/ccmem-v0.1-spec.md` 附录 F（§5.4 原文不动）。
 - **id 严格解析**（主题行 `fix(cli): parse memory ids strictly and refuse malformed ones with exit 64`）：共用 `scripts/lib/memory-id.mjs` 的 `parseMemoryId`（只收 `123`／`m123`），替换 forget／pin／show／promote 四处 `parseInt`；CLI 在开库前拒坏 id、exit 64（原来 `forget 1abc` 会忘掉 #1）。
@@ -108,7 +121,7 @@ PATH 上第一个是 nvm v22.13.1（**无 fts5**；`bin/ccmem` 的 `exec node` �
 - spec `docs/superpowers/specs/2026-10-17-codex-omp-adaptation-design.md`、计划 `docs/superpowers/plans/2026-10-17-codex-omp-adaptation.md`；台账（git-ignored，主仓）`.superpowers/sdd/2026-10-17-codex-omp-adaptation/progress.md`——**每条 `Ruling:` 与挂账 minor 都在里面**。
 - 做成的：三家共用一份记忆（Codex 命令钩子 `$CODEX_HOME/hooks.json`，人在 Codex 里 `/hooks` 批准；OMP TS 扩展 `<agent dir>/extensions/ccmem.ts`；都可 `uninstall`，先备份、原子写）；开局注入只一句短说明、稳定规则进 `.ccmem/context-<sha256 前 16 位>.md`（有上限：稳定 4096 B、其中项目 2048 B、整文件 12288 B；**Claude 也改了**——旧做法塞进 SessionStart 会被 Claude Code 截到约 2 KB）；整理结果不再悄悄截断；迁移 017 `memories.origin_agent`（**export 不变**）；后台 LLM 可选 Claude／Codex／OMP，额度用完**先问人**（`ccmem admin llm status|approve|reject`）。
 - ⚠️ **迁移 017 必须由 CLI 跑**（钩子跑会超时被杀、留约 440 MB `.partial`；回滚 SQL 在 `scripts/migrations/017_v015_agents.sql` 头注释）。真实库已于 2026-10-17 升到 schema 17（备份 `global.db.bak.1792245593182`）；迁移的备份轮换按设计删了三份 9 月旧备份。
-- ⚠️ **安装命令必须这样跑**：主仓里 `/usr/local/bin/node --no-warnings --experimental-sqlite scripts/cli.mjs install codex|omp`（钩子命令写死 `process.execPath` 与 `REPO_ROOT`；`bin/ccmem` 的 `exec node` 是无 fts5 的 nvm v22；从工作树装则工作树一删就悬空）。已装：`~/.codex/hooks.json`（0600，三个钩子，`timeout: 5`）、`~/.omp/agent/extensions/ccmem.ts`、记录 `~/.claude/ccmem/installs/{codex,omp}.json`。
+- ⚠️ **安装命令必须这样跑**：主仓里 `/usr/local/bin/node --no-warnings --experimental-sqlite scripts/cli.mjs install codex|omp`（钩子命令写死 `process.execPath` 与 `REPO_ROOT`；`bin/ccmem` 的 `exec node` 是无 fts5 的 nvm v22（2026-11-07 起新终端里是有 fts5 的 22.23.4，但钩子仍应和 daemon 一样写死 `/usr/local/bin/node`）；从工作树装则工作树一删就悬空）。已装：`~/.codex/hooks.json`（0600，三个钩子，`timeout: 5`）、`~/.omp/agent/extensions/ccmem.ts`、记录 `~/.claude/ccmem/installs/{codex,omp}.json`。
 - **真 Codex 会话实测**（10-17）：SessionStart ✅、UserPromptSubmit ✅（走 B-circuit）、**Stop 未触发**（那一轮因模型额度报错终止；「出错的轮次不触发 Stop」是推断）。OMP 扩展的真加载未验。
 - **其余付费验收没跑**（spec §7，人每次单独批准；命令在台账 Task 12 报告 §5）：codex 列整理质量、真 Codex／OMP 会话里模型确实读了 `.ccmem/…`（含 OMP `/new`）、cache 命中前后、真 Claude 额度用完的报错形状、Codex 严格 schema 是否接受 `maxLength`、OMP `session_stop` 时 `session_file` 是否已落盘。免费端到端：`scripts/acceptance/e2e-codex-omp.mjs`（51 ok）。
 - ⚠️ 事故：Task 2 实现席第一次 RED 跑**真调了一次 `claude -p`**（旧 refiner 不认 mock，费用拿不到）⇒ `run-tests.sh` 在 PATH 最前放了只认 `-p --help` 的假 `claude`，并整套换临时 HOME。
@@ -292,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-06（Orca 会话 `86352010`：**本仓无改动、§6.1 契约不变**）。入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8（本轮是 repin、soft loop 自动结算、额度探针、retry-task 追加额度、dogfood 摩擦修复与两次付费自举；都不经过本仓）。本仓最近一次代码改动仍是 §1.00000（`forget` 归档、id 严格解析），Orca 读取端不用改。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；dir 项目的决定留在 Orca 的 vault；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。Orca 的测试面板不设 `ORCA_CCMEM_BIN`；⚠️ 人的 shell 导出了 `ORCA_CCMEM_BIN` 与 `CCMEM_CONFIG_PATH`，Orca 的隔离面板要先 unset（本轮自举实测）。本仓本地 main 与 origin 是否一致以 `ls-remote` 现测为准。
+2026-11-07（Orca 会话 `b5e3c5a8`：环境轮，**本仓无改动、§6.1 契约不变**；daemon plist 改指 22.23.4 的 claude，见 §1.000000）。2026-11-06（Orca 会话 `86352010`：**本仓无改动、§6.1 契约不变**）。入口 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8（本轮是 repin、soft loop 自动结算、额度探针、retry-task 追加额度、dogfood 摩擦修复与两次付费自举；都不经过本仓）。本仓最近一次代码改动仍是 §1.00000（`forget` 归档、id 严格解析），Orca 读取端不用改。仍成立：普通目录项目的纠正 `projectKey = dir:<project id>`，Orca 导出按前缀跳过、不送进本仓（要送先改 §6.1 契约，Rule 16）；dir 项目的决定留在 Orca 的 vault；Orca 侧纠正写回仍**默认关**（面板 flag `--ccmem-corrections`）；embedding 额度（429）仍等人。Orca 的测试面板不设 `ORCA_CCMEM_BIN`；⚠️ 人的 shell 导出了 `ORCA_CCMEM_BIN` 与 `CCMEM_CONFIG_PATH`，Orca 的隔离面板要先 unset（本轮自举实测）。本仓本地 main 与 origin 是否一致以 `ls-remote` 现测为准。
 
 ## 7. 怎么找回旧全文
 

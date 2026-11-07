@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-07 又有两轮 Orca 侧工作（#169 终止结算；exhausted attempt 恢复的生产者／消费者），**两轮本仓都零改动**，§6.1 契约不变。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓。本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；普通目录纠正的 `dir:<project id>`、Orca 纠正写回默认关、embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
+2026-11-07 又有两轮 Orca 侧工作（#169 终止结算；exhausted attempt 恢复的生产者／消费者与 repin），**本仓仍零改动**，§6.1 契约不变。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓。Orca 本轮新增的 `group brief`、估算指令 v3、usage 未知 scope 拒绝都不触及 ccmem。本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；普通目录纠正的 `dir:<project id>`、Orca 纠正写回默认关、embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
 
 ## 7. 怎么找回旧全文
 

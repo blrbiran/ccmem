@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-07 Orca 侧完成 exhausted 来源的单次 verify 配对路径：ccloop 修复已推、Orca 已 repin 到含它的提交，配对判据在 pin 提交的克隆上通过；三个仓库的 main 均已推。测试者反馈的剩余边界集中在 Orca 侧，待人定的是未估算任务默认无限额度的保护方式（#145/#160），其后是三适配器解码（#159）与费用校准（#173/#174）。**本仓仍零改动**，§6.1 契约不变。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓；`group brief`、估算指令 v3、usage 未知 scope 拒绝、criteria review 的限额与 `criteriaReviews` 可见性也都不触及 ccmem。本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；普通目录纠正的 `dir:<project id>`、Orca 纠正写回默认关、embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
+2026-11-08 Orca 侧进入测试者反馈的实施轮：落了 #167（agent 可给草稿组设更低的有限 token 上限，提高／取消仍要人）、#166／#186／#181 三条 CLI 展示与提示修复，并修了 Orca 侧 wire 活动种类缺 `saved-result-top-up`；ccloop 侧 Claude execute 改为与另两个适配器共用严格解码（本地 main 已 ff，待推）。人 2026-11-08 裁定：未估算默认无限额仍可确认（#145/#160 不改）、判官保留 200k 软额度（#174 不改）。**本仓仍零改动**，§6.1 契约不变。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓；`group brief`、估算指令 v3、usage 未知 scope 拒绝、criteria review 的限额与 `criteriaReviews` 可见性也都不触及 ccmem。本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；普通目录纠正的 `dir:<project id>`、Orca 纠正写回默认关、embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
 
 ## 7. 怎么找回旧全文
 

@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-08 Orca 侧本轮收紧测试者反馈的三项：拆分检查必须能由任务可写范围修复（拆分指令 v5）、终态不再提示重估/确认并在父组显示判官入口、orca-control 新增手写 workflow 指引；都在 Orca 隔离 worktree，**未合入 main、未推**。Orca 已 repin ccloop 的严格解码提交。人 2026-11-08 裁定：未估算默认无限额仍可确认（#145/#160 不改）、判官保留 200k 软额度（#174 不改）。**本仓仍零改动**，§6.1 契约不变。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓；`group brief`、估算指令 v3、usage 未知 scope 拒绝、criteria review 的限额与 `criteriaReviews` 可见性也都不触及 ccmem。本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；普通目录纠正的 `dir:<project id>`、Orca 纠正写回默认关、embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
+2026-11-08 Orca 侧：测试者反馈那批（拆分检查归属、终态下一步与判官入口、操作指引）已合入，随后又落了四笔——归档判官只读路由（#179 尾项）、CLI 单条证据读取（#184）、`status` 的 work 健康行（#182）、settle 分段计时（#192）——**都已在 Orca 的 `origin/main`（人已推）**。Orca 也已 repin ccloop 的严格解码提交。**本仓仍零改动**，§6.1 契约不变。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓；`group brief`、估算指令 v3、usage 未知 scope 拒绝、criteria review 的限额与 `criteriaReviews` 可见性也都不触及 ccmem。本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；普通目录纠正的 `dir:<project id>`、Orca 纠正写回默认关、embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
 
 ## 7. 怎么找回旧全文
 

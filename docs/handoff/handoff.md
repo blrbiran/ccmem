@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-08 Orca 侧第二轮（会话 `6eb5df84`，就地替换旧述）：前一轮四笔已 `--ff-only` 合入 Orca 本地 main（**未推**），`npm test` 用 ccloop 工作树二进制跑 796/796；新增 #186 的 `group depend` 人类提示（服务端拒绝与 `--json` 不变，判据先红后绿，受影响 792/792）；#158／#138 设计稿按独立审阅追加 **Correction 1**，两条仍等人定产品方向。#191 用隔离 HOME＋假本地上游做了免费探针：OMP 18.17.0 单次调用出站 body 7,384 B，本机复现不出约 232k 隐藏前缀，要定论需测试者证物，**不改账本**。**本仓（ccmem）仍零改动**，§6.1 契约不变。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓；`group brief`、估算指令 v3、usage 未知 scope 拒绝、criteria review 的限额与 `criteriaReviews` 可见性也都不触及 ccmem。本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；普通目录纠正的 `dir:<project id>`、Orca 纠正写回默认关、embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
+2026-11-09 Orca 侧第三轮（会话 `cf294856`，就地替换旧述）：**本仓（ccmem）本轮零改动，§6.1 契约不变**。Orca 侧落地 #127／#138（合同声明 `commandChecksDecideGoal`＋结构化 no-change undo）、#171（`recovery list` 的 `deferredWakes`）、#181（plan 版本号）、UI 信息架构四项（web 200 文件／1849 用例全绿）；ccloop 落地 #158 验证专用恢复来源。**两处待人**：ccloop `c726a93` 的 push 被 Orca Tier 0 闸门拦下（推完才 repin，跨仓 #158 验收才能跑），以及「`task retry --work` 只加账、不抬 finite 合同」的产品取舍。付费校准 n=1：估算 11,000 vs 实际 43,849（约 4×）。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓；本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
 
 
 ## 7. 怎么找回旧全文

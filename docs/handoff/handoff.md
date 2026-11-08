@@ -305,7 +305,8 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-08 Orca 侧（会话 `8c916c3a`，就地替换旧述）：测试者反馈文档（`orca_archived_files/issue-20261023.md`）做了一次全量复核，按当天代码把旧快照里「已修／已变味」的条目挑了出来（#157 工作流三表、#190 plan 上限、#198 README 判据、#199 `group brief`、#149／#187／#171）。两笔落在**未合入的分支**上：`multiDirLandingD` 判据夹具改为真正执行检查文件（`checkPaths` 自 `1e050b9d` 起只认被执行的路径，原夹具的 `true <path>` 不再算检查文件）、`group import` 人类输出点明 agent／预算检查（#164）。#158（OMP 坏 final 只做验证、不重建答案）与 #138（no-op undo）只出设计稿，两条都要人定产品方向。**本仓（ccmem）仍零改动**，§6.1 契约不变。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓；`group brief`、估算指令 v3、usage 未知 scope 拒绝、criteria review 的限额与 `criteriaReviews` 可见性也都不触及 ccmem。本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；普通目录纠正的 `dir:<project id>`、Orca 纠正写回默认关、embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
+2026-11-08 Orca 侧第二轮（会话 `6eb5df84`，就地替换旧述）：前一轮四笔已 `--ff-only` 合入 Orca 本地 main（**未推**），`npm test` 用 ccloop 工作树二进制跑 796/796；新增 #186 的 `group depend` 人类提示（服务端拒绝与 `--json` 不变，判据先红后绿，受影响 792/792）；#158／#138 设计稿按独立审阅追加 **Correction 1**，两条仍等人定产品方向。#191 用隔离 HOME＋假本地上游做了免费探针：OMP 18.17.0 单次调用出站 body 7,384 B，本机复现不出约 232k 隐藏前缀，要定论需测试者证物，**不改账本**。**本仓（ccmem）仍零改动**，§6.1 契约不变。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓；`group brief`、估算指令 v3、usage 未知 scope 拒绝、criteria review 的限额与 `criteriaReviews` 可见性也都不触及 ccmem。本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；普通目录纠正的 `dir:<project id>`、Orca 纠正写回默认关、embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
+
 
 ## 7. 怎么找回旧全文
 

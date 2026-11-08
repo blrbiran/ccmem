@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-08 Orca 侧：测试者反馈那批（拆分检查归属、终态下一步与判官入口、操作指引）已合入，随后又落了四笔——归档判官只读路由（#179 尾项）、CLI 单条证据读取（#184）、`status` 的 work 健康行（#182）、settle 分段计时（#192）——**都已在 Orca 的 `origin/main`（人已推）**。Orca 也已 repin ccloop 的严格解码提交。**本仓仍零改动**，§6.1 契约不变。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓；`group brief`、估算指令 v3、usage 未知 scope 拒绝、criteria review 的限额与 `criteriaReviews` 可见性也都不触及 ccmem。本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；普通目录纠正的 `dir:<project id>`、Orca 纠正写回默认关、embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
+2026-11-08 Orca 侧（会话 `8c916c3a`，就地替换旧述）：测试者反馈文档（`orca_archived_files/issue-20261023.md`）做了一次全量复核，按当天代码把旧快照里「已修／已变味」的条目挑了出来（#157 工作流三表、#190 plan 上限、#198 README 判据、#199 `group brief`、#149／#187／#171）。两笔落在**未合入的分支**上：`multiDirLandingD` 判据夹具改为真正执行检查文件（`checkPaths` 自 `1e050b9d` 起只认被执行的路径，原夹具的 `true <path>` 不再算检查文件）、`group import` 人类输出点明 agent／预算检查（#164）。#158（OMP 坏 final 只做验证、不重建答案）与 #138（no-op undo）只出设计稿，两条都要人定产品方向。**本仓（ccmem）仍零改动**，§6.1 契约不变。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓；`group brief`、估算指令 v3、usage 未知 scope 拒绝、criteria review 的限额与 `criteriaReviews` 可见性也都不触及 ccmem。本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；普通目录纠正的 `dir:<project id>`、Orca 纠正写回默认关、embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
 
 ## 7. 怎么找回旧全文
 

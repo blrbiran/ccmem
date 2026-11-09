@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-09 Orca 侧第三轮（会话 `cf294856`，就地替换旧述）：**本仓（ccmem）本轮零改动，§6.1 契约不变**。Orca 侧落地 #127／#138（合同声明 `commandChecksDecideGoal`＋结构化 no-change undo）、#171（`recovery list` 的 `deferredWakes`）、#181（plan 版本号）、UI 信息架构四项（web 200 文件／1849 用例全绿）；ccloop 落地 #158 验证专用恢复来源。**两处待人**：ccloop `c726a93` 的 push 被 Orca Tier 0 闸门拦下（推完才 repin，跨仓 #158 验收才能跑），以及「`task retry --work` 只加账、不抬 finite 合同」的产品取舍。付费校准 n=1：估算 11,000 vs 实际 43,849（约 4×）。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓；本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
+2026-11-09 Orca 侧第四轮（repin／#158 验收，就地替换旧述）：**本仓（ccmem）本轮零改动，§6.1 契约不变**。ccloop 的 #158 生产端已由人 push，Orca 随即 `pin-ccloop` 到该提交（六项检查全 ok）并通过跨仓验收 V11（来源胶囊 → 只验证的恢复 run：假 OMP 总调用仍只有 plan/execute、检查恰好一次）。同轮 Orca 把两个产品问题落了地：**可选策略任务的 top-up 不再被确认合同时冻结的 tokenBudget 吞掉**（派发按资金 grant，`finite-legacy` 仍直接拒绝 top-up），以及**估算指令升到 v4**（v3 的 token 口径 + 实测 framing 下限：一次 plan 调用约 43k，任务至少两次调用）。两件都只动 Orca。**待人**：Orca 分支 `chore/repin-ccloop-158` 待推；`~/.orca/profile.json` 的 `instructionVersion` 仍是 `"3"`，自动审批拒绝 agent 写这份用户配置，需人改成 `"4"`。先读 `/Users/biran/code/skills/orca/Orca/docs/handoff/handoff.md` §3 最新一节、§4.0、§8。Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`，dogfood 都不经过本仓；本仓仍是 §1 记录的功能与 22.23.4 daemon 环境；embedding 429 等边界照 §6.1／§1。三仓远端和本地状态只用 `ls-remote`／`status` 现核，不在本文写活 HEAD。
 
 
 ## 7. 怎么找回旧全文

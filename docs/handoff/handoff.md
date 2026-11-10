@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-10 Orca 侧第五轮（测试者反馈 P0／A，就地替换旧述）：**本仓（ccmem）本轮零改动，§6.1 契约不变**。ccloop 已修 #223 停止证明去重并要求 Orca 在 #213 中结算 blocked 组里的已停 run；两侧新增 #207 终结门、#212 可授予额度预览、#222 归档组统计、#214 plan 版本号导入，以及人裁选 A 的 #215 零用量结算（ccloop 终态失败原因新增 `usageKnownZero`，Orca 用 `release-known-zero`）。Orca 与 ccloop 的提交都已在本地 main 或已由人推，**ccloop 推后仍需 repin 才跨仓生效**。先读 Orca handoff §3 最新一节、§4.0、§8。本仓仍按 §1 的功能与 22.23.4 daemon 环境；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。三仓远端与本地状态只用 `ls-remote`／`status` 现核，不写活 HEAD。
+2026-11-10 Orca 会话 `9179cdad`（就地替换旧述）：**本仓（ccmem）本轮零改动，§6.1 契约不变**。Orca 已 repin 到人推过的 ccloop main（#206／#215 生产者上了正式 pin），并在分支 `fix/tester-followup-20261110` 修了 #201（失效项目路径不再让面板起不来）、#205、#209（catalog 未列模型改为预览警告）、#211 与 UI #216–#218／#220／#221，均不涉及 ccmem export。先读 Orca handoff §3 最新一节、§4.0、§8。本仓仍按 §1 的功能与 22.23.4 daemon 环境；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。三仓远端与本地状态只用 `ls-remote`／`status` 现核，不写活 HEAD。
 
 
 ## 7. 怎么找回旧全文

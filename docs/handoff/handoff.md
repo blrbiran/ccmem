@@ -305,8 +305,44 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-10 Orca 会话 `9179cdad`（就地替换旧述）：**本仓（ccmem）本轮零改动，§6.1 契约不变**。Orca 已 repin 到人推过的 ccloop main（#206／#215 生产者上了正式 pin），并在分支 `fix/tester-followup-20261110` 修了 #201（失效项目路径不再让面板起不来）、#205、#209（catalog 未列模型改为预览警告）、#211 与 UI #216–#218／#220／#221，均不涉及 ccmem export。先读 Orca handoff §3 最新一节、§4.0、§8。本仓仍按 §1 的功能与 22.23.4 daemon 环境；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。三仓远端与本地状态只用 `ls-remote`／`status` 现核，不写活 HEAD。
+2026-11-10 Orca 会话 `3153bf70`（就地替换旧述）：本仓本轮只**新增**一个只读分析脚本（§6.5，主题行 `feat(analysis): estimate ccmem's prompt share and cache behaviour from magpie's logs`，已 ff 合入本地 main、未推），钩子、daemon、§6.1 export 契约都没动 ⇒ 不需要重启 daemon。Orca 本轮修测试者反馈 #202–#241 的一批（见 Orca handoff §3 最新一节），均不涉及 ccmem export。本仓仍按 §1 的功能与 22.23.4 daemon 环境；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。三仓远端与本地状态只用 `ls-remote`／`status` 现核，不写活 HEAD。
 
+
+## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
+
+**目的**：在不同 agent（claude／codex／omp）× model 下，粗估 ccmem 注入占多少 prompt、对 prompt cache 有什么影响，作为深层优化的尺子。**人裁（原话）**：「尽量对magpie的侵入修改越小越好，甚至只是留一个导出开关。后续的分析可以参考magpie的写法另写一个程序」「magpie 精度 没必要那么关心，有个粗估就好」。
+
+**做法：magpie 零改动，只读它已经写的文件。** magpie 是人用的本地模型代理（源码 `/Users/biran/code/skills/models/magpie`，`github.com/yetone/magpie`；`sourceget find magpie` 可找到；更新很频繁，所以不给它打补丁）。分析程序在本仓 `scripts/analysis/magpie-context.mjs`（主题行 `feat(analysis): estimate ccmem's prompt share and cache behaviour from magpie's logs`；判据 `tests/unit/magpie-context.test.mjs`），只读 `~/.config/magpie/` 下三类文件，按 route id 连起来：
+
+| 文件 | 何时有 | 内容 |
+|---|---|---|
+| `usage.jsonl` | 一直写 | 每次调用的 in／out／cache_read／cache_write、`route_id`、`session`、`archive` 指针 |
+| `routing/<本地日期>.jsonl[.gz]` | 一直写，留 30 天 | 每个请求的 prompt 分段 token 估算（system／tools／skills／memory／files／results／chat），**没有正文** |
+| `request-archive/<UTC 日期>/<id>.json` | **只在人打开「请求存档」后** | 完整请求体与响应体（密钥已脱敏），1 GiB 上限、旧的先删 |
+
+**导出开关就是 magpie 自带的「请求存档」**：桌面版「用量」页，用量明细表头最右边的开关。⚠️ 它按有没有配 S3 同步 bucket 自动选去处（`internal/gui/archive.go:109-125`）：没配 ⇒ 写 `requestArchiveLocal`，存本机；**配了 ⇒ 写 `requestArchive`，上传到 bucket 且同步到所有机器**。开之前鼠标停在开关上看提示：提示里出现 bucket 名就不要开。存档里是对话与代码原文 ⇒ 实验期间才开，做完关掉并删 `~/.config/magpie/request-archive/`。
+
+**三个子命令**（都支持 `--json`；默认只输出数字、id、名称，正文片段只在 `--show-text` 时给）：
+- `requests`：逐请求 in／cache_read／cache_write／out、命中率 cache_read÷(in+cache_read+cache_write)、ccmem 估算占用与比例、magpie 的分段。
+- `cache`：同一会话（含子 agent）相邻两次**已存档**请求的公共前缀长度、第一个不同点（`append`／`changed <tools[i]|system[i]|messages[m].content[j]>`／`shrunk`）、该块里有没有 ccmem 标记、`cache_control` 断点位置（比较前先剥掉 `cache_control`）。
+- `summary`：按 agent × model × 有无 ccmem 标记汇总：条数、in 中位、prompt 中位与 p90、平均命中率、ccmem token 中位与占比。
+
+**ccmem 怎么被认出来**：靠 ccmem 自己输出的文本标记（程序里的 `CCMEM_MARKERS`，只认行首）：`## ccmem context`、`=== ccmem: retrieved for current prompt ===`、`=== ccmem: stable context ===`、`<!-- content-hash: `、`<!-- ccmem: no relevant memories -->`；另外被 Read 读进来的 `.ccmem/context-*.md` 在 magpie 分段里按路径单列。估算用 magpie 同款粗规则（约 4 个 ASCII 字符／token、非 ASCII 每字 1 token），再按服务商报的 prompt 总数等比缩放。
+
+**实验配方**
+1. 人打开「请求存档」（先看提示，确认是本机）。记下开始时间。
+2. 同一组脚本化任务，ccmem 开／关各跑若干轮；需要时在 codex、omp 下重复。真模型调用花钱 ⇒ 每次先问人。
+3. `node scripts/analysis/magpie-context.mjs summary --since <开始时间>` 看整体占比与命中率；`… cache --since <开始> --agent claude-code` 看每轮检索注入后 `first diff` 是不是 `append`、`ccmem@diff` 是不是 `no`——是就说明注入没打断缓存前缀；`… requests --session <前缀>` 看逐条。
+4. 关掉存档，删存档目录。
+
+**要先验证的假设**：①每轮检索注入只改最新那条用户消息，不打断前面的缓存前缀；②开局那句说明只影响会话第一次缓存写入；③codex／omp 把注入放在哪——**还没拿真实存档核过**。
+
+**粗估的边界（别把数当精确值）**
+- 不分词：token 是按字符估、按总数缩放的，中文偏差大；只看趋势与 A/B 差值。要精确只能另调 `count_tokens`（同一请求体去掉 ccmem 段前后各算一次），目前不做。cache_read／cache_write 本身是服务商报的，准。
+- Claude Code 里 magpie 把所有 system-reminder 合并成一项 `reminders`，程序把它单列为上界（`routeReminderTokens`），**不算作 ccmem**；没开存档时只能数到 `.ccmem/context-*.md` 文件项，漏掉内联注入。
+- magpie 每个分段只留 24 项，其余并入 other。
+- 协议被 magpie 转换时（`call.from ≠ call.to`），发往上游那份请求体不存，前缀比对看的是 agent 发出的那份；Responses／Chat 的前缀顺序（instructions、tools、input）是假设，Anthropic 是 tools → system → messages。
+- 用户正文里恰好在行首出现标记会被误算。`--since` 给纯日期按 UTC 零点算。
 
 ## 7. 怎么找回旧全文
 

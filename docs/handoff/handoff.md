@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-11 晚 Orca 会话 `f958ec3f`（就地替换旧述）：本仓本轮**零改动**（只有本 handoff）。Orca 本轮落地：CLI 浏览器登录 `orca auth login`（#208）、预算 A 方案（不限额组里估算只作预期）、人专用 `task accept-attempt`、一批面板首屏 UI、拆分校验与 CLI 输出修复——**都不涉及 ccmem export（§6.1 不变）、不需要重启 daemon**。**§6.5 的前置已满足**（上一轮记）：人 2026-11-11 在 magpie 打开了「请求存档」（本机目录 `~/.config/magpie/request-archive/<UTC 日期>/` 当天即有文件），`magpie-context.mjs summary --since 2026-11-11` 能读出 claude 两组；但那一会话首条消息是贴进来的转录、行首含 `## ccmem context`，整块被按 ccmem 算（§6.5「行首标记误算」边界）⇒ **正式实验要在干净会话里跑**，且实验做完按 §6.5 第 4 步关存档、删目录。Orca 隔离测试面板仍显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。三仓远端只用 `ls-remote` 现核，不写活 HEAD。
+2026-11-11 深夜 Orca 会话 `e43cd52d`（测试者反馈 E 轮，就地替换旧述）：本仓本轮**零代码改动**（只有本 handoff）。Orca 本轮与本仓相关的只有一处：面板 Memory 页加了分页（#258，`offset`＋「加载更多」）——**切片完全在 Orca 侧**（Orca 仍是一次 `ccmem export --json --scope …` 拿全部行再排序切片），**export 契约（§6.1）不变、不需要重启 daemon**。Orca 本轮其余（组级验收、合并后检查留证、转录排版、`orca project add` 等）都不碰 ccmem。**§6.5 的前置已满足**（上一轮记）：人 2026-11-11 在 magpie 打开了「请求存档」（本机目录 `~/.config/magpie/request-archive/<UTC 日期>/` 当天即有文件），`magpie-context.mjs summary --since 2026-11-11` 能读出 claude 两组；但那一会话首条消息是贴进来的转录、行首含 `## ccmem context`，整块被按 ccmem 算（§6.5「行首标记误算」边界）⇒ **正式实验要在干净会话里跑**，且实验做完按 §6.5 第 4 步关存档、删目录。Orca 隔离测试面板仍显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。三仓远端只用 `ls-remote` 现核，不写活 HEAD。
 
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）

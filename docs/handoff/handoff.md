@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-10 Orca 会话 `3153bf70`（就地替换旧述）：本仓本轮只**新增**一个只读分析脚本（§6.5，主题行 `feat(analysis): estimate ccmem's prompt share and cache behaviour from magpie's logs`，已 ff 合入本地 main、未推），钩子、daemon、§6.1 export 契约都没动 ⇒ 不需要重启 daemon。Orca 本轮修测试者反馈 #202–#241 的一批（见 Orca handoff §3 最新一节），均不涉及 ccmem export。本仓仍按 §1 的功能与 22.23.4 daemon 环境；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。三仓远端与本地状态只用 `ls-remote`／`status` 现核，不写活 HEAD。
+2026-11-11 Orca 会话 `29b4e843`（就地替换旧述）：本仓本轮**零改动**（只有本 handoff）。上一轮的分析脚本（§6.5）人已推。Orca 本轮：repin ccloop #225、Live 区默认跟随转录、续跑带 operator note（#226 ii）、两份待人裁的设计稿——都不涉及 ccmem export（§6.1 不变）、不需要重启 daemon。**§6.5 的前置已满足**：人 2026-11-11 在 magpie 打开了「请求存档」（本机目录 `~/.config/magpie/request-archive/<UTC 日期>/` 当天即有文件），`magpie-context.mjs summary --since 2026-11-11` 能读出 claude 两组；但那一会话首条消息是贴进来的转录、行首含 `## ccmem context`，整块被按 ccmem 算（§6.5「行首标记误算」边界）⇒ **正式实验要在干净会话里跑**，且实验做完按 §6.5 第 4 步关存档、删目录。Orca 隔离测试面板仍显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。三仓远端只用 `ls-remote` 现核，不写活 HEAD。
 
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
@@ -320,7 +320,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 | `routing/<本地日期>.jsonl[.gz]` | 一直写，留 30 天 | 每个请求的 prompt 分段 token 估算（system／tools／skills／memory／files／results／chat），**没有正文** |
 | `request-archive/<UTC 日期>/<id>.json` | **只在人打开「请求存档」后** | 完整请求体与响应体（密钥已脱敏），1 GiB 上限、旧的先删 |
 
-**导出开关就是 magpie 自带的「请求存档」**：桌面版「用量」页，用量明细表头最右边的开关。⚠️ 它按有没有配 S3 同步 bucket 自动选去处（`internal/gui/archive.go:109-125`）：没配 ⇒ 写 `requestArchiveLocal`，存本机；**配了 ⇒ 写 `requestArchive`，上传到 bucket 且同步到所有机器**。开之前鼠标停在开关上看提示：提示里出现 bucket 名就不要开。存档里是对话与代码原文 ⇒ 实验期间才开，做完关掉并删 `~/.config/magpie/request-archive/`。
+**导出开关就是 magpie 自带的「请求存档」**（2026-11-11 人已打开，本机目录，见 §6.2）：桌面版「用量」页，用量明细表头最右边的开关。⚠️ 它按有没有配 S3 同步 bucket 自动选去处（`internal/gui/archive.go:109-125`）：没配 ⇒ 写 `requestArchiveLocal`，存本机；**配了 ⇒ 写 `requestArchive`，上传到 bucket 且同步到所有机器**。开之前鼠标停在开关上看提示：提示里出现 bucket 名就不要开。存档里是对话与代码原文 ⇒ 实验期间才开，做完关掉并删 `~/.config/magpie/request-archive/`。
 
 **三个子命令**（都支持 `--json`；默认只输出数字、id、名称，正文片段只在 `--show-text` 时给）：
 - `requests`：逐请求 in／cache_read／cache_write／out、命中率 cache_read÷(in+cache_read+cache_write)、ccmem 估算占用与比例、magpie 的分段。

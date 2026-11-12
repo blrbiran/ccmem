@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-12 Orca 会话 `5abcad7d`（测试者反馈 F 轮，就地替换旧述）：本仓本轮**零代码改动**（只有本 handoff）。Orca 本轮改的（#195 交接阈值可空、#116 有限组按观测下界结算、#81 收起低频 UI、CLI／Web 文案、组级验收 worktree 竞态、#252 转录时间的 Orca 半边）**都不碰 ccmem**，export 契约（§6.1）不变、不需要重启 daemon。仍成立：Memory 页分页（#258）切片在 Orca 侧；§6.5 的 magpie 实验要在**干净会话**里跑（首条消息若是贴进来的转录、行首含 `## ccmem context` 会被整块误算），做完按 §6.5 第 4 步关存档、删目录；Orca 隔离测试面板仍显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。三仓远端只用 `ls-remote` 现核，不写活 HEAD。
+2026-11-12 Orca 会话 `d1cbbd58`（测试者反馈 G 轮，就地替换旧述）：本仓本轮**零代码改动**（只有本 handoff）。Orca 本轮的改动（无改动完成与目标判断、需求复核、任务间 handoff 由 Orca 保存在自己的组状态目录、Live 说明、预算新模型的分支、#192／#269／#189 及一批小修）**都不碰 ccmem**：export 契约（§6.1）不变、不需要重启 daemon；任务间 handoff 文件**不写进 ccmem**（人裁「由 Orca 保存」）。仍成立：Memory 页分页（#258）切片在 Orca 侧；§6.5 的 magpie 实验要在**干净会话**里跑，做完按 §6.5 第 4 步关存档、删目录；Orca 隔离测试面板仍显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。三仓远端只用 `ls-remote` 现核，不写活 HEAD。
 
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）

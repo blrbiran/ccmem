@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-14 Orca 会话 `23ce4a7b`（测试者反馈 K 轮，就地替换旧述）：本仓本轮**零代码改动**（只有本 handoff）。Orca 本轮三个实施席（「需要你处理」统一规则、组验收「通过（未跑全量）」标签、拆分草稿的人工编辑 verb 等）都在 Orca 自己的 worktree 里、**未合 main**，都不碰 ccmem：export 契约（§6.1）不变，daemon 不需要重启。三仓开工时本地 main＝`origin/main`（以 `ls-remote` 现核）。仍成立：§6.5 的 magpie 实验要在**干净会话**里跑，做完按 §6.5 第 4 步关存档、删目录；Orca 隔离测试面板仍显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；Orca 的 dogfood 目标仓在 `~/code/skills/orca/orca_dogfooding/orca-dogfood`。
+2026-11-14 Orca 会话 `6b727312`（测试者反馈 L 轮，就地替换旧述）：本仓本轮**零代码改动**（只有本 handoff）。Orca 的 K、L 两轮已合进 Orca main、已推、已装进面板，都不碰 ccmem：export 契约（§6.1）不变，daemon 不需要重启。三仓收尾时本地 main＝`origin/main`（以 `ls-remote` 现核）。仍成立：§6.5 的 magpie 实验要在**干净会话**里跑，做完按 §6.5 第 4 步关存档、删目录；Orca 隔离测试面板仍显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；Orca 的 dogfood 目标仓在 `~/code/skills/orca/orca_dogfooding/orca-dogfood`。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

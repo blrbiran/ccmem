@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-15 Orca 会话 `1b8535c8`（本小节原位滚动）：本仓**零代码改动**，export 契约（§6.1）不变，daemon 不需要重启。Orca 本地 main 新增 #267／#273 从阻塞到下游完成的配对判据（当前 pin 的 ccloop 独立构建 **10/10**）、#312 失败验收后修复任务的复评解锁，以及 #285 Codex 临时响应读数的 CLI／Web 消费端；旧三红的 `orchestration` 假来源判据已修。`TMPDIR=/tmp npm test` 在 Orca 上 RC0（root 6,422 passed／140 skipped；Web 2,017 passed），其 handoff §3.最新给出观测命令与边界。ccloop 的 loop phase 生产者已在远端 main，Orca **仍钉 J 轮**：留下完整会话内容的崩溃窗口和 SQLite/WAL 擦除边界待人裁，未 repin；旧 dogfood 组与面板未作生产恢复／重启。此会话的 `allow-push` 消息未对应到已现核的 grant 文件，推送前以闸门和 `ls-remote` 再核。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；dogfood 目标仓在 `~/code/skills/orca/orca_dogfooding/orca-dogfood`。
+2026-11-15 Orca 会话 `60e715bf`（本小节原位滚动；上一轮 `1b8535c8`）：本仓**零代码改动**，export 契约（§6.1）不变，daemon 不需要重启。Orca 本轮修 #313／#314／#315／#243 补充／#291／#261／#229／#296／#224／#265 与 #267/#273 的 Orca 半边，均未触及 ccmem；`TMPDIR=/tmp npm test` RC0（root 7,877 passed／142 skipped；Web 1,664 passed，见其 §3.最新）。ccloop 的 loop phase 生产者已在远端 main，但 Orca **仍未 repin**（仍钉 `9c83b38`）：保留风险待人裁；旧 dogfood 组与面板未作生产恢复／重启。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；dogfood 目标仓在 `~/code/skills/orca/orca_dogfooding/orca-dogfood`。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

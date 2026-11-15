@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-15 Orca 会话 `60e715bf`（本小节原位滚动；上一轮 `1b8535c8`）：本仓**零代码改动**，export 契约（§6.1）不变，daemon 不需要重启。Orca 本轮修 #313／#314／#315／#243 补充／#291／#261／#229／#296／#224／#265 与 #267/#273 的 Orca 半边，均未触及 ccmem；`TMPDIR=/tmp npm test` RC0（root 7,877 passed／142 skipped；Web 1,664 passed，见其 §3.最新）。ccloop 的 loop phase 生产者已在远端 main，但 Orca **仍未 repin**（仍钉 `9c83b38`）：保留风险待人裁；旧 dogfood 组与面板未作生产恢复／重启。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；dogfood 目标仓在 `~/code/skills/orca/orca_dogfooding/orca-dogfood`。
+2026-11-15 Orca 会话 `60e715bf`（本小节原位滚动；上一轮 `1b8535c8`）：本仓**零代码改动**，export 契约（§6.1）不变，daemon 不需要重启。Orca 本轮修 #313／#314／#315／#243 补充／#291／#261／#229／#296／#224／#265 与 #267/#273 的 Orca 半边，均未触及 ccmem；`TMPDIR=/tmp npm test` 的日常受影响门 root 7,881 passed／142 skipped／1 failed（`driverReconcileN` 负载形状，单跑 5/5）、Web 1,664 passed，见其 §3.最新。ccloop 的 loop phase 生产者已在远端 main，但 Orca **仍未 repin**（仍钉 `9c83b38`）：保留风险待人裁；旧 dogfood 组与面板未作生产恢复／重启。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；dogfood 目标仓在 `~/code/skills/orca/orca_dogfooding/orca-dogfood`。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

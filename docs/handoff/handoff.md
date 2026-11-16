@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-16 Orca 会话 `5f974912`（本小节原位滚动；上一轮 `60e715bf`）：本仓**零代码改动**，export 契约（§6.1）不变，daemon 不需要重启。Orca 已把 ccloop repin 到 `1453fc5` 并 build/restart 面板；用新的 completed-attempt accept 路径把 `g-28d9b560/review-fix-4` 落地，组 done 7/7（无付费重跑）。Orca 日常受影响门 root 6,494 passed／140 skipped／0 failed、Web 1,664 passed（见其 §3.最新）。均未触及 ccmem。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；dogfood 目标仓在 `~/code/skills/orca/orca_dogfooding/orca-dogfood`。
+2026-11-16 Orca 会话 `365ff5f9`（本小节原位滚动；上一轮 `5f974912`）：本仓**零代码改动**，export 契约（§6.1）不变，daemon 不需要重启。Orca 本轮本地修 #315 测试守卫、#296 估算/Board 顺序、#291 资金预览；ccloop 本地 main 修 #316 Codex 数组日志与成功来源恢复，但已授权的普通 push 仍被 Tier 0 拒，不能用 npm GitHub 依赖 repin，Orca 面板继续运行上轮 pin（正式门与发布状态见 Orca handoff 最新节）。上轮 `g-28d9b560/review-fix-4` 已用 completed-attempt accept 落地，组 done 7/7、无付费重跑。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；dogfood 目标仓在 `~/code/skills/orca/orca_dogfooding/orca-dogfood`。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-17 Orca 会话 `aee3cc87`（本小节原位滚动；上一轮 `365ff5f9`）：**本仓零代码改动，export 契约（§6.1）不变，daemon 不需重启。** ccloop #316 已由人推远端，Orca 在独立安装树核 build-info、正式 repin 与 V10/V11 配对；Orca 两批 #329 恢复命令、#330 依赖替换、#322 人的禁修要求冲突、#319/#324 Results/草稿和 #225 软预算文案已合进 main 并普通推远端（正式门、负载红与后续优先级见 Orca handoff §3.最新／§4.0）。**面板仍运行旧安装**，主仓没有在本轮 npm ci／build／restart；#328 Git 合并父链只写设计，#224/#266/#196 估算校准待同仓精确样本。上轮 `g-28d9b560/review-fix-4` 已 completed-attempt accept 落地、组 done 7/7，无付费重跑。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；dogfood 目标仓路径见 Orca handoff。
+2026-11-17 Orca 会话 `9982cf01`（本小节原位滚动；上一轮 `aee3cc87`）：**本仓零代码改动，export 契约（§6.1）不变，daemon 不需重启。** Orca 本地 main 已合入 #328 具名来源历史交付、#320 转录时间消费、#323/#325/#326 UI 修复并完成 root/Web 构建；ccloop #320 producer 只在 ccloop 本地 main（未推送），故 Orca 面板当前不能消费新时间标记。Orca 普通 push 被 Tier 0 拒、待人推；面板未重装/重启，仍跑旧构建。#333 立即集成、#322 自由文本冲突漏报、#321 verify-only、#317/#320 余项、#224/#266/#196 校准仍待处理；详见 Orca handoff §3.最新。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

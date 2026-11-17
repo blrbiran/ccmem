@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-17 Orca 会话 `0ae7510a`（本小节原位滚动；上一轮 `9982cf01`）：**本仓零代码改动，export 契约（§6.1）不变，daemon 不需重启。** Orca main 本轮加了 #334/#333/#336/#335/#322/#332 与 #317/#318/#331（交付尾 spec `Orca/docs/superpowers/specs/2026-11-17-delivery-tail-design.md`）；Orca 面板未重装本轮代码。三仓与远端的同步以 `/usr/bin/git ls-remote` 现核为准，不在此记 HEAD。详见 Orca handoff §3.最新、§4.0。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；dogfood 目标仓路径见 Orca handoff。
+2026-11-17 Orca 会话 `0ae7510a`（本小节原位滚动；上一轮 `9982cf01`）：**本仓零代码改动，export 契约（§6.1）不变，daemon 不需重启。** Orca main 本轮加了 #334/#335/#322/#332 与 #317/#318/#331；交付尾 #333/#336（spec `Orca/docs/superpowers/specs/2026-11-17-delivery-tail-design.md`）在 Orca 分支 `fix/delivery-tail` 未合；Orca 面板未重装本轮代码。三仓与远端的同步以 `/usr/bin/git ls-remote` 现核为准，不在此记 HEAD。详见 Orca handoff §3.最新、§4.0。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；dogfood 目标仓路径见 Orca handoff。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-17 晚 Orca 会话 `0e0846ae`（本小节原位滚动；上一轮 `0ae7510a`）：**本仓零代码改动，export 契约（§6.1）不变，daemon 不需重启。** Orca main 本轮合入交付尾、测试门分快速档／`test:wide`、#338–#344（含 `orca run abandon`）；Orca 面板已重装本轮代码；会话末人已推三仓。三仓与远端的同步以 `/usr/bin/git ls-remote` 现核为准，不在此记 HEAD。详见 Orca handoff §3.最新、§4.0。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；dogfood 目标仓路径见 Orca handoff。
+2026-11-18 Orca 会话 `4389b15f`（本小节原位滚动；上一轮 `0e0846ae`）：**本仓零代码改动，export 契约（§6.1）不变，daemon 不需重启。** Orca 本轮合入测试者台账 12 件、stuck-runs 审阅修复，ccloop 加 #347／#349 后 Orca 已 repin；三仓会话末已推（以 `/usr/bin/git ls-remote` 现核，不在此记 HEAD）；Orca 面板尚未重装本轮代码。本轮发现的环境坑对本仓同样成立：`/private/tmp` 下的会话 scratchpad 约每 30 分钟被外部清掉（持久文件别放那里）。详见 Orca handoff §3.最新、§4.0。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；dogfood 目标仓路径见 Orca handoff。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

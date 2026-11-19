@@ -46,6 +46,15 @@ export const ALL_CLASSIFIED_KEYS = [
 const ENV_OPEN = '<key>EnvironmentVariables</key><dict>';
 const PROGRAM_ARGS_RE = /<key>ProgramArguments<\/key>\s*<array>[\s\S]*?<\/array>/;
 
+const STRING_RE = /<string>([^<]*)<\/string>/g;
+
+// 只解析 ProgramArguments 那段里的 <string> —— splitPlist().programArgs 的输出。
+// 用于回答"launchd 将来会 exec 哪些路径"，不看值的变化（漂移轴不在这里）。
+export function parseProgramArguments(programArgsText) {
+  if (typeof programArgsText !== 'string') return null;
+  return [...programArgsText.matchAll(STRING_RE)].map((match) => unescapeXml(match[1]));
+}
+
 export function splitPlist(text) {
   let envText = null;
   let rest = text;

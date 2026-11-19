@@ -11,6 +11,7 @@ import { daemonCostFile, decisionDataFile, decisionDataSizeBytes, metricsFile } 
 import { fallbackProjectKey, resolveProjectKey } from '../project-key.mjs';
 import { collectInjectionRows, countNeverInjected } from '../recent-injections.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
+import { describeInstalledPlistHealth } from './daemon.mjs';
 
 const SESSION_LIMIT = 10;
 const RECENT_INJECTION_LIMIT = 3;
@@ -1287,7 +1288,8 @@ export async function cmdAdminDiagnose(
       hostname: lock?.hostname ?? null,
       heartbeat_age_ms: lock ? Math.max(0, Date.now() - lock.heartbeat_at) : null,
       startup_schema_version: Number.isFinite(startupSchemaVersion) ? startupSchemaVersion : null,
-      uptime_sec: lock?.acquired_at ? Math.max(0, Math.floor((Date.now() - lock.acquired_at) / 1000)) : null
+      uptime_sec: lock?.acquired_at ? Math.max(0, Math.floor((Date.now() - lock.acquired_at) / 1000)) : null,
+      plist: describeInstalledPlistHealth()
     },
     project_key: {
       value: projectKey,

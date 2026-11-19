@@ -84,7 +84,10 @@ const { join } = await import('node:path');
 
 const { comparePlist } = await import('../../scripts/lib/admin/plist-drift.mjs');
 
-function plistWith(envPairs, { programArg = '/usr/bin/node', extra = '' } = {}) {
+// The default program must exist: restart now refuses a plist whose
+// ProgramArguments names a missing file (issue #396), and /usr/bin/node is not
+// present on every machine (this one resolves node through /usr/local/bin).
+function plistWith(envPairs, { programArg = process.execPath, extra = '' } = {}) {
   const dict = Object.entries(envPairs)
     .map(([k, v]) => `    <key>${k}</key><string>${v}</string>`)
     .join('\n');

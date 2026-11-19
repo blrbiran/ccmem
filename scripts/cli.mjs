@@ -815,6 +815,9 @@ try {
       process.stdout.write(`ccmem: daemon uninstalled ${result.plist_path}\n`);
     } else if (result.status === 'not_installed') {
       process.stdout.write('ccmem: daemon not installed\n');
+    } else if (result.status === 'program_missing') {
+      process.stderr.write(`ccmem: daemon ${daemonVerb} refused — ${result.reason}\n`);
+      process.exitCode = 1;
     } else if (result.status === 'install_failed') {
       process.stderr.write(
         `ccmem: WARNING — failed to register Tier 2 daemon (${result.reason}).\n` +
@@ -1214,6 +1217,16 @@ try {
         );
       } else {
         process.stdout.write('ccmem: daemon unavailable\n');
+      }
+
+      // A launchd job that execs a path that no longer exists is a KeepAlive
+      // crash loop writing into daemon.err.log; so is a job whose last exit
+      // code is nonzero. Either is a failure here, not a note.
+      if (result.daemon.plist?.problems?.length) {
+        for (const problem of result.daemon.plist.problems) {
+          process.stdout.write(`ccmem: FAIL daemon plist ${result.daemon.plist.path}: ${problem}\n`);
+        }
+        process.exitCode = 1;
       }
 
       process.stdout.write(`ccmem: project_key ${result.project_key.value} source=${result.project_key.source}\n`);

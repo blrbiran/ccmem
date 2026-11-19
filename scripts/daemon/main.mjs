@@ -2,6 +2,7 @@ import { ConfigError, loadConfig } from '../lib/config.mjs';
 import { openDb } from '../lib/db.mjs';
 import { getProvider } from '../lib/embedding/provider.mjs';
 import { currentEmbeddingSig } from '../lib/embedding/signature.mjs';
+import { recordDaemonStart } from './crash-guard.mjs';
 import { acquireDaemonLock, refreshHeartbeat, releaseDaemonLock } from './lock.mjs';
 import { dispatchTask } from './dispatch.mjs';
 import { pendingEmbeddings } from './tasks/vec-backfill.mjs';
@@ -55,6 +56,24 @@ async function warmSemanticProvider(db) {
        VALUES ('vec_backfill', '{}', ?, ?, 'queued')`
     ).run(now, now);
   }
+}
+
+// Before anything claims a resource: launchd restarts an exiting daemon forever
+// (KeepAlive), so a daemon that dies during startup writes one more line into
+// daemon.err.log every ThrottleInterval — indefinitely. Past the hourly limit,
+// say so in one line and exit. `admin daemon install` / `restart` clear this
+// history: those are explicit starts, not a crash loop.
+let startRecord = null;
+try {
+  startRecord = recordDaemonStart();
+} catch (error) {
+  process.stderr.write(`ccmem: daemon start-history unavailable (${error.message}); continuing without the crash-loop guard\n`);
+}
+if (startRecord && !startRecord.allowed) {
+  process.stderr.write(
+    `ccmem: daemon not starting — ${startRecord.starts} starts in the last hour (limit ${startRecord.limit}); refusing to crash-loop. Fix the cause, then run \`ccmem admin daemon install\` or \`restart\`. State: ${startRecord.statePath}\n`
+  );
+  process.exit(1);
 }
 
 // Read the config before anything else claims a resource. launchd restarts a

@@ -1,15 +1,28 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describeBackendState } from '../../daemon/backend-state.mjs';
+import { clearStartHistory } from '../../daemon/crash-guard.mjs';
 import { isLockRowAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
 import { DB_BUSY_TIMEOUT_MS, getDataRoot } from '../db.mjs';
-import { comparePlist, EMPTY_LISTS, evaluateGates, parseEnvDict, splitPlist } from './plist-drift.mjs';
+import {
+  comparePlist,
+  EMPTY_LISTS,
+  evaluateGates,
+  parseEnvDict,
+  parseProgramArguments,
+  splitPlist
+} from './plist-drift.mjs';
 
 const DAEMON_MAIN = fileURLToPath(new URL('../../daemon/main.mjs', import.meta.url));
+// launchd 对 KeepAlive job 的默认节流是 10s；把一个每 30s 就崩一次、每次都往
+// daemon.err.log 追加一段 MODULE_NOT_FOUND 的进程改成每分钟一次，是这一侧
+// 唯一不需要代码判断的减速手段。crash-guard 在 daemon 进程里另有硬上限。
+const THROTTLE_INTERVAL_SECONDS = 60;
+
 const LAUNCHD_LABEL = 'com.ccmem.daemon';
 const WAIT_INTERVAL_MS = 50;
 const WAIT_TIMEOUT_MS = 2000;
@@ -441,6 +454,7 @@ ${renderProgramArguments(buildLaunchdProgramArguments(nodePath))}
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>${THROTTLE_INTERVAL_SECONDS}</integer>
   <key>StandardErrorPath</key><string>${escapeXml(paths.stderrPath)}</string>
   <key>StandardOutPath</key><string>${escapeXml(paths.stdoutPath)}</string>
   <key>EnvironmentVariables</key><dict>
@@ -500,10 +514,17 @@ function launchctlError(result) {
 function readLaunchdJob() {
   const result = runLaunchctl(['print', `${getLaunchDomain()}/${LAUNCHD_LABEL}`]);
   if (result.status !== 0) {
-    return { loaded: false, pid: null, reason: launchctlError(result) };
+    return { loaded: false, pid: null, last_exit_code: null, reason: launchctlError(result) };
   }
-  const match = /^\s*pid = (\d+)\s*$/m.exec(result.stdout ?? '');
-  return { loaded: true, pid: match ? Number(match[1]) : null, reason: null };
+  const text = result.stdout ?? '';
+  const pid = /^\s*pid = (\d+)\s*$/m.exec(text);
+  const exitCode = /^\s*last exit code = (-?\d+)\s*$/m.exec(text);
+  return {
+    loaded: true,
+    pid: pid ? Number(pid[1]) : null,
+    last_exit_code: exitCode ? Number(exitCode[1]) : null,
+    reason: null
+  };
 }
 
 const LAUNCHD_JOB_ABSENT_HINT = `no ${LAUNCHD_LABEL} job in launchd; run \`ccmem admin daemon install\` from a normal terminal (not a sandbox)`;
@@ -514,6 +535,88 @@ function isLaunchdInstalled() {
 
 function readPlist() {
   return readFileSync(getLaunchAgentPath(), 'utf8');
+}
+
+function isRegularFile(candidate) {
+  try {
+    return statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+// ProgramArguments 里除了选项（以 - 开头）以外都是 launchd 将来要 exec 的路径。
+// 这里不做 PATH 解析：模板写进去的永远是绝对路径，相对路径在 launchd 的 cwd（/）
+// 下本来就找不到，按"缺"处理才是实话。
+export function findMissingProgramFiles(programArgs) {
+  if (!Array.isArray(programArgs)) return [];
+  const missing = [];
+  for (const arg of programArgs) {
+    if (typeof arg !== 'string' || !arg || arg.startsWith('-')) continue;
+    if (!isRegularFile(arg)) missing.push(arg);
+  }
+  return missing;
+}
+
+function programMissingReason(missing) {
+  const currentRepo = path.dirname(path.dirname(DAEMON_MAIN));
+  const names = missing.map((candidate) => `\`${candidate}\``).join(', ');
+  return `ProgramArguments names ${names}, which ${missing.length === 1 ? 'does not' : 'do not'} exist; if the ccmem repository moved, run \`ccmem admin daemon uninstall && ccmem admin daemon install\` from the current checkout (${currentRepo})`;
+}
+
+function installedProgramArguments() {
+  const parsed = splitPlist(readPlist()).programArgs;
+  return parseProgramArguments(parsed);
+}
+
+// install 写盘前 / restart 动 launchd 前调用。返回 null 表示没有可校验的
+// ProgramArguments（未安装、或不是本构建能读的形状），否则 { ok, missing }。
+function checkInstalledProgramArguments() {
+  if (!isLaunchdInstalled()) return null;
+  const args = installedProgramArguments();
+  if (args == null) return null;
+  const missing = findMissingProgramFiles(args);
+  return { ok: missing.length === 0, missing };
+}
+
+function programMissingResult(missing) {
+  return {
+    status: 'program_missing',
+    missing_paths: missing,
+    reason: programMissingReason(missing)
+  };
+}
+
+// `ccmem admin diagnose` 的 failure 判据：已装的 plist 指向不存在的程序，
+// 或 launchd 自己报的 last exit code 非零。未安装时不是失败（doctor 常在没有
+// launchd 的环境里跑）。
+export function describeInstalledPlistHealth() {
+  const plistPath = getLaunchAgentPath();
+  if (!existsSync(plistPath)) {
+    return { installed: false, path: plistPath, ok: true, problems: [] };
+  }
+
+  const programArguments = installedProgramArguments() ?? [];
+  const missingPaths = findMissingProgramFiles(programArguments);
+  const job = readLaunchdJob();
+  const problems = [];
+
+  if (missingPaths.length) {
+    problems.push(programMissingReason(missingPaths));
+  }
+  if (job.loaded && job.last_exit_code != null && job.last_exit_code !== 0) {
+    problems.push(`launchd reports last exit code ${job.last_exit_code} for ${LAUNCHD_LABEL}`);
+  }
+
+  return {
+    installed: true,
+    path: plistPath,
+    program_arguments: programArguments,
+    missing_paths: missingPaths,
+    launchd: job,
+    problems,
+    ok: problems.length === 0
+  };
 }
 
 function loadRunningTask(db) {
@@ -673,9 +776,16 @@ function installDaemon() {
   warnings.push(...others.warnings);
 
   const nodePath = resolveInstallNodePath(process.env);
+  const missing = findMissingProgramFiles(buildLaunchdProgramArguments(nodePath));
+  if (missing.length) {
+    return { ...programMissingResult(missing), plist_path: plistPath };
+  }
 
   mkdirSync(getLaunchAgentDir(), { recursive: true });
   writeFileSync(plistPath, renderPlist());
+  // An explicit install is a fresh operator intent: a start history left by a
+  // crash loop must not keep the new job from starting for the rest of the hour.
+  clearStartHistory();
 
   const bootstrapError = bootstrapDaemon();
   if (bootstrapError) {
@@ -893,6 +1003,15 @@ function rewritePlistIfAllowed() {
 }
 
 async function restartDaemon(db) {
+  // Verify before stopping anything: an installed plist whose program has moved
+  // is the shape launchd keeps restarting into daemon.err.log. Refusing here
+  // leaves the plist, the lock and the logs untouched and names the dead path,
+  // instead of booting out a job that cannot come back.
+  const programCheck = checkInstalledProgramArguments();
+  if (programCheck && !programCheck.ok) {
+    return { ...programMissingResult(programCheck.missing), phase: 'check', plist_rewrite: null };
+  }
+
   const current = loadDaemonStatus(db);
   const stopped = await stopDaemon(db);
 
@@ -901,6 +1020,7 @@ async function restartDaemon(db) {
   }
 
   const rewrite = rewritePlistIfAllowed();
+  clearStartHistory();
 
   const started = await startDaemon(db);
   if (!['started', 'already_running'].includes(started.status)) {

@@ -305,7 +305,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-19 Orca 会话 `543e800e`（本小节原位滚动；上一轮 `4389b15f`）：**本仓零代码改动，export 契约（§6.1）不变，daemon 不需重启。** Orca 本轮合入测试者台账一大批（批 D、#355/#357、#356、#378、#379–#381、去掉复制 P0），ccloop 加 omp 启动隔离后 Orca 已 repin；三仓推送以收尾 `/usr/bin/git ls-remote` 为准（不在此记 HEAD）；Orca 面板**尚未重装**本轮代码。环境坑对本仓同样成立：`/private/tmp` 下的会话 scratchpad 约每 30 分钟被外部清掉；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑。详见 Orca handoff §3.最新、§4.0。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；dogfood 目标仓路径见 Orca handoff。
+2026-11-19 Orca 会话 `3ba26002`（本小节原位滚动；上一轮 `543e800e`）：**本仓零代码改动，export 契约（§6.1）不变，daemon 不需重启。** Orca 本轮把测试者台账的一大批（#377、#381、#337、#379、#365/#328、#362、#364b、#368b、#374c、#170、dogfood 三项）和「去掉复制」P2 合进了 Orca 本地 main，面板已重装（schema 仍 25）；ccloop 的「去掉复制」P1 在 ccloop 本地 main。**三仓都领先远端、未推**（本会话 Orca 闸门因人的消息是整段粘贴而没认出 `allow-push`，已修；推送等人），以收尾 `/usr/bin/git ls-remote` 为准（不在此记 HEAD）。详见 Orca handoff §3.最新、§4.0。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑（面板重启也会让正在跑的门撞 Rule 17 守卫）。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

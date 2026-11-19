@@ -64,6 +64,12 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
+### 1.0000000 2026-11-20（Orca 会话 `57896c64`）—— #396 安装/重启校验、diagnose、崩溃退避（代码在 main，未推；daemon 未重启）
+
+- 测试者 #396：plist 的 ProgramArguments 指向已搬走的仓库时，KeepAlive 每 ~30 s 重启并无限追加 `MODULE_NOT_FOUND`（报告里 83 MB；本机日志已 609 MB——测试者是另一台机器，本机 plist 与心跳都正常）。改动：install／restart 在写盘/加载前 `stat` 每个程序路径，缺失即 exit 1、点名路径并给迁移提示（不写 plist、不调 launchctl、不写 install-state）；`admin diagnose` 对「程序缺失」或「last exit code 非 0」报 FAIL 并 exit 1；新 plist 带 `ThrottleInterval 60`；`scripts/daemon/crash-guard.mjs` 在 1 小时内第 11 次启动时拒绝（状态在 `CCMEM_DATA_ROOT/daemon-start-history.json`，目录 0700／文件 0600，显式 install／restart 清空）。**用户日志一字未动，也没有轮转/截断。**
+- 判据：新增 `tests/integration/daemon-hardening.test.mjs` 11 条；既有 `plist-drift.test.mjs` 的 fixture 默认 node 路径从写死的 `/usr/bin/node` 改为 `process.execPath`（新校验会先拦下它，注释说明）。全量 `npm test` **986/986**（2026-11-20）。
+- ⚠️ **daemon 侧改动要重启才生效**（崩溃守卫在 `main.mjs`；ThrottleInterval 要重装 plist 才进旧 plist）。本轮没有重启 daemon：需要时在本人终端 `ccmem admin daemon restart`，或 `uninstall && install`。旧 plist 若程序已不存在，新代码根本没机会跑——只能靠 diagnose 的 FAIL 或 restart 的拒绝把人引到重装。
+
 ### 1.000000 2026-11-07（Orca 会话 `b5e3c5a8`）—— 环境轮，代码无改动；代码状态仍看 §1.00000
 
 - 人把 nvm default 升到 22.23.4。daemon 本身跑 `/usr/local/bin/node`，不受影响；但它 plist 里的 `CCMEM_CLAUDE_P_COMMAND` 仍指向 22.13.1 下的 claude。人让改配置后，在 agent 会话里跑了 `admin daemon restart` 重写 plist，过程：
@@ -305,7 +311,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-19 Orca 会话 `3ba26002`（本小节原位滚动；上一轮 `543e800e`）：**本仓零代码改动，export 契约（§6.1）不变，daemon 不需重启。** Orca 本轮把测试者台账的一大批（#377、#381、#337、#379、#365/#328、#362、#364b、#368b、#374c、#170、dogfood 三项）和「去掉复制」P2 合进了 Orca 本地 main，面板已重装（schema 仍 25）；ccloop 的「去掉复制」P1 在 ccloop 本地 main。**三仓都领先远端、未推**（本会话 Orca 闸门因人的消息是整段粘贴而没认出 `allow-push`，已修；推送等人），以收尾 `/usr/bin/git ls-remote` 为准（不在此记 HEAD）。详见 Orca handoff §3.最新、§4.0。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑（面板重启也会让正在跑的门撞 Rule 17 守卫）。
+2026-11-20 Orca 会话 `57896c64`（本小节原位滚动；上一轮 `3ba26002`）：**export 契约（§6.1）不变**；本仓代码有改动（#396，见 §1.0000000），daemon 未重启。Orca 本轮把测试者台账第二批（#382 #383 #384 #386 #387 #388 #389 #390 #391 #392 #393 #394 #396 #397 #398 #399）做掉大头，改钉 ccloop `b81f2fc`（去掉复制 P1）并重装面板（schema 仍 25）。推送与远端一律 `/usr/bin/git ls-remote` 现测。详见 Orca handoff §3.最新、§4.0。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑（面板重启也会让在跑的门撞 Rule 17 守卫；本轮 wide 门前先停了面板）。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

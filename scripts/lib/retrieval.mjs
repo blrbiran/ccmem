@@ -4,14 +4,25 @@ import { blobToVec, cosineSimilarity, vecToBlob } from './embedding/cosine.mjs';
 import { getProvider, getProviderWithCircuit, recordEmbedFailure, recordEmbedSuccess } from './embedding/provider.mjs';
 import { currentEmbeddingSig } from './embedding/signature.mjs';
 
-export function sanitizeFtsQuery(prompt) {
+/**
+ * Issue 414: a prompt is not an FTS5 query. These tokens are what the lexical paths search for; the
+ * MATCH form below wraps each in a quoted literal, so characters with FTS meaning (`-`, `+`, `^`, `:`,
+ * parentheses, `*`) become literal text instead of syntax. Only `"` can break that form, so it is
+ * removed; pure punctuation is not a word and is dropped; inner punctuation stays, so `C++`, `a:b` and
+ * `-bar` still name what the prompt named.
+ */
+export function ftsTokens(prompt) {
   return String(prompt ?? '')
-    .replace(/["':(){}\[\]]/g, ' ')
+    .toLowerCase()
+    .replace(/"/g, ' ')
     .split(/\s+/)
-    .map((token) => token.trim().toLowerCase())
-    .filter((token) => token.length >= 2)
-    .slice(0, 20)
-    .join(' ');
+    .map((token) => token.replace(/^[,;.!?()[\]{}]+|[,;.!?()[\]{}]+$/g, ''))
+    .filter((token) => token.length >= 2 && /[\p{L}\p{N}]/u.test(token))
+    .slice(0, 20);
+}
+
+export function sanitizeFtsQuery(prompt) {
+  return ftsTokens(prompt).map((token) => `"${token}"`).join(' ');
 }
 
 const CJK_RANGE = /[㐀-鿿]/u;
@@ -163,9 +174,7 @@ export function likeSearch(db, prompt, projectKey, limit, disableScopeIsolation 
 }
 
 export function legacySubstringSearch(db, prompt, projectKey, limit, disableScopeIsolation = false) {
-  const tokens = sanitizeFtsQuery(String(prompt ?? '').slice(0, 2000))
-    .split(/\s+/)
-    .filter(Boolean);
+  const tokens = ftsTokens(String(prompt ?? '').slice(0, 2000));
   if (!tokens.length) {
     return [];
   }

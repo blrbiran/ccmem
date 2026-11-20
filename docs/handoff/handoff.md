@@ -64,7 +64,15 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.0000000 2026-11-20（Orca 会话 `57896c64`；其后 `9299e610` 重启 daemon）—— #396 安装/重启校验、diagnose、崩溃退避（代码在 main 且已推；daemon 已重启）
+### 1.0000000 2026-11-20（Orca 会话 `c8fc876f`）—— 日志轮转、vec_backfill 退避（#396）、stop hook 单次解析的设计；**代码在 main、未推；daemon 未重启**
+
+- **日志轮转（已生效，无需重启）**：新 CLI `ccmem admin daemon rotate-log [--keep-bytes N]`（默认保留 5 MiB）：把日志尾部复制到 `<path>.<epoch-ms>.tail`（0600、`wx` 不覆盖），再**原地 truncate**（不 rename——launchd 与 daemon 持有该 fd）；缺文件 exit 1。`admin daemon install` 在日志 >10 MiB 时打一行大小提示，**不自动轮转**（日志是人的数据）。**本轮已对真实日志执行一次**：616,109,244 B → 0 B，保留 5.0 MB 到 `daemon.err.log.1795142086727.tail`。
+- **vec_backfill 429 退避（需重启 daemon 才生效）**：连续失败指数退避 30 s 起、翻倍、封顶 1 h，状态在 `config_kv`（`vec_backfill.consecutive_failures` / `next_attempt_at`），continuation 按 `now + delay` 排队；stderr 只记第一次与每第 10 次；成功一批清零。此前每个 429 都立即重排并各写一行 ⇒ 日志每几秒一条、一小时数十 MB。
+- **判据**：`tests/integration/admin-daemon-rotate-log.test.mjs`（7）与 `tests/unit/v015-vec-backfill-backoff.test.mjs`（2，含第二次失败 +60 s 且不写 stderr、封顶）；全量 `npm test` **995/995**（2026-11-20）。两个新文件单独复跑 9/9。
+- **等人**：`ccmem admin daemon restart` 让退避进运行中的 daemon（本轮没重启：daemon 活着 pid 67171、正在跑 vec_backfill；重启前按 Rule 13 先备份 1.6 GB 的 global.db，本轮没做）。推送归人／按 `allow-push` 可代推。
+- **#395（hook 延迟）只到设计**：`.superpowers/sdd/plan/design-395-hooks.md`（在 Orca 仓）。要点：stop 目前把 transcript **解析 5 次**（stats、count、两条 infer、probe）；先「解析一次、entries 贯穿」，再考虑按字节截尾与 embedding 熔断时跳过网络。未改代码。
+
+### 1.000000 2026-11-20（Orca 会话 `57896c64`；其后 `9299e610` 重启 daemon）—— #396 安装/重启校验、diagnose、崩溃退避（代码在 main 且已推；daemon 已重启）
 
 - **2026-11-20 后续（会话 `9299e610`）**：daemon 已重启到含 `a9ba63e` 的代码（pid 67171）；plist 重写后带 `ThrottleInterval 60`；`admin diagnose` ok；旧 `daemon.err.log` 未轮转/截断（83MB 类现场仍在），需要时人工处理。
 
@@ -313,7 +321,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-20 Orca 会话 `9299e610`（本小节原位滚动；上一轮 `57896c64`）：**export 契约（§6.1）不变**；本仓代码无改动；#396 已在 ccmem main（`a9ba63e`）且 daemon 已重启（pid 67171，plist 带 `ThrottleInterval 60`）；#398 syncskill 已修并重 build 实测 0.18–0.28s；#395 hook 延迟仍开放（设计项）。Orca 本轮修 #400/#393/#390/#389/#370/#383/#369 残余、跑 wide 门并重启面板（schema 仍 25，ccloop `d50c468`）。推送与远端一律 `/usr/bin/git ls-remote` 现测。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑（面板重启也会让在跑的门撞 Rule 17 守卫；本轮 wide 门前先停了面板）。
+2026-11-20 Orca 会话 `c8fc876f`（本小节原位滚动；上一轮 `9299e610`／`57896c64`）：**export 契约（§6.1）不变**；本轮 ccmem 代码在 main、**未推**（日志轮转 + vec_backfill 退避，见 §1.0000000），daemon 仍跑旧代码（重启才带退避），真实日志已轮转（616 MB → 0 B，留 5 MB 尾巴）；#395 hook 只到设计（Orca `.superpowers/sdd/plan/design-395-hooks.md`）。Orca 本轮修 #401/#402/#387/#393/#385，ccloop #369 tick 已推并 repin；A3 付费真跑因本机 claude 二进制被安全软件 SIGKILL、requirement 限额被两次失败结算耗尽而放弃（scratch 组已归档）。推送与远端一律 `/usr/bin/git ls-remote` 现测。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑（面板重启也会让在跑的门撞 Rule 17 守卫；本轮 wide 门前先停了面板）。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

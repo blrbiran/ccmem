@@ -15,7 +15,9 @@ const { cmdAdminDaemon, rotateDaemonLog } = await import('../../scripts/lib/admi
 const { openDb } = await import('../../scripts/lib/db.mjs');
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const NODE = '/usr/local/bin/node';
+// Issue 420: the binary that runs this suite is the binary the child CLI must run, whatever path the
+// checkout lives at or which node is first on PATH.
+const NODE = process.execPath;
 const CLI = path.join(ROOT, 'scripts/cli.mjs');
 const LOG_PATH = path.join(dataRoot, 'daemon.err.log');
 const MiB = 1024 * 1024;

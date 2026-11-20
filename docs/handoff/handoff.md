@@ -64,6 +64,17 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
+### 1.00000000 2026-11-20（Orca 会话 `48bc4690`）—— #414 查询转义、#415 probe 改 temp、#420 测试 node；daemon 已重启（退避生效）
+
+- **代码在 main 并已推**（人 `allow-push`）：
+  - **#414**：`sanitizeFtsQuery` 不再把 prompt 原样交给 `MATCH`——token 去掉唯一能破坏引号字面量的 `"`、去掉首尾分隔标点，再逐 token 包成引号字面量（`+ - ^ : ( ) *` 都成字面量）；纯标点丢弃，内部标点保留（`C++`、`a:b`、`-bar` 仍指名）。`legacySubstringSearch` 改用新导出的 `ftsTokens`（不带引号）。判据 `tests/unit/fts-query-syntax.test.mjs` 三条，先红在 `fts5: syntax error near "+"`。
+  - **#415**：可用性探针改在 `temp.ccmem_fts_probe` 建/删，主库 schema 不再每次短进程 +2；旧版本崩溃留下的主库 probe 表仍在缓存冷时清掉。判据两条（`fts-probe-temp`／`fts-probe-legacy`），前者用 cache-cold 的模块实例量 `PRAGMA schema_version`。**其余优化（FTS 重复存 content、无 optimize）未做**。
+  - **#420**：rotate-log 测试的子进程改用 `process.execPath`。
+  - 全量 `npm test` **1000/1000**。
+- **daemon 已重启**（人本轮「这一轮可以做」）：重启前 `sqlite3 .backup` 到 `global.db.bak.1795183564694`（integrity ok）；plist 备份 `com.ccmem.daemon.plist.bak.20261120`。`admin daemon restart` 报 **G1 未重写 plist**（plist 有 `CCMEM_CONFIG_PATH`、会话 shell 没有）——plist 字节未动，只换了进程（pid 以 `admin daemon status` 现测，`running=vec_backfill`）。**行为判别**：`config_kv` 出现 `vec_backfill.consecutive_failures=1` 与 `next_attempt_at` ⇒ 429 退避已在跑。`status` 仍报 `plist=drifted`（只差 `CCMEM_CONFIG_PATH`，预期）。
+- **未做**：**#413**（原生 ollama embedding provider；`openai`＋`openai_base_url`＋dummy key＋`openai_dim` 的兼容层仍可用，是否做归人裁）；**#416**（Codex 接入与省 context：其 P0 度量要先在该机器的 Codex `/hooks` 里人工批准一次，测试者自己未跑；依赖 #414/#415，两者已修）。
+- **给下一轮**：若裁 #413，照 `scripts/lib/embedding/{jina,openai}.mjs` 的 provider 形状加一个 `/api/embed` 适配（无 key、维数取自响应），`embedding.provider` 增加 `ollama`。若做 #416 的 P1（去重/新颖度门），先读 `recent_injections` 的现有字段，别新造探针。
+
 ### 1.0000000 2026-11-20（Orca 会话 `c8fc876f`）—— 日志轮转、vec_backfill 退避（#396）、stop hook 单次解析的设计；**代码在 main、未推；daemon 未重启**
 
 - **日志轮转（已生效，无需重启）**：新 CLI `ccmem admin daemon rotate-log [--keep-bytes N]`（默认保留 5 MiB）：把日志尾部复制到 `<path>.<epoch-ms>.tail`（0600、`wx` 不覆盖），再**原地 truncate**（不 rename——launchd 与 daemon 持有该 fd）；缺文件 exit 1。`admin daemon install` 在日志 >10 MiB 时打一行大小提示，**不自动轮转**（日志是人的数据）。**本轮已对真实日志执行一次**：616,109,244 B → 0 B，保留 5.0 MB 到 `daemon.err.log.1795142086727.tail`。
@@ -321,7 +332,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-20 Orca 会话 `c8fc876f`（本小节原位滚动；上一轮 `9299e610`／`57896c64`）：**export 契约（§6.1）不变**；本轮 ccmem 代码在 main、**未推**（日志轮转 + vec_backfill 退避，见 §1.0000000），daemon 仍跑旧代码（重启才带退避），真实日志已轮转（616 MB → 0 B，留 5 MB 尾巴）；#395 hook 只到设计（Orca `.superpowers/sdd/plan/design-395-hooks.md`）。Orca 本轮修 #401/#402/#387/#393/#385，ccloop #369 tick 已推并 repin；A3 付费真跑因本机 claude 二进制被安全软件 SIGKILL、requirement 限额被两次失败结算耗尽而放弃（scratch 组已归档）。推送与远端一律 `/usr/bin/git ls-remote` 现测。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试面板显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑（面板重启也会让在跑的门撞 Rule 17 守卫；本轮 wide 门前先停了面板）。
+2026-11-20 晚 Orca 会话 `48bc4690`（本小节原位滚动；上一行 `c8fc876f`／`9299e610`／`57896c64`）：**export 契约（§6.1）不变**；本仓 #414/#415/#420 已修并推，daemon 已重启（退避生效，plist 未重写）；#413（ollama provider）未做、#416 待测试者先跑 P0 度量。Orca 侧本轮：syncskill #403–#411 九条、Orca #419（criteria-review judge 终态＋brief 一行）、#401 剩余分支、#417（按人裁明确「Orca 派出的 agent 不使用 ccmem」，status 改 warn＋README 写清），并出了 `work.memory`＋ccmem 只读查询的设计稿（Orca `docs/superpowers/specs/2026-11-20-memory-in-runs-and-read-api-design.md`，待人裁 Q1–Q4）。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

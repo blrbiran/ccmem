@@ -33,7 +33,7 @@ export function pendingEmbeddings(db, sig) {
  * permanently true and the chain would never continue. daemon/main.mjs's
  * startup guard correctly counts both, because nothing is running there.
  */
-function enqueueContinuation(db) {
+function enqueueContinuation(db, delayMs = 0, now = Date.now()) {
   const alreadyQueued = Number(db.prepare(
     `SELECT COUNT(*) AS n
      FROM tasks
@@ -44,12 +44,60 @@ function enqueueContinuation(db) {
     return false;
   }
 
-  const now = Date.now();
   db.prepare(
     `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
      VALUES ('vec_backfill', '{}', ?, ?, 'queued')`
-  ).run(now, now);
+  ).run(now + Math.max(0, delayMs), now);
   return true;
+}
+
+// A 429 (or any other repeated provider failure) used to queue the next
+// continuation for immediately, so an account out of credits retried every few
+// seconds forever and wrote one daemon.err.log line per attempt. config_kv is
+// where this task's other state already lives (the circuit breaker uses it),
+// so the streak and the next attempt ride there rather than in a new table.
+const BACKOFF_BASE_MS = 30_000;
+const BACKOFF_CAP_MS = 60 * 60 * 1000;
+// One line per window, not per failure: the first, then every tenth. A 429
+// loop that has settled into the cap stays quiet between these.
+const BACKOFF_LOG_EVERY = 10;
+const BACKOFF_FAILURES_KEY = 'vec_backfill.consecutive_failures';
+const BACKOFF_NEXT_ATTEMPT_KEY = 'vec_backfill.next_attempt_at';
+
+function readBackoffInt(db, key) {
+  const raw = db.prepare(`SELECT value FROM config_kv WHERE key = ?`).get(key)?.value ?? null;
+  if (raw == null) {
+    return null;
+  }
+
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function resetBackoff(db) {
+  db.prepare(`DELETE FROM config_kv WHERE key IN (?, ?)`).run(BACKOFF_FAILURES_KEY, BACKOFF_NEXT_ATTEMPT_KEY);
+}
+
+function recordFailureBackoff(db, now = Date.now()) {
+  const failures = (readBackoffInt(db, BACKOFF_FAILURES_KEY) ?? 0) + 1;
+  // 2 ** 20 is already far past the cap; clamping the exponent keeps a long
+  // outage from turning into Infinity before the cap min() sees it.
+  const delayMs = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * (2 ** Math.min(failures - 1, 20)));
+  const nextAttemptAt = now + delayMs;
+  const write = db.prepare(
+    `INSERT INTO config_kv (key, value, set_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+  );
+  write.run(BACKOFF_FAILURES_KEY, String(failures), now);
+  write.run(BACKOFF_NEXT_ATTEMPT_KEY, String(nextAttemptAt), now);
+
+  return {
+    failures,
+    delayMs,
+    nextAttemptAt,
+    shouldLog: failures === 1 || failures % BACKOFF_LOG_EVERY === 0
+  };
 }
 
 /**
@@ -141,6 +189,10 @@ export async function runVecBackfill(db, _task = null) {
       throw error;
     }
 
+    // A completed batch proves the provider is working, so the next failure is
+    // the first of a new streak and gets the short delay again.
+    resetBackoff(db);
+
     const durationMs = Date.now() - startedAt;
     const remaining = pendingEmbeddings(db, sig);
     if (remaining > 0) {
@@ -165,10 +217,18 @@ export async function runVecBackfill(db, _task = null) {
     // only trace: daemon.err.log stays silent, `semantic status` shows a number
     // that simply stops moving, and a single failure is below the circuit
     // breaker's threshold so nothing else notices either.
-    const chained = enqueueContinuation(db);
-    process.stderr.write(
-      `ccmem: vec_backfill failed: ${message} — ${chained ? 'continuation queued' : 'continuation already queued'}\n`
-    );
+    //
+    // Repeated failures are different: a 429 only repeats as fast as this path
+    // reschedules it, so the delay doubles per consecutive failure (30s → 1h)
+    // and the stderr line is written once per backoff window, not per attempt.
+    const now = Date.now();
+    const backoff = recordFailureBackoff(db, now);
+    const chained = enqueueContinuation(db, backoff.delayMs, now);
+    if (backoff.shouldLog) {
+      process.stderr.write(
+        `ccmem: vec_backfill failed (attempt ${backoff.failures}): ${message} — next attempt in ${Math.round(backoff.delayMs / 1000)}s, ${chained ? 'continuation queued' : 'continuation already queued'}\n`
+      );
+    }
     throw error;
   }
 }

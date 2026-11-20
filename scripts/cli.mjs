@@ -11,7 +11,7 @@ import { cmdAuditShow } from './lib/cmd/audit.mjs';
 import { cmdExport } from './lib/cmd/export.mjs';
 import { cmdForget } from './lib/cmd/forget.mjs';
 import { cmdImport } from './lib/cmd/import.mjs';
-import { cmdList } from './lib/cmd/list.mjs';
+import { cmdList, cmdListJson } from './lib/cmd/list.mjs';
 import { cmdMode } from './lib/cmd/mode.mjs';
 import { cmdOrcaCorrectionUpsert, cmdOrcaCorrectionWithdraw, OrcaCorrectionInputError, parseOrcaCorrectionInput } from './lib/cmd/orca-correction.mjs';
 import { cmdPin } from './lib/cmd/pin.mjs';
@@ -43,7 +43,7 @@ function printHelp() {
     'Usage: ccmem <command> [options]\n\n' +
     'Commands:\n' +
     '  save <content> [--global]\n' +
-    '  list [query] [--limit N] [--quarantined] [--never-injected] [--days N] [--score]\n' +
+    '  list [query] [--limit N] [--offset N] [--json] [--scope project|global|all] [--quarantined] [--never-injected] [--days N] [--score]\n' +
     '  show <id>\n' +
     '  forget <id>             archive a memory: never retrieved or injected again; audited\n' +
     '  pin <id> [--remove]     pin a memory so decay never takes it\n' +
@@ -316,6 +316,24 @@ function positionalArgs(optionFlagsWithValue = []) {
   }
 
   return args.filter((arg, idx) => !arg.startsWith('--') && !skip.has(idx));
+}
+
+/** The read-contract columns of one memory, without the embedding and internal bookkeeping `SELECT *` carries. */
+function pickReadRow(row) {
+  return {
+    id: row.id,
+    scope: row.scope,
+    project_key: row.project_key,
+    type: row.type,
+    content: row.content,
+    pinned: row.pinned,
+    source: row.source,
+    trust_score: row.trust_score,
+    tags: row.tags,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    score: null
+  };
 }
 
 function createStdinLineReader() {
@@ -624,65 +642,108 @@ try {
     const result = await cmdSave(getDb(), { cwd: process.cwd(), content, scope });
     process.stdout.write(`ccmem: saved memory #${result.id} (${result.scope} ${result.type})\n`);
   } else if (verb === 'list') {
-    const query = positionalArgs(['--limit', '--days']).join(' ') || null;
+    const query = positionalArgs(['--limit', '--days', '--offset', '--scope']).join(' ') || null;
     const showScore = args.includes('--score');
     const neverInjected = args.includes('--never-injected');
-    const rows = await cmdList(getDb(), {
-      cwd: process.cwd(),
-      limit: Number(getOptionValue('--limit') ?? 20),
-      quarantined: args.includes('--quarantined'),
-      neverInjected,
-      days: Number(getOptionValue('--days') ?? 30),
-      query: neverInjected ? null : query
-    });
 
-    if (!rows.length) {
-      process.stdout.write(
-        args.includes('--quarantined')
-          ? 'ccmem: no quarantined memories\n'
-          : neverInjected
-            ? 'ccmem: no never-injected memories\n'
-            : 'ccmem: no memories\n'
-      );
-    } else if (args.includes('--quarantined')) {
-      for (const row of rows) {
-        process.stdout.write(
-          `[m${row.id}] ${row.type} | ${row.scope} | ${row.source} trust=${Number(row.trust_score ?? 0).toFixed(2)} quarantined=${formatAgeDays(row.quarantined_at)} reason=${row.reason ?? 'unknown'}\n`
-        );
+    if (args.includes('--json')) {
+      if (args.includes('--quarantined') || neverInjected) {
+        process.stderr.write('ccmem: --json cannot be combined with --quarantined or --never-injected\n');
+        process.exitCode = 64;
+      } else {
+        const limit = Number(getOptionValue('--limit') ?? 20);
+        const offset = Number(getOptionValue('--offset') ?? 0);
+        const scope = getOptionValue('--scope') ?? 'project';
+        if (!Number.isInteger(limit) || limit < 0
+          || !Number.isInteger(offset) || offset < 0
+          || !['project', 'global', 'all'].includes(scope)
+          || (query && scope !== 'project')) {
+          process.stderr.write('ccmem: --json wants --limit/--offset as non-negative integers and, without a query, --scope project|global|all\n');
+          process.exitCode = 64;
+        } else {
+          const payload = await cmdListJson(getDb(), { cwd: process.cwd(), limit, offset, query, scope });
+          process.stdout.write(`${JSON.stringify(payload)}\n`);
+        }
       }
     } else {
-      for (const row of rows) {
-        const scoreSuffix = showScore && row.score
-          ? ` | score fused=${Number(row.score.fused ?? 0).toFixed(3)} fts=${Number(row.score.fts ?? 0).toFixed(3)} jaccard=${Number(row.score.jaccard ?? 0).toFixed(3)} semantic=${Number(row.score.semantic ?? 0).toFixed(3)}`
-          : '';
-        const neverSuffix = neverInjected
-          ? ` | trust=${Number(row.trust_score ?? 0).toFixed(2)}`
-          : '';
-        const originSuffix = row.origin_agent ? ` | origin_agent=${row.origin_agent}` : '';
-        process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}${neverSuffix}${scoreSuffix}${originSuffix}\n`);
+      const rows = await cmdList(getDb(), {
+        cwd: process.cwd(),
+        limit: Number(getOptionValue('--limit') ?? 20),
+        quarantined: args.includes('--quarantined'),
+        neverInjected,
+        days: Number(getOptionValue('--days') ?? 30),
+        query: neverInjected ? null : query
+      });
+
+      if (!rows.length) {
+        process.stdout.write(
+          args.includes('--quarantined')
+            ? 'ccmem: no quarantined memories\n'
+            : neverInjected
+              ? 'ccmem: no never-injected memories\n'
+              : 'ccmem: no memories\n'
+        );
+      } else if (args.includes('--quarantined')) {
+        for (const row of rows) {
+          process.stdout.write(
+            `[m${row.id}] ${row.type} | ${row.scope} | ${row.source} trust=${Number(row.trust_score ?? 0).toFixed(2)} quarantined=${formatAgeDays(row.quarantined_at)} reason=${row.reason ?? 'unknown'}\n`
+          );
+        }
+      } else {
+        for (const row of rows) {
+          const scoreSuffix = showScore && row.score
+            ? ` | score fused=${Number(row.score.fused ?? 0).toFixed(3)} fts=${Number(row.score.fts ?? 0).toFixed(3)} jaccard=${Number(row.score.jaccard ?? 0).toFixed(3)} semantic=${Number(row.score.semantic ?? 0).toFixed(3)}`
+            : '';
+          const neverSuffix = neverInjected
+            ? ` | trust=${Number(row.trust_score ?? 0).toFixed(2)}`
+            : '';
+          const originSuffix = row.origin_agent ? ` | origin_agent=${row.origin_agent}` : '';
+          process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope} ${row.content}${neverSuffix}${scoreSuffix}${originSuffix}\n`);
+        }
       }
     }
   } else if (verb === 'show') {
     const id = positionalArgs()[0];
-    const row = await cmdShow(getDb(), { id });
-    if (!row) {
-      process.stderr.write('ccmem: memory not found\n');
-      process.exitCode = 2;
+    if (args.includes('--json')) {
+      // Read-only: do not go through cmdShow, whose tier15 maintenance writes to the database.
+      const projectKey = resolveProjectKey(process.cwd());
+      const memId = parseMemoryId(id);
+      const row = memId == null ? null : getDb().prepare(
+        `SELECT id, scope, project_key, type, content, pinned, source, trust_score, tags,
+                created_at, updated_at, status, decay_status
+         FROM memories
+         WHERE id = ?`
+      ).get(memId);
+      const visible = row
+        && row.status === 'active'
+        && ['active', 'probation'].includes(row.decay_status)
+        && (row.scope === 'global' || (row.scope === 'project' && row.project_key === projectKey));
+      process.stdout.write(`${JSON.stringify({
+        version: 1,
+        project_key: projectKey,
+        memory: visible ? pickReadRow(row) : null
+      })}\n`);
     } else {
-      process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope}${row.project_key ? `:${row.project_key}` : ''}\n`);
-      process.stdout.write(`${row.content}\n`);
-      process.stdout.write(`trust=${Number(row.trust_score ?? 0).toFixed(2)} status=${row.status} decay=${row.decay_status}\n`);
-      if (row.origin_agent) {
-        process.stdout.write(`origin_agent: ${row.origin_agent}\n`);
-      }
-      if (row.injection_history?.length) {
-        process.stdout.write('\nRecent injections (last 14d):\n');
-        for (const item of row.injection_history) {
-          process.stdout.write(
-            `  ${formatAgeDays(item.created_at)}  fts=${Number(item.score?.fts ?? 0).toFixed(3)} jac=${Number(item.score?.jac ?? 0).toFixed(3)} cos=${Number(item.score?.cos ?? 0).toFixed(3)} fused=${Number(item.score?.f ?? 0).toFixed(3)}\n`
-          );
+      const row = await cmdShow(getDb(), { id });
+      if (!row) {
+        process.stderr.write('ccmem: memory not found\n');
+        process.exitCode = 2;
+      } else {
+        process.stdout.write(`[m${row.id}] ${row.type} | ${row.scope}${row.project_key ? `:${row.project_key}` : ''}\n`);
+        process.stdout.write(`${row.content}\n`);
+        process.stdout.write(`trust=${Number(row.trust_score ?? 0).toFixed(2)} status=${row.status} decay=${row.decay_status}\n`);
+        if (row.origin_agent) {
+          process.stdout.write(`origin_agent: ${row.origin_agent}\n`);
         }
-        process.stdout.write(`  (${row.injection_history.length} times in 14d)\n`);
+        if (row.injection_history?.length) {
+          process.stdout.write('\nRecent injections (last 14d):\n');
+          for (const item of row.injection_history) {
+            process.stdout.write(
+              `  ${formatAgeDays(item.created_at)}  fts=${Number(item.score?.fts ?? 0).toFixed(3)} jac=${Number(item.score?.jac ?? 0).toFixed(3)} cos=${Number(item.score?.cos ?? 0).toFixed(3)} fused=${Number(item.score?.f ?? 0).toFixed(3)}\n`
+            );
+          }
+          process.stdout.write(`  (${row.injection_history.length} times in 14d)\n`);
+        }
       }
     }
   } else if (verb === 'forget') {

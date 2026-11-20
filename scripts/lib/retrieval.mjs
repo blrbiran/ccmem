@@ -287,7 +287,24 @@ function writeQueryEmbeddingCache(db, promptText, sig, queryVec) {
   );
 }
 
-function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery) {
+/** The agent path ranks pinned first; the JSON read API ranks fused first so a page is a slice of the score order. */
+function compareScored(fusedFirst) {
+  if (fusedFirst) {
+    return (a, b) =>
+      (b.fused - a.fused)
+      || (Number(b.pinned ?? 0) - Number(a.pinned ?? 0))
+      || (Number(b.trust_score ?? 0) - Number(a.trust_score ?? 0))
+      || (Number(b.last_touched_at ?? 0) - Number(a.last_touched_at ?? 0));
+  }
+
+  return (a, b) =>
+    (Number(b.pinned ?? 0) - Number(a.pinned ?? 0))
+    || (b.fused - a.fused)
+    || (Number(b.trust_score ?? 0) - Number(a.trust_score ?? 0))
+    || (Number(b.last_touched_at ?? 0) - Number(a.last_touched_at ?? 0));
+}
+
+function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery, fusedFirst = false) {
   const disableScopeIsolation = config?.eval?.disable_scope_isolation === true;
   let ftsRows = useFts && ftsQuery ? ftsSearch(db, ftsQuery, projectKey, limit * 3, disableScopeIsolation) : [];
   let candidateRows = ftsRows;
@@ -307,13 +324,18 @@ function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit
 
   if (!candidateRows.length) {
     const fallbackRows = legacySubstringSearch(db, promptText, projectKey, limit, disableScopeIsolation);
+    const fallbackScored = fallbackRows.map((row) => ({ ...row, fused: Number(row.tokenHits ?? 0) }));
+    if (fusedFirst) {
+      fallbackScored.sort(compareScored(true));
+    }
     return {
-      rows: fallbackRows.map((row) => renderRow(row, {
+      rows: fallbackScored.map((row) => renderRow(row, {
         fused: Number(row.tokenHits ?? 0),
         fts: 0,
         jaccard: Number(row.tokenHits ?? 0),
         semantic: 0
       })),
+      total: fallbackRows.length,
       timing: null
     };
   }
@@ -333,12 +355,7 @@ function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit
     };
   });
 
-  scored.sort((a, b) =>
-    (Number(b.pinned ?? 0) - Number(a.pinned ?? 0))
-    || (b.fused - a.fused)
-    || (Number(b.trust_score ?? 0) - Number(a.trust_score ?? 0))
-    || (Number(b.last_touched_at ?? 0) - Number(a.last_touched_at ?? 0))
-  );
+  scored.sort(compareScored(fusedFirst));
 
   return {
     rows: scored.slice(0, limit).map((row) => renderRow(row, {
@@ -347,21 +364,28 @@ function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit
       jaccard: row.jaccardScore,
       semantic: 0
     })),
+    total: scored.length,
     timing: null
   };
 }
 
-export async function retrieveMemories(db, prompt, projectKey, config) {
+export async function retrieveMemories(db, prompt, projectKey, config, options = {}) {
   // Computed once and shared by every query below (including the copy of the
   // lexical block further down and the vector-candidate query) — this is the
   // path the eval harness actually runs, so lexicalRetrieve's own copy of
   // this boolean does not reach it.
   const disableScopeIsolation = config?.eval?.disable_scope_isolation === true;
-  const limit = Number(config?.inject?.max_per_prompt ?? 6);
+  const requestedLimit = Number(options?.limit);
+  const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+    ? requestedLimit
+    : Number(config?.inject?.max_per_prompt ?? 6);
+  // The JSON read API asks for fused-first so that --offset is a slice of the
+  // score order; the agent path keeps pinned-first.
+  const fusedFirst = options?.order === 'fused';
   const promptText = String(prompt ?? '').slice(0, 2000);
   const promptTokenList = tokenize(promptText);
   if (!promptTokenList.length) {
-    return { rows: [], queryVec: null, cosineContribution: null, timing: null };
+    return { rows: [], total: 0, queryVec: null, cosineContribution: null, timing: null };
   }
 
   const promptTokens = new Set(promptTokenList);
@@ -393,9 +417,10 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
   }
 
   if (!useEmbedding) {
-    const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery);
+    const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery, fusedFirst);
     return {
       rows: lexical.rows,
+      total: lexical.total,
       queryVec: null,
       cosineContribution: null,
       timing: lexical.timing,
@@ -417,9 +442,10 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
       embedMs = Date.now() - tEmbed;
       recordEmbedFailure(db, config);
       process.stderr.write(`ccmem: embedding API failed (${error.message}), falling back to lexical retrieval\n`);
-      const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery);
+      const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery, fusedFirst);
       return {
         rows: lexical.rows,
+        total: lexical.total,
         queryVec: null,
         cosineContribution: null,
         retrievalPath: 'B-fail',
@@ -500,12 +526,7 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
     };
   });
 
-  scored.sort((a, b) =>
-    (Number(b.pinned ?? 0) - Number(a.pinned ?? 0))
-    || (b.fused - a.fused)
-    || (Number(b.trust_score ?? 0) - Number(a.trust_score ?? 0))
-    || (Number(b.last_touched_at ?? 0) - Number(a.last_touched_at ?? 0))
-  );
+  scored.sort(compareScored(fusedFirst));
 
   const selected = scored.slice(0, limit);
   const cosineContribution = selected.length
@@ -519,6 +540,7 @@ export async function retrieveMemories(db, prompt, projectKey, config) {
       jaccard: row.jaccardScore,
       semantic: row.cosineScore
     })),
+    total: scored.length,
     queryVec,
     // The signature queryVec was produced under. Returned alongside it because
     // any consumer that cosines this vector against stored ones must filter by

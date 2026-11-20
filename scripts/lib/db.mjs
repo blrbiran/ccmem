@@ -209,6 +209,27 @@ export function hasUsableFts(db) {
   return supportsFts(db) && tableExists(db, 'memories_fts');
 }
 
+/**
+ * #415 P3: FTS5 leaves segments and tombstones behind as rows are updated and
+ * deleted; `optimize` merges them. The daily maintenance runs this once, and
+ * reports the size change so the audit trail can show whether it paid off.
+ * The measurement uses `dbstat`, which is optional in some builds: when it is
+ * unavailable the optimize still runs and both sizes read 0.
+ */
+export function optimizeFts(db) {
+  if (!tableExists(db, 'memories_fts')) return { optimized: false, bytesBefore: 0, bytesAfter: 0 };
+  const size = () => {
+    try {
+      return Number(db.prepare("SELECT COALESCE(SUM(pgsize), 0) AS n FROM dbstat WHERE name LIKE 'memories_fts%'").get()?.n ?? 0);
+    } catch {
+      return 0;
+    }
+  };
+  const bytesBefore = size();
+  db.exec("INSERT INTO memories_fts(memories_fts) VALUES('optimize')");
+  return { optimized: true, bytesBefore, bytesAfter: size() };
+}
+
 function runInTransaction(db, work) {
   // IMMEDIATE，不是裸 BEGIN：这里的 work 全是写（migration 与 FTS 对账）。deferred 事务会
   // 先读后写，别的连接一旦在中间提交，SQLite 就判读快照失效、返回 SQLITE_BUSY_SNAPSHOT，

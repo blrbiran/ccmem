@@ -2,7 +2,7 @@ import { loadConfig } from '../../lib/config.mjs';
 import { writeAudit } from '../../lib/audit.mjs';
 import { writeMetricsDailyRollup } from '../../lib/metrics-rollup.mjs';
 import { revalidationAuditCore } from '../../lib/revalidation.mjs';
-import { pruneMigrationBackups } from '../../lib/db.mjs';
+import { optimizeFts, pruneMigrationBackups } from '../../lib/db.mjs';
 import { monthlyMetaLeaseKey } from '../loop.mjs';
 import { RAN_BY, markLeaseComplete, tryClaimLease } from '../../lib/task-runs.mjs';
 import { runVecBackfill } from './vec-backfill.mjs';
@@ -215,6 +215,19 @@ export async function runDailyMaintenance(db, task) {
          WHERE content_hash = context_snapshots.content_hash
        )`
     ).run();
+
+    // #415 P3: merge FTS5 segments after the day's deletes/updates. Only a
+    // shrink is audited, so a stable index adds no daily row to the trail.
+    try {
+      const fts = optimizeFts(db);
+      if (fts.optimized && fts.bytesAfter < fts.bytesBefore) {
+        writeAudit(db, 'fts_optimized', null, fts);
+      }
+    } catch (error) {
+      writeAudit(db, 'fts_optimize_error', null, {
+        error: String(error?.message ?? error).slice(0, 200)
+      });
+    }
 
     pruneMigrationBackups();
     markLeaseComplete(db, 'daily_maintenance', leaseKey);

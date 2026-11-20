@@ -64,6 +64,16 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
+### 1.000000000 2026-11-20（Orca 会话 `cc03e171`）—— 原生 ollama provider（#413）、只读 JSON 读路径（#418）、#416 度量与两处省 context 改动
+
+- **代码在 main，已推**（人本轮 `allow-push`）：`3c8eac8`（ollama provider）、`35bd82c`（#413 review：观测维数胜配置、失败回滚 `active_provider`、status 重算 pending、latency probe 标签）、`a489916`（#418 `list/show --json`）、`788a450`（magpie 度量修正）、`301e37f`（渲染去掉 score 后缀）。全量 `npm test` **1014/1014**（2026-11-20）。
+- **#413**：`embedding.provider: "ollama"`，键 `ollama_base_url`（默认 `http://localhost:11434`）、`ollama_model`（**无默认，必须给**，不在代码里 pin 模型）、`ollama_dim`（只是猜测，首次 `/api/embed` 后以响应维数为准）。`admin semantic on --provider ollama` 可用；`semantic status` 报 `reachable/health`；未装模型时报 `ollama pull <model>`；失败时回滚 `active_provider`。**本机 Ollama 当前 0 个模型（`ollama list` 空，`bge-m3` 不在）**，因此没有切换真实配置：`~/.claude/ccmem/config.json` 仍是 `provider=openai`＋真实 key。要用：`ollama pull bge-m3`，改 config 的 `provider/ollama_model/ollama_dim`，重启 daemon；签名会从 `openai:…` 变 `ollama:bge-m3:1024`，backfill 会重嵌。
+- **#418**：`ccmem list [query] --json [--limit --offset --scope]` 与 `show <id> --json`；返回 export 行形状＋`score`，不跑 tier15 写维护；文本输出逐字未变。Orca 面板每次 list/search/get 只起一个 ccmem 进程，按 fused 排序；旧 ccmem（不认 `--json`）回退两次 export。
+- **#416 度量（magpie 请求存档，2026-11-20 快照）**：存档只有 11-11／11-20 两天且在按 1 GiB 上限淘汰；claude×dfmodel／gpt-6-sol 的 ccmem 中位 **~1.2k tok / 0.4–0.6% prompt**，真实注入体（routing files 项）中位 **1214 tok**、最大 2715；**2367 对相邻请求里 `ccmem@diff=YES` 为 0**（注入从不打断缓存前缀）；`recent_injections` 相邻复用 16.1%、会话内复用 32.3%。**旧读数 opus 7.8% 是量具 bug**：`## ccmem context` 没有闭合 reminder，`ccmemSegment` 把后续用户正文算成 ccmem；`788a450` 已改为读指令止于首个空行、其余块 16 KiB 封顶。codex 仍 0 标记（存档当时未开，无法证实）。
+- **省 context 的结论**：真实成本很小，ref+按需取回（P2）与摘要优先（P3）**不值得做**；去重门最多省 32% 槽位（~几百 tok），未实现。已做：渲染不再把 `score fused/fts/…` 给模型（`recent_injections` 已存分数）；曾试「retrieved 去重 stable」，因既有判据把「唯一命中也是 pinned」当 retrieved 块而回退，留作单独改动。
+- **daemon 未因本轮代码重启**：改了 provider/status/latency probe（daemon 侧），但配置未切到 ollama，所以不急着重启；下次重启前照 Rule 13 备份。
+- **给下一轮**：#416 的 P0（Codex 真接入与 A/B）仍需测试者在自己的 Codex `/hooks` 批准一次；`#416` 的 P1 去重门若要做的先读 `recent_injections` 现成字段；#413 的真实 Ollama 链路要先 `ollama pull bge-m3`。
+
 ### 1.00000000 2026-11-20（Orca 会话 `48bc4690`）—— #414 查询转义、#415 probe 改 temp、#420 测试 node；daemon 已重启（退避生效）
 
 - **代码在 main 并已推**（人 `allow-push`）：
@@ -333,7 +343,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-20 晚 Orca 会话 `48bc4690`（本小节原位滚动；上一行 `c8fc876f`／`9299e610`／`57896c64`）：**export 契约（§6.1）不变**；本仓 #414/#415/#420 已修并推，daemon 已重启（退避生效，plist 未重写）；#413（ollama provider）未做、#416 待测试者先跑 P0 度量。Orca 侧本轮：syncskill #403–#411 九条、Orca #419（criteria-review judge 终态＋brief 一行）、#401 剩余分支、#417（按人裁明确「Orca 派出的 agent 不使用 ccmem」，status 改 warn＋README 写清），并出了 `work.memory`＋ccmem 只读查询的设计稿（Orca `docs/superpowers/specs/2026-11-20-memory-in-runs-and-read-api-design.md`，待人裁 Q1–Q4）。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑。
+2026-11-20 深夜 Orca 会话 `cc03e171`（本小节原位滚动；上一行 `48bc4690`）：**export 契约（§6.1）不变**。本仓新增 `list/show --json` 只读读路径（Orca 面板每次一个进程，不再两次全量 export），ollama 原生 provider（本机未装模型、未切配置）；#416 实测 ccmem 只占 prompt 0.4–1.3%、缓存前缀 0/2367 次被打断，修了 magpie 量具过捕。Orca 侧本轮：syncskill #421/#422、Orca #417/#418 设计定稿（bundle 方向）、#419 派生组生命周期、#366 `orca gc`＋`--disk`（均上本地 main，待推）。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

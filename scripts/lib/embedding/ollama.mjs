@@ -5,6 +5,7 @@ let baseUrl = 'http://localhost:11434';
 let modelId = null;
 let dim = 0;
 let probedDim = 0;
+let probedKey = null;
 let timeoutMs = 30000;
 
 function configFrom(override = null) {
@@ -89,11 +90,18 @@ export const ollamaEmbedding = {
 
   applyConfig(override = null) {
     const cfg = configFrom(override);
+    const key = `${cfg.baseUrl}\u0000${cfg.modelId ?? ''}`;
+    // A different endpoint or model is a different embedding space: a dimension
+    // observed for the old pair must not survive.
+    if (key !== probedKey) {
+      probedKey = key;
+      probedDim = 0;
+    }
     baseUrl = cfg.baseUrl;
     modelId = cfg.modelId;
     // A configured dim is only a starting guess. Once the provider answered,
     // keep that answer across later applyConfig calls (embed re-applies config).
-    dim = cfg.dim || probedDim;
+    dim = probedDim || cfg.dim;
     timeoutMs = cfg.timeoutMs;
     this.modelId = modelId;
     this.dim = dim;
@@ -120,7 +128,7 @@ export const ollamaEmbedding = {
     this.applyConfig(override);
     requireModel();
     await this.probe(override);
-    if (!dim) {
+    if (!probedDim) {
       const [probe] = await embedBatch(['dimension probe']);
       if (!probe || probe.length === 0) {
         throw new Error('Ollama /api/embed returned an empty embedding');
@@ -158,6 +166,7 @@ export const ollamaEmbedding = {
     modelId = null;
     dim = 0;
     probedDim = 0;
+    probedKey = null;
     timeoutMs = 30000;
   }
 };

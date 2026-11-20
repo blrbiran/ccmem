@@ -90,6 +90,7 @@ export async function cmdAdminSemantic(db, { verb, provider: requestedProvider =
     // No --provider means "enable what the config file declares", so the override is
     // deleted rather than re-pinned. An explicit --provider is a deliberate runtime
     // override and still persists.
+    const priorProvider = db.prepare("SELECT value FROM config_kv WHERE key = 'embedding.active_provider'").get()?.value ?? null;
     if (requestedProvider) {
       setConfigValue(db, 'embedding.active_provider', requestedProvider);
     } else {
@@ -98,7 +99,19 @@ export async function cmdAdminSemantic(db, { verb, provider: requestedProvider =
 
     _resetProviderCache();
     const provider = getProvider(providerCfg);
-    await provider.load(providerCfg);
+    try {
+      await provider.load(providerCfg);
+    } catch (error) {
+      // Issue #413 review: a provider that cannot load (missing model, daemon down) must
+      // not leave the store pinned to it. Restore whatever the file/kv said before.
+      if (priorProvider === null) {
+        db.prepare(`DELETE FROM config_kv WHERE key = 'embedding.active_provider'`).run();
+      } else {
+        setConfigValue(db, 'embedding.active_provider', priorProvider);
+      }
+      _resetProviderCache();
+      throw error;
+    }
     const newModel = provider.modelId;
 
     // No model-change detector here. v0.13's embedding signature already handles a
@@ -142,6 +155,16 @@ export async function cmdAdminSemantic(db, { verb, provider: requestedProvider =
       } catch (error) {
         state.reachable = false;
         state.health = error instanceof Error ? error.message : String(error);
+      }
+      // semanticState computed `pending` before the provider knew its dimension, so its
+      // signature was null and the answer could not be trusted. Recompute with the
+      // provider that just answered (issue #413 review).
+      if (provider.dim) {
+        state.pending = pendingEmbeddings(
+          db,
+          currentEmbeddingSig(provider, { ...cfg, embedding: { ...cfg.embedding, enabled: true, provider: state.provider } })
+        );
+        state.embedded = embeddedCount(db);
       }
     }
     return state;

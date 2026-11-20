@@ -1,10 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { ollamaEmbedding } from '../../scripts/lib/embedding/ollama.mjs';
 import { currentEmbeddingSig } from '../../scripts/lib/embedding/signature.mjs';
 import { getProvider, _resetProviderCache } from '../../scripts/lib/embedding/provider.mjs';
+
+// getProvider() opens the control DB through readConfigKv. Standalone (outside run-tests.sh)
+// this must not touch the human's real ~/.claude/ccmem.
+process.env.CCMEM_DATA_ROOT ??= mkdtempSync(join(tmpdir(), 'ccmem-ollama-test-'));
 
 function startOllama({ models = ['bge-m3:latest'], embedDim = 4 } = {}) {
   const calls = [];
@@ -62,6 +69,19 @@ test('ollama load probes tags and takes the dimension from the provider', async 
     assert.equal(ollamaEmbedding.dim, 4, 'configured dim is a guess; /api/embed is the truth');
     assert.ok(calls.some((call) => call.url === '/api/tags'));
     assert.ok(calls.some((call) => call.url === '/api/embed'));
+  } finally {
+    server.close();
+  }
+});
+
+test('a configured dim guess is replaced by the provider answer and does not come back', async () => {
+  const { server, baseUrl } = await startOllama({ embedDim: 4 });
+  try {
+    ollamaEmbedding.unload();
+    await ollamaEmbedding.load(cfgFor(baseUrl, { ollama_dim: 1536 }));
+    assert.equal(ollamaEmbedding.dim, 4);
+    ollamaEmbedding.applyConfig(cfgFor(baseUrl, { ollama_dim: 1536 }));
+    assert.equal(ollamaEmbedding.dim, 4, 'applyConfig must not resurrect the configured guess after a probe');
   } finally {
     server.close();
   }

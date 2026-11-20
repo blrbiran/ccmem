@@ -92,7 +92,18 @@ export async function runEmbedLatencyProbe(db, _task, deps = {}) {
   // read from the same config and is correct. Deliberately not importing
   // currentEmbeddingSig to fix the label: a minimal import surface is itself
   // one of this probe's isolation properties.
-  const signature = `${embedding.provider}:${embedding.openai_model ?? 'text-embedding-3-small'}:${embedding.openai_dim ?? 1536}`;
+  const probeProvider = embedding.provider;
+  const probeModel = probeProvider === 'ollama'
+    ? (embedding.ollama_model ?? 'ollama')
+    : probeProvider === 'jina'
+      ? 'jina-embeddings-v3'
+      : (embedding.openai_model ?? 'text-embedding-3-small');
+  const probeDim = probeProvider === 'ollama'
+    ? (embedding.ollama_dim ?? 0)
+    : probeProvider === 'jina'
+      ? 1024
+      : (embedding.openai_dim ?? 1536);
+  const signature = `${probeProvider}:${probeModel}:${probeDim}`;
 
   mkdirSync(getDataRoot(), { recursive: true });
   appendFileSync(

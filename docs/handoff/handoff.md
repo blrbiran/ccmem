@@ -64,6 +64,13 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
+### 1.0000000000 2026-11-21（Orca 会话 `0677fe2a`）—— #413 真实 Ollama 链路、#395 stop 单次解析、#415 P3 optimize；全量 1018/1018
+
+- **#413 已切真实配置**：`ollama pull bge-m3` 完成（467 MB、1024 维）；`~/.claude/ccmem/config.json` 改为 `embedding.provider=ollama`、`ollama_model=bge-m3`、`ollama_dim=1024`，**保留 openai 键**以便回滚；备份 `config.json.bak.1795194943994`、`global.db.bak.1795194943994`（`quick_check ok`）、plist `.bak.1795194943994`。daemon 重启为 pid 60721（重启前显式 unset 了 `ANTHROPIC_*`）。`admin semantic status`：`reachable=true`、`health=http://localhost:11434 serves bge-m3`、`model=bge-m3 dim=1024`；签名从 `openai:…` 变为 `ollama:bge-m3:1024`，vec_backfill 正在重嵌（01:39 时 pending≈15k，每批 50；**未等到 pending=0 就已交接**）。
+- **#395（设计稿第 1 条）**：`scripts/handlers/stop.mjs` 现在只 `parseTranscript` 一次，stats／seq／`inferFromTranscript`／`inferL25FromTranscript`／`recordL25Probe` 都消费同一份 entries；`transcript.mjs` 拆出 `*Of(entries)`，`feedback.mjs` 的 helpers 加可选 `entries` 参数。判据 `tests/integration/stop-hook-parse-once.test.mjs`（注入 reader，断言只读一次且 `session_context` 行不变）；既有 stop／feedback／transcript 43/43。**未做**：设计稿第 2 条按字节尾部截断；prompt_submit 的 embedding 熔断本来就有（`B-circuit`）。
+- **#415 P3**：`optimizeFts(db)` 在 daily maintenance 末尾执行 FTS5 `optimize`，只在索引缩小时写 `fts_optimized` 审计（不缩就不写，避免审计膨胀）。真实库备份实测 **26,136,576 B → 25,870,336 B**（−266 KB），`MATCH 'ccmem'` 20 次均值 **0.34 ms → 0.14 ms**，`quick_check ok`。判据 `tests/integration/fts-optimize.test.mjs`（2）＋`fts-daily-maintenance.test.mjs`（1，变异删掉调用见红）。**P2 external-content 未做**（要迁移用户库，单独裁）。
+- 全量 `npm test` **1018/1018**（2026-11-21，`env -u CCMEM_CONFIG_PATH` 隔离跑）。
+
 ### 1.000000000 2026-11-20（Orca 会话 `cc03e171`）—— 原生 ollama provider（#413）、只读 JSON 读路径（#418）、#416 度量与两处省 context 改动
 
 - **代码在 main，已推**（人本轮 `allow-push`）：`3c8eac8`（ollama provider）、`35bd82c`（#413 review：观测维数胜配置、失败回滚 `active_provider`、status 重算 pending、latency probe 标签）、`a489916`（#418 `list/show --json`）、`788a450`（magpie 度量修正）、`301e37f`（渲染去掉 score 后缀）。全量 `npm test` **1014/1014**（2026-11-20）。
@@ -343,7 +350,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-20 深夜 Orca 会话 `cc03e171`（本小节原位滚动；上一行 `48bc4690`）：**export 契约（§6.1）不变**。本仓新增 `list/show --json` 只读读路径（Orca 面板每次一个进程，不再两次全量 export），ollama 原生 provider（本机未装模型、未切配置）；#416 实测 ccmem 只占 prompt 0.4–1.3%、缓存前缀 0/2367 次被打断，修了 magpie 量具过捕。Orca 侧本轮：syncskill #421/#422、Orca #417/#418 设计定稿（bundle 方向）、#419 派生组生命周期、#366 `orca gc`＋`--disk`（均已推）。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑。
+2026-11-21 Orca 会话 `0677fe2a`（本小节原位滚动；上一行 `cc03e171`）：**export 契约（§6.1）不变**。本仓本轮：#413 已切真实 Ollama（`bge-m3`，backfill 运行中，未等到 pending=0）、#395 Stop hook 单次解析、#415 P3 每日 FTS optimize（真实库 −266 KB、0.34→0.14 ms）。Orca 侧本轮：C-1 单次调用大额结算（>250k tokens）要 person token；#418 纠正导出默认开＋`dir:` 项目具名拒绝；#369 `agent models` 显示最近一次 model-unavailable/provider-error/quota 失败；#385 提示「requirement 要全量套件、但没有 task 跑它」。台账收窄：#419 本机派生组已 0、#366 磁盘已回到 7.5M/0B、#328 接受 working-tree 路径、#387 证物确认 package.json 未变。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

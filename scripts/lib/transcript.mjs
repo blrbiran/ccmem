@@ -62,17 +62,24 @@ export function extractEntryText(entry) {
 // The Stop hook stores this as last_message_seq, and summarize_pending slices
 // parseTranscript(path, agent) with it. For codex / omp it is therefore the
 // count of normalized entries the agent's parser returns, not of raw lines.
-export function countTranscriptLines(transcriptPath, agent = 'claude-code') {
-  return parseTranscript(transcriptPath, agent).length;
+export function countTranscriptLinesOf(entries) {
+  return entries.length;
 }
 
-export function computeSessionStats(transcriptPath, agent = 'claude-code') {
-  const entries = parseTranscript(transcriptPath, agent);
+export function computeSessionStatsOf(entries) {
   return {
     toolCalls: entries.filter((entry) => entry.type === 'tool').length,
     messageCount: entries.length,
     durationMs: 0
   };
+}
+
+export function countTranscriptLines(transcriptPath, agent = 'claude-code') {
+  return countTranscriptLinesOf(parseTranscript(transcriptPath, agent));
+}
+
+export function computeSessionStats(transcriptPath, agent = 'claude-code') {
+  return computeSessionStatsOf(parseTranscript(transcriptPath, agent));
 }
 
 export function extractAssistantText(entry) {

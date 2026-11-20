@@ -3,11 +3,11 @@ import { inferFromTranscript, inferL25FromTranscript, recordL25Probe } from '../
 import { loadConfig } from '../lib/config.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
-import { computeSessionStats, countTranscriptLines } from '../lib/transcript.mjs';
+import { computeSessionStatsOf, countTranscriptLinesOf, parseTranscript } from '../lib/transcript.mjs';
 
 const SHADOW_NOTICE = 'ccmem: mode=shadow (read-only diagnostic — no writes, no inject)\n';
 
-export async function handleStop(db, hookData) {
+export async function handleStop(db, hookData, deps = {}) {
   const mode = getMode(db);
   if (mode === 'off') {
     return { additionalContext: '' };
@@ -19,8 +19,12 @@ export async function handleStop(db, hookData) {
   }
 
   const agent = hookData.ccmem_agent ?? 'claude-code';
-  const stats = computeSessionStats(hookData.transcript_path, agent);
-  const seq = countTranscriptLines(hookData.transcript_path, agent);
+  // #395: one read of the transcript for the whole Stop hook. The stats, the
+  // sequence, both inferences and the L2.5 probe all consume the same entries;
+  // before this each consumer opened and parsed the file again.
+  const entries = (deps.parseTranscript ?? parseTranscript)(hookData.transcript_path, agent);
+  const stats = computeSessionStatsOf(entries);
+  const seq = countTranscriptLinesOf(entries);
 
   db.prepare(
     `INSERT INTO session_context (
@@ -66,11 +70,11 @@ export async function handleStop(db, hookData) {
     Date.now()
   );
 
-  inferFromTranscript(db, hookData.session_id, hookData.transcript_path, agent);
-  inferL25FromTranscript(db, hookData.session_id, hookData.transcript_path, agent);
+  inferFromTranscript(db, hookData.session_id, hookData.transcript_path, agent, entries);
+  inferL25FromTranscript(db, hookData.session_id, hookData.transcript_path, agent, entries);
 
   try {
-    recordL25Probe(db, hookData.session_id, hookData.transcript_path, loadConfig(), agent);
+    recordL25Probe(db, hookData.session_id, hookData.transcript_path, loadConfig(), agent, entries);
   } catch (e) {
     // Pure observation — never let it affect the Stop hook's real work.
     process.stderr.write(`ccmem: l25 probe skipped (${e.message})\n`);

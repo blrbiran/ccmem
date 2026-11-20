@@ -52,7 +52,7 @@ function printHelp() {
     '  orca-correction <upsert|withdraw>   (JSON on stdin; cwd = the target repository)\n' +
     '  mode [active|shadow|off]\n' +
     '  audit show <id>\n' +
-    '  admin daemon <status|start|stop|restart|install|uninstall>\n' +
+    '  admin daemon <status|start|stop|restart|install|uninstall|rotate-log [--keep-bytes N]>\n' +
     '  admin cron <list|run>\n' +
     '  admin llm <status|use <claude|codex|omp>|order <a,b,c>|approve [--yes]|reject>\n' +
     '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina>]\n' +
@@ -742,7 +742,10 @@ try {
     process.stdout.write(`${JSON.stringify(row)}\n`);
   } else if (verb === 'admin' && args[0] === 'daemon' && args[1]) {
     const daemonVerb = args[1];
-    const result = await cmdAdminDaemon(getDb(), { verb: daemonVerb });
+    const result = await cmdAdminDaemon(getDb(), {
+      verb: daemonVerb,
+      keepBytes: getOptionValue('--keep-bytes')
+    });
 
     if (daemonVerb === 'restart' && result.plist_rewrite?.blocked_by) {
       // Only the code and the reason string — the reason never carries a
@@ -811,6 +814,23 @@ try {
     } else if (result.status === 'installed') {
       const variant = result.variant ? ` (${result.variant})` : '';
       process.stdout.write(`ccmem: daemon installed${variant} ${result.plist_path}\n`);
+      if (result.stderr_log) {
+        process.stdout.write(
+          `ccmem: ${result.stderr_log.path} is ${result.stderr_log.size_bytes} bytes; run \`ccmem admin daemon rotate-log\` to keep the last ${result.stderr_log.default_keep_bytes / (1024 * 1024)} MiB (not rotated automatically)\n`
+        );
+      }
+    } else if (result.status === 'rotated') {
+      process.stdout.write(
+        `ccmem: daemon log rotated path=${result.path} before_bytes=${result.before_bytes} kept_bytes=${result.kept_bytes} tail=${result.tail_path}\n`
+      );
+    } else if (result.status === 'log_missing') {
+      process.stderr.write(`ccmem: daemon log not found at ${result.path}; nothing to rotate\n`);
+      process.exitCode = 1;
+    } else if (result.status === 'invalid_keep_bytes') {
+      process.stderr.write(
+        `ccmem: --keep-bytes must be a positive number (got ${JSON.stringify(result.keep_bytes)}); the default is ${result.default_keep_bytes}\n`
+      );
+      process.exitCode = 64;
     } else if (result.status === 'uninstalled') {
       process.stdout.write(`ccmem: daemon uninstalled ${result.plist_path}\n`);
     } else if (result.status === 'not_installed') {

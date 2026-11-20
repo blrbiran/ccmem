@@ -207,7 +207,13 @@ ccmem admin daemon status
 ccmem admin daemon restart
 ccmem admin daemon stop
 ccmem admin daemon uninstall
+ccmem admin daemon rotate-log [--keep-bytes N]
 ```
+
+`rotate-log` copies the last 5 MiB (default) of `daemon.err.log` to
+`<path>.<epoch-ms>.tail` and then truncates the live file in place, so launchd's
+open descriptor keeps writing to the same file. Install prints a one-line
+notice when the log is over 10 MiB; it never rotates automatically.
 
 `ccmem admin daemon status` may show `running=none`. That is normal when the daemon is alive but currently idle.
 

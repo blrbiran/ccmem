@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, truncateSync, writeFileSync, writeSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,12 @@ const DAEMON_MAIN = fileURLToPath(new URL('../../daemon/main.mjs', import.meta.u
 const THROTTLE_INTERVAL_SECONDS = 60;
 
 const LAUNCHD_LABEL = 'com.ccmem.daemon';
+// daemon.err.log is launchd's StandardErrorPath, so the daemon cannot be asked
+// to rotate it and a rename would leave the open fd writing to the moved file.
+// The operator-invoked verb copies the tail aside and truncates in place: the
+// fd stays the same file, and the next write lands at the new end.
+const DEFAULT_LOG_KEEP_BYTES = 5 * 1024 * 1024;
+const LOG_NOTICE_BYTES = 10 * 1024 * 1024;
 const WAIT_INTERVAL_MS = 50;
 const WAIT_TIMEOUT_MS = 2000;
 // 启动等待与停止等待不同源。restart 是人为动作，没有任何外部截止时间约束它,
@@ -441,6 +447,107 @@ function getDaemonPlistPaths(dataRoot) {
   };
 }
 
+function stderrLogPath() {
+  return getDaemonPlistPaths(getDataRoot()).stderrPath;
+}
+
+// epoch-ms names the tail, and `wx` refuses to overwrite: two rotations in the
+// same millisecond must produce two files, not one silently replaced tail.
+function createUniqueTailFile(logPath) {
+  let timestamp = Date.now();
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const tailPath = `${logPath}.${timestamp}.tail`;
+    try {
+      return { fd: openSync(tailPath, 'wx', 0o600), tailPath };
+    } catch (error) {
+      if (error?.code !== 'EEXIST') {
+        throw error;
+      }
+    }
+    timestamp += 1;
+  }
+
+  throw new Error(`could not find an unused tail path next to ${logPath}`);
+}
+
+/**
+ * Copy the last `keepBytes` of daemon.err.log to `<path>.<epoch-ms>.tail` and
+ * truncate the live file in place. Never renames the live file: launchd and the
+ * daemon hold an fd open, and a rename would keep every subsequent write going
+ * into the renamed file while a fresh daemon.err.log sat empty.
+ */
+export function rotateDaemonLog({ keepBytes } = {}) {
+  const logPath = stderrLogPath();
+  const keep = keepBytes == null || keepBytes === ''
+    ? DEFAULT_LOG_KEEP_BYTES
+    : Number(keepBytes);
+
+  if (!Number.isFinite(keep) || keep <= 0) {
+    return {
+      status: 'invalid_keep_bytes',
+      path: logPath,
+      keep_bytes: keepBytes ?? null,
+      default_keep_bytes: DEFAULT_LOG_KEEP_BYTES
+    };
+  }
+
+  let sourceFd;
+  try {
+    sourceFd = openSync(logPath, 'r');
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return { status: 'log_missing', path: logPath };
+    }
+    throw error;
+  }
+
+  let beforeBytes;
+  let tail;
+  try {
+    beforeBytes = fstatSync(sourceFd).size;
+    const start = Math.max(0, beforeBytes - keep);
+    tail = Buffer.alloc(beforeBytes - start);
+    if (tail.length > 0) {
+      readSync(sourceFd, tail, 0, tail.length, start);
+    }
+  } finally {
+    closeSync(sourceFd);
+  }
+
+  const { fd, tailPath } = createUniqueTailFile(logPath);
+  try {
+    if (tail.length > 0) {
+      writeSync(fd, tail);
+    }
+  } finally {
+    closeSync(fd);
+  }
+
+  truncateSync(logPath, 0);
+
+  return {
+    status: 'rotated',
+    path: logPath,
+    before_bytes: beforeBytes,
+    kept_bytes: tail.length,
+    tail_path: tailPath
+  };
+}
+
+// Reported by `install` only. Rotation is the operator's call: the log is their
+// data, so an oversized one is named, never shrunk behind their back.
+function oversizedStderrLog() {
+  const logPath = stderrLogPath();
+  try {
+    const { size } = statSync(logPath);
+    return size > LOG_NOTICE_BYTES
+      ? { path: logPath, size_bytes: size, default_keep_bytes: DEFAULT_LOG_KEEP_BYTES }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function renderDaemonPlist(dataRoot, daemonEnv, nodePath = process.execPath) {
   const paths = getDaemonPlistPaths(dataRoot);
 
@@ -781,6 +888,8 @@ function installDaemon() {
     return { ...programMissingResult(missing), plist_path: plistPath };
   }
 
+  const stderrLog = oversizedStderrLog();
+
   mkdirSync(getLaunchAgentDir(), { recursive: true });
   writeFileSync(plistPath, renderPlist());
   // An explicit install is a fresh operator intent: a start history left by a
@@ -805,7 +914,8 @@ function installDaemon() {
       plist: readPlist(),
       variant: 'linux/container-fallback',
       pid: child.pid,
-      ...(warnings.length ? { warnings } : {})
+      ...(warnings.length ? { warnings } : {}),
+      ...(stderrLog ? { stderr_log: stderrLog } : {})
     };
   }
 
@@ -815,7 +925,8 @@ function installDaemon() {
     status: 'installed',
     plist_path: plistPath,
     plist: readPlist(),
-    ...(warnings.length ? { warnings } : {})
+    ...(warnings.length ? { warnings } : {}),
+    ...(stderrLog ? { stderr_log: stderrLog } : {})
   };
 }
 
@@ -1046,7 +1157,7 @@ function describePlistDrift() {
   return comparePlist(onDisk, expected);
 }
 
-export async function cmdAdminDaemon(db, { verb } = {}) {
+export async function cmdAdminDaemon(db, { verb, keepBytes } = {}) {
   if (verb === 'status') {
     const status = loadDaemonStatus(db);
     // Which backend runs LLM work, and any exhaustion or switch waiting for
@@ -1072,6 +1183,10 @@ export async function cmdAdminDaemon(db, { verb } = {}) {
 
   if (verb === 'uninstall') {
     return uninstallDaemon(db);
+  }
+
+  if (verb === 'rotate-log') {
+    return rotateDaemonLog({ keepBytes });
   }
 
   throw new Error(`unsupported admin daemon verb: ${verb}`);

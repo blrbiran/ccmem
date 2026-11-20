@@ -123,7 +123,28 @@ export async function cmdAdminSemantic(db, { verb, provider: requestedProvider =
   }
 
   if (verb === 'status') {
-    return semanticState(db, cfg);
+    const state = semanticState(db, cfg);
+    const provider = getProvider({ embedding: { ...cfg.embedding, enabled: true, provider: state.provider } });
+    if (state.enabled && provider?.probe) {
+      // Only remote providers with a probe (ollama) talk to the network here.
+      // Anthropic/OpenAI/Jina probes would spend money or hit rate limits.
+      try {
+        const health = await provider.probe({ embedding: { ...cfg.embedding, enabled: true, provider: state.provider } });
+        state.reachable = health.ok;
+        state.health = health.detail;
+        // A status call is allowed to pay one local embed: it is the only way
+        // to report the true dimension before the first backfill batch.
+        if (!state.dim) {
+          await provider.load({ embedding: { ...cfg.embedding, enabled: true, provider: state.provider } });
+          state.dim = provider.dim;
+          state.model = provider.modelId ?? state.model;
+        }
+      } catch (error) {
+        state.reachable = false;
+        state.health = error instanceof Error ? error.message : String(error);
+      }
+    }
+    return state;
   }
 
   throw Object.assign(new Error(`unknown semantic verb '${verb}'`), { exitCode: 64 });

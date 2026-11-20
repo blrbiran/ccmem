@@ -23,6 +23,9 @@ export const DEFAULT_CONFIG = {
     openai_base_url: null,
     openai_model: 'text-embedding-3-small',
     openai_dim: null,
+    ollama_base_url: 'http://localhost:11434',
+    ollama_model: null,
+    ollama_dim: null,
     latency_probe: {
       // Strictly `enabled === true` to run. Note this is the OPPOSITE of the
       // adjacent decision-data flag (metrics.mjs recordDecisionMetric treats

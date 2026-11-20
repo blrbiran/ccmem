@@ -25,6 +25,7 @@ export function currentEmbeddingSig(provider, config = null) {
     switch (e.provider) {
       case 'openai': model = String(e.openai_model ?? 'text-embedding-3-small'); break;
       case 'jina':   model = 'jina-embeddings-v3'; break;
+      case 'ollama': model = String(e.ollama_model ?? 'ollama'); break;
       default:       model = String(e.model ?? 'Xenova/all-MiniLM-L6-v2');
     }
   }

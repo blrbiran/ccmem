@@ -2,6 +2,7 @@ import { writeAudit } from '../audit.mjs';
 import { loadConfig } from '../config.mjs';
 import { openDb } from '../db.mjs';
 import { jinaEmbedding } from './jina.mjs';
+import { ollamaEmbedding } from './ollama.mjs';
 import { openaiEmbedding } from './openai.mjs';
 import { transformersLocal } from './transformers-local.mjs';
 
@@ -94,6 +95,8 @@ function providerByName(name) {
       return openaiEmbedding;
     case 'jina':
       return jinaEmbedding;
+    case 'ollama':
+      return ollamaEmbedding;
     default:
       throw new Error(`Unknown embedding provider: ${name}`);
   }

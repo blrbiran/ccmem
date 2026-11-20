@@ -55,7 +55,7 @@ function printHelp() {
     '  admin daemon <status|start|stop|restart|install|uninstall|rotate-log [--keep-bytes N]>\n' +
     '  admin cron <list|run>\n' +
     '  admin llm <status|use <claude|codex|omp>|order <a,b,c>|approve [--yes]|reject>\n' +
-    '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina>]\n' +
+    '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina|ollama>]\n' +
     '  admin retrieval-check [--corpus <path>] [--k 1,3,5]\n' +
     '  admin diagnose [--retrieval] [--embedding-circuit <open|close|status>] [--migrations|--key|--sessions|--security|--tuning|--metrics|--synthesis|--restart-history|--injections|--context-history|--feedback|--cost|--config] [--session ID] [--hash HASH] [--days N]\n' +
     '  admin alias <old-project-key> <new-project-key>\n' +
@@ -1001,7 +1001,7 @@ try {
   } else if (verb === 'admin' && args[0] === 'semantic' && args[1]) {
     const result = await cmdAdminSemantic(getDb(), { verb: args[1], provider: getOptionValue('--provider') });
     process.stdout.write(
-      `ccmem: semantic ${result.status} enabled=${result.enabled} loaded=${result.loaded} provider=${result.provider} embedded=${result.embedded} pending=${result.pending} model=${result.model} dim=${result.dim}\n`
+      `ccmem: semantic ${result.status} enabled=${result.enabled} loaded=${result.loaded} provider=${result.provider} embedded=${result.embedded} pending=${result.pending} model=${result.model} dim=${result.dim}${result.reachable === undefined ? '' : ` reachable=${result.reachable}`}${result.health ? ` health=${result.health}` : ''}\n`
     );
   } else if (verb === 'admin' && args[0] === 'retrieval-check') {
     const result = await cmdRetrievalCheck(getDb(), {

@@ -85,6 +85,14 @@ test('ccmem markers: injected text is attributed, source code quoting a marker i
   const readResult = '     1\t<!-- content-hash: 1a2b3c4d -->\n     2\t=== ccmem: stable context ===\n     3\t- a fact';
   assert.ok(ccmemSegment(readResult).startsWith('<!-- content-hash: 1a2b3c4d -->'));
 
+  // Issue #416 measurement bug: the SessionStart instruction has no closing reminder.
+  // It ends at the first blank line; the user prompt after it is not ccmem.
+  const instruction = '## ccmem context\nRead `.ccmem/context-x.md` at session start and after each /compact.\nRe-read if you have not read it in the last 5 turns.\n\n' + 'user prompt '.repeat(2000);
+  const instructionSegment = ccmemSegment(instruction);
+  assert.ok(instructionSegment.startsWith('## ccmem context'));
+  assert.ok(instructionSegment.includes('Re-read if you have not read it'));
+  assert.ok(!instructionSegment.includes('user prompt'), 'the prompt after the instruction is not attributed to ccmem');
+
   const units = unitsOf('anthropic', { system: 'You are an agent.', messages: [
     { role: 'user', content: [{ type: 'text', text: hookText }] },
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: "const s = '## ccmem context';" }] }

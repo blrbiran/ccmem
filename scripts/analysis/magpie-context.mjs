@@ -72,12 +72,27 @@ export function tokensOf(s) {
 
 // The ccmem part of one text: from its first marker to the end of the text or
 // of the <system-reminder> it sits in, whichever comes first.
+//
+// Issue #416 measurement bug: the SessionStart read instruction is a short
+// six-line block with no closing reminder, so "to the end of the text" swallowed
+// the whole user prompt (measured 60-62 KB), and the caller attributed it to ccmem.
+// That block always ends at the first blank line. The retrieved/stable blocks can
+// contain blank lines, so they keep the reminder rule and get a hard 16 KiB cap
+// (their own writers cap them at 8 KiB / 4 KiB).
+const READ_INSTRUCTION = '## ccmem context';
+const SEGMENT_CAP = 16 * 1024;
+
 export function ccmemSegment(text) {
   const m = MARKER_RE.exec(text ?? '');
   if (!m) return '';
   const start = m.index + m[0].length - m[1].length;
+  const rest = text.slice(start);
+  if (m[1] === READ_INSTRUCTION) {
+    const blank = rest.indexOf('\n\n');
+    return blank < 0 ? rest : rest.slice(0, blank);
+  }
   const end = text.indexOf('</system-reminder>', start);
-  return text.slice(start, end < 0 ? text.length : end);
+  return end < 0 ? rest.slice(0, SEGMENT_CAP) : text.slice(start, end);
 }
 export const hasMarker = (text) => MARKER_RE.test(text ?? '');
 

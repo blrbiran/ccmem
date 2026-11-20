@@ -343,7 +343,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-20 深夜 Orca 会话 `cc03e171`（本小节原位滚动；上一行 `48bc4690`）：**export 契约（§6.1）不变**。本仓新增 `list/show --json` 只读读路径（Orca 面板每次一个进程，不再两次全量 export），ollama 原生 provider（本机未装模型、未切配置）；#416 实测 ccmem 只占 prompt 0.4–1.3%、缓存前缀 0/2367 次被打断，修了 magpie 量具过捕。Orca 侧本轮：syncskill #421/#422、Orca #417/#418 设计定稿（bundle 方向）、#419 派生组生命周期、#366 `orca gc`＋`--disk`（均上本地 main，待推）。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑。
+2026-11-20 深夜 Orca 会话 `cc03e171`（本小节原位滚动；上一行 `48bc4690`）：**export 契约（§6.1）不变**。本仓新增 `list/show --json` 只读读路径（Orca 面板每次一个进程，不再两次全量 export），ollama 原生 provider（本机未装模型、未切配置）；#416 实测 ccmem 只占 prompt 0.4–1.3%、缓存前缀 0/2367 次被打断，修了 magpie 量具过捕。Orca 侧本轮：syncskill #421/#422、Orca #417/#418 设计定稿（bundle 方向）、#419 派生组生命周期、#366 `orca gc`＋`--disk`（均已推）。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

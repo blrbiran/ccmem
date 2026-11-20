@@ -73,6 +73,7 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
   - 全量 `npm test` **1000/1000**。
 - **daemon 已重启**（人本轮「这一轮可以做」）：重启前 `sqlite3 .backup` 到 `global.db.bak.1795183564694`（integrity ok）；plist 备份 `com.ccmem.daemon.plist.bak.20261120`。`admin daemon restart` 报 **G1 未重写 plist**（plist 有 `CCMEM_CONFIG_PATH`、会话 shell 没有）——plist 字节未动，只换了进程（pid 以 `admin daemon status` 现测，`running=vec_backfill`）。**行为判别**：`config_kv` 出现 `vec_backfill.consecutive_failures=1` 与 `next_attempt_at` ⇒ 429 退避已在跑。`status` 仍报 `plist=drifted`（只差 `CCMEM_CONFIG_PATH`，预期）。
 - **未做**：**#413**（原生 ollama embedding provider；`openai`＋`openai_base_url`＋dummy key＋`openai_dim` 的兼容层仍可用，是否做归人裁）；**#416**（Codex 接入与省 context：其 P0 度量要先在该机器的 Codex `/hooks` 里人工批准一次，测试者自己未跑；依赖 #414/#415，两者已修）。
+- **退避的第二个判别（现测）**：重启后 20 s 内 `daemon.err.log` 字节数 **delta=0**（5,945,218 → 5,945,218）；旧代码在同一时段每几秒写一行。
 - **给下一轮**：若裁 #413，照 `scripts/lib/embedding/{jina,openai}.mjs` 的 provider 形状加一个 `/api/embed` 适配（无 key、维数取自响应），`embedding.provider` 增加 `ollama`。若做 #416 的 P1（去重/新颖度门），先读 `recent_injections` 的现有字段，别新造探针。
 
 ### 1.0000000 2026-11-20（Orca 会话 `c8fc876f`）—— 日志轮转、vec_backfill 退避（#396）、stop hook 单次解析的设计；**代码在 main、未推；daemon 未重启**

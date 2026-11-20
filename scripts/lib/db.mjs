@@ -179,22 +179,25 @@ function supportsFts(db) {
   if (ftsDisabledByEnv()) {
     return false;
   }
+  // Issue 415: older builds answered this probe with CREATE/DROP in the main schema, so a process
+  // killed in between left an empty virtual table behind. The probe owns that cleanup; the lookup is
+  // a single sqlite_master read and only writes when the leftover is really there.
+  try {
+    if (tableExists(db, 'ccmem_fts_probe')) {
+      db.exec('DROP TABLE ccmem_fts_probe');
+    }
+  } catch {}
   if (cachedFtsSupport !== undefined) {
     return cachedFtsSupport;
   }
 
   try {
-    if (tableExists(db, 'ccmem_fts_probe')) {
-      db.exec('DROP TABLE ccmem_fts_probe');
-    }
-    db.exec("CREATE VIRTUAL TABLE ccmem_fts_probe USING fts5(content, tokenize='trigram')");
-    db.exec('DROP TABLE ccmem_fts_probe');
+    db.exec("CREATE VIRTUAL TABLE temp.ccmem_fts_probe USING fts5(content, tokenize='trigram')");
+    db.exec('DROP TABLE temp.ccmem_fts_probe');
     cachedFtsSupport = true;
   } catch {
     try {
-      if (tableExists(db, 'ccmem_fts_probe')) {
-        db.exec('DROP TABLE ccmem_fts_probe');
-      }
+      db.exec('DROP TABLE IF EXISTS temp.ccmem_fts_probe');
     } catch {}
     cachedFtsSupport = false;
   }

@@ -64,6 +64,13 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
+### 1.00000000000 2026-11-21（Orca 会话 `cf2d6dfd` 之后）—— #418 `orca-outcome`、#415 D／#416 可见性；全量 1028/1028
+
+- **#418 run/task 回写（ccmem 半边）**：新 verb `ccmem orca-outcome upsert`（stdin 一个 `orca-run-outcome-v1`，cwd 定项目键，`(project_key, run_id)` 唯一；同体 `unchanged`、异体 `refused` 且不覆盖；exit 0／64／1）与只读 `list [--project] [--since] [--json]`（按 `recorded_at` 过滤，选择已写在代码与帮助里）。迁移 018 新增 `orca_run_outcomes`（不改 export／retrieval／稳定段）；Phase 1 不动 trust。判据 `tests/integration/orca-outcome.test.mjs` 6 条先红后绿；trust 写入与覆盖两条变异见红。
+- **#415 D／#416 可见性**：`admin diagnose` 新增 `Runtime` 行（node／SQLite／FTS5 状态与降级原因）和 `Codex` 行（hooks 已装、Codex 的 trust key 几条已批准；未装时点名 `ccmem install codex`）。只读 `config.toml` 的 key 名，从不读／打印 `trusted_hash` 的值。判据 `tests/integration/diagnose-runtime-codex-hooks.test.mjs` 4 条。
+- **门**：全量 `npm test` **1028/1028**（另修 `self-restart` 的 schema 断言 17→18）。真实库**未迁移**：备份 `~/.claude/ccmem/global.db.bak.1795271000180`（`quick_check ok`，备份时 schema 17）；下一次 CLI／hook／daemon 开库会升到 18。**daemon 未重启**（新 verb 是一次性 CLI，不需要）。
+- **登记**：`--since` 取 `recorded_at`（若本意是 run 的 `observed_at`，改一行）；真实库的 018 迁移只在临时库验过；Orca 的 outbox 用注入 runner 验过，未在真 ccmem + 真面板上跑过。
+
 ### 1.0000000000 2026-11-21（Orca 会话 `0677fe2a`）—— #413 真实 Ollama 链路、#395 stop 单次解析、#415 P3 optimize；全量 1018/1018
 
 - **#413 已切真实配置**：`ollama pull bge-m3` 完成（467 MB、1024 维）；`~/.claude/ccmem/config.json` 改为 `embedding.provider=ollama`、`ollama_model=bge-m3`、`ollama_dim=1024`，**保留 openai 键**以便回滚；备份 `config.json.bak.1795194943994`、`global.db.bak.1795194943994`（`quick_check ok`）、plist `.bak.1795194943994`。daemon 重启为 pid 60721（重启前显式 unset 了 `ANTHROPIC_*`）；wide 门期间为降负载停过一次，门后重启为 pid 72748。`admin semantic status`：`reachable=true`、`health=http://localhost:11434 serves bge-m3`、`model=bge-m3 dim=1024`；签名从 `openai:…` 变为 `ollama:bge-m3:1024`，vec_backfill 正在重嵌（交接时 pending≈14k，每批 50；**未等到 pending=0**）。
@@ -350,7 +357,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-21 Orca 会话 `cf2d6dfd`（本小节原位滚动；上一行 `0677fe2a`）：**export 契约（§6.1）不变，本仓本轮无代码改动**。#415 P2 external-content 明确**不排期**（要迁移用户库；P1/P3 已落）。Orca 侧本轮：#419/#370 archived 组的 `groupSummary.state` 读作 `archived`／`closed`；#328 worktree + 共享 ref 交付的 confirm 提示；#375 把 ccloop 的 per-call MCP warnings 显示到 `run transcript`/Web 并加 `orca doctor` 检查；#366 `orca gc --include-uncleaned`；syncskill #424/#425。**#418 的 run/task 回写只写了 spec**：`Orca/docs/superpowers/specs/2026-11-21-run-outcome-writeback-design.md`，依赖 `work.memory` bundle（未实现），phase 1 只记录、不动 trust；独立 review 已把终态锚点、exit 64 语义、projectKey 由 cwd 推导、ids 为正整数、必须由 collect echo 证明已派发等更正进去，并给 bundle spec 追加了 ids 类型的 Correction。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑。
+2026-11-21（Orca 会话 `cf2d6dfd` 之后；本小节原位滚动，上一行 `0677fe2a`）：**export 契约（§6.1）不变**。本仓本轮新增 `orca-outcome upsert|list` 与迁移 018（Orca #418 的 run/task 回写消费它；Phase 1 只记录、不动 trust），`admin diagnose` 增加 Runtime（Node／SQLite／FTS5）与 Codex hooks 已装/已批准行。Orca 侧本轮：`work.memory` bundle（A2 产；8 KiB／1200 tok；只发给宣告 `features.memory:"v1"` 的 ccloop）＋ run-outcome outbox（默认开、`--no-ccmem-outcomes` 关），已 repin ccloop 到含 `work.memory` 的提交；另有 #366 gc 原因汇总、#328 拦截自建 git dir、#386 建议按不修关闭。#415 P2 external-content 仍**不排期**。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#418 的 `--since` 取 `recorded_at`。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

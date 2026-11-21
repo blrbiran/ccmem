@@ -210,6 +210,24 @@ export function hasUsableFts(db) {
 }
 
 /**
+ * #415 D: what the retrieval path is actually running on, for `admin diagnose`. The three
+ * answers are deliberately separate: a disabled-by-env process, a SQLite without FTS5, and a
+ * build that has FTS5 but lost the shadow table all degrade to the LIKE fallback, and only
+ * naming the cause tells the reader which one to fix.
+ */
+export function ftsDiagnostics(db) {
+  const disabled = ftsDisabledByEnv();
+  const supported = supportsFts(db);
+  const table = tableExists(db, 'memories_fts');
+  return {
+    disabled_by_env: disabled,
+    supported,
+    table_present: table,
+    status: disabled ? 'disabled-by-env' : !supported ? 'unsupported' : !table ? 'table-missing' : 'ready'
+  };
+}
+
+/**
  * #415 P3: FTS5 leaves segments and tombstones behind as rows are updated and
  * deleted; `optimize` merges them. The daily maintenance runs this once, and
  * reports the size change so the audit trail can show whether it paid off.

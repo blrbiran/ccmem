@@ -154,6 +154,68 @@ function hookKeys(target, hooksFile, entries) {
   });
 }
 
+/**
+ * #416: the keys Codex records in `config.toml` once the human approved a hook. Handles both
+ * shapes Codex writes: a table per key (`[hooks.state."<key>"]`) and a quoted key inside
+ * `[hooks.state]`. The values (trusted hashes) are never read or printed.
+ */
+export function trustedHookKeys(tomlText) {
+  const keys = new Set();
+  let inState = false;
+  for (const raw of String(tomlText).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === '' || line.startsWith('#')) continue;
+    if (line.startsWith('[')) {
+      const table = line.match(/^\[hooks\.state\.(?:"([^"]+)"|'([^']+)')\]\s*$/);
+      if (table) {
+        keys.add(table[1] ?? table[2]);
+        inState = false;
+        continue;
+      }
+      inState = /^\[hooks\.state\]\s*$/.test(line);
+      continue;
+    }
+    if (inState) {
+      const inline = line.match(/^(?:"([^"]+)"|'([^']+)')\s*=/);
+      if (inline) keys.add(inline[1] ?? inline[2]);
+    }
+  }
+  return keys;
+}
+
+/**
+ * #416 observability: are ccmem's Codex hooks installed in this CODEX_HOME, and which of them
+ * has Codex's own trust record? A key left behind for a changed command does not count: Codex
+ * drops a key when the hook's hash changes, so key presence is the whole answer here.
+ */
+export function codexHookTrust({ codexHome = getCodexHome() } = {}) {
+  const homeExists = existsSync(codexHome);
+  const target = path.join(codexHome, 'hooks.json');
+  if (!existsSync(target)) return { installed: false, home_exists: homeExists, target, total: 0, approved: 0, missing: [] };
+  let parsed;
+  try {
+    parsed = parseHooksFile(readFileSync(target, 'utf8'), target);
+  } catch {
+    return { installed: false, home_exists: homeExists, target, total: 0, approved: 0, missing: [], error: 'hooks-file-unreadable' };
+  }
+  const keys = [];
+  for (const [event, , label] of EVENTS) {
+    const groups = parsed.hooks?.[event] ?? [];
+    groups.forEach((group, index) => {
+      const hooks = Array.isArray(group?.hooks) ? group.hooks : [];
+      const ours = hooks.some((hook) => typeof hook?.command === 'string'
+        && hook.command.includes('scripts/hook.mjs')
+        && hook.command.includes('--agent codex'));
+      if (ours) keys.push(`${target}:${label}:${index}:0`);
+    });
+  }
+  if (keys.length === 0) return { installed: false, home_exists: homeExists, target, total: 0, approved: 0, missing: [] };
+  const configToml = path.join(codexHome, 'config.toml');
+  const trusted = existsSync(configToml) ? trustedHookKeys(readFileSync(configToml, 'utf8')) : new Set();
+  const missing = keys.filter((key) => !trusted.has(key));
+  return { installed: true, home_exists: homeExists, target, total: keys.length, approved: keys.length - missing.length, missing };
+}
+
 // `writeFile` is a seam for the failure tests; callers leave it at the default.
 export function installCodex({ codexHome, dataRoot, repoRoot, execPath, writeFile = writeOwnedFile }) {
   for (const value of [execPath, repoRoot]) {

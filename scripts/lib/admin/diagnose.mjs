@@ -4,9 +4,10 @@ import { probeFile } from '../../daemon/tasks/embed-latency-probe.mjs';
 import { writeAudit } from '../audit.mjs';
 import { loadConfig } from '../config.mjs';
 import { collectConfigDeltas } from '../config-delta.mjs';
-import { getDbPath, getSchemaVersion } from '../db.mjs';
+import { getDbPath, getSchemaVersion, ftsDiagnostics } from '../db.mjs';
 import { getProvider } from '../embedding/provider.mjs';
 import { currentEmbeddingSig } from '../embedding/signature.mjs';
+import { codexHookTrust } from '../install/codex.mjs';
 import { daemonCostFile, decisionDataFile, decisionDataSizeBytes, metricsFile } from '../metrics.mjs';
 import { fallbackProjectKey, resolveProjectKey } from '../project-key.mjs';
 import { collectInjectionRows, countNeverInjected } from '../recent-injections.mjs';
@@ -1282,6 +1283,16 @@ export async function cmdAdminDiagnose(
       health: String(firstValue(quickCheck) ?? 'unknown'),
       schema_version: getSchemaVersion(db)
     },
+    // #415 D: the process and the SQLite build, with the FTS cause when it is not usable. The
+    // fallback is silent by design elsewhere, which is exactly why it has to be visible here.
+    runtime: {
+      node: process.version,
+      sqlite: String(db.prepare('SELECT sqlite_version() AS version').get()?.version ?? 'unknown'),
+      fts: ftsDiagnostics(db)
+    },
+    // #416: installed vs approved, so "hooks are installed but Codex never runs them" is a line
+    // rather than a guess. Never reads or prints a trusted_hash value.
+    codex_hooks: codexHookTrust(),
     daemon: {
       alive: daemonAlive,
       pid: lock?.holder_pid ?? null,

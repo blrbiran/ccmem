@@ -1314,6 +1314,19 @@ try {
       process.stdout.write(`ccmem: tier2 ${result.tier2.available ? 'available' : 'unavailable'}\n`);
       printConfigSummary(result);
 
+      // #415 D / #416: the runtime the retrieval path is on, and the one line that explains a
+      // silent LIKE fallback or Codex hooks that are installed but never approved.
+      const fts = result.runtime.fts;
+      const ftsText = fts.status === 'ready' ? 'ready' : `${fts.status} (retrieval falls back to LIKE)`;
+      process.stdout.write(`Runtime  : node ${result.runtime.node} | sqlite ${result.runtime.sqlite} | fts5 ${ftsText}\n`);
+      const hooks = result.codex_hooks;
+      if (hooks.installed) {
+        const approved = hooks.approved === hooks.total ? 'all approved' : `${hooks.approved} of ${hooks.total} approved — open codex and run /hooks`;
+        process.stdout.write(`Codex    : hooks installed, ${approved}\n`);
+      } else if (hooks.home_exists) {
+        process.stdout.write('Codex    : ccmem hooks are not installed (ccmem install codex)\n');
+      }
+
       if (result.migrations) {
         for (const row of result.migrations) {
           process.stdout.write(

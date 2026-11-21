@@ -68,7 +68,7 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 - **#418 run/task 回写（ccmem 半边）**：新 verb `ccmem orca-outcome upsert`（stdin 一个 `orca-run-outcome-v1`，cwd 定项目键，`(project_key, run_id)` 唯一；同体 `unchanged`、异体 `refused` 且不覆盖；exit 0／64／1）与只读 `list [--project] [--since] [--json]`（按 `recorded_at` 过滤，选择已写在代码与帮助里）。迁移 018 新增 `orca_run_outcomes`（不改 export／retrieval／稳定段）；Phase 1 不动 trust。判据 `tests/integration/orca-outcome.test.mjs` 6 条先红后绿；trust 写入与覆盖两条变异见红。
 - **#415 D／#416 可见性**：`admin diagnose` 新增 `Runtime` 行（node／SQLite／FTS5 状态与降级原因）和 `Codex` 行（hooks 已装、Codex 的 trust key 几条已批准；未装时点名 `ccmem install codex`）。只读 `config.toml` 的 key 名，从不读／打印 `trusted_hash` 的值。判据 `tests/integration/diagnose-runtime-codex-hooks.test.mjs` 4 条。
-- **门**：全量 `npm test` **1028/1028**（另修 `self-restart` 的 schema 断言 17→18）。真实库**未迁移**：备份 `~/.claude/ccmem/global.db.bak.1795271000180`（`quick_check ok`，备份时 schema 17）；下一次 CLI／hook／daemon 开库会升到 18。**daemon 未重启**（新 verb 是一次性 CLI，不需要）。
+- **门**：全量 `npm test` **1028/1028**（另修 `self-restart` 的 schema 断言 17→18）。真实库**已由 hook 升到 18**（`orca_run_outcomes` 已存在）；备份 `~/.claude/ccmem/global.db.bak.1795271000180`（`quick_check ok`，备份时 schema 17）。**daemon 未重启**（新 verb 是一次性 CLI，不需要）。
 - **登记**：`--since` 取 `recorded_at`（若本意是 run 的 `observed_at`，改一行）；真实库的 018 迁移只在临时库验过；Orca 的 outbox 用注入 runner 验过，未在真 ccmem + 真面板上跑过。
 
 ### 1.0000000000 2026-11-21（Orca 会话 `0677fe2a`）—— #413 真实 Ollama 链路、#395 stop 单次解析、#415 P3 optimize；全量 1018/1018

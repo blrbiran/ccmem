@@ -350,7 +350,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-21 Orca 会话 `0677fe2a`（本小节原位滚动；上一行 `cc03e171`）：**export 契约（§6.1）不变**。本仓本轮：#413 已切真实 Ollama（`bge-m3`，backfill 运行中，未等到 pending=0）、#395 Stop hook 单次解析、#415 P3 每日 FTS optimize（真实库 −266 KB、0.34→0.14 ms）。Orca 侧本轮：C-1 单次调用大额结算（>250k tokens）要 person token；#418 纠正导出默认开＋`dir:` 项目具名拒绝；#369 `agent models` 显示最近一次 model-unavailable/provider-error/quota 失败；#385 提示「requirement 要全量套件、但没有 task 跑它」。台账收窄：#419 本机派生组已 0、#366 磁盘已回到 7.5M/0B、#328 接受 working-tree 路径、#387 证物确认 package.json 未变。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑。
+2026-11-21 Orca 会话 `cf2d6dfd`（本小节原位滚动；上一行 `0677fe2a`）：**export 契约（§6.1）不变，本仓本轮无代码改动**。#415 P2 external-content 明确**不排期**（要迁移用户库；P1/P3 已落）。Orca 侧本轮：#419/#370 archived 组的 `groupSummary.state` 读作 `archived`／`closed`；#328 worktree + 共享 ref 交付的 confirm 提示；#375 把 ccloop 的 per-call MCP warnings 显示到 `run transcript`/Web 并加 `orca doctor` 检查；#366 `orca gc --include-uncleaned`；syncskill #424/#425。**#418 的 run/task 回写只写了 spec**：`Orca/docs/superpowers/specs/2026-11-21-run-outcome-writeback-design.md`，依赖 `work.memory` bundle（未实现），phase 1 只记录、不动 trust；独立 review 已把终态锚点、exit 64 语义、projectKey 由 cwd 推导、ids 为正整数、必须由 collect echo 证明已派发等更正进去，并给 bundle spec 追加了 ids 类型的 Correction。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

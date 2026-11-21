@@ -29,7 +29,7 @@ function cli(...args) {
 
 test('migration 017 brings a fresh root to 17 with the new columns and tables', () => {
   const db = openDb();
-  assert.equal(getSchemaVersion(db), 17);
+  assert.equal(getSchemaVersion(db), 18);
   assert.ok(cols(db, 'memories').includes('origin_agent'));
   assert.ok(cols(db, 'session_context').includes('agent'));
   assert.deepEqual(cols(db, 'llm_backend_state'), ['backend', 'exhausted_until', 'last_error', 'updated_at']);
@@ -43,7 +43,7 @@ test('migration 017 brings a fresh root to 17 with the new columns and tables', 
 test('migration 017 is idempotent across reopens', () => {
   openDb().close();
   const db = openDb();
-  assert.equal(getSchemaVersion(db), 17);
+  assert.equal(getSchemaVersion(db), 18);
   const n = db.prepare(`SELECT COUNT(*) c FROM schema_migrations WHERE to_version = 17`).get().c;
   assert.equal(n, 1);
   db.close();
@@ -53,10 +53,12 @@ test('a v16 database is upgraded to 17 using the documented rollback as the down
   const db = openDb();
   // Apply the rollback steps from the migration header to reach a real v16 shape.
   db.exec(`
+    DROP TABLE orca_run_outcomes;
     DROP TABLE llm_switch_proposals;
     DROP TABLE llm_backend_state;
     ALTER TABLE session_context DROP COLUMN agent;
     ALTER TABLE memories DROP COLUMN origin_agent;
+    DELETE FROM schema_migrations WHERE to_version = 18;
     DELETE FROM schema_migrations WHERE to_version = 17;
     UPDATE schema_meta SET version = 16;
   `);
@@ -65,7 +67,7 @@ test('a v16 database is upgraded to 17 using the documented rollback as the down
   db.close();
 
   const upgraded = openDb();
-  assert.equal(getSchemaVersion(upgraded), 17);
+  assert.equal(getSchemaVersion(upgraded), 18);
   assert.ok(cols(upgraded, 'memories').includes('origin_agent'));
   assert.ok(cols(upgraded, 'session_context').includes('agent'));
   upgraded.close();

@@ -30,7 +30,7 @@ test.afterEach(() => {
 
 test('migration upgrades schema to latest version', () => {
   const db = openDb();
-  assert.equal(getSchemaVersion(db), 17);
+  assert.equal(getSchemaVersion(db), 18);
   assert.ok(columns(db, 'memories').includes('temporal_type'));
   assert.ok(columns(db, 'memories').includes('summary_meta'));
   assert.ok(columns(db, 'metrics_daily_rollup').includes('embed_error_rate'));
@@ -82,14 +82,14 @@ test('partial schema-14 database is repaired to schema 15', () => {
   seed.close();
 
   let db = openDb();
-  assert.equal(getSchemaVersion(db), 17);
+  assert.equal(getSchemaVersion(db), 18);
   assert.ok(columns(db, 'memories').includes('summary_meta'));
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='query_embedding_cache'").get());
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM memories WHERE temporal_type = 'temporary'").get().n, 0);
   db.close();
 
   db = openDb();
-  assert.equal(getSchemaVersion(db), 17);
+  assert.equal(getSchemaVersion(db), 18);
   assert.ok(columns(db, 'metrics_daily_rollup').includes('path_b_circuit_count'));
   db.close();
 });

@@ -14,6 +14,7 @@ import { cmdImport } from './lib/cmd/import.mjs';
 import { cmdList, cmdListJson } from './lib/cmd/list.mjs';
 import { cmdMode } from './lib/cmd/mode.mjs';
 import { cmdOrcaCorrectionUpsert, cmdOrcaCorrectionWithdraw, OrcaCorrectionInputError, parseOrcaCorrectionInput } from './lib/cmd/orca-correction.mjs';
+import { cmdOrcaOutcomeList, cmdOrcaOutcomeUpsert, OrcaOutcomeInputError, parseOrcaOutcomeInput, parseSinceDate } from './lib/cmd/orca-outcome.mjs';
 import { cmdPin } from './lib/cmd/pin.mjs';
 import { cmdPromote } from './lib/cmd/promote.mjs';
 import { cmdResurrect } from './lib/cmd/resurrect.mjs';
@@ -50,6 +51,7 @@ function printHelp() {
     '  export --json [--scope global|project]\n' +
     '  import <file>\n' +
     '  orca-correction <upsert|withdraw>   (JSON on stdin; cwd = the target repository)\n' +
+    '  orca-outcome <upsert|list>   (upsert: JSON on stdin, cwd = the target repository; list [--project KEY] [--since DATE] [--json])\n' +
     '  mode [active|shadow|off]\n' +
     '  audit show <id>\n' +
     '  admin daemon <status|start|stop|restart|install|uninstall|rotate-log [--keep-bytes N]>\n' +
@@ -110,6 +112,19 @@ if (verb === 'export' && args[0] === '--help') {
 if (verb === 'import' && args[0] === '--help') {
   printHelp();
   process.exit(0);
+}
+
+// Orca probes `ccmem orca-outcome --help` to tell a supporting binary from an
+// old one (spec §3.2), so this must exit 0 rather than fall through to an
+// unknown subcommand.
+if (verb === 'orca-outcome' && args[0] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'orca-outcome' && args[0] == null) {
+  printHelp();
+  process.exit(64);
 }
 
 if (verb === 'save' && args[0] === '--help') {
@@ -294,7 +309,7 @@ if (verb === 'admin' && args[0] === 'diagnose') {
   // handled below.
 }
 
-if (!['save', 'list', 'show', 'forget', 'pin', 'export', 'import', 'orca-correction', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect', 'install', 'uninstall'].includes(verb)) {
+if (!['save', 'list', 'show', 'forget', 'pin', 'export', 'import', 'orca-correction', 'orca-outcome', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect', 'install', 'uninstall'].includes(verb)) {
   printHelp();
   process.exit(64);
 }
@@ -794,6 +809,47 @@ try {
     } catch (error) {
       process.stderr.write(`ccmem: orca-correction: ${error.message}\n`);
       process.exitCode = error instanceof OrcaCorrectionInputError || error.exitCode === 64 ? 64 : 1;
+    }
+  } else if (verb === 'orca-outcome') {
+    // Exit 64: this input is refused and re-sending it will not help (a
+    // malformed payload, or a different body for an already recorded run);
+    // exit 1: anything else (e.g. a busy database), retry later. Spec
+    // docs/superpowers/specs/2026-11-21-run-outcome-writeback-design.md §2.
+    const subcommand = args[0];
+    try {
+      if (subcommand === 'upsert') {
+        const input = parseOrcaOutcomeInput(readFileSync(0, 'utf8'));
+        const result = cmdOrcaOutcomeUpsert(getDb(), { cwd: process.cwd(), input });
+        process.stdout.write(`${JSON.stringify(result)}\n`);
+        if (result.state === 'refused') {
+          process.exitCode = 64;
+        }
+      } else if (subcommand === 'list') {
+        const project = getOptionValue('--project');
+        const since = parseSinceDate(getOptionValue('--since'));
+        const result = cmdOrcaOutcomeList(getDb(), { project, since });
+        if (args.includes('--json')) {
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        } else {
+          for (const row of result.rows) {
+            process.stdout.write(
+              `run ${row.runId} project=${row.projectKey} task=${row.taskId ?? '-'} attempt=${row.attempt ?? '-'} ` +
+              `outcome=${row.outcome} abandoned=${row.abandoned} observedAt=${row.observedAt} memoryIds=[${row.memoryIds.join(',')}]\n`
+            );
+          }
+          for (const tally of result.memories) {
+            process.stdout.write(
+              `memory ${tally.memoryId}: carried=${tally.carried} succeeded=${tally.succeeded} failed=${tally.failed} ` +
+              `exhausted=${tally.exhausted} cancelled=${tally.cancelled} blocked_waiting_human=${tally.blocked_waiting_human}\n`
+            );
+          }
+        }
+      } else {
+        throw new OrcaOutcomeInputError('subcommand must be upsert or list');
+      }
+    } catch (error) {
+      process.stderr.write(`ccmem: orca-outcome: ${error.message}\n`);
+      process.exitCode = error instanceof OrcaOutcomeInputError || error.exitCode === 64 ? 64 : 1;
     }
   } else if (verb === 'mode') {
     const result = await cmdMode(getDb(), { mode: args[0] ?? null });

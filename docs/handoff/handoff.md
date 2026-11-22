@@ -357,7 +357,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-22（本轮；本小节原位滚动，上一行 `cf2d6dfd`）：**export 契约（§6.1）不变**；本仓零代码改动、daemon 未重启（仍是 schema 18）。本轮只处理 syncskill #426/#427：失败 push 的 staging 清理＋`prune`（默认 24 h dry-run）、远端 `manifest.json` 原子写＋`.bak`＋具名 `manifest-invalid`；syncskill 两笔（主题行 `fix(receiver): failed pushes clean up their staging tree…`／`docs(plan): stale staging cleanup…`）在本地 main，未 push。Orca／ccloop 本轮零代码改动。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#418 的 `--since` 取 `recorded_at`；#415 P2 external-content **不排期**。
+2026-11-23（本轮；本小节原位滚动，上一行 `cf2d6dfd`）：**export 契约（§6.1）不变**；本仓零代码改动、daemon 未重启（仍是 schema 18）。Orca 侧本轮改三笔（#393(b) summary 与 overview 共读每组、#385 拆分指令 v9 的 `deliveryGraph`、syncskill `.backup-*` 崩溃恢复），均不触及 ccmem 边界。#395 第 2 条（stop hook 只读 2 MB 尾部）**仍未做**——2 MB 上界待人裁（设计稿在 Orca `.superpowers/sdd/plan/design-395-hooks.md`），fix 1（只解析一次）已落。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#418 的 `--since` 取 `recorded_at`；#415 P2 external-content **不排期**。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

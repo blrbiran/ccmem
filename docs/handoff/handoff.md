@@ -64,6 +64,12 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
+### 1.0000000000000 2026-11-23 深夜（会话 `ec9efff6` 续做）—— daemon 已重启到范围读代码；两处 worktree 已清
+
+- **daemon 重启**（人授权）。备份 `~/.claude/ccmem/global.db.bak.1795444654000`（1.65 GB，`PRAGMA quick_check` = ok）。重启时**显式 unset 了 9 个 `ANTHROPIC_*`**（本 shell 有 6 个），否则会被复制进 plist。`admin daemon restart` 报 `start_timeout`——**这是超时不是失败**：sleep 5 后 `status` / `daemon_lock.holder_pid` / `pgrep` 三处都是 pid **19687**，一致。
+- **行为验证（不看 pid）**：①`plutil -p` plist 里 `ANTHROPIC_*` 计数 **0**（凭据没被复制）；②重启后新入队的 `summarize_pending` 任务 `transcript_window` 与 `snapshot_observed_at` 都在；③重启之后有 `summarize_pending_applied` 审计行（ts 晚于 `acquired_at`），说明新 daemon 真的按记录范围读完了任务。**结论：范围读已生效**，`incomplete-snapshot` 审计为 0（没有短读/不完整快照被跳过）。
+- **worktree 已清**：`ccmem/.worktrees/stop-tail-395-032cc670` 删除前先把未跟踪的 plan 文件提交并 cherry-pick 进 main（`docs(plan): the Stop tail-bound plan this round implemented`），再用不带 force 的 `git worktree remove` 移除。`ccloop/.worktrees/tester-issues-20261123` 的未提交 handoff 行（上一轮 `fc492f1b` 写的、内容已过期）存进 `ccloop` 的 `stash@{0}` 后移除，需要时可 `git stash show -p stash@{0}` 取回。
+
 ### 1.000000000000 2026-11-23（Orca 会话 `fc492f1b`）—— #395 第 2 条：Stop 尾部 2 MiB 窗口与摘要快照；全量 1038/1038
 
 - **#395 第 2 条已实现**（提交主题行 `feat(transcript): bound Stop transcript window`、`fix(transcript): cap and report bounded reads`、`fix(summarize): consume Stop snapshot ranges`）：`parseTranscriptWindow` 只读末尾 ≤2 MiB（调用方给更大值会被夹到 2 MiB），从完整 JSONL 行开始、UTF-8 安全；`open` 遇 ENOENT 返回空快照，短读不把未读字节当成已覆盖。`handleStop` 的统计、两条推断、L2.5 探针与入队元数据共用这一次窗口读；任务带 `{startByte,endByte}`，`runSummarizePending` 只读该字节范围（Stop 之后追加的内容不进摘要），旧 payload 无范围时保持原全量路径。
@@ -366,7 +372,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-23（本轮；本小节原位滚动，上一行 `cf2d6dfd`）：**export 契约（§6.1）不变**。本轮两段：#395 第 2 条（Stop hook 只读末尾 2 MiB；摘要任务按记录的 `{startByte,endByte}` 读）与**收尾修正**（会话 `ec9efff6`：`last_message_seq`／`session_context` 计数恢复**全文**含义，旧 daemon 的全量路径因此仍摘要最新一轮——上一版写成窗口计数，会让未重启的 daemon 摘要会话开头；已加判据与变异）。全量 `npm test` **1,046/1,046**；**daemon 未重启**（schema 18），新旧 daemon 现在都对，重启只决定是否启用范围读。Orca 侧本轮零代码改动；#385 付费评测缺 goal 原文（人已授权换组，但现存组不是该形态）。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#418 的 `--since` 取 `recorded_at`；#415 P2 external-content **不排期**。
+2026-11-23（本轮；本小节原位滚动，上一行 `cf2d6dfd`）：**export 契约（§6.1）不变**。本轮两段：#395 第 2 条（Stop hook 只读末尾 2 MiB；摘要任务按记录的 `{startByte,endByte}` 读）与**收尾修正**（会话 `ec9efff6`：`last_message_seq`／`session_context` 计数恢复**全文**含义，旧 daemon 的全量路径因此仍摘要最新一轮——上一版写成窗口计数，会让未重启的 daemon 摘要会话开头；已加判据与变异）。全量 `npm test` **1,046/1,046**；**daemon 已重启**（人授权，备份 `global.db.bak.1795444654000`，`quick_check` ok；重启前 unset 了 `ANTHROPIC_*`，plist 校验 0 个该前缀键），行为验证：重启后新任务带 `transcript_window`、其后有 `summarize_pending_applied` 审计行 ⇒ 范围读真的在跑。Orca 侧本轮零代码改动；#385 付费评测缺 goal 原文（人已授权换组，但现存组不是该形态）。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#418 的 `--since` 取 `recorded_at`；#415 P2 external-content **不排期**。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

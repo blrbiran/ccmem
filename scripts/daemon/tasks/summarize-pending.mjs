@@ -7,7 +7,7 @@ import { cleanTranscript } from '../../lib/transcript-cleaner.mjs';
 import { checkQuality } from '../../lib/quality-gate.mjs';
 import { parseLlmJson } from '../../lib/llm-parse.mjs';
 import { insertMemory } from '../../lib/cmd/save.mjs';
-import { extractEntryText, parseTranscript } from '../../lib/transcript.mjs';
+import { extractEntryText, parseTranscript, parseTranscriptByteRange } from '../../lib/transcript.mjs';
 import { loadConfig } from '../../lib/config.mjs';
 import { refineContentToLimit } from '../../lib/content-refiner.mjs';
 
@@ -42,11 +42,14 @@ export const SUMMARIZE_PENDING_JSON_SCHEMA = {
   }
 };
 
-function readTranscriptExcerpt(transcriptPath, lastMessageSeq, maxChars, agent) {
+function readTranscriptExcerpt(transcriptPath, lastMessageSeq, maxChars, agent, transcriptWindow) {
   const limit = Number.isFinite(maxChars) && maxChars > 0 ? maxChars : TRANSCRIPT_EXCERPT_MAX_FALLBACK;
   // lastMessageSeq counts entries of this same parser's output (see
   // countTranscriptLines), so the slice lines up for every agent.
-  const entries = parseTranscript(transcriptPath, agent).slice(0, lastMessageSeq);
+  const entries = (transcriptWindow
+    ? parseTranscriptByteRange(transcriptPath, agent, transcriptWindow.startByte, transcriptWindow.endByte)
+    : parseTranscript(transcriptPath, agent)
+  ).slice(0, lastMessageSeq);
   const lines = entries
     .map((entry) => {
       const text = extractEntryText(entry).trim();
@@ -110,11 +113,10 @@ function supersedeIfNewerTaskExists(db, taskId, sessionId, lastMessageSeq) {
      FROM tasks
      WHERE type = 'summarize_pending'
        AND status IN ('queued', 'running')
-       AND id <> ?
+       AND id > ?
        AND json_extract(payload, '$.session_id') = ?
-       AND json_extract(payload, '$.last_message_seq') > ?
      LIMIT 1`
-  ).get(taskId, sessionId, lastMessageSeq);
+  ).get(taskId, sessionId);
 
   if (!newer) {
     return false;
@@ -172,10 +174,9 @@ export async function runSummarizePending(db, task) {
      SET status = 'superseded', finished_at = ?
      WHERE type = 'summarize_pending'
        AND status = 'queued'
-       AND id <> ?
-       AND json_extract(payload, '$.session_id') = ?
-       AND json_extract(payload, '$.last_message_seq') < ?`
-  ).run(now, task.id, sessionId, lastMessageSeq);
+       AND id < ?
+       AND json_extract(payload, '$.session_id') = ?`
+  ).run(now, task.id, sessionId);
 
   if (supersedeIfNewerTaskExists(db, task.id, sessionId, lastMessageSeq)) {
     return;
@@ -202,7 +203,8 @@ export async function runSummarizePending(db, task) {
     transcriptPath,
     lastMessageSeq,
     Number(cfg.summarize?.transcript_excerpt_max),
-    agent
+    agent,
+    payload.transcript_window
   );
   if (!transcript.excerpt) {
     writeAudit(db, 'summarize_pending_skipped', null, {

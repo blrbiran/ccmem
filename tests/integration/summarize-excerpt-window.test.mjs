@@ -12,6 +12,7 @@ test.after(() => rmSync(dataRoot, { recursive: true, force: true }));
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { DEFAULT_CONFIG } = await import('../../scripts/lib/config.mjs');
 const { runSummarizePending } = await import('../../scripts/daemon/tasks/summarize-pending.mjs');
+const { handleStop } = await import('../../scripts/handlers/stop.mjs');
 
 /**
  * These two tests exist because the window has to be honoured AT THE CALL SITE.
@@ -118,6 +119,137 @@ test('the excerpt width follows config, so a rollback needs no code change', asy
       await runSummarizePending(db, task);
 
       assert.equal(excerptSentFor(db, sessionId).length, 1500);
+    });
+  } finally {
+    db.close();
+  }
+});
+
+function transcriptLine(type, text) {
+  return `${JSON.stringify({ type, message: { content: [{ type: 'text', text }] } })}\n`;
+}
+
+function withLlmOutput(db, task, synthesized) {
+  const payload = JSON.parse(task.payload);
+  payload.llm_output = JSON.stringify({ synthesized });
+  const serialized = JSON.stringify(payload);
+  db.prepare('UPDATE tasks SET payload = ? WHERE id = ?').run(serialized, task.id);
+  return { ...task, payload: serialized };
+}
+
+test('summarize reads the recorded Stop byte range after the transcript grows', async () => {
+  const db = openDb();
+  try {
+    await withConfig({}, async () => {
+      const sessionId = 's-snapshot-range';
+      const transcriptPath = path.join(dataRoot, 'snapshot-range.jsonl');
+      const prefix = transcriptLine('user', 'p'.repeat(2 * 1024 * 1024 + 256));
+      const snapshot = prefix
+        + transcriptLine('assistant', 'retained-before-tail')
+        + transcriptLine('user', 'CAPTURED_TAIL');
+      writeFileSync(transcriptPath, snapshot);
+
+      await handleStop(db, { session_id: sessionId, transcript_path: transcriptPath, cwd: process.cwd() });
+      let task = db.prepare(
+        `SELECT * FROM tasks
+         WHERE type = 'summarize_pending'
+           AND json_extract(payload, '$.session_id') = ?`
+      ).get(sessionId);
+      const snapshotPayload = JSON.parse(task.payload);
+      assert.equal(snapshotPayload.last_message_seq, 2);
+      assert.deepEqual(snapshotPayload.transcript_window, {
+        startByte: Buffer.byteLength(prefix),
+        endByte: Buffer.byteLength(snapshot)
+      });
+
+      task = withLlmOutput(db, task, []);
+      writeFileSync(transcriptPath, transcriptLine('user', 'APPENDED_SENTINEL'), { flag: 'a' });
+      await runSummarizePending(db, task);
+
+      const excerpt = excerptSentFor(db, sessionId);
+      assert.ok(excerpt.includes('CAPTURED_TAIL'));
+      assert.ok(!excerpt.includes('APPENDED_SENTINEL'));
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test('older Stop task is superseded when a newer snapshot retains fewer entries', async () => {
+  const db = openDb();
+  try {
+    await withConfig({ quality_gate: { enabled: false } }, async () => {
+      const sessionId = 's-shrinking-snapshot';
+      const transcriptPath = path.join(dataRoot, 'shrinking-snapshot.jsonl');
+      const prefix = transcriptLine('user', 'p'.repeat(2 * 1024 * 1024 + 256));
+      const firstSnapshot = prefix
+        + transcriptLine('user', 'older snapshot marker one')
+        + transcriptLine('assistant', 'older snapshot marker two')
+        + transcriptLine('user', 'older snapshot marker three');
+      writeFileSync(transcriptPath, firstSnapshot);
+
+      await handleStop(db, { session_id: sessionId, transcript_path: transcriptPath, cwd: process.cwd() });
+      let olderTask = db.prepare(
+        `SELECT * FROM tasks
+         WHERE type = 'summarize_pending'
+           AND json_extract(payload, '$.session_id') = ?
+         ORDER BY id ASC LIMIT 1`
+      ).get(sessionId);
+      olderTask = withLlmOutput(db, olderTask, [{
+        content: 'This project should retain the older snapshot memory.',
+        type: 'rule',
+        scope: 'project',
+        tags: ['snapshot-ordering']
+      }]);
+
+      const extension = transcriptLine('assistant', 'f'.repeat(2 * 1024 * 1024 + 256))
+        + transcriptLine('user', 'newer snapshot marker one')
+        + transcriptLine('assistant', 'newer snapshot marker two');
+      writeFileSync(transcriptPath, extension, { flag: 'a' });
+      await handleStop(db, { session_id: sessionId, transcript_path: transcriptPath, cwd: process.cwd() });
+      let newerTask = db.prepare(
+        `SELECT * FROM tasks
+         WHERE type = 'summarize_pending'
+           AND json_extract(payload, '$.session_id') = ?
+         ORDER BY id DESC LIMIT 1`
+      ).get(sessionId);
+      const olderPayload = JSON.parse(olderTask.payload);
+      const newerPayload = JSON.parse(newerTask.payload);
+      assert.ok(newerPayload.transcript_window.endByte > olderPayload.transcript_window.endByte);
+      assert.ok(newerPayload.last_message_seq < olderPayload.last_message_seq);
+      assert.ok(newerTask.id > olderTask.id);
+      newerTask = withLlmOutput(db, newerTask, [{
+        content: 'This project should retain the newer snapshot memory.',
+        type: 'rule',
+        scope: 'project',
+        tags: ['snapshot-ordering']
+      }]);
+
+      await runSummarizePending(db, olderTask);
+      const statusesAfterOlderRun = db.prepare(
+        `SELECT id, status FROM tasks
+         WHERE type = 'summarize_pending'
+           AND json_extract(payload, '$.session_id') = ?
+         ORDER BY id ASC`
+      ).all(sessionId);
+      assert.deepEqual(statusesAfterOlderRun.map((row) => [row.id, row.status]), [
+        [olderTask.id, 'superseded'],
+        [newerTask.id, 'queued']
+      ]);
+
+      await runSummarizePending(db, newerTask);
+      const memories = db.prepare(
+        `SELECT content FROM memories
+         WHERE source = 'auto_inferred'
+           AND content IN (?, ?)
+         ORDER BY content ASC`
+      ).all(
+        'This project should retain the older snapshot memory.',
+        'This project should retain the newer snapshot memory.'
+      );
+      assert.deepEqual(memories.map((row) => row.content), [
+        'This project should retain the newer snapshot memory.'
+      ]);
     });
   } finally {
     db.close();

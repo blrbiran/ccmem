@@ -77,6 +77,34 @@ export function parseTranscriptWindow(transcriptPath, agent = 'claude-code', max
   }
 }
 
+export function parseTranscriptByteRange(transcriptPath, agent = 'claude-code', startByte, endByte) {
+  if (
+    !transcriptPath ||
+    !Number.isSafeInteger(startByte) ||
+    !Number.isSafeInteger(endByte) ||
+    startByte < 0 ||
+    endByte < startByte
+  ) {
+    return [];
+  }
+
+  let fd;
+  try {
+    fd = fs.openSync(transcriptPath, 'r');
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+
+  try {
+    const buffer = Buffer.alloc(endByte - startByte);
+    const bytesRead = buffer.length ? fs.readSync(fd, buffer, 0, buffer.length, startByte) : 0;
+    return parseLines(buffer.subarray(0, bytesRead).toString('utf8').split('\n'), transcriptPath, agent);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 // claude-code: the raw transcript entries, as before. codex / omp: normalized
 // entries { type: 'user'|'assistant'|'tool', message: { content: string } }.
 export function parseTranscript(transcriptPath, agent = 'claude-code') {

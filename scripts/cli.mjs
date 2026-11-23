@@ -56,6 +56,8 @@ function printHelp() {
     '  audit show <id>\n' +
     '  admin daemon <status|start|stop|restart|install|uninstall|rotate-log [--keep-bytes N]>\n' +
     '  admin cron <list|run>\n' +
+    '             list [--issues] [--history N --task <type>] [--verbose]\n' +
+    '             run <type> [--session <id>]   (summarize_pending needs the session)\n' +
     '  admin llm <status|use <claude|codex|omp>|order <a,b,c>|approve [--yes]|reject>\n' +
     '  admin semantic <on|off|status> [--provider <transformers-local|openai|jina|ollama>]\n' +
     '  admin retrieval-check [--corpus <path>] [--k 1,3,5]\n' +
@@ -92,6 +94,45 @@ if (verb === 'admin' && args[0] === 'alias' && args[1] === '--help') {
 if (verb === 'admin' && args[0] === 'semantic' && args[1] === '--help') {
   printHelp();
   process.exit(0);
+}
+
+// Tester #447 defect 5 / #435: `admin cron issues` and `admin semantic off --help`
+// used to fall through to the dispatch chain and either do nothing (exit 0) or really
+// run the verb the person asked about. Any subcommand word that is neither a known
+// verb nor `--help` is an input error, and the usage line says what is accepted.
+if (verb === 'admin' && args[0] === 'cron' && args[1] != null && args[1] !== '--help') {
+  const sub = args[1];
+  if (sub !== 'list' && sub !== 'run') {
+    process.stderr.write(`ccmem: unknown admin cron subcommand: ${sub}\n`);
+    process.stderr.write('usage: ccmem admin cron <list|run> [--issues] [--history N --task <type>] [--verbose] [--session <id>]\n');
+    process.exit(64);
+  }
+}
+
+if (verb === 'admin' && args[0] === 'cron' && args[1] === '--help') {
+  printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === 'semantic' && args[1] != null && args[1] !== '--help') {
+  const sub = args[1];
+  if (sub !== 'on' && sub !== 'off' && sub !== 'status') {
+    process.stderr.write(`ccmem: unknown admin semantic subcommand: ${sub}\n`);
+    process.stderr.write('usage: ccmem admin semantic <on|off|status> [--provider <transformers-local|openai|jina|ollama>]\n');
+    process.exit(64);
+  }
+  // `on --help` names what `on` takes and runs nothing (#435: a help flag used to
+  // enable the provider).
+  if (args.slice(2).includes('--help')) {
+    process.stdout.write(
+      sub === 'on'
+        ? 'usage: ccmem admin semantic on [--provider <transformers-local|openai|jina|ollama>]\n  turns embeddings on for the provider named or configured\n'
+        : sub === 'off'
+          ? 'usage: ccmem admin semantic off\n  turns embeddings off; vectors are kept for a later on\n'
+          : 'usage: ccmem admin semantic status\n  reports the provider, model, dimensions and backfill progress\n'
+    );
+    process.exit(0);
+  }
 }
 
 if (verb === 'list' && args[0] === '--help') {
@@ -1101,15 +1142,20 @@ try {
     }
   } else if (verb === 'admin' && args[0] === 'cron' && args[1] === 'run' && args[2]) {
     try {
-      const result = await cmdAdminCron(getDb(), { verb: 'run', taskType: args[2] });
+      const result = await cmdAdminCron(getDb(), { verb: 'run', taskType: args[2], sessionId: getOptionValue('--session') });
       if (result.status === 'skipped') {
         process.stdout.write(`ccmem: skipped ${result.type} (${result.reason})\n`);
       } else {
         process.stdout.write(`ccmem: enqueued ${result.type} as task#${result.task_id}\n`);
       }
     } catch (error) {
-      if (error instanceof Error && /unsupported .*cron task:/.test(error.message)) {
+      // Tester #447: a payload that cannot be built (an unrecorded session) is an input
+      // error like an unknown task type: say why, exit 64, print the usage line.
+      if (error instanceof Error && /unsupported .*cron task:|no session context|has no transcript recorded|needs --session/.test(error.message)) {
         process.stderr.write(`ccmem: ${error.message}\n`);
+        if (/needs --session/.test(error.message)) {
+          process.stderr.write('usage: ccmem admin cron run <type> [--session <id>]\n');
+        }
         process.exitCode = 64;
       } else {
         throw error;

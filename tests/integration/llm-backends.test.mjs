@@ -94,6 +94,13 @@ if (mode === 'fail') {
   process.stderr.write('codex: unrelated failure');
   process.exit(2);
 }
+if (mode === 'fail-stdout') {
+  // Tester #448: the failure is reported ONLY on stdout (a 404 from the gateway),
+  // and stderr is left at 0 bytes -- codex --json's ordinary failure shape.
+  out({ type: 'item.completed', item: { id: 'e0', type: 'error', message: 'unexpected status 404 Not Found: magpie knows no model "group/nope"' } });
+  out({ type: 'turn.failed', error: { message: 'unexpected status 404 Not Found: magpie knows no model "group/nope"' } });
+  process.exit(1);
+}
 if (mode === 'hang') {
   setTimeout(() => {}, 60000);
 } else {
@@ -280,6 +287,17 @@ test('codex: an ordinary failure is not exhaustion, even if the model text menti
   assert.match(error.message, /^codex exec exit 2: codex: unrelated failure/);
   assert.equal(error.exhaustion, undefined);
   assert.equal(error.retryAfter, undefined);
+});
+
+// Tester #448: this is the live shape that made #445 unreadable — `codex exec exit 1: `
+// with nothing after the colon, because the message was on stdout and the excerpt only
+// read stderr. The assertion is on the MESSAGE the caller sees, not on the helper, so a
+// future edit that stops calling failureExcerpt fails here.
+test('codex: a stdout-only failure names its cause in the error message', async () => {
+  useFakes('codex', 'fail-stdout');
+  const error = await callClaudeP('p', { taskType: 'summarize_pending' }).then(() => null, (e) => e);
+  assert.match(error.message, /^codex exec exit 1: .*magpie knows no model/);
+  assert.doesNotMatch(error.message, /^codex exec exit 1:\s*$/);
 });
 
 test('codex classifyExhaustion parses both of Codex\'s reset formats', () => {

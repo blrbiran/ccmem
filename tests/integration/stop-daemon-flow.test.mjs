@@ -238,7 +238,7 @@ function assertWakeAndApplied(db, sessionId, expectedContent) {
   const details = JSON.parse(audit.details);
 
   assert.equal(existsSync(wakePath), true);
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(memory.content, expectedContent);
   assert.equal(memory.source, 'auto_inferred');
   assert.deepEqual(JSON.parse(memory.tags), ['stop-bridge']);
@@ -776,7 +776,7 @@ test('stop hook wake lets mainLoop dispatch summarize_pending stub', async () =>
   const details = JSON.parse(audit.details);
 
   assert.equal(existsSync(wakePath), true);
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(audit.action, 'summarize_pending_stub');
   assert.equal(details.session_id, 's-flow');
   assert.equal(details.transcript_entry_count, 2);
@@ -814,7 +814,7 @@ test('stop hook wake can drive configured claude bridge end to end', async () =>
   const details = JSON.parse(audit.details);
 
   assert.equal(existsSync(wakePath), true);
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(memory.content, 'Bridge remembered preference');
   assert.equal(memory.source, 'auto_inferred');
   assert.deepEqual(JSON.parse(memory.tags), ['stop-bridge']);
@@ -850,7 +850,7 @@ test('stop hook wake uses a configured bridge even without CCMEM_ENABLE_REAL_CLA
   const audit = getLatestAudit(db, 'summarize_pending_applied');
   const details = JSON.parse(audit.details);
 
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(memory.content, 'Bridge remembered without enable gate');
   assert.equal(details.session_id, 's-flow-bridge-no-enable');
   assert.equal(details.inserted_count, 1);
@@ -884,7 +884,7 @@ test('stop hook wake requests schema-structured bridge output so summarize_pendi
   const audit = getLatestAudit(db, 'summarize_pending_applied');
   const details = JSON.parse(audit.details);
 
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(memory.content, 'Bridge remembered via schema');
   assert.equal(details.session_id, 's-flow-bridge-schema');
   assert.equal(details.inserted_count, 1);
@@ -919,7 +919,7 @@ test('stop hook wake accepts Claude json result envelopes for schema-structured 
   const audit = getLatestAudit(db, 'summarize_pending_applied');
   const details = JSON.parse(audit.details);
 
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(memory.content, 'Bridge remembered via envelope');
   assert.equal(details.session_id, 's-flow-bridge-envelope');
   assert.equal(details.inserted_count, 1);
@@ -962,7 +962,7 @@ test('stop hook wake summarizes from the transcript tail so long sessions still 
   const details = JSON.parse(audit.details);
   const memory = getLatestAutoMemory(db);
 
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(details.session_id, 's-flow-bridge-tail');
   assert.equal(details.inserted_count, 1);
   assert.match(details.transcript_excerpt, /remember my preference/);
@@ -1002,7 +1002,7 @@ test('stop hook wake handles string user transcript content', async () => {
   const details = JSON.parse(audit.details);
 
   assert.equal(existsSync(wakePath), true);
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(memory.content, 'Bridge remembered string transcript');
   assert.equal(memory.source, 'auto_inferred');
   assert.deepEqual(JSON.parse(memory.tags), ['stop-bridge']);
@@ -1078,8 +1078,8 @@ test('stop hook wake re-enqueues the same seq after a completed bridge run and l
 
   assert.equal(existsSync(wakePath), true);
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq]), [
-    ['completed', 2],
-    ['completed', 2]
+    ['success', 2],
+    ['success', 2]
   ]);
   assert.equal(memories.length, 1);
   for (const memory of memories) {
@@ -1184,7 +1184,7 @@ test('stop hook wake dedupes the same seq while the prior bridge run is still ru
   ).all();
 
   assert.equal(existsSync(wakePath), true);
-  assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq]), [['completed', 2]]);
+  assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq]), [['success', 2]]);
   assert.equal(memories.length, 1);
   assert.equal(memories[0].source, 'auto_inferred');
   assert.deepEqual(JSON.parse(memories[0].tags), ['stop-bridge']);
@@ -1307,7 +1307,7 @@ test('stop hook wake supersedes a stale bridge result when a newer stop seq arri
   assert.equal(existsSync(wakePath), true);
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq]), [
     ['superseded', 2],
-    ['completed', 3]
+    ['success', 3]
   ]);
   assert.equal(stale.n, 0);
   assert.equal(memory.content, 'Bridge fresh preference');
@@ -1418,7 +1418,7 @@ test('stop hook wake re-enqueues the same seq after a bridge failure and later a
   assert.equal(existsSync(wakePath), true);
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq]), [
     ['failed', 2],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.equal(memory.content, 'Bridge remembered after retry');
   assert.equal(memory.source, 'auto_inferred');
@@ -1557,7 +1557,7 @@ test('stop hook wake applies summarize_pending after a timeout-scheduled retry l
   assert.equal(existsSync(wakePath), true);
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
-    ['completed', 2, 2]
+    ['success', 2, 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p timeout after 50ms/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -1689,7 +1689,7 @@ test('stop hook wake supersedes a stale timeout-scheduled retry when a newer sto
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
     ['superseded', 2, 2],
-    ['completed', 3, 1]
+    ['success', 3, 1]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p timeout after 50ms/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -1816,7 +1816,7 @@ test('stop hook wake applies summarize_pending after a rate-limit-scheduled retr
   assert.equal(existsSync(wakePath), true);
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
-    ['completed', 2, 2]
+    ['success', 2, 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 1234ms/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -1935,7 +1935,7 @@ test('stop hook wake supersedes a stale queued retry when a newer stop seq arriv
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
     ['superseded', 2, 2],
-    ['completed', 3, 1]
+    ['success', 3, 1]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 1234ms/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2062,7 +2062,7 @@ test('stop hook wake applies summarize_pending after a default-rate-limit retry 
   assert.equal(existsSync(wakePath), true);
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
-    ['completed', 2, 2]
+    ['success', 2, 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2181,7 +2181,7 @@ test('stop hook wake supersedes a stale default-rate-limit retry when a newer st
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
     ['superseded', 2, 2],
-    ['completed', 3, 1]
+    ['success', 3, 1]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2308,7 +2308,7 @@ test('stop hook wake applies summarize_pending after a second-based retry-after 
   assert.equal(existsSync(wakePath), true);
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
-    ['completed', 2, 2]
+    ['success', 2, 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2s/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2427,7 +2427,7 @@ test('stop hook wake supersedes a stale second-based retry when a newer stop seq
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
     ['superseded', 2, 2],
-    ['completed', 3, 1]
+    ['success', 3, 1]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2s/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2554,7 +2554,7 @@ test('stop hook wake applies summarize_pending after a minute-based retry-after 
   assert.equal(existsSync(wakePath), true);
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
-    ['completed', 2, 2]
+    ['success', 2, 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2m/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2673,7 +2673,7 @@ test('stop hook wake supersedes a stale minute-based retry when a newer stop seq
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
     ['superseded', 2, 2],
-    ['completed', 3, 1]
+    ['success', 3, 1]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2m/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2800,7 +2800,7 @@ test('stop hook wake applies summarize_pending after a too-many-requests retry l
   assert.equal(existsSync(wakePath), true);
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
-    ['completed', 2, 2]
+    ['success', 2, 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: too many requests/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2919,7 +2919,7 @@ test('stop hook wake supersedes a stale too-many-requests retry when a newer sto
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
     ['superseded', 2, 2],
-    ['completed', 3, 1]
+    ['success', 3, 1]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: too many requests/);
   assert.equal(tasks[1].error_excerpt, null);

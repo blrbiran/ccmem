@@ -451,25 +451,40 @@ export async function runTask(db, task, dispatch, { afterTask } = {}) {
     throw error;
   }
 
+  let dispatched = false;
+  let dispatchError = null;
   try {
     await dispatch(db, task);
-    const finishedAt = Date.now();
-    db.prepare(
-      `UPDATE tasks
-       SET status = 'completed',
-           finished_at = ?,
-           duration_ms = CASE
-             WHEN started_at IS NOT NULL AND ? >= started_at THEN ? - started_at
-             ELSE 0
-           END,
-           error_excerpt = NULL
-       WHERE id = ? AND status = 'running'`
-    ).run(finishedAt, finishedAt, finishedAt, task.id);
+    dispatched = true;
   } catch (error) {
-    const finishedAt = Date.now();
-    const message = errorMessage(error).slice(0, ERROR_EXCERPT_MAX);
-    const currentAttempt = Number(task.attempts ?? 0) + 1;
+    dispatchError = error;
+  }
 
+  try {
+    const finishedAt = Date.now();
+    if (dispatched) {
+      // Issue #444: this write is deliberately OUTSIDE the dispatch catch. A database
+      // built from the v0.1 spec carries `tasks.status CHECK (…, 'success', …)`; writing
+      // 'completed' there threw, the catch then recorded a task that had SUCCEEDED as
+      // 'failed' with `CHECK constraint failed…` as its excerpt, and every health read
+      // ("did the daemon finish? why did the last run fail?") inverted. 'success' is the
+      // word the spec names and both an old and a new database accept it.
+      db.prepare(
+        `UPDATE tasks
+         SET status = 'success',
+             finished_at = ?,
+             duration_ms = CASE
+               WHEN started_at IS NOT NULL AND ? >= started_at THEN ? - started_at
+               ELSE 0
+             END,
+             error_excerpt = NULL
+         WHERE id = ? AND status = 'running'`
+      ).run(finishedAt, finishedAt, finishedAt, task.id);
+      return true;
+    }
+
+    const message = errorMessage(dispatchError).slice(0, ERROR_EXCERPT_MAX);
+    const currentAttempt = Number(task.attempts ?? 0) + 1;
     db.prepare(
       `UPDATE tasks
        SET status = 'failed',
@@ -482,11 +497,19 @@ export async function runTask(db, task, dispatch, { afterTask } = {}) {
        WHERE id = ?`
     ).run(finishedAt, finishedAt, finishedAt, message, task.id);
 
-    scheduleRetry(db, { ...task, status: 'running' }, error, currentAttempt);
+    scheduleRetry(db, { ...task, status: 'running' }, dispatchError, currentAttempt);
+    return true;
+  } catch (error) {
+    // A settle that lost the write lock leaves the row 'running'; startup reclaim
+    // records it truthfully (reclaimOrphanedTasks). Anything else is a schema or
+    // storage fault and must be loud rather than recorded as a task failure.
+    if (isDatabaseBusy(error)) {
+      return true;
+    }
+    throw error;
   } finally {
     await afterTask?.(task);
   }
-  return true;
 }
 
 export async function mainLoop(db, shouldStop, dispatch, { afterTask } = {}) {

@@ -17,6 +17,7 @@ import {
 } from './backend-state.mjs';
 import { claudeBackend, parseRetryAfterMs, resolveCommand } from './backends/claude.mjs';
 import { codexBackend } from './backends/codex.mjs';
+import { failureExcerpt } from './failure-excerpt.mjs';
 import { ompBackend } from './backends/omp.mjs';
 
 const BLACKLIST_TTL_MS = 30 * 60 * 1000;
@@ -284,7 +285,10 @@ function runClaudeP(prompt, opts, queuedAt) {
         return;
       }
 
-      const excerpt = stderr.trim().slice(0, 200);
+      // Tester #448: codex --json reports failures on stdout (stderr is 0 bytes), so the
+      // excerpt reads stdout when stderr is empty -- and the structured message, not the
+      // raw JSON line. Shared with the exhaustion record below so both name one cause.
+      const excerpt = failureExcerpt({ stderr, stdout });
       const error = new Error(`${backend.label} exit ${code}: ${excerpt}`);
       const exhaustion = backend.classifyExhaustion({ stderr, stdout, exitCode: code });
       if (exhaustion.exhausted) {

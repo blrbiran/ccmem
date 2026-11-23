@@ -80,7 +80,7 @@ test('runTask leaves the task queued when the database is locked, then runs it o
 
     await runTask(db, task, async () => { dispatched += 1; });
     assert.equal(dispatched, 1);
-    assert.equal(db.prepare(`SELECT status FROM tasks WHERE id = ?`).get(task.id).status, 'completed');
+    assert.equal(db.prepare(`SELECT status FROM tasks WHERE id = ?`).get(task.id).status, 'success');
   } finally {
     db.close();
   }

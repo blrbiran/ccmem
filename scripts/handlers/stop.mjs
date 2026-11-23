@@ -47,8 +47,9 @@ export async function handleStop(db, hookData, deps = {}) {
       duration_ms,
       last_seq,
       updated_at,
-      agent
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      agent,
+      transcript_path
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(session_id) DO UPDATE SET
       project_key = excluded.project_key,
       tool_calls = excluded.tool_calls,
@@ -56,7 +57,8 @@ export async function handleStop(db, hookData, deps = {}) {
       duration_ms = excluded.duration_ms,
       last_seq = excluded.last_seq,
       updated_at = excluded.updated_at,
-      agent = excluded.agent`
+      agent = excluded.agent,
+      transcript_path = excluded.transcript_path`
   ).run(
     hookData.session_id,
     resolveProjectKey(hookData.cwd),
@@ -65,7 +67,8 @@ export async function handleStop(db, hookData, deps = {}) {
     stats.durationMs,
     seq,
     Date.now(),
-    agent
+    agent,
+    hookData.transcript_path ?? null
   );
 
   // No supersede here any more. last_message_seq counts the WHOLE transcript, so

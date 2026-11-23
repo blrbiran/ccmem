@@ -98,12 +98,29 @@ export async function cmdAdminSemantic(db, { verb, provider: requestedProvider =
     }
 
     _resetProviderCache();
-    const provider = getProvider(providerCfg);
+    // Tester #435: resolveEnabled (provider.mjs) reads config_kv BEFORE the config
+    // file, so after `semantic off` the row still says false and getProvider answered
+    // null even though this call asked for enabled:true — the next line then threw
+    // `Cannot read properties of null (reading 'load')`. The row must say true before
+    // the provider is resolved, and must go back to what it said if the load fails.
+    const priorEnabled = db.prepare("SELECT value FROM config_kv WHERE key = 'embedding.enabled'").get()?.value ?? null;
+    setConfigValue(db, 'embedding.enabled', 'true');
+    _resetProviderCache();
+    let provider;
     try {
+      // Resolving is inside the try too: an unknown --provider throws here, and that
+      // must leave the switch as it was found, exactly like a provider that fails to load.
+      provider = getProvider(providerCfg);
+      if (provider === null) throw new Error(`embedding provider ${providerName} did not resolve`);
       await provider.load(providerCfg);
     } catch (error) {
       // Issue #413 review: a provider that cannot load (missing model, daemon down) must
       // not leave the store pinned to it. Restore whatever the file/kv said before.
+      if (priorEnabled === null) {
+        db.prepare(`DELETE FROM config_kv WHERE key = 'embedding.enabled'`).run();
+      } else {
+        setConfigValue(db, 'embedding.enabled', priorEnabled);
+      }
       if (priorProvider === null) {
         db.prepare(`DELETE FROM config_kv WHERE key = 'embedding.active_provider'`).run();
       } else {

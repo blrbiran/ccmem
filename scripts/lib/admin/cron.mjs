@@ -2,6 +2,7 @@ import { isDaemonAlive } from '../../daemon/lock.mjs';
 import { contradictionAuditLeaseKey, dayKey, weeklyLeaseKey } from '../../daemon/loop.mjs';
 import { loadConfig } from '../config.mjs';
 import { RAN_BY, tryClaimLease } from '../task-runs.mjs';
+import { touchWakeFile } from '../../daemon/wake.mjs';
 
 const TRACKED_TYPES = [
   'daily_maintenance',
@@ -14,7 +15,7 @@ const TRACKED_TYPES = [
   'revalidation_audit',
   'vec_backfill'
 ];
-const MANUAL_RUN_TYPES = ['daily_maintenance', 'weekly_synthesis', 'security_audit', 'contradiction_audit', 'cross_project_patterns', 'monthly_meta_synthesis', 'revalidation_audit', 'vec_backfill'];
+const MANUAL_RUN_TYPES = ['daily_maintenance', 'summarize_pending', 'weekly_synthesis', 'security_audit', 'contradiction_audit', 'cross_project_patterns', 'monthly_meta_synthesis', 'revalidation_audit', 'vec_backfill'];
 const QUEUE_OVERDUE_MS = 5 * 60 * 1000;
 const RUNNING_ZOMBIE_MS = 10 * 60 * 1000;
 const RUN_AUDIT_BY_TASK = Object.freeze({
@@ -30,6 +31,62 @@ const RUN_AUDIT_BY_TASK = Object.freeze({
 
 function normalizeStatus(status) {
   return status === 'success' ? 'completed' : status;
+}
+
+/** The word a `tasks` row is shown with, as a lease row's 'success' already is. */
+function normalizeTaskStatus(status) {
+  return status === 'running' || status === 'queued' ? status : normalizeStatus(status);
+}
+
+/**
+ * Tester #447: `summarize_pending` never takes a lease — the Stop hook queues it, and
+ * no lease row exists for it — so `last=`, `--history` and `--issues` read
+ * `none`/empty forever for the one job that extracts memories. Where no lease row
+ * answers, the task rows do: one row per tracked type, the newest by start then id,
+ * shaped like a lease row so callers read one shape.
+ */
+function loadLatestTaskRows(db) {
+  // Only a row that started is a run: a queued task is the queued count's business,
+  // not a last result (the shape `last=none` still means "nothing has run yet").
+  const rows = db.prepare(
+    `SELECT id, type, started_at, finished_at, status, duration_ms
+     FROM tasks
+     WHERE started_at IS NOT NULL
+     ORDER BY type ASC, started_at DESC, id DESC`
+  ).all();
+  const latestByType = new Map();
+  for (const row of rows) {
+    if (!TRACKED_TYPES.includes(row.type) || latestByType.has(row.type)) continue;
+    latestByType.set(row.type, {
+      id: row.id,
+      date_key: row.started_at == null ? null : dayKey(new Date(row.started_at)),
+      started_at: row.started_at,
+      completed_at: row.finished_at,
+      status: normalizeTaskStatus(row.status),
+      ran_by: RAN_BY.DAEMON,
+      duration_ms: row.duration_ms
+    });
+  }
+  return latestByType;
+}
+
+function taskHistory(db, taskType, limit) {
+  const rows = db.prepare(
+    `SELECT id, started_at, finished_at, status, duration_ms
+     FROM tasks
+     WHERE type = ?
+     ORDER BY started_at DESC, id DESC
+     LIMIT ?`
+  ).all(taskType, limit);
+  return rows.map((row) => ({
+    id: row.id,
+    date_key: row.started_at == null ? null : dayKey(new Date(row.started_at)),
+    started_at: row.started_at,
+    completed_at: row.finished_at,
+    status: normalizeTaskStatus(row.status),
+    ran_by: RAN_BY.DAEMON,
+    duration_ms: row.duration_ms
+  }));
 }
 
 function parseDetails(details) {
@@ -123,6 +180,11 @@ function loadLatestRuns(db) {
     }
   }
 
+  // Tester #447: a type that never takes a lease still ran; its task rows answer.
+  for (const [type, row] of loadLatestTaskRows(db)) {
+    if (!latestByType.has(type)) latestByType.set(type, row);
+  }
+
   return latestByType;
 }
 
@@ -197,7 +259,9 @@ function listCronHistory(db, taskType, limit) {
 
   return {
     type: taskType,
-    history: history.map((row) => ({
+    // Tester #447: a type with no lease rows at all (`summarize_pending`) reports its
+    // task rows, so `--history` is not blank for the job that extracts memories.
+    history: history.length > 0 ? history.map((row) => ({
       id: row.id,
       date_key: row.date_key,
       started_at: row.started_at,
@@ -205,7 +269,7 @@ function listCronHistory(db, taskType, limit) {
       status: normalizeStatus(row.status),
       ran_by: row.ran_by,
       duration_ms: row.duration_ms
-    }))
+    })) : taskHistory(db, taskType, limit)
   };
 }
 
@@ -242,7 +306,7 @@ function manualLeaseKey(taskType, now) {
   return null;
 }
 
-function runCronTask(db, taskType) {
+function runCronTask(db, taskType, sessionId = null) {
   if (!TRACKED_TYPES.includes(taskType)) {
     throw new Error(`unsupported cron task: ${taskType}`);
   }
@@ -252,6 +316,40 @@ function runCronTask(db, taskType) {
 
   const now = new Date();
   const nowMs = now.getTime();
+
+  // Tester #447: `summarize_pending` extracts memories from ONE session's transcript,
+  // so a manual run needs the session it is for. The Stop hook already recorded
+  // everything the payload needs on `session_context`; a session it never saw is
+  // refused by name rather than queued as a bad payload the daemon would skip.
+  if (taskType === 'summarize_pending') {
+    if (typeof sessionId !== 'string' || sessionId === '') {
+      throw new Error('summarize_pending needs --session <id> (ccmem admin cron list shows queued summaries)');
+    }
+    const context = db.prepare(
+      `SELECT session_id, transcript_path, last_seq, agent
+       FROM session_context
+       WHERE session_id = ?`
+    ).get(sessionId);
+    if (!context) {
+      throw new Error(`no session context for ${sessionId}`);
+    }
+    if (typeof context.transcript_path !== 'string' || context.transcript_path === '') {
+      throw new Error(`session ${sessionId} has no transcript recorded (its Stop has not run since the upgrade)`);
+    }
+    const payload = {
+      session_id: context.session_id,
+      transcript_path: context.transcript_path,
+      last_message_seq: Number(context.last_seq ?? 0),
+      ...(context.agent ? { agent: context.agent } : {})
+    };
+    const inserted = db.prepare(
+      `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+       VALUES (?, ?, ?, ?, 'queued')`
+    ).run(taskType, JSON.stringify(payload), nowMs, nowMs);
+    touchWakeFile();
+    return { task_id: Number(inserted.lastInsertRowid), type: taskType, scheduled_for: nowMs, enqueued_at: nowMs, status: 'queued' };
+  }
+
   const leaseKey = manualLeaseKey(taskType, now);
   const payload = leaseKey ? { lease_key: leaseKey } : {};
 
@@ -270,6 +368,10 @@ function runCronTask(db, taskType) {
     `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
      VALUES (?, ?, ?, ?, 'queued')`
   ).run(taskType, JSON.stringify(payload), nowMs, nowMs);
+
+  // Tester #447: enqueueing without waking the daemon left a manual run waiting out
+  // the idle tick -- 300 s idle, observed live as 21:42:43 enqueued, 21:48 claimed.
+  touchWakeFile();
 
   return {
     task_id: Number(result.lastInsertRowid),
@@ -297,7 +399,7 @@ function attachVerboseHistory(db, result) {
   };
 }
 
-export async function cmdAdminCron(db, { verb, taskType = null, history = null, issues = false, verbose = false } = {}) {
+export async function cmdAdminCron(db, { verb, taskType = null, history = null, issues = false, verbose = false, sessionId = null } = {}) {
   if (verb === 'list') {
     if (issues) {
       return listCronIssues(db);
@@ -311,7 +413,7 @@ export async function cmdAdminCron(db, { verb, taskType = null, history = null, 
   }
 
   if (verb === 'run') {
-    return runCronTask(db, taskType);
+    return runCronTask(db, taskType, sessionId);
   }
 
   throw new Error(`unsupported admin cron verb: ${verb}`);

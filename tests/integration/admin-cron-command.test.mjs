@@ -316,7 +316,7 @@ test('manual daily admin cron run completes the claimed lease after dispatch', a
        LIMIT 1`
     ).get();
 
-    assert.equal(storedTask.status, 'completed');
+    assert.equal(storedTask.status, 'success');
     assert.equal(typeof storedTask.finished_at, 'number');
     assert.equal(lease.date_key, dayKey(fixedNow));
     assert.equal(lease.ran_by, 'manual');
@@ -374,7 +374,7 @@ test('manual weekly admin cron run completes the claimed lease after dispatch', 
        LIMIT 1`
     ).get();
 
-    assert.equal(storedTask.status, 'completed');
+    assert.equal(storedTask.status, 'success');
     assert.equal(typeof storedTask.finished_at, 'number');
     assert.equal(lease.date_key, weeklyLeaseKey(fixedNow));
     assert.equal(lease.ran_by, 'manual');
@@ -422,7 +422,7 @@ test('manual revalidation admin cron run dispatches successfully and records man
        WHERE type = 'revalidation_audit'`
     ).get();
 
-    assert.equal(storedTask.status, 'completed');
+    assert.equal(storedTask.status, 'success');
     assert.equal(typeof storedTask.finished_at, 'number');
     assert.equal(runs.n, 0);
     assert.equal(JSON.parse(task.payload ?? '{}').lease_key ?? null, null);
@@ -531,7 +531,7 @@ test('manual weekly admin cron run completes the claimed lease after a timeout-s
 
     assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
       ['failed', 1],
-      ['completed', 2]
+      ['success', 2]
     ]);
     assert.match(tasks[0].error_excerpt, /claude -p timeout after 50ms/);
     assert.equal(tasks[1].error_excerpt, null);
@@ -650,7 +650,7 @@ test('manual weekly admin cron run completes the claimed lease after an explicit
 
     assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
       ['failed', 1],
-      ['completed', 2]
+      ['success', 2]
     ]);
     assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 1234ms/);
     assert.equal(tasks[1].error_excerpt, null);
@@ -769,7 +769,7 @@ test('manual weekly admin cron run completes the claimed lease after a default r
 
     assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
       ['failed', 1],
-      ['completed', 2]
+      ['success', 2]
     ]);
     assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit/);
     assert.equal(tasks[1].error_excerpt, null);
@@ -888,7 +888,7 @@ test('manual weekly admin cron run completes the claimed lease after a too-many-
 
     assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
       ['failed', 1],
-      ['completed', 2]
+      ['success', 2]
     ]);
     assert.match(tasks[0].error_excerpt, /claude -p exit 29: too many requests/);
     assert.equal(tasks[1].error_excerpt, null);
@@ -1009,7 +1009,7 @@ test('manual weekly admin cron run completes the claimed lease after a seconds r
 
     assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
       ['failed', 1],
-      ['completed', 2]
+      ['success', 2]
     ]);
     assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2s/);
     assert.equal(tasks[1].error_excerpt, null);
@@ -1130,7 +1130,7 @@ test('manual weekly admin cron run completes the claimed lease after a minutes r
 
     assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
       ['failed', 1],
-      ['completed', 2]
+      ['success', 2]
     ]);
     assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2m/);
     assert.equal(tasks[1].error_excerpt, null);
@@ -1167,13 +1167,19 @@ test('manual weekly admin cron run completes the claimed lease after a minutes r
   }
 });
 
-test('cmdAdminCron run rejects summarize_pending because manual payload cannot be constructed', async () => {
+// Ruling (tester #447, 2026-11-24): this criterion used to pin the opposite — that
+// summarize_pending is refused as a manual task "because a manual payload cannot be
+// constructed". That refusal is the defect: the payload CAN be built from what the
+// Stop hook recorded (`session_context`), and with extraction stalled there was no
+// supported way to prove it works again. A manual run now needs `--session <id>`;
+// without one it is still refused, by name, and queues nothing.
+test('cmdAdminCron run refuses summarize_pending without the session it is for', async () => {
   const db = openDb();
   resetCronTables(db);
 
   await assert.rejects(
     cmdAdminCron(db, { verb: 'run', taskType: 'summarize_pending' }),
-    /unsupported manual cron task: summarize_pending/
+    /needs --session/
   );
 
   const tasks = db.prepare(
@@ -1460,7 +1466,10 @@ test('cli admin cron run enqueues supported tasks', () => {
   assert.equal(lease.status, 'running');
 });
 
-test('cli admin cron run rejects summarize_pending as a manual task', () => {
+// Ruling (tester #447, 2026-11-24): the CLI half of the criterion above. A manual
+// summarize run names the session it is for; without one the CLI says so, points at
+// the usage line, exits 64, and queues nothing.
+test('cli admin cron run asks summarize_pending for its session', () => {
   const db = openDb();
   resetCronTables(db);
   db.close();
@@ -1474,7 +1483,8 @@ test('cli admin cron run rejects summarize_pending as a manual task', () => {
       }),
     (error) => {
       assert.equal(error.status, 64);
-      assert.match(String(error.stderr), /ccmem: unsupported manual cron task: summarize_pending/);
+      assert.match(String(error.stderr), /ccmem: summarize_pending needs --session/);
+      assert.match(String(error.stderr), /usage: ccmem admin cron run <type> \[--session <id>\]/);
       return true;
     }
   );

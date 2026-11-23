@@ -96,7 +96,7 @@ test('mainLoop dispatches queued tasks and marks them completed', async () => {
   const row = db.prepare(`SELECT status, started_at, finished_at, attempts FROM tasks WHERE type = 'demo'`).get();
 
   assert.deepEqual(seen, ['demo']);
-  assert.equal(row.status, 'completed');
+  assert.equal(row.status, 'success');
   assert.equal(typeof row.started_at, 'number');
   assert.equal(typeof row.finished_at, 'number');
   assert.equal(row.attempts, 1);
@@ -411,7 +411,7 @@ test('mainLoop dispatches tasks scheduled for the current millisecond', async ()
   const row = db.prepare(`SELECT status, attempts FROM tasks WHERE type = 'edge-now'`).get();
 
   assert.deepEqual(seen, ['edge-now']);
-  assert.equal(row.status, 'completed');
+  assert.equal(row.status, 'success');
   assert.equal(row.attempts, 1);
   db.close();
 });
@@ -753,7 +753,7 @@ test('dispatchTask supersedes a stale summarize_pending bridge result when a new
   assert.equal(existsSync(release), true);
   assert.deepEqual(rows.map((row) => [row.status, row.last_message_seq]), [
     ['superseded', 2],
-    ['completed', 3]
+    ['success', 3]
   ]);
   assert.equal(stale.n, 0);
   assert.equal(fresh.content, 'fresh bridge result');
@@ -835,8 +835,8 @@ test('dispatchTask re-applies the same summarize_pending seq after a prior bridg
   ).all();
 
   assert.deepEqual(rows.map((row) => [row.status, row.last_message_seq]), [
-    ['completed', 2],
-    ['completed', 2]
+    ['success', 2],
+    ['success', 2]
   ]);
   assert.equal(memories.length, 1);
   for (const memory of memories) {
@@ -1085,7 +1085,7 @@ test('dispatchTask re-applies the same summarize_pending seq after a prior bridg
 
   assert.deepEqual(rows.map((row) => [row.status, row.last_message_seq]), [
     ['failed', 2],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.equal(memories.length, 1);
   assert.equal(memories[0].source, 'auto_inferred');
@@ -1277,7 +1277,7 @@ test('dispatchTask applies summarize_pending after a rate-limit-scheduled retry 
 
   assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
     ['failed', 1],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 1234ms/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -1433,7 +1433,7 @@ test('dispatchTask supersedes a stale summarize_pending retry when a newer seq a
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
     ['superseded', 2, 2],
-    ['completed', 3, 1]
+    ['success', 3, 1]
   ]);
   assert.equal(stale.n, 0);
   assert.equal(fresh.content, 'fresh retry result');
@@ -1627,7 +1627,7 @@ test('dispatchTask applies summarize_pending after a default-rate-limit retry la
 
   assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
     ['failed', 1],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -1783,7 +1783,7 @@ test('dispatchTask supersedes a stale default-rate-limit summarize_pending retry
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
     ['superseded', 2, 2],
-    ['completed', 3, 1]
+    ['success', 3, 1]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -1979,7 +1979,7 @@ test('dispatchTask applies summarize_pending after a too-many-requests retry lat
 
   assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
     ['failed', 1],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: too many requests/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2135,7 +2135,7 @@ test('dispatchTask supersedes a stale too-many-requests summarize_pending retry 
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
     ['superseded', 2, 2],
-    ['completed', 3, 1]
+    ['success', 3, 1]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: too many requests/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2331,7 +2331,7 @@ test('dispatchTask applies summarize_pending after a second-based retry-after re
 
   assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
     ['failed', 1],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2s/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2487,7 +2487,7 @@ test('dispatchTask supersedes a stale second-based summarize_pending retry when 
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
     ['superseded', 2, 2],
-    ['completed', 3, 1]
+    ['success', 3, 1]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2s/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2683,7 +2683,7 @@ test('dispatchTask applies summarize_pending after a minute-based retry-after re
 
   assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
     ['failed', 1],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2m/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -2839,7 +2839,7 @@ test('dispatchTask supersedes a stale minute-based summarize_pending retry when 
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
     ['superseded', 2, 2],
-    ['completed', 3, 1]
+    ['success', 3, 1]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2m/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -3041,7 +3041,7 @@ test('dispatchTask applies summarize_pending after a timeout-scheduled retry lat
 
   assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
     ['failed', 1],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p timeout after 50ms/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -3200,7 +3200,7 @@ test('dispatchTask supersedes a stale timeout-scheduled summarize_pending retry 
   assert.deepEqual(tasks.map((task) => [task.status, task.last_message_seq, task.attempts]), [
     ['failed', 2, 1],
     ['superseded', 2, 2],
-    ['completed', 3, 1]
+    ['success', 3, 1]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p timeout after 50ms/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -3272,7 +3272,7 @@ test('dispatchTask routes summarize_pending and keeps superseded status', async 
   ).get();
   const details = JSON.parse(audit.details);
 
-  assert.deepEqual(rows.map((row) => row.status), ['superseded', 'completed']);
+  assert.deepEqual(rows.map((row) => row.status), ['superseded', 'success']);
   assert.equal(audit.action, 'summarize_pending_stub');
   assert.equal(details.session_id, 's1');
   assert.equal(details.transcript_entry_count, 2);
@@ -3327,7 +3327,7 @@ test('dispatchTask skips summarize_pending when transcript excerpt is empty', as
   ).get();
   const details = JSON.parse(audit.details);
 
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(audit.action, 'summarize_pending_skipped');
   assert.equal(details.reason, 'empty_transcript');
   assert.equal(details.session_id, 's-empty');
@@ -3380,7 +3380,7 @@ test('dispatchTask skips summarize_pending when session is too short', async () 
   ).get();
   const details = JSON.parse(audit.details);
 
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(audit.action, 'summarize_pending_skipped');
   assert.equal(details.reason, 'short_session');
   assert.equal(details.session_id, 's-short');
@@ -3421,7 +3421,7 @@ test('dispatchTask marks bad summarize payload via audit', async () => {
   ).get();
   const details = JSON.parse(audit.details);
 
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(audit.action, 'summarize_pending_bad_payload');
   assert.equal(details.task_id > 0, true);
   db.close();
@@ -3509,7 +3509,7 @@ test('dispatchTask runs weekly_synthesis stub route', async () => {
   ).get();
   const details = JSON.parse(audit.details);
 
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
   assert.equal(audit.action, 'weekly_synthesis_run');
@@ -3589,7 +3589,7 @@ test('dispatchTask completes the anchored Sunday weekly lease across ISO week ro
        WHERE type = 'weekly_synthesis' AND date_key = ?`
     ).get(leaseKey);
 
-    assert.equal(task.status, 'completed');
+    assert.equal(task.status, 'success');
     assert.equal(lease.status, 'completed');
     assert.equal(typeof lease.completed_at, 'number');
   } finally {
@@ -3694,7 +3694,7 @@ test('dispatchTask keeps weekly completion on the originally claimed lease even 
        WHERE type = 'weekly_synthesis' AND date_key = ?`
     ).get(finishLeaseKey);
 
-    assert.equal(task.status, 'completed');
+    assert.equal(task.status, 'success');
     assert.equal(claimedLease.status, 'completed');
     assert.equal(typeof claimedLease.completed_at, 'number');
     assert.equal(finishLease, undefined);
@@ -3768,7 +3768,7 @@ test('dispatchTask can use configured claude bridge command for weekly_synthesis
   ).get();
   const details = JSON.parse(audit.details);
 
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
   assert.equal(details.item_count, 1);
@@ -4065,7 +4065,7 @@ test('dispatchTask applies weekly_synthesis after a timeout-scheduled retry late
 
   assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
     ['failed', 1],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p timeout after 50ms/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -4234,7 +4234,7 @@ test('dispatchTask applies weekly_synthesis after an explicit retry-after retry 
 
   assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
     ['failed', 1],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 1234ms/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -4403,7 +4403,7 @@ test('dispatchTask applies weekly_synthesis after a default-rate-limit retry lat
 
   assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
     ['failed', 1],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -4572,7 +4572,7 @@ test('dispatchTask applies weekly_synthesis after a too-many-requests retry late
 
   assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
     ['failed', 1],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: too many requests/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -4741,7 +4741,7 @@ test('dispatchTask applies weekly_synthesis after a second-based retry-after ret
 
   assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
     ['failed', 1],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2s/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -4910,7 +4910,7 @@ test('dispatchTask applies weekly_synthesis after a minute-based retry-after ret
 
   assert.deepEqual(tasks.map((task) => [task.status, task.attempts]), [
     ['failed', 1],
-    ['completed', 2]
+    ['success', 2]
   ]);
   assert.match(tasks[0].error_excerpt, /claude -p exit 29: 429 rate limit; retry-after: 2m/);
   assert.equal(tasks[1].error_excerpt, null);
@@ -5043,7 +5043,7 @@ test('dispatchTask runs daily_maintenance maintenance SQL', async () => {
   assert.equal(memory.decay_status, 'archived');
   assert.equal(injectionCount.n, 0);
   assert.deepEqual(blacklistSessions, ['s-active']);
-  assert.equal(task.status, 'completed');
+  assert.equal(task.status, 'success');
   assert.equal(lease.status, 'completed');
   assert.equal(typeof lease.completed_at, 'number');
   assert.deepEqual(cacheHashes, ['fresh-cache']);
@@ -5143,7 +5143,7 @@ test('dispatchTask keeps daily completion on the originally claimed lease even i
        WHERE type = 'daily_maintenance' AND date_key = ?`
     ).get(finishLeaseKey);
 
-    assert.equal(task.status, 'completed');
+    assert.equal(task.status, 'success');
     assert.equal(claimedLease.status, 'completed');
     assert.equal(typeof claimedLease.completed_at, 'number');
     assert.equal(finishLease, undefined);

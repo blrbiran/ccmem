@@ -64,6 +64,14 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
+### 1.000000000000 2026-11-23（Orca 会话 `fc492f1b`）—— #395 第 2 条：Stop 尾部 2 MiB 窗口与摘要快照；全量 1038/1038
+
+- **#395 第 2 条已实现**（提交主题行 `feat(transcript): bound Stop transcript window`、`fix(transcript): cap and report bounded reads`、`fix(summarize): consume Stop snapshot ranges`）：`parseTranscriptWindow` 只读末尾 ≤2 MiB（调用方给更大值会被夹到 2 MiB），从完整 JSONL 行开始、UTF-8 安全；`open` 遇 ENOENT 返回空快照，短读不把未读字节当成已覆盖。`handleStop` 的统计、两条推断、L2.5 探针与入队元数据共用这一次窗口读；任务带 `{startByte,endByte}`，`runSummarizePending` 只读该字节范围（Stop 之后追加的内容不进摘要），旧 payload 无范围时保持原全量路径。
+- **窗口滑动的排序修正**：保留 entry 数可能随窗口前进而变小，因此摘要任务的新旧/取代不再按 `last_message_seq` 比较，改按单调 task 行 id；`last_message_seq` 只作为窗口内切片长度。
+- **诚实边界**：尾部窗口会丢掉超长会话最开头几轮的推断输入（推断只关心最后一条 assistant 消息）；`deps.parseTranscript` 测试注入路径不带快照元数据（生产路径不走它）；**daemon 未重启**——Stop hook 是每次新进程、已即时用新代码，但 `runSummarizePending` 要等下次 daemon 重启才消费新范围（旧 daemon 继续走旧全量路径，行为不坏）。
+- **门**：全量 `npm test` **1,038/1,038**（本会话现测）；包没有 `build` 脚本，用 `node --check` 校验改动文件。判据覆盖默认/恰好 2 MiB、UTF-8 切分、末行不完整、短读、ENOENT、追加后只读原范围、两次 Stop 的排序。
+- 测试者 #416：仍等其在自己的 Codex `/hooks` 批准一次；#412–#415 的前置已在此前轮修完。
+
 ### 1.00000000000 2026-11-21（Orca 会话 `cf2d6dfd` 之后）—— #418 `orca-outcome`、#415 D／#416 可见性；全量 1028/1028
 
 - **#418 run/task 回写（ccmem 半边）**：新 verb `ccmem orca-outcome upsert`（stdin 一个 `orca-run-outcome-v1`，cwd 定项目键，`(project_key, run_id)` 唯一；同体 `unchanged`、异体 `refused` 且不覆盖；exit 0／64／1）与只读 `list [--project] [--since] [--json]`（按 `recorded_at` 过滤，选择已写在代码与帮助里）。迁移 018 新增 `orca_run_outcomes`（不改 export／retrieval／稳定段）；Phase 1 不动 trust。判据 `tests/integration/orca-outcome.test.mjs` 6 条先红后绿；trust 写入与覆盖两条变异见红。
@@ -357,7 +365,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-23（本轮；本小节原位滚动，上一行 `cf2d6dfd`）：**export 契约（§6.1）不变**；本仓零代码改动、daemon 未重启（仍是 schema 18）。Orca 侧本轮改三笔（#393(b) summary 与 overview 共读每组、#385 拆分指令 v9 的 `deliveryGraph`、syncskill `.backup-*` 崩溃恢复），均不触及 ccmem 边界。#395 第 2 条（stop hook 只读 2 MB 尾部）**仍未做**——2 MB 上界待人裁（设计稿在 Orca `.superpowers/sdd/plan/design-395-hooks.md`），fix 1（只解析一次）已落。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#418 的 `--since` 取 `recorded_at`；#415 P2 external-content **不排期**。
+2026-11-23（本轮；本小节原位滚动，上一行 `cf2d6dfd`）：**export 契约（§6.1）不变**；本仓本轮改 #395 第 2 条（Stop hook 只读末尾 2 MiB：字节边界、UTF-8/短读/ENOENT 安全；摘要任务按记录的 `{startByte,endByte}` 快照读，追加内容不进摘要；新旧按 task 行 id 排序）。全量 `npm test` 1,038/1,038；**daemon 未重启**（仍是 schema 18，hook 与 daemon 都在下次运行时用新代码）。Daemon 的 `handleStop` 在 hook 进程里跑，无需重启；`runSummarizePending` 属 daemon 任务，旧 daemon 会继续用旧代码直到下次重启——登记。Orca 侧本轮零代码改动；#385 付费评测因缺两段历史 goal 原文未跑。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#418 的 `--since` 取 `recorded_at`；#415 P2 external-content **不排期**。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

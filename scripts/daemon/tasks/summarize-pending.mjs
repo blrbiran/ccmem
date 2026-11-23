@@ -22,7 +22,9 @@ export const SUMMARIZE_PENDING_JSON_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['content', 'type', 'scope', 'tags'],
+        // Tester #446: `learned` is what the memory established -- the field a calibration task
+        // compares against the transcript. Requiring it is what makes summary_meta non-empty.
+        required: ['content', 'type', 'scope', 'tags', 'learned'],
         properties: {
           content: { type: 'string' },
           type: { enum: ['rule', 'fact', 'episode'] },
@@ -94,6 +96,10 @@ export function buildSummarizePrompt(transcript) {
     '    These harden into refusals the agent cites against itself long after the',
     '    problem was fixed.',
     'Do NOT extract implementation churn, test-only results, commit info, version bumps, or one-off debugging notes.',
+    'For each memory also say (both fields are short, one sentence each):',
+    '  - "learned": what this session established that a fresh session should know (the durable claim).',
+    '  - "investigated": what was looked at to establish it (files, commands, sources).',
+    '    Both are stored beside the memory and are what lets it be checked later; they are not the memory text.',
     '',
     transcript
   ].join('\n');
@@ -419,7 +425,10 @@ export async function runSummarizePending(db, task) {
         embeddingBlob,
         summaryMeta: buildSummaryMeta(item),
         temporalType: item.temporal_type ?? null,
-        originAgent: agent
+        originAgent: agent,
+        // Tester #446: the row names the session and transcript it came from, so a later calibration
+        // task can check it against what was actually said (and say so when the transcript is gone).
+        provenance: { sessionId, transcriptPath }
       });
       insertedIds.push(inserted.id);
     } catch {

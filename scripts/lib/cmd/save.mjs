@@ -49,7 +49,10 @@ export async function insertMemory(db, {
   embeddingBlob = undefined,
   summaryMeta = null,
   temporalType = null,
-  originAgent = null
+  originAgent = null,
+  // Tester #446: where this memory came from, when the caller knows (a summarize run does; a person's
+  // `save` does not, and NULL is the honest answer rather than a guess).
+  provenance = null
 }) {
   const cfg = loadConfig();
   const maxChars = Number(cfg.save?.max_chars_per_memory ?? 500);
@@ -130,9 +133,11 @@ export async function insertMemory(db, {
       quarantined_at,
       last_touched_at,
       origin_agent,
+      session_id,
+      transcript_path,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     resolvedScope,
     resolvedProjectKey,
@@ -153,6 +158,8 @@ export async function insertMemory(db, {
     resolvedQuarantinedAt,
     touchedAt,
     originAgent ?? null,
+    typeof provenance?.sessionId === 'string' && provenance.sessionId ? provenance.sessionId : null,
+    typeof provenance?.transcriptPath === 'string' && provenance.transcriptPath ? provenance.transcriptPath : null,
     now,
     now
   );

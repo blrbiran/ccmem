@@ -42,7 +42,7 @@ function isInjectedUserText(text) {
 // Tool calls keep empty content: arguments and outputs are not conversation,
 // and an output may be the read of ccmem's own context file. Their outputs
 // (`*_output`) are dropped so each call counts once.
-function normalizeCodexLine(line) {
+export function normalizeCodexLine(line) {
   if (line?.type !== 'response_item') {
     return null;
   }

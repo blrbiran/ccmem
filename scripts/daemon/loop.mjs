@@ -1,5 +1,6 @@
 import { loadConfig } from '../lib/config.mjs';
 import { isDatabaseBusy } from '../lib/db.mjs';
+import { writeAudit } from '../lib/audit.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { RAN_BY, tryClaimLease } from '../lib/task-runs.mjs';
 import { wakeRecently } from './wake.mjs';
@@ -311,6 +312,69 @@ function resolveRetryDelayMs(task, error, currentAttempt) {
   return Math.pow(2, currentAttempt - 1) * RETRY_DELAY_BASE_MS;
 }
 
+function summarizeSnapshotIsStale(db, task) {
+  if (task.type !== 'summarize_pending') {
+    return false;
+  }
+
+  const payload = JSON.parse(task.payload ?? '{}');
+  const observedAt = Number(payload.snapshot_observed_at);
+  if (Number.isFinite(observedAt)) {
+    return Boolean(db.prepare(
+      `SELECT id
+       FROM tasks
+       WHERE type = 'summarize_pending'
+         AND status IN ('queued', 'running')
+         AND id <> ?
+         AND json_extract(payload, '$.session_id') = ?
+         AND json_extract(payload, '$.snapshot_observed_at') > ?
+       LIMIT 1`
+    ).get(task.id, payload.session_id, observedAt));
+  }
+
+  const lastMessageSeq = Number(payload.last_message_seq ?? 0);
+  return Boolean(db.prepare(
+    `SELECT id
+     FROM tasks
+     WHERE type = 'summarize_pending'
+       AND status IN ('queued', 'running')
+       AND id <> ?
+       AND json_extract(payload, '$.session_id') = ?
+       AND json_extract(payload, '$.snapshot_observed_at') IS NULL
+       AND json_extract(payload, '$.last_message_seq') > ?
+     LIMIT 1`
+  ).get(task.id, payload.session_id, lastMessageSeq));
+}
+
+function supersedeWinningSummarizeTask(db, taskId, sessionId) {
+  db.prepare(
+    `UPDATE tasks
+     SET status = 'superseded', finished_at = ?
+     WHERE id = ?
+       AND status = 'running'`
+  ).run(Date.now(), taskId);
+  writeAudit(db, 'summarize_pending_superseded', null, {
+    task_id: taskId,
+    session_id: sessionId,
+    reason: 'retry_snapshot_stale'
+  });
+}
+
+function insertRetryTask(db, task, enqueuedAt, delayMs, currentAttempt, mark) {
+  const payload = JSON.parse(task.payload ?? '{}');
+  if (task.type === 'summarize_pending' && summarizeSnapshotIsStale(db, task)) {
+    if (task.status === 'running') {
+      supersedeWinningSummarizeTask(db, task.id, payload.session_id);
+    }
+    return;
+  }
+
+  db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status, attempts, error_excerpt)
+     VALUES (?, ?, ?, ?, 'queued', ?, ?)`
+  ).run(task.type, task.payload ?? null, enqueuedAt + delayMs, enqueuedAt, currentAttempt, mark);
+}
+
 function scheduleRetry(db, task, error, currentAttempt) {
   // An exhausted backend (claude-p.mjs sets error.exhaustion) is not the
   // task's fault: it waits for the reset or the human's approval however many
@@ -328,11 +392,11 @@ function scheduleRetry(db, task, error, currentAttempt) {
   const mark = backend
     ? `${EXHAUSTED_RETRY_MARK}${backend}: ${errorMessage(error)}`.slice(0, ERROR_EXCERPT_MAX)
     : null;
-  db.prepare(
-    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status, attempts, error_excerpt)
-     VALUES (?, ?, ?, ?, 'queued', ?, ?)`
-  ).run(task.type, task.payload ?? null, enqueuedAt + delayMs, enqueuedAt, currentAttempt, mark);
-
+  // A summarize retry re-queues the same payload, so it carries the ORIGINAL
+  // snapshot_observed_at and transcript_window. insertRetryTask refuses to
+  // queue it when a newer Stop already supersedes that snapshot, and marks a
+  // running row superseded: the retry must never look newer than it is.
+  insertRetryTask(db, task, enqueuedAt, delayMs, currentAttempt, mark);
   return true;
 }
 
@@ -418,7 +482,7 @@ export async function runTask(db, task, dispatch, { afterTask } = {}) {
        WHERE id = ?`
     ).run(finishedAt, finishedAt, finishedAt, message, task.id);
 
-    scheduleRetry(db, task, error, currentAttempt);
+    scheduleRetry(db, { ...task, status: 'running' }, error, currentAttempt);
   } finally {
     await afterTask?.(task);
   }

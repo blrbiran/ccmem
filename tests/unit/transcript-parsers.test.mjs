@@ -17,7 +17,7 @@ process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = dataRoot;
 test.after(() => rmSync(dataRoot, { recursive: true, force: true }));
 
-const { parseTranscript, parseTranscriptWindow, countTranscriptLines, computeSessionStats } = await import('../../scripts/lib/transcript.mjs');
+const { parseTranscript, parseTranscriptWindow, parseTranscriptByteRange, countTranscriptLines, computeSessionStats, scanTranscript } = await import('../../scripts/lib/transcript.mjs');
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { handleStop } = await import('../../scripts/handlers/stop.mjs');
 const { runSummarizePending } = await import('../../scripts/daemon/tasks/summarize-pending.mjs');
@@ -139,14 +139,20 @@ test('transcript window safely skips a UTF-8 code point split at the byte bounda
   assert.equal(window.entries.some((entry) => entry.message?.content?.includes('🙂')), false);
 });
 
-test('oversized transcript window excludes an incomplete final JSONL record', () => {
+test('oversized transcript window and replay both omit a valid unterminated final record', () => {
   const prefix = `${JSON.stringify({ type: 'user', message: { content: 'x'.repeat(2 * 1024 * 1024) } })}${JSONL_NEWLINE}`;
   const complete = `${JSON.stringify({ type: 'assistant', message: { content: 'complete reply' } })}${JSONL_NEWLINE}`;
-  const incomplete = '{"type":"assistant","message":{"content":"unfinished';
-  const file = writeTemp('incomplete-window-tail.jsonl', prefix + complete + incomplete);
+  const unterminated = JSON.stringify({ type: 'assistant', message: { content: 'valid but unterminated' } });
+  const file = writeTemp('incomplete-window-tail.jsonl', prefix + complete + unterminated);
   const window = parseTranscriptWindow(file);
   assert.equal(window.entries.at(-1)?.message?.content, 'complete reply');
-  assert.equal(window.entries.some((entry) => entry.message?.content === 'unfinished'), false);
+  assert.equal(window.entries.some((entry) => entry.message?.content === 'valid but unterminated'), false);
+  assert.equal(window.completeLinesOnly, true);
+  assert.equal(window.complete, true);
+  assert.deepEqual(
+    parseTranscriptByteRange(file, 'claude-code', window.startByte, window.endByte, window.completeLinesOnly),
+    window.entries
+  );
 });
 
 test('requested transcript window limits above the default are capped at 2 MiB', () => {
@@ -164,13 +170,14 @@ test('transcript window treats an open-time ENOENT as an empty snapshot', () => 
     openSync() { opened = true; const error = new Error('gone'); error.code = 'ENOENT'; throw error; }
   });
   assert.deepEqual(parseTranscriptWindow('/disappeared.jsonl', 'claude-code', undefined, fileSystem), {
-    entries: [], startByte: 0, endByte: 0
+    entries: [], startByte: 0, endByte: 0, completeLinesOnly: false, complete: false
   });
   assert.equal(opened, true);
 });
 
-test('transcript window range stops at the bytes actually returned after a short read', () => {
-  const file = writeTemp('short-window-read.jsonl', `${JSON.stringify({ type: 'assistant', message: { content: 'short' } })}${JSONL_NEWLINE}`);
+test('a short transcript window read is incomplete even if the file later regrows', () => {
+  const original = `${JSON.stringify({ type: 'assistant', message: { content: 'short' } })}${JSONL_NEWLINE}`;
+  const file = writeTemp('short-window-read.jsonl', original);
   const { fileSystem, reads } = instrumentFs({
     readSync(fd, buffer, offset, length, position) {
       reads.push({ length, position });
@@ -178,8 +185,53 @@ test('transcript window range stops at the bytes actually returned after a short
     }
   });
   const window = parseTranscriptWindow(file, 'claude-code', 1024, fileSystem);
+  writeFileSync(file, `${original}${JSON.stringify({ type: 'user', message: { content: 'regrown' } })}${JSONL_NEWLINE}`);
   assert.equal(window.endByte, reads[0].position + 10);
+  assert.equal(window.complete, false);
   assert.deepEqual(window.entries, []);
+});
+
+test('a complete full-file window includes a valid final record without a newline', () => {
+  const text = JSON.stringify({ type: 'user', message: { content: 'final record' } });
+  const file = writeTemp('complete-unterminated-window.jsonl', text);
+  const window = parseTranscriptWindow(file);
+  assert.equal(window.complete, true);
+  assert.equal(window.completeLinesOnly, false);
+  assert.deepEqual(window.entries, [{ type: 'user', message: { content: 'final record' } }]);
+  assert.deepEqual(
+    parseTranscriptByteRange(file, 'claude-code', window.startByte, window.endByte, window.completeLinesOnly),
+    window.entries
+  );
+});
+
+test('byte range parser keeps in-range records and excludes appended out-of-range records', () => {
+  const inRange = `${JSON.stringify({ type: 'user', message: { content: 'IN_RANGE_SENTINEL' } })}${JSONL_NEWLINE}`;
+  const appended = `${JSON.stringify({ type: 'assistant', message: { content: 'OUT_OF_RANGE_SENTINEL' } })}${JSONL_NEWLINE}`;
+  const file = writeTemp('exact-byte-range.jsonl', inRange + appended);
+
+  const entries = parseTranscriptByteRange(file, 'claude-code', 0, Buffer.byteLength(inRange), false);
+
+  assert.deepEqual(entries, [{ type: 'user', message: { content: 'IN_RANGE_SENTINEL' } }]);
+  assert.equal(entries.some((entry) => entry.message.content === 'OUT_OF_RANGE_SENTINEL'), false);
+});
+
+test('OMP range preserves the snapshot branch after a later branch switch', () => {
+  const root = `${JSON.stringify({ type: 'model_change', id: 'root', parentId: null })}${JSONL_NEWLINE}`;
+  const snapshotLeaf = `${JSON.stringify({
+    type: 'message', id: 'snapshot', parentId: 'root', message: { role: 'assistant', content: 'snapshot branch' }
+  })}${JSONL_NEWLINE}`;
+  const snapshot = root + snapshotLeaf;
+  const file = writeTemp('omp-range-branch-switch.jsonl', snapshot);
+  const endByte = Buffer.byteLength(snapshot);
+  writeFileSync(file, `${snapshot}${JSON.stringify({
+    type: 'message', id: 'appended', parentId: 'root', message: { role: 'assistant', content: 'appended branch' }
+  })}${JSONL_NEWLINE}`);
+
+  const captured = parseTranscriptByteRange(file, 'omp', 0, endByte, false);
+  const current = parseTranscript(file, 'omp');
+
+  assert.deepEqual(captured, [{ type: 'assistant', message: { content: 'snapshot branch' } }]);
+  assert.deepEqual(current, [{ type: 'assistant', message: { content: 'appended branch' } }]);
 });
 
 test('codex: keeps the conversation and tool calls, drops injected context', () => {
@@ -253,6 +305,34 @@ test('codex: a zstd-compressed rollout yields no entries and says so on stderr',
   assert.equal(writes.some((line) => line.includes('.zst')), true, `no stderr notice: ${JSON.stringify(writes)}`);
 });
 
+test('scanTranscript counts the whole file exactly as a full parse does', () => {
+  // The Stop hook reads only a 2 MiB tail, but last_message_seq and
+  // session_context must keep meaning "the whole transcript": a daemon that
+  // predates the window parses the full file and slices it with that number.
+  for (const [agent, fixture] of [['codex', CODEX_FIXTURE], ['omp', OMP_FIXTURE], ['claude-code', null]]) {
+    const file = fixture ?? writeTemp('scan-claude.jsonl', [
+      JSON.stringify({ type: 'user', message: { content: 'one' } }),
+      JSON.stringify({ type: 'tool', message: { content: '' } }),
+      JSON.stringify({ type: 'assistant', message: { content: 'two' } }),
+      'not json at all',
+      ''
+    ].join('\n'));
+    const entries = parseTranscript(file, agent);
+    assert.deepEqual(
+      scanTranscript(file, agent),
+      { entryCount: entries.length, toolCalls: computeSessionStats(file, agent).toolCalls, messageCount: entries.length },
+      `scanTranscript disagreed with parseTranscript for ${agent}`
+    );
+  }
+});
+
+test('scanTranscript skips an unterminated final record and a missing file', () => {
+  const complete = `${JSON.stringify({ type: 'user', message: { content: 'kept' } })}\n`;
+  const file = writeTemp('scan-unterminated.jsonl', `${complete}{"type":"assistant","message":{"cont`);
+  assert.deepEqual(scanTranscript(file, 'claude-code'), { entryCount: 1, toolCalls: 0, messageCount: 1 });
+  assert.deepEqual(scanTranscript('/no/such/transcript.jsonl', 'claude-code'), { entryCount: 0, toolCalls: 0, messageCount: 0 });
+});
+
 test('count and stats are taken from the agent\'s normalized entries', () => {
   // last_message_seq slices this same parser output, so it must count
   // normalized entries, not raw lines (the codex fixture has 19 raw lines).
@@ -297,10 +377,14 @@ test('stop: a codex session is counted and learned from through the codex parser
       `SELECT payload FROM tasks WHERE type = 'summarize_pending'
        AND json_extract(payload, '$.session_id') = ?`
     ).get(sessionId);
-    assert.equal(JSON.parse(task.payload).last_message_seq, 6);
-    assert.deepEqual(JSON.parse(task.payload).transcript_window, {
+    const payload = JSON.parse(task.payload);
+    assert.equal(payload.last_message_seq, 6);
+    assert.equal(Number.isFinite(payload.snapshot_observed_at), true);
+    assert.deepEqual(payload.transcript_window, {
       startByte: 0,
-      endByte: Buffer.byteLength(readFileSync(CODEX_FIXTURE))
+      endByte: Buffer.byteLength(readFileSync(CODEX_FIXTURE)),
+      completeLinesOnly: false,
+      complete: true
     });
     // The last codex assistant reply quotes the injected memory, so implicit
     // feedback must see it. Read as a Claude transcript it has no assistant

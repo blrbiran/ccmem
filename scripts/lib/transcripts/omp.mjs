@@ -7,6 +7,8 @@ import { CCMEM_MARKERS } from './codex.mjs';
 // from the last physical entry and walks parentId to the root; so does this.
 
 const HEADER_TYPES = new Set(['title', 'session']);
+/** The same set, for the streaming scan in transcript.mjs (which keeps tuples, not entries). */
+export const OMP_HEADER_TYPES = HEADER_TYPES;
 
 function messageText(content) {
   if (typeof content === 'string') {
@@ -38,7 +40,7 @@ function activeBranch(entries) {
 // Tool results keep empty content: a result may be the read of ccmem's own
 // context file, and tool output is not conversation. A user message carrying
 // ccmem's injected text is dropped for the same reason.
-function normalizeOmpEntry(entry) {
+export function normalizeOmpEntry(entry) {
   if (entry.type !== 'message') {
     return null;
   }

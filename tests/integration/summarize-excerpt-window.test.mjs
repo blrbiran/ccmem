@@ -12,6 +12,7 @@ test.after(() => rmSync(dataRoot, { recursive: true, force: true }));
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { DEFAULT_CONFIG } = await import('../../scripts/lib/config.mjs');
 const { runSummarizePending } = await import('../../scripts/daemon/tasks/summarize-pending.mjs');
+const { runTask } = await import('../../scripts/daemon/loop.mjs');
 const { handleStop } = await import('../../scripts/handlers/stop.mjs');
 
 /**
@@ -87,6 +88,49 @@ async function withConfig(overrides, fn) {
   }
 }
 
+test('a daemon that predates the window summarizes the same whole transcript', async () => {
+  // The compatibility promise: last_message_seq means "the whole transcript", so an
+  // OLD daemon (one that ignores transcript_window and parses the whole file) slices
+  // the same prefix the new daemon would summarize. Hand it a Stop payload with the
+  // window stripped -- exactly what an un-restarted daemon reads -- and the excerpt
+  // must still end with the newest turn, not the file's opening.
+  const db = openDb();
+  try {
+    await withConfig({}, async () => {
+      const sessionId = 's-legacy-daemon';
+      const transcriptPath = path.join(dataRoot, 'legacy-daemon.jsonl');
+      const prefix = transcriptLine('user', 'p'.repeat(2 * 1024 * 1024 + 256));
+      const snapshot = prefix
+        + transcriptLine('assistant', 'window retained line')
+        + transcriptLine('user', 'NEWEST TURN');
+      writeFileSync(transcriptPath, snapshot);
+      await handleStop(db, { session_id: sessionId, transcript_path: transcriptPath, cwd: process.cwd() });
+
+      const task = db.prepare(
+        `SELECT * FROM tasks
+         WHERE type = 'summarize_pending'
+           AND json_extract(payload, '$.session_id') = ?`
+      ).get(sessionId);
+      const payload = JSON.parse(task.payload);
+      // What the old daemon does: it has no idea the window exists.
+      delete payload.transcript_window;
+      payload.llm_output = JSON.stringify({ synthesized: [] });
+      const legacyPayload = JSON.stringify(payload);
+      db.prepare('UPDATE tasks SET payload = ? WHERE id = ?').run(legacyPayload, task.id);
+
+      await runSummarizePending(db, { ...task, payload: legacyPayload });
+
+      const excerpt = excerptSentFor(db, sessionId);
+      assert.ok(excerpt.includes('NEWEST TURN'), 'the legacy path must reach the newest turn');
+      // The prefix is one huge line; the excerpt cap keeps its tail, so the summary
+      // sees the same end of the transcript either way.
+      assert.ok(excerpt.endsWith('NEWEST TURN'), 'the legacy path must end at the newest turn');
+    });
+  } finally {
+    db.close();
+  }
+});
+
 test('the excerpt handed to the LLM is as wide as the shipped default', async () => {
   const db = openDb();
   try {
@@ -156,10 +200,14 @@ test('summarize reads the recorded Stop byte range after the transcript grows', 
            AND json_extract(payload, '$.session_id') = ?`
       ).get(sessionId);
       const snapshotPayload = JSON.parse(task.payload);
-      assert.equal(snapshotPayload.last_message_seq, 2);
+      // Whole-transcript count (scanTranscript), not the 2-entry window (Ruling above).
+      assert.equal(snapshotPayload.last_message_seq, 3);
+      assert.equal(Number.isFinite(snapshotPayload.snapshot_observed_at), true);
       assert.deepEqual(snapshotPayload.transcript_window, {
         startByte: Buffer.byteLength(prefix),
-        endByte: Buffer.byteLength(snapshot)
+        endByte: Buffer.byteLength(snapshot),
+        completeLinesOnly: true,
+        complete: true
       });
 
       task = withLlmOutput(db, task, []);
@@ -169,6 +217,105 @@ test('summarize reads the recorded Stop byte range after the transcript grows', 
       const excerpt = excerptSentFor(db, sessionId);
       assert.ok(excerpt.includes('CAPTURED_TAIL'));
       assert.ok(!excerpt.includes('APPENDED_SENTINEL'));
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test('Stop timestamp and transcript window survive a retry row', async () => {
+  const db = openDb();
+  try {
+    await withConfig({}, async () => {
+      const sessionId = 's-snapshot-retry';
+      const transcriptPath = path.join(dataRoot, 'snapshot-retry.jsonl');
+      writeFileSync(transcriptPath, transcriptLine('user', 'remember this rule') + transcriptLine('assistant', 'noted'));
+      await handleStop(db, { session_id: sessionId, transcript_path: transcriptPath, cwd: process.cwd() });
+
+      const originalTask = db.prepare(
+        `SELECT * FROM tasks
+         WHERE type = 'summarize_pending'
+           AND json_extract(payload, '$.session_id') = ?`
+      ).get(sessionId);
+      const originalPayload = JSON.parse(originalTask.payload);
+      await runTask(db, originalTask, async () => {
+        const error = new Error('simulated timeout');
+        error.timedOut = true;
+        throw error;
+      });
+
+      const retryTask = db.prepare(
+        `SELECT * FROM tasks
+         WHERE type = 'summarize_pending'
+           AND json_extract(payload, '$.session_id') = ?
+         ORDER BY id DESC LIMIT 1`
+      ).get(sessionId);
+      const retryPayload = JSON.parse(retryTask.payload);
+
+      assert.ok(retryTask.id > originalTask.id);
+      assert.equal(retryPayload.snapshot_observed_at, originalPayload.snapshot_observed_at);
+      assert.deepEqual(retryPayload.transcript_window, originalPayload.transcript_window);
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test('a newer Stop supersedes the older active snapshot range', async () => {
+  const db = openDb();
+  try {
+    await withConfig({}, async () => {
+      const sessionId = 's-equal-count-snapshot';
+      const transcriptPath = path.join(dataRoot, 'equal-count-snapshot.jsonl');
+      const prefix = transcriptLine('user', 'p'.repeat(2 * 1024 * 1024 + 256));
+      const firstSnapshot = prefix
+        + transcriptLine('assistant', 'first snapshot entry one')
+        + transcriptLine('user', 'first snapshot entry two');
+      writeFileSync(transcriptPath, firstSnapshot);
+      await handleStop(db, { session_id: sessionId, transcript_path: transcriptPath, cwd: process.cwd() });
+      await new Promise((resolve) => setTimeout(resolve, 2));
+
+      const extension = transcriptLine('assistant', 'f'.repeat(2 * 1024 * 1024 + 256))
+        + transcriptLine('assistant', 'second snapshot entry one')
+        + transcriptLine('user', 'second snapshot entry two');
+      writeFileSync(transcriptPath, extension, { flag: 'a' });
+      await handleStop(db, { session_id: sessionId, transcript_path: transcriptPath, cwd: process.cwd() });
+
+      const tasks = db.prepare(
+        `SELECT id, status, payload FROM tasks
+         WHERE type = 'summarize_pending'
+           AND json_extract(payload, '$.session_id') = ?
+         ORDER BY id ASC`
+      ).all(sessionId);
+      // Both Stops queued their snapshot: the whole-transcript sequence differs, so
+      // the unique index does not merge them. Stop itself supersedes nothing.
+      assert.equal(tasks.length, 2);
+      assert.deepEqual(tasks.map((row) => row.status), ['queued', 'queued']);
+      const older = JSON.parse(tasks[0].payload);
+      const newer = JSON.parse(tasks[1].payload);
+      // Whole-transcript counts (scanTranscript), not the retained window's entry count.
+      assert.ok(newer.last_message_seq > older.last_message_seq);
+      assert.ok(newer.transcript_window.endByte > older.transcript_window.endByte);
+      assert.ok(newer.snapshot_observed_at > older.snapshot_observed_at);
+
+      // The ordering lives in the run, not in the Stop: running the newer snapshot
+      // retires the older pending row, and only the newer one is summarized.
+      const newerTask = withLlmOutput(db, tasks[1], [{
+        content: 'This project should retain the newer snapshot memory.',
+        type: 'rule',
+        scope: 'project',
+        tags: ['snapshot-ordering']
+      }]);
+      await runSummarizePending(db, newerTask);
+      const after = db.prepare(
+        `SELECT id, status FROM tasks
+         WHERE type = 'summarize_pending'
+           AND json_extract(payload, '$.session_id') = ?
+         ORDER BY id ASC`
+      ).all(sessionId);
+      // runSummarizePending does not touch the row's status (runTask owns that): the
+      // older pending row is retired, the row being summarized stays queued.
+      assert.deepEqual(after.map((row) => [row.id, row.status]), [[tasks[0].id, 'superseded'], [tasks[1].id, 'queued']]);
     });
   } finally {
     db.close();
@@ -201,6 +348,7 @@ test('older Stop task is superseded when a newer snapshot retains fewer entries'
         scope: 'project',
         tags: ['snapshot-ordering']
       }]);
+      await new Promise((resolve) => setTimeout(resolve, 2));
 
       const extension = transcriptLine('assistant', 'f'.repeat(2 * 1024 * 1024 + 256))
         + transcriptLine('user', 'newer snapshot marker one')
@@ -216,7 +364,14 @@ test('older Stop task is superseded when a newer snapshot retains fewer entries'
       const olderPayload = JSON.parse(olderTask.payload);
       const newerPayload = JSON.parse(newerTask.payload);
       assert.ok(newerPayload.transcript_window.endByte > olderPayload.transcript_window.endByte);
-      assert.ok(newerPayload.last_message_seq < olderPayload.last_message_seq);
+      // Ruling (2026-11-23, #395 follow-up): last_message_seq keeps its WHOLE-transcript
+      // meaning (scanTranscript), not the retained window's entry count. A daemon that
+      // predates the window parses the full file and slices it with this number; a
+      // window-relative count would make it summarize the transcript's opening turns.
+      // The file only grows between two Stops, so the newer Stop's sequence is larger
+      // even though its 2 MiB tail now holds fewer entries.
+      assert.ok(newerPayload.last_message_seq > olderPayload.last_message_seq);
+      assert.ok(newerPayload.snapshot_observed_at > olderPayload.snapshot_observed_at);
       assert.ok(newerTask.id > olderTask.id);
       newerTask = withLlmOutput(db, newerTask, [{
         content: 'This project should retain the newer snapshot memory.',
@@ -225,16 +380,25 @@ test('older Stop task is superseded when a newer snapshot retains fewer entries'
         tags: ['snapshot-ordering']
       }]);
 
-      await runSummarizePending(db, olderTask);
-      const statusesAfterOlderRun = db.prepare(
+      db.prepare('UPDATE tasks SET status = \'failed\' WHERE id = ?').run(olderTask.id);
+      const retryInsert = db.prepare(
+        `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status, attempts)
+         VALUES ('summarize_pending', ?, ?, ?, 'queued', 1)`
+      ).run(olderTask.payload, Date.now(), Date.now());
+      const retryTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(Number(retryInsert.lastInsertRowid));
+      assert.ok(retryTask.id > newerTask.id);
+
+      await runSummarizePending(db, retryTask);
+      const statusesAfterRetryRun = db.prepare(
         `SELECT id, status FROM tasks
          WHERE type = 'summarize_pending'
            AND json_extract(payload, '$.session_id') = ?
          ORDER BY id ASC`
       ).all(sessionId);
-      assert.deepEqual(statusesAfterOlderRun.map((row) => [row.id, row.status]), [
-        [olderTask.id, 'superseded'],
-        [newerTask.id, 'queued']
+      assert.deepEqual(statusesAfterRetryRun.map((row) => [row.id, row.status]), [
+        [olderTask.id, 'failed'],
+        [newerTask.id, 'queued'],
+        [retryTask.id, 'superseded']
       ]);
 
       await runSummarizePending(db, newerTask);

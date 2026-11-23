@@ -47,7 +47,13 @@ function readTranscriptExcerpt(transcriptPath, lastMessageSeq, maxChars, agent, 
   // lastMessageSeq counts entries of this same parser's output (see
   // countTranscriptLines), so the slice lines up for every agent.
   const entries = (transcriptWindow
-    ? parseTranscriptByteRange(transcriptPath, agent, transcriptWindow.startByte, transcriptWindow.endByte)
+    ? parseTranscriptByteRange(
+        transcriptPath,
+        agent,
+        transcriptWindow.startByte,
+        transcriptWindow.endByte,
+        transcriptWindow.completeLinesOnly
+      )
     : parseTranscript(transcriptPath, agent)
   ).slice(0, lastMessageSeq);
   const lines = entries
@@ -107,18 +113,57 @@ function shouldUseClaudeBridge(payload) {
   return process.env.CCMEM_TEST_MODE !== '1';
 }
 
-function supersedeIfNewerTaskExists(db, taskId, sessionId, lastMessageSeq) {
-  const newer = db.prepare(
+function newerSnapshotClause(payload) {
+  const observedAt = Number(payload.snapshot_observed_at);
+  if (Number.isFinite(observedAt)) {
+    return {
+      sql: `(json_extract(payload, '$.snapshot_observed_at') > ?
+        OR (json_extract(payload, '$.snapshot_observed_at') = ? AND id > ?))`,
+      params: [observedAt, observedAt, payload.task_id]
+    };
+  }
+  return {
+    sql: `(json_extract(payload, '$.snapshot_observed_at') IS NOT NULL
+      OR (json_extract(payload, '$.snapshot_observed_at') IS NULL
+        AND (json_extract(payload, '$.last_message_seq') > ?
+          OR (json_extract(payload, '$.last_message_seq') = ? AND id > ?))))`,
+    params: [Number(payload.last_message_seq ?? 0), Number(payload.last_message_seq ?? 0), payload.task_id]
+  };
+}
+
+function olderSnapshotClause(payload) {
+  const observedAt = Number(payload.snapshot_observed_at);
+  if (Number.isFinite(observedAt)) {
+    return `(json_extract(payload, '$.snapshot_observed_at') IS NULL
+      OR json_extract(payload, '$.snapshot_observed_at') < ?
+      OR (json_extract(payload, '$.snapshot_observed_at') = ? AND id < ?))`;
+  }
+  return `(json_extract(payload, '$.snapshot_observed_at') IS NULL
+    AND json_extract(payload, '$.last_message_seq') < ?)`;
+}
+
+function olderSnapshotParams(taskId, payload) {
+  const observedAt = Number(payload.snapshot_observed_at);
+  if (Number.isFinite(observedAt)) {
+    return [observedAt, observedAt, taskId];
+  }
+  return [Number(payload.last_message_seq ?? 0)];
+}
+
+function supersedeIfNewerTaskExists(db, taskId, payload) {
+  const sessionId = payload.session_id;
+  const newer = newerSnapshotClause({ ...payload, task_id: taskId });
+  const row = db.prepare(
     `SELECT id
      FROM tasks
      WHERE type = 'summarize_pending'
        AND status IN ('queued', 'running')
-       AND id > ?
        AND json_extract(payload, '$.session_id') = ?
+       AND ${newer.sql}
      LIMIT 1`
-  ).get(taskId, sessionId);
+  ).get(sessionId, ...newer.params);
 
-  if (!newer) {
+  if (!row) {
     return false;
   }
 
@@ -130,8 +175,9 @@ function supersedeIfNewerTaskExists(db, taskId, sessionId, lastMessageSeq) {
   writeAudit(db, 'summarize_pending_superseded', null, {
     task_id: taskId,
     session_id: sessionId,
-    last_message_seq: lastMessageSeq,
-    newer_task_id: newer.id
+    last_message_seq: payload.last_message_seq,
+    snapshot_observed_at: payload.snapshot_observed_at ?? null,
+    newer_task_id: row.id
   });
   return true;
 }
@@ -173,12 +219,13 @@ export async function runSummarizePending(db, task) {
     `UPDATE tasks
      SET status = 'superseded', finished_at = ?
      WHERE type = 'summarize_pending'
-       AND status = 'queued'
-       AND id < ?
-       AND json_extract(payload, '$.session_id') = ?`
-  ).run(now, task.id, sessionId);
+       AND status IN ('queued', 'running')
+       AND id <> ?
+       AND json_extract(payload, '$.session_id') = ?
+       AND ${olderSnapshotClause(payload)}`
+  ).run(now, task.id, sessionId, ...olderSnapshotParams(task.id, payload));
 
-  if (supersedeIfNewerTaskExists(db, task.id, sessionId, lastMessageSeq)) {
+  if (supersedeIfNewerTaskExists(db, task.id, payload)) {
     return;
   }
 
@@ -197,6 +244,16 @@ export async function runSummarizePending(db, task) {
     return;
   }
 
+  const window = payload.transcript_window;
+  if (window?.complete === false) {
+    writeAudit(db, 'summarize_pending_skipped', null, {
+      task_id: task.id,
+      session_id: sessionId,
+      reason: 'incomplete-snapshot'
+    });
+    return;
+  }
+
   // Tasks queued before the agent was recorded carry neither field: Claude Code.
   const agent = payload.agent ?? ctx?.agent ?? 'claude-code';
   const transcript = readTranscriptExcerpt(
@@ -204,7 +261,7 @@ export async function runSummarizePending(db, task) {
     lastMessageSeq,
     Number(cfg.summarize?.transcript_excerpt_max),
     agent,
-    payload.transcript_window
+    window
   );
   if (!transcript.excerpt) {
     writeAudit(db, 'summarize_pending_skipped', null, {
@@ -256,7 +313,7 @@ export async function runSummarizePending(db, task) {
     });
   }
 
-  if (supersedeIfNewerTaskExists(db, task.id, sessionId, lastMessageSeq)) {
+  if (supersedeIfNewerTaskExists(db, task.id, payload)) {
     return;
   }
 

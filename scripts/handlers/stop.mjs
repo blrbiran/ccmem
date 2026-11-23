@@ -3,7 +3,7 @@ import { inferFromTranscript, inferL25FromTranscript, recordL25Probe } from '../
 import { loadConfig } from '../lib/config.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
-import { computeSessionStatsOf, countTranscriptLinesOf, parseTranscriptWindow } from '../lib/transcript.mjs';
+import { computeSessionStatsOf, parseTranscriptWindow, scanTranscript } from '../lib/transcript.mjs';
 
 const SHADOW_NOTICE = 'ccmem: mode=shadow (read-only diagnostic — no writes, no inject)\n';
 
@@ -26,8 +26,17 @@ export async function handleStop(db, hookData, deps = {}) {
     ? { entries: deps.parseTranscript(hookData.transcript_path, agent) }
     : parseTranscriptWindow(hookData.transcript_path, agent);
   const entries = transcriptWindow.entries;
-  const stats = computeSessionStatsOf(entries);
-  const seq = countTranscriptLinesOf(entries);
+  // The window's entries are what the inferences read, but the two stored
+  // counts keep meaning "the whole transcript" (see scanTranscript): a daemon
+  // that predates the window parses the full file and slices it with
+  // last_message_seq, so a window-relative count would make it summarize the
+  // opening turns. One streaming pass, no full parse, nothing kept.
+  const whole = deps.parseTranscript
+    ? { entryCount: entries.length, toolCalls: computeSessionStatsOf(entries).toolCalls }
+    : scanTranscript(hookData.transcript_path, agent);
+  const stats = { toolCalls: whole.toolCalls, messageCount: whole.entryCount, durationMs: 0 };
+  const seq = whole.entryCount;
+  const observedAt = Date.now();
 
   db.prepare(
     `INSERT INTO session_context (
@@ -59,6 +68,13 @@ export async function handleStop(db, hookData, deps = {}) {
     agent
   );
 
+  // No supersede here any more. last_message_seq counts the WHOLE transcript, so
+  // two Stops over the same file carry the same sequence and the unique index
+  // dedupes them; a grown file carries a larger one and the two rows coexist
+  // until runSummarizePending's ordering retires the older one (a running older
+  // row is left alone, as before). Superseding by time here turned every repeat
+  // Stop into a second row.
+
   db.prepare(
     `INSERT OR IGNORE INTO tasks (type, payload, scheduled_for, enqueued_at, status)
      VALUES ('summarize_pending', ?, ?, ?, 'queued')`
@@ -67,9 +83,15 @@ export async function handleStop(db, hookData, deps = {}) {
       session_id: hookData.session_id,
       transcript_path: hookData.transcript_path,
       last_message_seq: seq,
+      snapshot_observed_at: observedAt,
       agent,
       ...(transcriptWindow.startByte === undefined ? {} : {
-        transcript_window: { startByte: transcriptWindow.startByte, endByte: transcriptWindow.endByte }
+        transcript_window: {
+          startByte: transcriptWindow.startByte,
+          endByte: transcriptWindow.endByte,
+          completeLinesOnly: transcriptWindow.completeLinesOnly,
+          complete: transcriptWindow.complete
+        }
       })
     }),
     Date.now(),

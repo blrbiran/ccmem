@@ -49,6 +49,30 @@ test_home="$data_root/home"
 test_tmp="$data_root/tmp"
 /bin/mkdir -m 0700 "$test_tmp" || exit 1
 
+# Tester #451: the interpreter used to be the literal /usr/local/bin/node — the first entry of the
+# daemon's own fallback list (config.mjs platform_install_fallback_node_paths) treated as the only
+# answer. On a machine whose node lives under nvm/fnm/asdf, that path does not exist and `npm test`
+# exited 127 having run nothing. Same shape as resolveInstallNodePath (daemon.mjs): the configured
+# override, the fallback candidates, then whatever node is on PATH, then this shell's own node
+# when the runner IS node. CCMEM_STRICT_INTERPRETER=1 (the test that pins the refusal) forbids the
+# last two so the no-node message can be exercised on a machine that does have a fallback.
+node_bin=
+for candidate in "${CCMEM_INSTALL_NODE_PATH:-}" /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node; do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then node_bin=$candidate; break; fi
+done
+if [ -z "$node_bin" ] && [ "${CCMEM_STRICT_INTERPRETER:-}" != "1" ]; then
+  node_bin=$(command -v node 2>/dev/null || true)
+fi
+# CCMEM_STRICT_INTERPRETER asks the runner to pretend no node is reachable, so the refusal below
+# can be pinned on a machine that does have one (tester #451).
+if [ "${CCMEM_STRICT_INTERPRETER:-}" = "1" ]; then node_bin=; fi
+if [ -z "$node_bin" ]; then
+  echo "ccmem: no usable node interpreter found (looked at CCMEM_INSTALL_NODE_PATH, /usr/local/bin/node," >&2
+  echo "       /opt/homebrew/bin/node, /usr/bin/node, and PATH). Set CCMEM_INSTALL_NODE_PATH to the" >&2
+  echo "       absolute path of a node with the sqlite module, e.g. \"\$(command -v node)\"." >&2
+  exit 127
+fi
+
 env -u CCMEM_CONFIG_PATH -u CODEX_HOME -u CCMEM_OMP_AGENT_DIR -u PI_CODING_AGENT_DIR \
   -u OMP_PROFILE -u PI_PROFILE -u PI_CONFIG_DIR -u CCMEM_LAUNCHAGENT_DIR \
-  HOME="$test_home" TMPDIR="$test_tmp" CCMEM_DATA_ROOT="$data_root" PATH="$stub_bin:$PATH" /usr/local/bin/node --test "$@"
+  HOME="$test_home" TMPDIR="$test_tmp" CCMEM_DATA_ROOT="$data_root" PATH="$stub_bin:$PATH" "$node_bin" --test "$@"

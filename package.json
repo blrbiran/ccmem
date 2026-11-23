@@ -14,7 +14,7 @@
     "test": "sh scripts/run-tests.sh tests/unit/*.test.mjs tests/integration/*.test.mjs",
     "test:unit": "sh scripts/run-tests.sh tests/unit/*.test.mjs",
     "test:integration": "sh scripts/run-tests.sh tests/integration/*.test.mjs",
-    "threat:report": "/usr/local/bin/node scripts/threat-report.mjs",
-    "threat:baseline": "/usr/local/bin/node scripts/threat-report.mjs --baseline"
+    "threat:report": "node scripts/threat-report.mjs",
+    "threat:baseline": "node scripts/threat-report.mjs --baseline"
   }
 }

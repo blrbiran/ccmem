@@ -366,7 +366,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-23（本轮；本小节原位滚动，上一行 `cf2d6dfd`）：**export 契约（§6.1）不变**；本仓本轮改 #395 第 2 条（Stop hook 只读末尾 2 MiB：字节边界、UTF-8/短读/ENOENT 安全；摘要任务按记录的 `{startByte,endByte}` 快照读，追加内容不进摘要；新旧按 task 行 id 排序）。**收尾修正（会话 `ec9efff6`）**：`last_message_seq` 与 `session_context` 计数恢复「全文」含义，旧 daemon 的全量路径因此仍然摘要最新一轮（上一版把它们写成窗口计数，会让未重启的 daemon 摘要会话开头；已加判据与变异）。全量 `npm test` 1,046/1,046；**daemon 未重启**（仍是 schema 18）。新旧 daemon 现在都对，重启只决定是否启用范围读。Orca 侧本轮零代码改动；#385 付费评测缺两段历史 goal 原文——人已授权改用现存组。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#418 的 `--since` 取 `recorded_at`；#415 P2 external-content **不排期**。
+2026-11-23（本轮；本小节原位滚动，上一行 `cf2d6dfd`）：**export 契约（§6.1）不变**。本轮两段：#395 第 2 条（Stop hook 只读末尾 2 MiB；摘要任务按记录的 `{startByte,endByte}` 读）与**收尾修正**（会话 `ec9efff6`：`last_message_seq`／`session_context` 计数恢复**全文**含义，旧 daemon 的全量路径因此仍摘要最新一轮——上一版写成窗口计数，会让未重启的 daemon 摘要会话开头；已加判据与变异）。全量 `npm test` **1,046/1,046**；**daemon 未重启**（schema 18），新旧 daemon 现在都对，重启只决定是否启用范围读。Orca 侧本轮零代码改动；#385 付费评测缺 goal 原文（人已授权换组，但现存组不是该形态）。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#418 的 `--since` 取 `recorded_at`；#415 P2 external-content **不排期**。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

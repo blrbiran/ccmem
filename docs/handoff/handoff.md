@@ -64,6 +64,18 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
+### 1.00000000000000 2026-11-24（Orca 会话 `221948a1`）—— 测试者 #444 #448 #447 #435 #451 #436 #446 P0；全量 1075/1075
+
+- **#444（读数）**：成功路径原本写 `tasks.status='completed'`，而 v0.1 spec 的 `tasks` CHECK 只许 `'success'` —— 该约束**从未进过仓库的迁移**（`git log -S "CHECK (status"` 只命中 spec 文档），是早期库带进来的。在带该约束的库上 UPDATE 抛错、catch 把**跑成功**的任务记成 `failed`（本机 38 行 `error_excerpt LIKE 'CHECK%'`）。现在写 `'success'`；成功记账**移出** dispatch 的 try/catch（记账失败不会再被报成任务失败）；`cron list` 两种词都认。改写过的判据都带 `Ruling (#444)` 注释。
+- **#448**：新 `scripts/daemon/failure-excerpt.mjs`。`claude -p` 写 stderr，`codex exec --json` 把错误全写 stdout 且 stderr 为 0 字节 ⇒ 摘录只有 `codex exec exit 1: `。stderr 为空时读 stdout，取 `turn.failed.error.message` / 最后一条 `error` item，而不是 900 字节 JSON 行。
+- **#447**：`summarize_pending` 可人工跑（`admin cron run summarize_pending --session <id>`，payload 由 Stop hook 记下的 `session_context` 构造）；lease 无行时 `last=`/`--history`/`--issues` 回退读 task 行；`cron run` 入队后 `touchWakeFile()`；help 补齐 flag；未知子命令 exit 64 + usage。**改写两条既有判据**（`cmdAdminCron run` 与 CLI 各一条，`Ruling (#447)`）。
+- **#435**：`semantic off`→`on` 抛 `TypeError … reading 'load'`：`resolveEnabled` 先读 config_kv，`off` 留下 `enabled=false` ⇒ `getProvider` 返 null。现在先写 kv 再解析，失败回滚两者；`<verb> --help` 不再执行该 verb。
+- **#451**：`scripts/run-tests.sh` 解释器改为「`CCMEM_INSTALL_NODE_PATH` → 三个平台候选 → `PATH` → 具名报错 exit 127」；`package.json` 两个 threat 脚本同改。`CCMEM_STRICT_INTERPRETER=1` 强制走拒绝分支，好让这条在有任何回落的机器上也能钉住。宿主测试要删子进程的 `NODE_TEST_CONTEXT`，否则内层 `node --test` 不向 stdout 输出。
+- **#436**：README 补 `ollama`（三个键）、`orca-outcome`/`orca-correction`/`list --json`、`npm test` 一节；`embedding.remote_host`/`remote_path_template`/`ollama_timeout_ms` 三个**代码读、两处配置都不声明**的键补进 `config.default.json` 与 `DEFAULT_CONFIG`（`v013-config-sync` 抓到了后一半）。
+- **#446 P0（迁移 019、020）**：019 给 `session_context` 加 `transcript_path`（Stop 写入；也是 #447 人工跑 summarize 的 payload 来源）。020 给 `memories` 加 `session_id`/`transcript_path`（可空 + 部分索引），`insertMemory` 收可选 `provenance`，summarize 的写入点填它；抽取 schema 把 `learned` 列入 `required`，prompt 要求 `learned`/`investigated`。**存量行保持 NULL**；从 audit 回填是单独的可选步骤（会重写用户数据），归人。**真实库未应用 019/020**（需先备份）。
+- **门（现测）**：`npm test` **1075/1075**；迁移相关 schema 断言与「降级到 v16 再升级」判据已按 019/020 更新。
+- **登记**：`admin cron` 的 `--issues` 对 `summarize_pending` 仍只报 `failed`/`zombie`（现读得到 task 行，行为正确但未加判据）；`semantic off` 的 kv 行与 config 文件的优先级仍是既有设计，未改。
+
 ### 1.0000000000000 2026-11-23 深夜（会话 `ec9efff6` 续做）—— daemon 已重启到范围读代码；两处 worktree 已清
 
 - **daemon 重启**（人授权）。备份 `~/.claude/ccmem/global.db.bak.1795444654000`（1.65 GB，`PRAGMA quick_check` = ok）。重启时**显式 unset 了 9 个 `ANTHROPIC_*`**（本 shell 有 6 个），否则会被复制进 plist。`admin daemon restart` 报 `start_timeout`——**这是超时不是失败**：sleep 5 后 `status` / `daemon_lock.holder_pid` / `pgrep` 三处都是 pid **19687**，一致。
@@ -372,7 +384,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-23（本轮；本小节原位滚动，上一行 `cf2d6dfd`）：**export 契约（§6.1）不变**。本轮两段：#395 第 2 条（Stop hook 只读末尾 2 MiB；摘要任务按记录的 `{startByte,endByte}` 读）与**收尾修正**（会话 `ec9efff6`：`last_message_seq`／`session_context` 计数恢复**全文**含义，旧 daemon 的全量路径因此仍摘要最新一轮——上一版写成窗口计数，会让未重启的 daemon 摘要会话开头；已加判据与变异）。全量 `npm test` **1,046/1,046**；**daemon 已重启**（人授权，备份 `global.db.bak.1795444654000`，`quick_check` ok；重启前 unset 了 `ANTHROPIC_*`，plist 校验 0 个该前缀键），行为验证：重启后新任务带 `transcript_window`、其后有 `summarize_pending_applied` 审计行 ⇒ 范围读真的在跑。Orca 侧本轮零代码改动；#385 付费评测缺 goal 原文（人已授权换组，但现存组不是该形态）。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#418 的 `--since` 取 `recorded_at`；#415 P2 external-content **不排期**。
+2026-11-24（本轮，Orca 会话 `221948a1`；本节原位滚动，上一版是 `ec9efff6`）：**export 契约（§6.1）不变**。本轮七件：#444（成功任务记成 failed 的根因是早期库的 `CHECK (status … 'success')`，现已写 `success` 且成功记账移出 dispatch 的 catch）、#448（失败摘录在 stderr 空时读 stdout 的结构化错误）、#447（`summarize_pending` 可人工按 `--session` 跑，lease 缺失时 `last=`/`--history`/`--issues` 回退读 task 行，`cron run` 唤醒 daemon，未知子命令 exit 64）、#435（`semantic off` 后 `on` 不再 TypeError；`<verb> --help` 不执行）、#451（`run-tests.sh` 解释器不再写死 `/usr/local/bin/node`）、#436（README 补 ollama/orca-outcome/orca-correction/list --json/npm test，三个只读未声明的 embedding 键进默认配置）、#446 P0（迁移 019 `session_context.transcript_path`、020 `memories.session_id`+`transcript_path`；抽取 schema 要求 `learned`）。全量 **1075/1075**。**真实库未应用 019/020，需先备份再由人跑**；**#446 存量行保持 NULL，audit 回填未做**。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#418 的 `--since` 取 `recorded_at`；#415 P2 external-content **不排期**。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -91,6 +92,94 @@ test('transcript window omits the large prefix and keeps the last complete assis
   assert.equal(window.entries.some((entry) => entry.message?.content === 'old'), false);
   assert.ok(window.endByte - window.startByte <= maxBytes);
   assert.equal(window.endByte, Buffer.byteLength(text));
+});
+
+const JSONL_NEWLINE = String.fromCharCode(10);
+
+function instrumentFs(overrides = {}) {
+  const reads = [];
+  const fileSystem = {
+    ...fs,
+    readSync(fd, buffer, offset, length, position) {
+      reads.push({ length, position });
+      return fs.readSync(fd, buffer, offset, length, position);
+    },
+    ...overrides
+  };
+  return { fileSystem, reads };
+}
+
+test('transcript window physically reads at most the default 2 MiB from the positioned tail', () => {
+  const limit = 2 * 1024 * 1024;
+  const file = writeTemp('default-window-limit.jsonl', `${JSON.stringify({ type: 'user', message: { content: 'x'.repeat(limit + 100) } })}${JSONL_NEWLINE}`);
+  const fileSize = fs.statSync(file).size;
+  const { fileSystem, reads } = instrumentFs();
+  parseTranscriptWindow(file, 'claude-code', undefined, fileSystem);
+  assert.deepEqual(reads, [{ length: limit, position: fileSize - limit }]);
+});
+
+test('transcript window handles an exact-cap file without dropping its first record', () => {
+  const limit = 2 * 1024 * 1024;
+  const last = `${JSON.stringify({ type: 'assistant', message: { content: 'cap reply' } })}${JSONL_NEWLINE}`;
+  const text = `${'x'.repeat(limit - Buffer.byteLength(last) - 1)}${JSONL_NEWLINE}${last}`;
+  const file = writeTemp(`exact-window-limit-${process.pid}-${Date.now()}.jsonl`, text);
+  const { fileSystem, reads } = instrumentFs();
+  const window = parseTranscriptWindow(file, 'claude-code', limit, fileSystem);
+  assert.deepEqual(reads, [{ length: limit, position: 0 }]);
+  assert.equal(window.endByte, limit);
+  assert.equal(window.entries.at(-1)?.message?.content, 'cap reply');
+});
+
+test('transcript window safely skips a UTF-8 code point split at the byte boundary', () => {
+  const prefix = `${JSON.stringify({ type: 'user', message: { content: '🙂'.repeat(40) } })}${JSONL_NEWLINE}`;
+  const latest = `${JSON.stringify({ type: 'assistant', message: { content: 'unicode tail' } })}${JSONL_NEWLINE}`;
+  const file = writeTemp('utf8-window-boundary.jsonl', prefix + latest);
+  const window = parseTranscriptWindow(file, 'claude-code', 64);
+  assert.equal(window.entries.at(-1)?.message?.content, 'unicode tail');
+  assert.equal(window.entries.some((entry) => entry.message?.content?.includes('🙂')), false);
+});
+
+test('oversized transcript window excludes an incomplete final JSONL record', () => {
+  const prefix = `${JSON.stringify({ type: 'user', message: { content: 'x'.repeat(2 * 1024 * 1024) } })}${JSONL_NEWLINE}`;
+  const complete = `${JSON.stringify({ type: 'assistant', message: { content: 'complete reply' } })}${JSONL_NEWLINE}`;
+  const incomplete = '{"type":"assistant","message":{"content":"unfinished';
+  const file = writeTemp('incomplete-window-tail.jsonl', prefix + complete + incomplete);
+  const window = parseTranscriptWindow(file);
+  assert.equal(window.entries.at(-1)?.message?.content, 'complete reply');
+  assert.equal(window.entries.some((entry) => entry.message?.content === 'unfinished'), false);
+});
+
+test('requested transcript window limits above the default are capped at 2 MiB', () => {
+  const limit = 2 * 1024 * 1024;
+  const file = writeTemp('requested-large-window.jsonl', `${JSON.stringify({ type: 'user', message: { content: 'x'.repeat(limit + 100) } })}${JSONL_NEWLINE}`);
+  const fileSize = fs.statSync(file).size;
+  const { fileSystem, reads } = instrumentFs();
+  parseTranscriptWindow(file, 'claude-code', limit * 4, fileSystem);
+  assert.deepEqual(reads, [{ length: limit, position: fileSize - limit }]);
+});
+
+test('transcript window treats an open-time ENOENT as an empty snapshot', () => {
+  let opened = false;
+  const { fileSystem } = instrumentFs({
+    openSync() { opened = true; const error = new Error('gone'); error.code = 'ENOENT'; throw error; }
+  });
+  assert.deepEqual(parseTranscriptWindow('/disappeared.jsonl', 'claude-code', undefined, fileSystem), {
+    entries: [], startByte: 0, endByte: 0
+  });
+  assert.equal(opened, true);
+});
+
+test('transcript window range stops at the bytes actually returned after a short read', () => {
+  const file = writeTemp('short-window-read.jsonl', `${JSON.stringify({ type: 'assistant', message: { content: 'short' } })}${JSONL_NEWLINE}`);
+  const { fileSystem, reads } = instrumentFs({
+    readSync(fd, buffer, offset, length, position) {
+      reads.push({ length, position });
+      return fs.readSync(fd, buffer, offset, Math.min(length, 10), position);
+    }
+  });
+  const window = parseTranscriptWindow(file, 'claude-code', 1024, fileSystem);
+  assert.equal(window.endByte, reads[0].position + 10);
+  assert.deepEqual(window.entries, []);
 });
 
 test('codex: keeps the conversation and tool calls, drops injected context', () => {

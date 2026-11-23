@@ -1,4 +1,5 @@
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync } from 'node:fs';
+import * as fs from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { parseCodexLines } from './transcripts/codex.mjs';
 import { parseOmpLines } from './transcripts/omp.mjs';
 
@@ -36,17 +37,25 @@ function parseLines(lines, transcriptPath, agent) {
   return parsed;
 }
 
-export function parseTranscriptWindow(transcriptPath, agent = 'claude-code', maxBytes = 2 * 1024 * 1024) {
-  if (!transcriptPath || !existsSync(transcriptPath)) {
+export function parseTranscriptWindow(transcriptPath, agent = 'claude-code', maxBytes = 2 * 1024 * 1024, io = fs) {
+  if (!transcriptPath) {
     return { entries: [], startByte: 0, endByte: 0 };
   }
-  const fd = openSync(transcriptPath, 'r');
+  let fd;
   try {
-    const endByte = fstatSync(fd).size;
-    const limit = Math.max(0, Math.floor(maxBytes));
-    const rawStart = Math.max(0, endByte - limit);
-    const buffer = Buffer.alloc(Math.min(limit, endByte));
-    const bytesRead = buffer.length ? readSync(fd, buffer, 0, buffer.length, rawStart) : 0;
+    fd = io.openSync(transcriptPath, 'r');
+  } catch (error) {
+    if (error.code === 'ENOENT') return { entries: [], startByte: 0, endByte: 0 };
+    throw error;
+  }
+  try {
+    const snapshotSize = io.fstatSync(fd).size;
+    const requestedLimit = Number.isFinite(maxBytes) ? Math.max(0, Math.floor(maxBytes)) : 0;
+    const limit = Math.min(2 * 1024 * 1024, requestedLimit);
+    const rawStart = Math.max(0, snapshotSize - limit);
+    const buffer = Buffer.alloc(Math.min(limit, snapshotSize));
+    const bytesRead = buffer.length ? io.readSync(fd, buffer, 0, buffer.length, rawStart) : 0;
+    const endByte = bytesRead < buffer.length ? rawStart + bytesRead : snapshotSize;
     const data = buffer.subarray(0, bytesRead);
     let startByte = rawStart;
     if (rawStart > 0) {
@@ -56,7 +65,7 @@ export function parseTranscriptWindow(transcriptPath, agent = 'claude-code', max
     }
     const completeThrough = data.lastIndexOf(0x0a);
     const contentStart = rawStart > 0 ? data.indexOf(0x0a) + 1 : 0;
-    const contentEnd = rawStart === 0 ? data.length : completeThrough + 1;
+    const contentEnd = rawStart === 0 && endByte === snapshotSize ? data.length : completeThrough + 1;
     const complete = contentEnd <= contentStart ? Buffer.alloc(0) : data.subarray(contentStart, contentEnd);
     return {
       entries: parseLines(complete.toString('utf8').split('\n'), transcriptPath, agent),
@@ -64,7 +73,7 @@ export function parseTranscriptWindow(transcriptPath, agent = 'claude-code', max
       endByte
     };
   } finally {
-    closeSync(fd);
+    io.closeSync(fd);
   }
 }
 

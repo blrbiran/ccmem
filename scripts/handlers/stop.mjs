@@ -3,7 +3,7 @@ import { inferFromTranscript, inferL25FromTranscript, recordL25Probe } from '../
 import { loadConfig } from '../lib/config.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
-import { computeSessionStatsOf, countTranscriptLinesOf, parseTranscript } from '../lib/transcript.mjs';
+import { computeSessionStatsOf, countTranscriptLinesOf, parseTranscriptWindow } from '../lib/transcript.mjs';
 
 const SHADOW_NOTICE = 'ccmem: mode=shadow (read-only diagnostic — no writes, no inject)\n';
 
@@ -22,7 +22,10 @@ export async function handleStop(db, hookData, deps = {}) {
   // #395: one read of the transcript for the whole Stop hook. The stats, the
   // sequence, both inferences and the L2.5 probe all consume the same entries;
   // before this each consumer opened and parsed the file again.
-  const entries = (deps.parseTranscript ?? parseTranscript)(hookData.transcript_path, agent);
+  const transcriptWindow = deps.parseTranscript
+    ? { entries: deps.parseTranscript(hookData.transcript_path, agent) }
+    : parseTranscriptWindow(hookData.transcript_path, agent);
+  const entries = transcriptWindow.entries;
   const stats = computeSessionStatsOf(entries);
   const seq = countTranscriptLinesOf(entries);
 
@@ -64,7 +67,10 @@ export async function handleStop(db, hookData, deps = {}) {
       session_id: hookData.session_id,
       transcript_path: hookData.transcript_path,
       last_message_seq: seq,
-      agent
+      agent,
+      ...(transcriptWindow.startByte === undefined ? {} : {
+        transcript_window: { startByte: transcriptWindow.startByte, endByte: transcriptWindow.endByte }
+      })
     }),
     Date.now(),
     Date.now()

@@ -16,7 +16,7 @@ process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = dataRoot;
 test.after(() => rmSync(dataRoot, { recursive: true, force: true }));
 
-const { parseTranscript, countTranscriptLines, computeSessionStats } = await import('../../scripts/lib/transcript.mjs');
+const { parseTranscript, parseTranscriptWindow, countTranscriptLines, computeSessionStats } = await import('../../scripts/lib/transcript.mjs');
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { handleStop } = await import('../../scripts/handlers/stop.mjs');
 const { runSummarizePending } = await import('../../scripts/daemon/tasks/summarize-pending.mjs');
@@ -78,6 +78,20 @@ async function withDbAsync(fn) {
     db.close();
   }
 }
+
+test('transcript window omits the large prefix and keeps the last complete assistant entry within its byte limit', () => {
+  const maxBytes = 2 * 1024 * 1024;
+  const prefix = `${JSON.stringify({ type: 'user', message: { content: 'old' } })}\n`;
+  const filler = `${JSON.stringify({ type: 'user', message: { content: 'x'.repeat(512) } })}\n`;
+  const finalAssistant = { type: 'assistant', message: { content: 'latest reply' } };
+  const text = prefix.repeat(1000) + filler.repeat(5000) + `${JSON.stringify(finalAssistant)}\n`;
+  const file = writeTemp('large-window.jsonl', text);
+  const window = parseTranscriptWindow(file, 'claude-code', maxBytes);
+  assert.equal(window.entries.at(-1)?.message?.content, 'latest reply');
+  assert.equal(window.entries.some((entry) => entry.message?.content === 'old'), false);
+  assert.ok(window.endByte - window.startByte <= maxBytes);
+  assert.equal(window.endByte, Buffer.byteLength(text));
+});
 
 test('codex: keeps the conversation and tool calls, drops injected context', () => {
   const entries = parseTranscript(CODEX_FIXTURE, 'codex');
@@ -195,6 +209,10 @@ test('stop: a codex session is counted and learned from through the codex parser
        AND json_extract(payload, '$.session_id') = ?`
     ).get(sessionId);
     assert.equal(JSON.parse(task.payload).last_message_seq, 6);
+    assert.deepEqual(JSON.parse(task.payload).transcript_window, {
+      startByte: 0,
+      endByte: Buffer.byteLength(readFileSync(CODEX_FIXTURE))
+    });
     // The last codex assistant reply quotes the injected memory, so implicit
     // feedback must see it. Read as a Claude transcript it has no assistant
     // entry at all, and this row would stay 'unknown'.

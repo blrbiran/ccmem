@@ -108,6 +108,20 @@ ccmem export --json --scope global > memories.json
 ccmem import memories.json          # inserts what it accepts, skips the rest
 ccmem audit show 42                 # one audit row
 ccmem admin alias old-key new-key   # move every memory between project keys; type ALIAS to confirm
+ccmem list "retrieval" --json       # the rows export writes, with a fused score, for a program
+ccmem show 42 --json
+```
+
+`list --json` and `show --json` answer the same row shape `export` writes (plus `score`), so a caller that needs one
+query's hits does not have to pull the whole store. Both are read-only: neither runs the periodic maintenance `list`
+does in its text form.
+
+Orca reads and writes here over the CLI only (it never opens the database):
+
+```bash
+ccmem orca-outcome upsert           # one orca-run-outcome-v1 JSON on stdin; cwd names the project
+ccmem orca-outcome list [--project KEY] [--since DATE] [--json]
+ccmem orca-correction upsert|withdraw   # one JSON on stdin; cwd is the target repository
 ```
 
 ### Semantic search
@@ -117,13 +131,20 @@ Retrieval is lexical by default. Turning embeddings on adds a semantic score to 
 ```bash
 ccmem admin semantic status
 ccmem admin semantic on             # the provider config.json declares
-ccmem admin semantic on --provider transformers-local|openai|jina
+ccmem admin semantic on --provider transformers-local|openai|jina|ollama
 ccmem admin semantic off
 ```
 
 `status` reports the provider, model, dimensions, how many memories are embedded and how many still need backfill.
 Changing the provider or model leaves old vectors stale until the daemon's `vec_backfill` task re-embeds them. If an
 embedding call fails, retrieval falls back to lexical and says so on stderr.
+
+`ollama` talks to a local Ollama server (`ollama pull bge-m3`, then `embedding.provider: "ollama"` with
+`embedding.ollama_model`). Its keys are `ollama_base_url` (default `http://localhost:11434`), `ollama_model`
+(required: there is no pinned default, so the model you pull is the model used) and `ollama_dim` (a guess only; the
+dimension the server reports on the first embed wins). `ollama_timeout_ms` bounds each call. `remote_host` is read
+by the `transformers-local` provider when its model lives behind a remote inference server; both keys are declared in
+`config.default.json` now, so `admin diagnose --config` does not report them as unknown.
 
 ### Scheduled maintenance
 
@@ -133,8 +154,13 @@ ccmem admin cron run daily_maintenance   # queue one task now
 ccmem admin retrieval-check [--corpus <path>] [--k 1,3,5]
 ```
 
-`admin cron run` accepts `daily_maintenance`, `weekly_synthesis`, `security_audit`, `contradiction_audit`,
-`cross_project_patterns`, `monthly_meta_synthesis`, `revalidation_audit` and `vec_backfill`.
+`admin cron run` accepts `daily_maintenance`, `summarize_pending`, `weekly_synthesis`, `security_audit`,
+`contradiction_audit`, `cross_project_patterns`, `monthly_meta_synthesis`, `revalidation_audit` and `vec_backfill`.
+`summarize_pending` is the one job that turns transcripts into memories; a manual run names the session it is for
+(`ccmem admin cron run summarize_pending --session <id>`), and the payload comes from what the Stop hook recorded.
+`list` takes `--issues`, `--history N --task <type>` and `--verbose`; a type that never takes a lease
+(`summarize_pending`) reports its last run from the task rows themselves, not from an empty lease table. An unknown
+subcommand is refused with exit 64 and a usage line rather than exiting 0 in silence.
 `retrieval-check` runs lexical retrieval against a corpus and reports recall and precision at the given cutoffs; it
 writes an audit row.
 
@@ -216,6 +242,18 @@ open descriptor keeps writing to the same file. Install prints a one-line
 notice when the log is over 10 MiB; it never rotates automatically.
 
 `ccmem admin daemon status` may show `running=none`. That is normal when the daemon is alive but currently idle.
+
+## Running the tests
+
+```bash
+npm test                # scripts/run-tests.sh: node --test over tests/unit and tests/integration
+```
+
+The suite runs in an isolated data root, temp HOME and temp TMPDIR, with a stub `claude` on PATH, so it never touches
+your `~/.claude/ccmem`, your real credentials or your LLM quota. It uses the node you run `npm test` with; to pin
+another one, set `CCMEM_INSTALL_NODE_PATH` to its absolute path (the runner also looks at `/usr/local/bin/node`,
+`/opt/homebrew/bin/node`, `/usr/bin/node` and then `node` on `PATH`, and says which variable to set when it finds
+none).
 
 ## Notes
 

@@ -26,6 +26,11 @@ export const DEFAULT_CONFIG = {
     ollama_base_url: 'http://localhost:11434',
     ollama_model: null,
     ollama_dim: null,
+    // Tester #436: read by ollama.mjs and transformers-local.mjs, but undeclared here, so
+    // `admin diagnose --config` listed them as unknown keys and config.default.json drifted.
+    ollama_timeout_ms: 30000,
+    remote_host: null,
+    remote_path_template: null,
     latency_probe: {
       // Strictly `enabled === true` to run. Note this is the OPPOSITE of the
       // adjacent decision-data flag (metrics.mjs recordDecisionMetric treats

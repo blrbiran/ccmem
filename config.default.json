@@ -28,6 +28,9 @@
     "openai_model": "text-embedding-3-small",
     "openai_dim": null,
     "ollama_base_url": "http://localhost:11434",
+    "ollama_timeout_ms": 30000,
+    "remote_host": null,
+    "remote_path_template": null,
     "ollama_model": null,
     "ollama_dim": null,
     "latency_probe": {

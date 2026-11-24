@@ -24,6 +24,8 @@ const CLI = path.join(ROOT, 'scripts/cli.mjs');
 const EXEC = '/opt/fake/bin/node';
 const REPO = '/opt/fake/ccmem';
 const TRUST_LINE = 'Codex hooks run only after you trust them: open codex and run /hooks to approve the three ccmem hooks.';
+// Tester #452: `codex exec` cannot approve hooks and skips untrusted ones without a word.
+const EXEC_TRUST_LINE = 'Until you do, non-interactive `codex exec` skips them silently: /hooks is the only way to approve, so do it once in an interactive Codex session.';
 
 let caseNo = 0;
 function freshDirs() {
@@ -405,6 +407,7 @@ test('ccmem install codex prints the diff and the trust instruction; uninstall u
   const installed = run('install', 'codex');
   assert.equal(installed.status, 0, installed.stderr);
   assert.ok(installed.stdout.includes(TRUST_LINE), installed.stdout);
+  assert.ok(installed.stdout.includes(EXEC_TRUST_LINE), installed.stdout);
   assert.ok(installed.stdout.includes(`${process.execPath} --no-warnings --experimental-sqlite ${ROOT}/scripts/hook.mjs stop --agent codex`));
   assert.match(installed.stdout, /^\+ /m);
   assert.doesNotMatch(installed.stdout + installed.stderr, /trusted_hash|dangerously-bypass-hook-trust/);

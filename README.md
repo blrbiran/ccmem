@@ -178,7 +178,7 @@ ccmem uninstall codex
 ```
 
 - `install` writes `${CODEX_HOME:-~/.codex}/hooks.json` (never `config.toml`), backs up an existing file to `hooks.json.bak.<ms>`, and records what it added in `<dataRoot>/installs/codex.json`. It refuses when `config.toml` defines `[hooks]`.
-- Then open Codex and approve the three ccmem hooks (SessionStart, UserPromptSubmit, Stop) with `/hooks`. ccmem never bypasses Codex's hook trust. Per Codex's source (ccmem code cannot show this), approval is needed again whenever the hook definitions change (for example after a reinstall with a different `node`).
+- Then open Codex and approve the three ccmem hooks (SessionStart, UserPromptSubmit, Stop) with `/hooks`. ccmem never bypasses Codex's hook trust. Non-interactive `codex exec` cannot approve hooks and silently skips unapproved ones, so approve them once in an interactive Codex session first. Per Codex's source (ccmem code cannot show this), approval is needed again whenever the hook definitions change (for example after a reinstall with a different `node`).
 - `uninstall` restores the backup or strips exactly what install added. Removing an entry can shift hook indices and revoke trust of user hooks added after ccmem in the same event. Per Codex's source, trust records stay in `config.toml`. If the file was damaged or edited by hand, uninstall leaves a `hooks.json.bak.<ms>` of those bytes.
 
 ### OMP

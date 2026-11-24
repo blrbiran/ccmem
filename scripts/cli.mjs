@@ -646,6 +646,7 @@ try {
         process.stdout.write(`ccmem: the ccmem hooks are already in ${target}; nothing changed\n`);
       }
       process.stdout.write('Codex hooks run only after you trust them: open codex and run /hooks to approve the three ccmem hooks.\n');
+      process.stdout.write('Until you do, non-interactive `codex exec` skips them silently: /hooks is the only way to approve, so do it once in an interactive Codex session.\n');
       process.stdout.write(`Codex tracks their approval under these keys (any change to a hook needs a new approval):\n${result.hookKeys.map((key) => `  ${key}\n`).join('')}`);
     }
   } else if (verb === 'uninstall' && args[0] === 'codex') {

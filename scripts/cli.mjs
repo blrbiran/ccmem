@@ -985,7 +985,7 @@ try {
       }
       process.stdout.write(`${formatLlmStatus(result.llm)}\n`);
       const extraction = result.extraction;
-      let lastSuccess = 'never';
+      let lastSuccess = extraction.scanned_rows == null ? 'never' : `none-in-last-${extraction.scanned_rows}-tasks`;
       if (extraction.last_success_at != null) {
         const d = new Date(extraction.last_success_at);
         const pad = (n) => String(n).padStart(2, '0');

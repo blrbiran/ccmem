@@ -628,6 +628,30 @@ test('cli admin daemon status says never when memory extraction has never succee
   assert.match(output, /^ccmem: memory extraction last_success=never failed_24h=0 last_error=none$/m);
 });
 
+// The real store holds millions of task rows with no index on (type, status, finished_at): a full scan took
+// 24.68 s there, so status reads only the newest rows by rowid, and says so instead of claiming "never".
+test('extraction health reads only the newest tasks and names the window when no success is inside it', async () => {
+  const { describeExtractionHealth } = await import('../../scripts/lib/admin/daemon.mjs');
+  const now = Date.now();
+  const db = openDb();
+  resetAdminTables(db);
+  const insert = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, started_at, finished_at, status, error_excerpt)
+     VALUES (?, '{}', ?, ?, ?, ?, ?, ?)`
+  );
+  insert.run('summarize_pending', now - 5000, now - 5000, now - 5000, now - 5000, 'success', null);
+  insert.run('vec_backfill', now - 2000, now - 2000, now - 2000, now - 2000, 'failed', '429');
+  insert.run('summarize_pending', now - 1000, now - 1000, now - 1000, now - 1000, 'failed', 'exit 1');
+  try {
+    assert.deepEqual(describeExtractionHealth(db, now, 2), { last_success_at: null, failed_24h: 1, last_error: 'exit 1', scanned_rows: 2 });
+    assert.equal(describeExtractionHealth(db, now, 10).last_success_at, now - 5000);
+    // A window wider than the table's highest id covers every row, so the answer is not windowed.
+    assert.equal(describeExtractionHealth(db, now, Number.MAX_SAFE_INTEGER).scanned_rows, null);
+  } finally {
+    db.close();
+  }
+});
+
 test('bin ccmem suppresses sqlite experimental warning for daemon status', () => {
   const db = openDb();
   resetAdminTables(db);

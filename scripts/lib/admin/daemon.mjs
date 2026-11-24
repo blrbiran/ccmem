@@ -1161,24 +1161,32 @@ function describePlistDrift() {
 // exit 1) looked healthy for weeks. Read the outcome straight from `tasks`; no
 // LLM probe (it would cost money). Successful rows are 'success' since #444;
 // older stores also hold 'completed', which counts the same.
-function describeExtractionHealth(db, now = Date.now()) {
+// The real store holds millions of task rows (mostly vec_backfill) and no index serves this question: the
+// unbounded scan took 24.68 s there. Only the newest EXTRACTION_SCAN_ROWS rows by rowid are read (0.36 s,
+// same answers); when the table is larger than that, `scanned_rows` says how far the answer reaches.
+const EXTRACTION_SCAN_ROWS = 200000;
+
+export function describeExtractionHealth(db, now = Date.now(), scanRows = EXTRACTION_SCAN_ROWS) {
+  const floor = Number(db.prepare('SELECT COALESCE(MAX(id), 0) AS n FROM tasks').get().n) - scanRows;
   const lastSuccess = db.prepare(
-    `SELECT MAX(finished_at) AS at FROM tasks
-     WHERE type = 'summarize_pending' AND status IN ('success', 'completed')`
-  ).get();
+    `SELECT finished_at AS at FROM tasks
+     WHERE id > ? AND type = 'summarize_pending' AND status IN ('success', 'completed')
+     ORDER BY id DESC LIMIT 1`
+  ).get(floor);
   const failed24h = db.prepare(
     `SELECT COUNT(*) AS n FROM tasks
-     WHERE type = 'summarize_pending' AND status = 'failed' AND finished_at >= ?`
-  ).get(now - 24 * 60 * 60 * 1000);
+     WHERE id > ? AND type = 'summarize_pending' AND status = 'failed' AND finished_at >= ?`
+  ).get(floor, now - 24 * 60 * 60 * 1000);
   const lastFailed = db.prepare(
     `SELECT error_excerpt FROM tasks
-     WHERE type = 'summarize_pending' AND status = 'failed'
-     ORDER BY finished_at DESC, id DESC LIMIT 1`
-  ).get();
+     WHERE id > ? AND type = 'summarize_pending' AND status = 'failed'
+     ORDER BY id DESC LIMIT 1`
+  ).get(floor);
   return {
     last_success_at: lastSuccess?.at ?? null,
     failed_24h: Number(failed24h?.n ?? 0),
-    last_error: lastFailed ? String(lastFailed.error_excerpt ?? '').replace(/\s+/g, ' ').trim().slice(0, 120) : null
+    last_error: lastFailed ? String(lastFailed.error_excerpt ?? '').replace(/\s+/g, ' ').trim().slice(0, 120) : null,
+    scanned_rows: floor > 0 ? scanRows : null
   };
 }
 

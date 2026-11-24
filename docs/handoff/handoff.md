@@ -64,6 +64,16 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
+### 1.0000000000000000 2026-11-24 晚（Orca 会话 `d7ca40c0`→`6f9b7b78`）—— 测试者 #459 #464 #458 #460；全量 1098/1098；**本地 main 未推**（闸门拒了本会话的 push）
+
+- **#459**（`fix(config): codex runs on its own default model unless one is configured`）：`llm.models.codex` 默认由 `'gpt-6-luna'` 改为 `null`（不传 `-m`），与 claude/omp 一致；两条判据改写（带 Ruling 行），codex-omp 适配 spec 追加具名更正。**daemon 未重启**：只在 `llm.backend` 走 codex 的机器上有效果，重启时照 §0.2 先备份。
+- **#464**（`fix(diagnose): read Codex's trust table headers segment by segment…`）：`trustedHookKeys` 逐段解析 TOML 表头（bare／"basic"／'literal'，点两侧可有空格），认 Codex 0.170 的 `["hooks"."state"."<key>"]`；新判据用真实形状，旧码下是空集。
+- **#458**（`fix(omp): a hanging hook resolves at its timeout…`）：去掉 `timer.unref()`；本机测试 runner 复现不了，新判据在子进程里跑挂起 hook（旧码 exit 13）。
+- **#460**（`fix(daemon): stop signals only this host's ccmem daemon…` 与 follow-up）：`daemon stop` 在锁行 pid 活着且 hostname 不是本机、或该 pid 的命令不是 `daemon/main.mjs`（或读不到）时拒绝并不发信号；pid 已不存活的陈旧行照旧经 ESRCH 清掉；launchd 分支在 plist 的 `CCMEM_DATA_ROOT` 不是当前数据根时拒绝 bootout —— **只在 `stop` 做，`restart` 未做**（plist-drift 夹具故意写 `/tmp/root`，留作余项）。CLI 打 `daemon stop refused — …`、exit 1。
+- **门（现测）**：`npm test` **1098/1098**（load≈300）。
+- **仍未修（登记）**：FTS 查询是 AND（`retrieval.mjs` `sanitizeFtsQuery`），自然语言 prompt 几乎命中不了，且 #453 的下限门只看 cosine —— 两者要一起设计（人已同意以后单独做）；#454 只修了 ADD COLUMN，017/018 的 `CREATE` 仍不幂等；#445 余项（非额度的启动失败归为 backend-unhealthy）、#452 余项、#461（54 处写死 1000 ms 的 loop timeout）。
+- **已有库升级的约定（沿用）**：只由 `ccmem admin migrate` 升级，顺序 `daemon stop` → `migrate` → `start`；待迁移时 hook 返回空上下文，CLI 与 daemon exit 1。
+
 ### 1.000000000000000 2026-11-24 全天（Orca 会话续做，`221948a1` 之后；**本节全部已推**，`/usr/bin/git ls-remote` 现测）—— hook 全部超时的事故与修法：迁移只走 `ccmem admin migrate`
 
 - **事故（现测）**：上一轮加了 019/020，但真实库还没升级。每次 `openDb()` 都先跑 `createMigrationBackup` ⇒ 对 1.73 GB 的库做 `VACUUM INTO`，实测 **12.04 s**；而三个 hook 的时限只有 2／5／3 s ⇒ hook 做到一半就被杀，迁移永远落不了库，下一次 hook 又从头再来。当天所有 Claude 会话都报 `UserPromptSubmit … timed out after 5s`。这类事故按 018、019、020 三次各发生过一次，`.partial` 的 mtime 分布与三次迁移的应用时间对得上。**最后是一次 CLI（`admin daemon status`，不受 5 s 时限）在 08:24:30 把库升到了 20**，hook 随之恢复。

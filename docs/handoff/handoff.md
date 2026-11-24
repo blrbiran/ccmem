@@ -64,6 +64,15 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
+### 1.000000000000000 2026-11-24 上午（Orca 会话续做，`221948a1` 之后）—— hook 全部超时的事故与修法：迁移只走 `ccmem admin migrate`
+
+- **事故（现测）**：上一轮加了 019/020，但真实库还没升级。每次 `openDb()` 都先跑 `createMigrationBackup` ⇒ 对 1.73 GB 的库做 `VACUUM INTO`，实测 **12.04 s**；而三个 hook 的时限只有 2／5／3 s ⇒ hook 做到一半就被杀，迁移永远落不了库，下一次 hook 又从头再来。当天所有 Claude 会话都报 `UserPromptSubmit … timed out after 5s`。这类事故按 018、019、020 三次各发生过一次，`.partial` 的 mtime 分布与三次迁移的应用时间对得上。**最后是一次 CLI（`admin daemon status`，不受 5 s 时限）在 08:24:30 把库升到了 20**，hook 随之恢复。
+- **清理**：先确认 226 个 `.global.db.backup-*.partial*`（131,532,564,480 B）没有进程打开（`lsof` 空），且最近 15 分钟内没有变动，然后 `trash` 进废纸篓（可还原；清空废纸篓归人）。另做一份维护备份 `global.db.bak.1795482388243`（`quick_check` ok，schema 20）。
+- **修法**（主题行 `fix(db): only \`ccmem admin migrate\` upgrades an existing store; …`，已在本地 main，**未推**）：已有数据的旧库，`openDb()` 一律拒绝（`MigrationRequiredError`），并且在切 WAL 之前就拒、不改文件。hook 返回空上下文，stderr 写一行指路；CLI 与 daemon 以 exit 1 退出；`admin daemon stop` 在待迁移状态下仍可用。`ccmem admin migrate` 发现 daemon 还活着就拒绝；SQL 迁移先拿写锁再做快照，迁移过程中不删旧备份。空库仍会自动初始化。判据 `tests/integration/explicit-migration.test.mjs` 10 条，原 8 条先在基线上见红、审阅补的 2 条先在修前见红；全量 **1084/1084**。计划与审阅裁定在 `docs/superpowers/plans/2026-11-24-explicit-schema-migration.md`（As built 节）。
+- **以后加迁移**：顺序是先 `admin daemon stop`，再 `admin migrate`，最后 `admin daemon start`，并且要写进 handoff。**不要再假设 hook 会帮你迁移。**
+- **登记**：daily maintenance 仍按 `migration_backup.max_keep` 修剪备份（属于用户配置的保留策略，裁定保留）；全新空库被多进程同时首次初始化的竞态没修（§2.4 已有登记）。daemon pid 59824 是 08:24 起的旧代码进程，库已是 20，不需要重启。
+- **#444 那 38 行不在本机**：本机 `tasks` 没有 CHECK 约束，相关行数为 0。那 38 行在测试者机器上（任务 42340–42343 等），修复步骤已交给人，转给测试者的 agent 执行。
+
 ### 1.00000000000000 2026-11-24（Orca 会话 `221948a1`）—— 测试者 #444 #448 #447 #435 #451 #436 #446 P0；全量 1075/1075
 
 - **#444（读数）**：成功路径原本写 `tasks.status='completed'`，而 v0.1 spec 的 `tasks` CHECK 只许 `'success'` —— 该约束**从未进过仓库的迁移**（`git log -S "CHECK (status"` 只命中 spec 文档），是早期库带进来的。在带该约束的库上 UPDATE 抛错、catch 把**跑成功**的任务记成 `failed`（本机 38 行 `error_excerpt LIKE 'CHECK%'`）。现在写 `'success'`；成功记账**移出** dispatch 的 try/catch（记账失败不会再被报成任务失败）；`cron list` 两种词都认。改写过的判据都带 `Ruling (#444)` 注释。
@@ -72,7 +81,7 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 - **#435**：`semantic off`→`on` 抛 `TypeError … reading 'load'`：`resolveEnabled` 先读 config_kv，`off` 留下 `enabled=false` ⇒ `getProvider` 返 null。现在先写 kv 再解析，失败回滚两者；`<verb> --help` 不再执行该 verb。
 - **#451**：`scripts/run-tests.sh` 解释器改为「`CCMEM_INSTALL_NODE_PATH` → 三个平台候选 → `PATH` → 具名报错 exit 127」；`package.json` 两个 threat 脚本同改。`CCMEM_STRICT_INTERPRETER=1` 强制走拒绝分支，好让这条在有任何回落的机器上也能钉住。宿主测试要删子进程的 `NODE_TEST_CONTEXT`，否则内层 `node --test` 不向 stdout 输出。
 - **#436**：README 补 `ollama`（三个键）、`orca-outcome`/`orca-correction`/`list --json`、`npm test` 一节；`embedding.remote_host`/`remote_path_template`/`ollama_timeout_ms` 三个**代码读、两处配置都不声明**的键补进 `config.default.json` 与 `DEFAULT_CONFIG`（`v013-config-sync` 抓到了后一半）。
-- **#446 P0（迁移 019、020）**：019 给 `session_context` 加 `transcript_path`（Stop 写入；也是 #447 人工跑 summarize 的 payload 来源）。020 给 `memories` 加 `session_id`/`transcript_path`（可空 + 部分索引），`insertMemory` 收可选 `provenance`，summarize 的写入点填它；抽取 schema 把 `learned` 列入 `required`，prompt 要求 `learned`/`investigated`。**存量行保持 NULL**；从 audit 回填是单独的可选步骤（会重写用户数据），归人。**真实库未应用 019/020**（需先备份）。
+- **#446 P0（迁移 019、020）**：019 给 `session_context` 加 `transcript_path`（Stop 写入；也是 #447 人工跑 summarize 的 payload 来源）。020 给 `memories` 加 `session_id`/`transcript_path`（可空 + 部分索引），`insertMemory` 收可选 `provenance`，summarize 的写入点填它；抽取 schema 把 `learned` 列入 `required`，prompt 要求 `learned`/`investigated`。**存量行保持 NULL**；从 audit 回填是单独的可选步骤（会重写用户数据），归人。~~真实库未应用 019/020~~ **已过期**：019 于 11-24 00:56、020 于 08:24:30 由 CLI 进程应用（见上一节的事故）。
 - **门（现测）**：`npm test` **1075/1075**；迁移相关 schema 断言与「降级到 v16 再升级」判据已按 019/020 更新。
 - **登记**：`admin cron` 的 `--issues` 对 `summarize_pending` 仍只报 `failed`/`zombie`（现读得到 task 行，行为正确但未加判据）；`semantic off` 的 kv 行与 config 文件的优先级仍是既有设计，未改。
 

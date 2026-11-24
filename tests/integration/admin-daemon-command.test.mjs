@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { tmpdir } from 'node:os';
+import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 
@@ -380,6 +380,74 @@ test('cmdAdminDaemon start, restart, and stop manage the daemon lifecycle', asyn
   db.close();
 
   assert.equal(await waitForDaemonLock(false), true);
+});
+
+// Tester #460: stop SIGTERMed whatever pid the lock row named. A global.db restored or copied from elsewhere carries
+// another machine's or another process's pid, and on the tester's machine stopping a copied store stopped the real
+// daemon (launchd bootout of the one global job). Stop now signals only a ccmem daemon of this host, and boots out the
+// launchd job only when it serves this data root; otherwise it refuses by name and signals nothing.
+function bystander() {
+  const child = spawn('sleep', ['30'], { stdio: 'ignore' });
+  return child;
+}
+function seedLock(db, pid, hostname) {
+  const now = Date.now();
+  db.prepare(`INSERT INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive) VALUES (1, ?, ?, ?, ?, 1)`).run(pid, hostname, now - 5000, now - 100);
+}
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+test('daemon stop refuses a lock row from another host and signals nothing (#460)', async () => {
+  const db = openDb();
+  resetAdminTables(db);
+  const child = bystander();
+  try {
+    seedLock(db, child.pid, 'some-other-host');
+    const result = await cmdAdminDaemon(db, { verb: 'stop' });
+    // mutation: drop the hostname check -> the bystander is SIGTERMed and status is stopped/stop_timeout, red
+    assert.equal(result.status, 'refused');
+    assert.match(result.reason, /some-other-host/);
+    assert.equal(alive(child.pid), true, 'the process the lock row named was not signalled');
+    assert.ok(db.prepare(`SELECT 1 FROM daemon_lock WHERE id = 1`).get(), 'the lock row is left for the person to judge');
+  } finally {
+    child.kill('SIGKILL');
+    db.close();
+  }
+});
+
+test('daemon stop refuses a pid of this host that is not a ccmem daemon and signals nothing (#460)', async () => {
+  const db = openDb();
+  resetAdminTables(db);
+  const child = bystander();
+  try {
+    seedLock(db, child.pid, os.hostname());
+    const result = await cmdAdminDaemon(db, { verb: 'stop' });
+    // mutation: drop the process identity check -> the bystander is SIGTERMed, red
+    assert.equal(result.status, 'refused');
+    assert.match(result.reason, new RegExp(`pid ${child.pid} is not a ccmem daemon`));
+    assert.equal(alive(child.pid), true);
+  } finally {
+    child.kill('SIGKILL');
+    db.close();
+  }
+});
+
+test('daemon stop does not boot out a launchd daemon that serves another data root (#460)', async () => {
+  await withFakeLaunchctl(async () => {
+    mkdirSync(path.dirname(getLaunchAgentPath()), { recursive: true });
+    writeFileSync(getLaunchAgentPath(), '<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>com.ccmem.daemon</string>'
+      + '<key>EnvironmentVariables</key><dict><key>CCMEM_DATA_ROOT</key><string>/Users/someone/.claude/ccmem</string></dict></dict></plist>\n');
+    const db = openDb();
+    resetAdminTables(db);
+    try {
+      const result = await cmdAdminDaemon(db, { verb: 'stop' });
+      // mutation: drop the data-root comparison -> launchctl bootout is called, red
+      assert.equal(result.status, 'refused');
+      assert.match(result.reason, /serves \/Users\/someone\/\.claude\/ccmem/);
+      assert.doesNotMatch(readLaunchctlLog(), /bootout/);
+    } finally {
+      db.close();
+    }
+  });
 });
 
 test('cmdAdminDaemon install and uninstall manage a launchd plist', async () => {

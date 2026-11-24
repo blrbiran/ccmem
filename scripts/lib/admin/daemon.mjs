@@ -1025,6 +1025,35 @@ async function startDaemon(db) {
     : { status: 'start_timeout', via: 'spawn', pid: child.pid, alive: false, running_task: null };
 }
 
+/**
+ * Tester #460: stop signals only what it can prove is this store's daemon. A global.db restored or copied from elsewhere
+ * carries another host's or another process's pid in its lock row; a launchd job is global (one label per user) and may
+ * serve another data root. Returns the refusal reason, or null when stopping is safe.
+ */
+function lockRowRefusal(current) {
+  if (!current.pid) return null;
+  if (current.hostname && current.hostname !== os.hostname()) {
+    return `the lock row names pid ${current.pid} on host ${current.hostname}, not ${os.hostname()}: this store was copied or is shared; nothing was signalled`;
+  }
+  if (!isProcessAlive(current.pid)) return null;
+  const ps = spawnSync('ps', ['-o', 'command=', '-p', String(current.pid)], { encoding: 'utf8' });
+  const command = ps.status === 0 ? ps.stdout.trim() : '';
+  if (command === '') return `cannot read the command of pid ${current.pid} to check it is a ccmem daemon; nothing was signalled (run from a normal terminal, not a sandbox)`;
+  if (!command.includes('daemon/main.mjs')) return `pid ${current.pid} is not a ccmem daemon (${command.slice(0, 120)}); nothing was signalled`;
+  return null;
+}
+
+function launchdDataRootRefusal() {
+  let plist;
+  try { plist = readPlist(); } catch { return null; }
+  const match = plist.match(/<key>CCMEM_DATA_ROOT<\/key>\s*<string>([^<]*)<\/string>/);
+  if (!match) return null;
+  const served = match[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const here = getDataRoot();
+  if (path.resolve(served) === path.resolve(here)) return null;
+  return `the installed launchd daemon serves ${served}, not ${here}; nothing was booted out`;
+}
+
 async function stopDaemon(db) {
   const current = loadDaemonStatus(db);
 
@@ -1044,6 +1073,8 @@ async function stopDaemon(db) {
   }
 
   if (isLaunchdInstalled()) {
+    const refusal = launchdDataRootRefusal();
+    if (refusal) return { ...current, status: 'refused', via: 'launchctl', reason: refusal };
     const error = bootoutDaemon();
     if (error) {
       if (!readLaunchdJob().loaded) {
@@ -1058,6 +1089,9 @@ async function stopDaemon(db) {
   if (!current.pid) {
     return { status: 'not_running', ...current };
   }
+
+  const refusal = lockRowRefusal(current);
+  if (refusal) return { ...current, status: 'refused', reason: refusal };
 
   try {
     process.kill(current.pid, 'SIGTERM');

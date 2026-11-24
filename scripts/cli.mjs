@@ -1005,6 +1005,9 @@ try {
       process.stdout.write(`ccmem: daemon stopped pid=${result.pid}\n`);
     } else if (result.status === 'not_running') {
       process.stdout.write('ccmem: daemon not running\n');
+    } else if (result.status === 'refused') {
+      process.stderr.write(`ccmem: daemon ${daemonVerb} refused — ${result.reason}\n`);
+      process.exitCode = 1;
     } else if (result.status === 'restarted') {
       process.stdout.write(`ccmem: daemon restarted pid=${result.pid}\n`);
     } else if (result.status === 'installed') {

@@ -579,6 +579,55 @@ test('cli admin daemon status prints live daemon summary', () => {
   assert.match(output, /running=summarize_pending#\d+/);
 });
 
+// Tester #445: the daemon read "alive" for weeks while every summarize_pending
+// run failed (backend exit 1), so status must say when extraction last worked.
+// The newest success is a pre-#444 'completed' row: older stores still carry
+// those, and ignoring them would report an extraction outage that never happened.
+test('cli admin daemon status shows when memory extraction last succeeded and recent failures', () => {
+  const now = Date.now();
+  const hour = 60 * 60 * 1000;
+  const newestError = `codex exec exit 1 ${'x'.repeat(200)}`;
+  const db = openDb();
+  resetAdminTables(db);
+  seedAliveDaemon(db, now);
+  const insert = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, started_at, finished_at, status, error_excerpt)
+     VALUES (?, '{}', ?, ?, ?, ?, ?, ?)`
+  );
+  const row = (type, finishedAt, status, error = null) => insert.run(type, finishedAt, finishedAt, finishedAt, finishedAt, status, error);
+  row('summarize_pending', now - 30 * hour, 'success');
+  row('summarize_pending', now - 20 * hour, 'completed');
+  row('summarize_pending', now - 26 * hour, 'failed', 'too old for the 24h count');
+  row('summarize_pending', now - 3 * hour, 'failed', 'older failure');
+  row('summarize_pending', now - 1 * hour, 'failed', newestError);
+  row('security_audit', now - 10 * 60 * 1000, 'failed', 'another task type is not extraction');
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'status'], { cwd: REPO_ROOT, env, encoding: 'utf8' });
+
+  const d = new Date(now - 20 * hour);
+  const pad = (n) => String(n).padStart(2, '0');
+  const expectedTime = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const line = output.split('\n').find((l) => l.startsWith('ccmem: memory extraction '));
+  assert.ok(line, `no memory extraction line in:\n${output}`);
+  assert.equal(
+    line,
+    `ccmem: memory extraction last_success=${expectedTime} failed_24h=2 last_error=${newestError.slice(0, 120)}`
+  );
+});
+
+test('cli admin daemon status says never when memory extraction has never succeeded', () => {
+  const now = Date.now();
+  const db = openDb();
+  resetAdminTables(db);
+  seedAliveDaemon(db, now);
+  db.close();
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'status'], { cwd: REPO_ROOT, env, encoding: 'utf8' });
+
+  assert.match(output, /^ccmem: memory extraction last_success=never failed_24h=0 last_error=none$/m);
+});
+
 test('bin ccmem suppresses sqlite experimental warning for daemon status', () => {
   const db = openDb();
   resetAdminTables(db);

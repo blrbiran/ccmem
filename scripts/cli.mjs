@@ -983,6 +983,16 @@ try {
         }
       }
       process.stdout.write(`${formatLlmStatus(result.llm)}\n`);
+      const extraction = result.extraction;
+      let lastSuccess = 'never';
+      if (extraction.last_success_at != null) {
+        const d = new Date(extraction.last_success_at);
+        const pad = (n) => String(n).padStart(2, '0');
+        lastSuccess = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+      process.stdout.write(
+        `ccmem: memory extraction last_success=${lastSuccess} failed_24h=${extraction.failed_24h} last_error=${extraction.last_error ?? 'none'}\n`
+      );
     } else if (result.status === 'already_running') {
       process.stdout.write(`ccmem: daemon already running pid=${result.pid}\n`);
     } else if (result.status === 'started') {

@@ -1157,12 +1157,42 @@ function describePlistDrift() {
   return comparePlist(onDisk, expected);
 }
 
+// Tester #445: a live daemon whose every summarize_pending run fails (backend
+// exit 1) looked healthy for weeks. Read the outcome straight from `tasks`; no
+// LLM probe (it would cost money). Successful rows are 'success' since #444;
+// older stores also hold 'completed', which counts the same.
+function describeExtractionHealth(db, now = Date.now()) {
+  const lastSuccess = db.prepare(
+    `SELECT MAX(finished_at) AS at FROM tasks
+     WHERE type = 'summarize_pending' AND status IN ('success', 'completed')`
+  ).get();
+  const failed24h = db.prepare(
+    `SELECT COUNT(*) AS n FROM tasks
+     WHERE type = 'summarize_pending' AND status = 'failed' AND finished_at >= ?`
+  ).get(now - 24 * 60 * 60 * 1000);
+  const lastFailed = db.prepare(
+    `SELECT error_excerpt FROM tasks
+     WHERE type = 'summarize_pending' AND status = 'failed'
+     ORDER BY finished_at DESC, id DESC LIMIT 1`
+  ).get();
+  return {
+    last_success_at: lastSuccess?.at ?? null,
+    failed_24h: Number(failed24h?.n ?? 0),
+    last_error: lastFailed ? String(lastFailed.error_excerpt ?? '').replace(/\s+/g, ' ').trim().slice(0, 120) : null
+  };
+}
+
 export async function cmdAdminDaemon(db, { verb, keepBytes } = {}) {
   if (verb === 'status') {
     const status = loadDaemonStatus(db);
     // Which backend runs LLM work, and any exhaustion or switch waiting for
     // the human (spec G5: visible in the existing status output).
-    return { ...status, plist_drift: describePlistDrift(), llm: describeBackendState(db, loadConfig()) };
+    return {
+      ...status,
+      plist_drift: describePlistDrift(),
+      llm: describeBackendState(db, loadConfig()),
+      extraction: describeExtractionHealth(db)
+    };
   }
 
   if (verb === 'start') {

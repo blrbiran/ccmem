@@ -230,6 +230,11 @@ function renderRow(row, score = null) {
   };
 }
 
+function relevanceFloorFor(config, sig) {
+  const value = sig ? config?.retrieval?.min_cosine_by_signature?.[sig] : undefined;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 function toFloat32Vec(vec) {
   if (!vec) {
     return null;
@@ -528,7 +533,13 @@ export async function retrieveMemories(db, prompt, projectKey, config, options =
 
   scored.sort(compareScored(fusedFirst));
 
-  const selected = scored.slice(0, limit);
+  // Tester #453: without a floor every slot was filled, so a prompt nothing in the store is about still got six
+  // memories. A cosine scale belongs to one embedding model (unrelated text reads ~0.4-0.6 under bge-m3, far lower
+  // under OpenAI's), so the floor is configured per signature from a calibration on real prompts; a model with no
+  // calibrated floor keeps every candidate. Only the agent-facing callers ask for it; search and list do not.
+  const floor = options?.relevanceFloor ? relevanceFloorFor(config, sig) : null;
+  const relevant = floor == null ? scored : scored.filter((row) => row.cosineScore >= floor);
+  const selected = relevant.slice(0, limit);
   const cosineContribution = selected.length
     ? selected.reduce((sum, row) => sum + (row.fused > 0 ? ((row.cosineScore * weights.semantic) / row.fused) : 0), 0) / selected.length
     : null;
@@ -540,7 +551,8 @@ export async function retrieveMemories(db, prompt, projectKey, config, options =
       jaccard: row.jaccardScore,
       semantic: row.cosineScore
     })),
-    total: scored.length,
+    total: relevant.length,
+    gated: scored.length - relevant.length,
     queryVec,
     // The signature queryVec was produced under. Returned alongside it because
     // any consumer that cosines this vector against stored ones must filter by

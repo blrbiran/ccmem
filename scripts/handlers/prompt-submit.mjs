@@ -54,7 +54,7 @@ export async function handlePromptSubmit(hookData) {
     const projectKey = resolveProjectKey(hookData.cwd);
     upsertSessionContext(db, hookData.session_id, projectKey, hookData.ccmem_agent ?? 'claude-code');
 
-    const retrieval = await retrieveMemories(db, hookData.prompt ?? '', projectKey, config);
+    const retrieval = await retrieveMemories(db, hookData.prompt ?? '', projectKey, config, { relevanceFloor: true });
     const disableScopeIsolation = config?.eval?.disable_scope_isolation === true;
 
     if (hookData.session_id) {
@@ -143,6 +143,7 @@ export async function handlePromptSubmit(hookData) {
       additionalContext: useFileBased ? '' : (rows.length ? renderRetrievedBlock(rows) : ''),
       _metricFields: {
         matched: rows.length,
+        retrieval_gated: retrieval.gated ?? null,
         fused_count: rows.filter((row) => row.score).length,
         cosine_contribution: retrieval.cosineContribution ?? null,
         retrieval_embed_ms: retrieval.timing?.embedMs ?? null,

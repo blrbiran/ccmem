@@ -58,6 +58,9 @@
       "fts": 0.4,
       "jaccard": 0.2,
       "semantic": 0.4
+    },
+    "min_cosine_by_signature": {
+      "ollama:bge-m3:1024": 0.6
     }
   },
   "feedback": {

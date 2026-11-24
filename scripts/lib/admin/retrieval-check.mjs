@@ -33,7 +33,7 @@ export async function cmdRetrievalCheck(db, { corpus = null, k = null, cwd = pro
   const results = [];
 
   for (const item of items) {
-    const { rows } = await retrieveMemories(db, item.prompt, projectKey, config);
+    const { rows } = await retrieveMemories(db, item.prompt, projectKey, config, { relevanceFloor: true });
     const expected = new Set(Array.isArray(item.expected_ids) ? item.expected_ids.map((id) => Number(id)) : []);
     const retrievedIds = rows.map((row) => Number(row.id));
     const firstHitIndex = retrievedIds.findIndex((id) => expected.has(id));

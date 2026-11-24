@@ -61,6 +61,11 @@ export const DEFAULT_CONFIG = {
       fts: 0.4,
       jaccard: 0.2,
       semantic: 0.4
+    },
+    // #453: calibrated 2026-11-24 on a 16.7k-vector bge-m3 store (24 off-topic vs 80 real prompts):
+    // 0.60 kept 1/144 off-topic rows and emptied 1/80 real prompts.
+    min_cosine_by_signature: {
+      'ollama:bge-m3:1024': 0.6
     }
   },
   feedback: {

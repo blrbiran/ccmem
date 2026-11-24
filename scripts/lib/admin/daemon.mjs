@@ -1073,8 +1073,7 @@ async function stopDaemon(db, { checkLaunchdRoot = false } = {}) {
   }
 
   if (isLaunchdInstalled()) {
-    // Only `daemon stop` checks the plist's data root: restart's fixtures and callers still run without it
-    // (tester #460 residual, recorded in the handoff).
+    // `daemon stop` and `daemon restart` check the plist's data root (tester #460).
     const refusal = checkLaunchdRoot ? launchdDataRootRefusal() : null;
     if (refusal) return { ...current, status: 'refused', via: 'launchctl', reason: refusal };
     const error = bootoutDaemon();
@@ -1160,8 +1159,10 @@ async function restartDaemon(db) {
   }
 
   const current = loadDaemonStatus(db);
-  const stopped = await stopDaemon(db);
+  const stopped = await stopDaemon(db, { checkLaunchdRoot: true });
 
+  // Tester #460: a refusal is reported as itself (`daemon restart refused — …`, exit 1), not as a failed stop phase.
+  if (stopped.status === 'refused') return { ...stopped, phase: 'stop', previous_pid: current.pid ?? null };
   if (!['stopped', 'not_running'].includes(stopped.status)) {
     return { ...stopped, status: 'restart_failed', failed_status: stopped.status, phase: 'stop', previous_pid: current.pid ?? null };
   }

@@ -170,6 +170,10 @@ test('T10: an unparsable env dict is unknown, never in_sync', () => {
 // 分开，避免 openDb() 落进一个被其他测试写过的目录。
 const wiringDataRoot = mkdtempSync(join(tmpdir(), 'ccmem-t3-wiring-'));
 process.env.CCMEM_DATA_ROOT = wiringDataRoot;
+// Ruling (#460, 2026-11-25): restart now refuses to boot out a launchd job whose plist serves another data root,
+// as stop already did. The restart fixtures below used BASE_ENV (/tmp/root, kept for the pure comparisons above) and
+// now name the data root this file runs on, so each still reaches the stop/rewrite/start path it was written for.
+const RESTART_ENV = { ...BASE_ENV, CCMEM_DATA_ROOT: wiringDataRoot };
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { cmdAdminDaemon } = await import('../../scripts/lib/admin/daemon.mjs');
@@ -516,7 +520,7 @@ test('T9: a blocked gate still lets the restart finish', () => withFakeLaunchctl
   const agentDir = trackedMkdtemp('ccmem-la-');
   process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
   const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
-  writeFileSync(plistPath, plistWith({ ...BASE_ENV, ANTHROPIC_API_KEY: 'old' }));
+  writeFileSync(plistPath, plistWith({ ...RESTART_ENV, ANTHROPIC_API_KEY: 'old' })); // Ruling (#460, 2026-11-25): the plist serves this data root
   const before = readFileSync(plistPath, 'utf8');
 
   const db = openDb();
@@ -534,7 +538,7 @@ test('T9: a blocked gate still lets the restart finish', () => withFakeLaunchctl
 test('T14: a restart that fails in the stop phase still reports restart_failed', () => withFakeLaunchctl(async () => {
   const agentDir = trackedMkdtemp('ccmem-la-');
   process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
-  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
+  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(RESTART_ENV)); // Ruling (#460, 2026-11-25): the plist serves this data root
 
   const db = openDb();
   process.env.CCMEM_FAKE_BOOTOUT_FAIL = '1';
@@ -556,7 +560,7 @@ test('T14: a restart that fails in the stop phase still reports restart_failed',
 test('T15: a daemon that takes three seconds to come up is reported as started', () => withFakeLaunchctl(async () => {
   const agentDir = trackedMkdtemp('ccmem-la-');
   process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
-  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
+  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(RESTART_ENV)); // Ruling (#460, 2026-11-25): the plist serves this data root
 
   const db = openDb();
   // 慢启动由这条测试自己拥有的定时器模拟，不用后台子 shell：子 shell 会活过本测试，
@@ -619,7 +623,7 @@ test('T11: an unparsable plist blocks the rewrite', () => withFakeLaunchctl(asyn
   const agentDir = trackedMkdtemp('ccmem-la-');
   process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
   const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
-  writeFileSync(plistPath, plistWith(BASE_ENV).replace('<string>/usr/bin</string>', '<data>zz</data>'));
+  writeFileSync(plistPath, plistWith(RESTART_ENV).replace('<string>/usr/bin</string>', '<data>zz</data>')); // Ruling (#460, 2026-11-25): the plist serves this data root
   const before = readFileSync(plistPath, 'utf8');
 
   const db = openDb();
@@ -782,7 +786,7 @@ test('CLI reporting: a blocked gate writes the remedy to stderr', () => withFake
   const agentDir = trackedMkdtemp('ccmem-la-');
   process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
   const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
-  writeFileSync(plistPath, plistWith({ ...BASE_ENV, ANTHROPIC_API_KEY: 'old' }));
+  writeFileSync(plistPath, plistWith({ ...RESTART_ENV, ANTHROPIC_API_KEY: 'old' })); // Ruling (#460, 2026-11-25): the plist serves this data root
 
   const result = spawnSync(process.execPath, [cliPath, 'admin', '--', 'daemon', 'restart'], {
     env: process.env,
@@ -826,7 +830,7 @@ test('CLI reporting: a failed restart names the phase and the reason on stderr',
 
   const agentDir = trackedMkdtemp('ccmem-la-');
   process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
-  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
+  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(RESTART_ENV)); // Ruling (#460, 2026-11-25): the plist serves this data root
 
   process.env.CCMEM_FAKE_BOOTOUT_FAIL = '1';
   try {
@@ -856,7 +860,7 @@ test('CLI reporting: a restart whose start times out says it timed out, not just
 
   const agentDir = trackedMkdtemp('ccmem-la-');
   process.env.CCMEM_LAUNCHAGENT_DIR = agentDir;
-  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(BASE_ENV));
+  writeFileSync(join(agentDir, 'com.ccmem.daemon.plist'), plistWith(RESTART_ENV)); // Ruling (#460, 2026-11-25): the plist serves this data root
 
   process.env.CCMEM_FAKE_START_NEVER = '1';
   try {

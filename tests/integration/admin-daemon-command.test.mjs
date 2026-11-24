@@ -450,6 +450,31 @@ test('daemon stop does not boot out a launchd daemon that serves another data ro
   });
 });
 
+// #460 residual: restart stops before it starts, so it booted out the one global launchd job even when that job served
+// another data root -- the same harm `daemon stop` refuses. It now refuses the same way, through the CLI too.
+test('daemon restart does not boot out a launchd daemon that serves another data root (#460)', async () => {
+  mkdirSync(path.dirname(getLaunchAgentPath()), { recursive: true });
+  writeFileSync(getLaunchAgentPath(), '<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>com.ccmem.daemon</string>'
+    + '<key>EnvironmentVariables</key><dict><key>CCMEM_DATA_ROOT</key><string>/Users/someone/.claude/ccmem</string></dict></dict></plist>\n');
+  const db = openDb();
+  resetAdminTables(db);
+  db.close();
+  rmSync(fakeLaunchctlLog, { force: true });
+  try {
+    const result = spawnSync(NODE, [CLI, 'admin', '--', 'daemon', 'restart'], {
+      cwd: REPO_ROOT,
+      env: { ...env, CCMEM_LAUNCHCTL_BIN: fakeLaunchctlPath, CCMEM_LAUNCHCTL_LOG: fakeLaunchctlLog },
+      encoding: 'utf8'
+    });
+    // mutation: restart calls stopDaemon without the data-root check -> launchctl bootout is called, red
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /ccmem: daemon restart refused — the installed launchd daemon serves \/Users\/someone\/\.claude\/ccmem/);
+    assert.equal(existsSync(fakeLaunchctlLog) ? readFileSync(fakeLaunchctlLog, 'utf8') : '', '', 'launchctl was not called at all');
+  } finally {
+    rmSync(getLaunchAgentPath(), { force: true });
+  }
+});
+
 test('cmdAdminDaemon install and uninstall manage a launchd plist', async () => {
   await withFakeLaunchctl(async () => {
     const fakeClaudeDir = path.join(dataRoot, 'fake-claude-bin');

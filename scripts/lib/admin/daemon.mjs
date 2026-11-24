@@ -1031,11 +1031,11 @@ async function startDaemon(db) {
  * serve another data root. Returns the refusal reason, or null when stopping is safe.
  */
 function lockRowRefusal(current) {
-  if (!current.pid) return null;
+  // A pid with no live process here is a stale row: the ESRCH path below clears it, whichever host wrote it.
+  if (!current.pid || !isProcessAlive(current.pid)) return null;
   if (current.hostname && current.hostname !== os.hostname()) {
-    return `the lock row names pid ${current.pid} on host ${current.hostname}, not ${os.hostname()}: this store was copied or is shared; nothing was signalled`;
+    return `the lock row names pid ${current.pid} on host ${current.hostname}, not ${os.hostname()}: this store was copied or is shared, and pid ${current.pid} here is some other process; nothing was signalled`;
   }
-  if (!isProcessAlive(current.pid)) return null;
   const ps = spawnSync('ps', ['-o', 'command=', '-p', String(current.pid)], { encoding: 'utf8' });
   const command = ps.status === 0 ? ps.stdout.trim() : '';
   if (command === '') return `cannot read the command of pid ${current.pid} to check it is a ccmem daemon; nothing was signalled (run from a normal terminal, not a sandbox)`;
@@ -1054,7 +1054,7 @@ function launchdDataRootRefusal() {
   return `the installed launchd daemon serves ${served}, not ${here}; nothing was booted out`;
 }
 
-async function stopDaemon(db) {
+async function stopDaemon(db, { checkLaunchdRoot = false } = {}) {
   const current = loadDaemonStatus(db);
 
   if (isFallbackInstalled()) {
@@ -1073,7 +1073,9 @@ async function stopDaemon(db) {
   }
 
   if (isLaunchdInstalled()) {
-    const refusal = launchdDataRootRefusal();
+    // Only `daemon stop` checks the plist's data root: restart's fixtures and callers still run without it
+    // (tester #460 residual, recorded in the handoff).
+    const refusal = checkLaunchdRoot ? launchdDataRootRefusal() : null;
     if (refusal) return { ...current, status: 'refused', via: 'launchctl', reason: refusal };
     const error = bootoutDaemon();
     if (error) {
@@ -1242,7 +1244,7 @@ export async function cmdAdminDaemon(db, { verb, keepBytes } = {}) {
   }
 
   if (verb === 'stop') {
-    return stopDaemon(db);
+    return stopDaemon(db, { checkLaunchdRoot: true });
   }
 
   if (verb === 'restart') {

@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { raceLoop } from '../helpers/loop-timeout.mjs';
 
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-loop-'));
@@ -85,13 +86,12 @@ test('mainLoop dispatches queued tasks and marks them completed', async () => {
   const seen = [];
   let stop = false;
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async (_db, task) => {
       seen.push(task.type);
       stop = true;
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const row = db.prepare(`SELECT status, started_at, finished_at, attempts FROM tasks WHERE type = 'demo'`).get();
 
@@ -126,12 +126,11 @@ test('mainLoop in off mode skips dispatching queued tasks and only sleeps', asyn
   });
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (_db, task) => {
         seen.push(task.type);
-      }),
-      new Promise((_, reject) => originalSetTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     global.setTimeout = originalSetTimeout;
   }
@@ -191,12 +190,11 @@ test('mainLoop in off mode does not enqueue cron tasks or leases before sleeping
   });
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async () => {
         throw new Error('off mode should not dispatch cron work');
-      }),
-      new Promise((_, reject) => originalSetTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     global.Date = OriginalDate;
     global.setTimeout = originalSetTimeout;
@@ -233,12 +231,11 @@ test('mainLoop shortens idle sleep to 30 seconds when wake file is recent', asyn
   });
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async () => {
         throw new Error('idle wake branch should not dispatch work');
-      }),
-      new Promise((_, reject) => originalSetTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     global.setTimeout = originalSetTimeout;
   }
@@ -270,12 +267,11 @@ test('mainLoop in off mode also shortens sleep to 30 seconds when wake file is r
   });
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async () => {
         throw new Error('off mode wake branch should not dispatch work');
-      }),
-      new Promise((_, reject) => originalSetTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     global.setTimeout = originalSetTimeout;
   }
@@ -299,13 +295,12 @@ test('mainLoop marks failed tasks and stores error excerpt', async () => {
 
   let stop = false;
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async () => {
       stop = true;
       throw new Error('dispatch failed for test');
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const row = db.prepare(`SELECT status, finished_at, error_excerpt, attempts FROM tasks WHERE type = 'broken'`).get();
 
@@ -328,13 +323,12 @@ test('mainLoop schedules exponential retry for retryable timeout failures', asyn
 
   let stop = false;
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async () => {
       stop = true;
       throw new Error('claude -p timeout after 50ms');
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const tasks = db.prepare(
     `SELECT status, error_excerpt, attempts, scheduled_for, enqueued_at
@@ -365,13 +359,12 @@ test('mainLoop stops scheduling retries after retry budget is exhausted', async 
 
   let stop = false;
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async () => {
       stop = true;
       throw new Error('claude -p timeout after 50ms');
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const tasks = db.prepare(
     `SELECT status, error_excerpt, attempts
@@ -400,13 +393,12 @@ test('mainLoop dispatches tasks scheduled for the current millisecond', async ()
   let stop = false;
   const seen = [];
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async (_db, task) => {
       seen.push(task.type);
       stop = true;
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const row = db.prepare(`SELECT status, attempts FROM tasks WHERE type = 'edge-now'`).get();
 
@@ -585,13 +577,12 @@ test('dispatchTask can use configured claude bridge command', async () => {
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         stop = true;
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -895,13 +886,12 @@ test('dispatchTask registers generated child session ids in blacklist for summar
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         stop = true;
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -970,13 +960,12 @@ test('dispatchTask marks task failed when configured claude bridge exits non-zer
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -1136,13 +1125,12 @@ test('dispatchTask schedules retry when configured claude bridge is rate limited
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -1486,13 +1474,12 @@ test('dispatchTask defaults rate-limit retry delay to 60 seconds when retry-afte
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -1838,13 +1825,12 @@ test('dispatchTask defaults too-many-requests retry delay to 60 seconds', async 
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -2190,13 +2176,12 @@ test('dispatchTask converts second-based retry-after into milliseconds', async (
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -2542,13 +2527,12 @@ test('dispatchTask converts minute-based retry-after into milliseconds', async (
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -2896,13 +2880,12 @@ test('dispatchTask marks task failed when configured claude bridge times out', a
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     restoreTimeoutConfig();
     setClaudeBridgeEnv({
@@ -3247,15 +3230,14 @@ test('dispatchTask routes summarize_pending and keeps superseded status', async 
 
   let stop = false;
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async (loopDb, task) => {
       await dispatchTask(loopDb, task);
       if (JSON.parse(task.payload).last_message_seq === 2) {
         stop = true;
       }
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const rows = db.prepare(
     `SELECT status
@@ -3305,13 +3287,12 @@ test('dispatchTask skips summarize_pending when transcript excerpt is empty', as
 
   let stop = false;
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async (loopDb, task) => {
       await dispatchTask(loopDb, task);
       stop = true;
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const task = db.prepare(
     `SELECT status
@@ -3358,13 +3339,12 @@ test('dispatchTask skips summarize_pending when session is too short', async () 
 
   let stop = false;
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async (loopDb, task) => {
       await dispatchTask(loopDb, task);
       stop = true;
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const task = db.prepare(
     `SELECT status
@@ -3399,13 +3379,12 @@ test('dispatchTask marks bad summarize payload via audit', async () => {
 
   let stop = false;
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async (loopDb, task) => {
       await dispatchTask(loopDb, task);
       stop = true;
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const task = db.prepare(
     `SELECT status
@@ -3475,13 +3454,12 @@ test('dispatchTask runs weekly_synthesis stub route', async () => {
 
   let stop = false;
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async (loopDb, task) => {
       stop = true;
       await dispatchTask(loopDb, task);
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const task = db.prepare(
     `SELECT status
@@ -3570,13 +3548,12 @@ test('dispatchTask completes the anchored Sunday weekly lease across ISO week ro
 
     let stop = false;
 
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
 
     const task = db.prepare(
       `SELECT status
@@ -3734,13 +3711,12 @@ test('dispatchTask can use configured claude bridge command for weekly_synthesis
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -3807,13 +3783,12 @@ test('dispatchTask registers generated child session ids in blacklist for weekly
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -3864,13 +3839,12 @@ test('dispatchTask marks weekly_synthesis failed when configured claude bridge e
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -3931,13 +3905,12 @@ test('dispatchTask marks weekly_synthesis failed when configured claude bridge t
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     restoreTimeoutConfig();
     setClaudeBridgeEnv({
@@ -4104,13 +4077,12 @@ test('dispatchTask schedules weekly_synthesis retry when configured claude bridg
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -4273,13 +4245,12 @@ test('dispatchTask defaults weekly_synthesis rate-limit retry delay to 60 second
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -4442,13 +4413,12 @@ test('dispatchTask defaults weekly_synthesis too-many-requests retry delay to 60
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -4611,13 +4581,12 @@ test('dispatchTask converts weekly_synthesis second-based retry-after into milli
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -4780,13 +4749,12 @@ test('dispatchTask converts weekly_synthesis minute-based retry-after into milli
   let stop = false;
 
   try {
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         stop = true;
         await dispatchTask(loopDb, task);
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     setClaudeBridgeEnv({
       CCMEM_ENABLE_REAL_CLAUDE_P: null,
@@ -4935,13 +4903,12 @@ test('dispatchTask fails unknown task types and preserves error excerpt', async 
 
   let stop = false;
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async (loopDb, task) => {
       stop = true;
       await dispatchTask(loopDb, task);
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const task = db.prepare(
     `SELECT status, error_excerpt, attempts
@@ -5004,13 +4971,12 @@ test('dispatchTask runs daily_maintenance maintenance SQL', async () => {
 
   let stop = false;
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async (loopDb, task) => {
       stop = true;
       await dispatchTask(loopDb, task);
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const memory = db.prepare(
     `SELECT decay_status
@@ -5708,13 +5674,12 @@ test('dispatchTask applies parsed llm output into memories', async () => {
 
   let stop = false;
 
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async (loopDb, task) => {
       await dispatchTask(loopDb, task);
       stop = true;
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 
   const memory = db.prepare(
     `SELECT scope, project_key, type, content, source, trust_score, tags

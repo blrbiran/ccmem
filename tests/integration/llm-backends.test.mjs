@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { raceLoop } from '../helpers/loop-timeout.mjs';
 
 /**
  * The daemon's LLM work runs on Claude, Codex or OMP behind one seam
@@ -430,13 +431,12 @@ test('a non-claude timeout is retried like a claude timeout', async () => {
      VALUES ('backend-timeout', '{}', ?, ?, 'queued', 1)`
   ).run(now - 1000, now - 1000);
   let stop = false;
-  await Promise.race([
+  await raceLoop(
     mainLoop(db, () => stop, async () => {
       stop = true;
       throw timeoutError;
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
   const tasks = db.prepare(`SELECT status FROM tasks WHERE type = 'backend-timeout' ORDER BY id`).all();
   db.close();
   assert.deepEqual(tasks.map((t) => t.status), ['failed', 'queued'], 'a timed-out codex call gets a retry row');

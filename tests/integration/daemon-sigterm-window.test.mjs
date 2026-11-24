@@ -42,16 +42,26 @@ test('a daemon SIGTERMed the moment its lock appears still releases the lock', a
     const exited = new Promise((resolve) => child.once('exit', resolve));
     const dbPath = path.join(root, 'global.db');
 
-    let row = null;
-    for (let t = 0; t < 2000 && !row; t += 1) {
-      row = lockRow(dbPath);
-      if (!row) await sleep(2);
-    }
-    assert.equal(row?.holder_pid, child.pid, 'the daemon took the lock (the condition under test was reached)');
+    // Tester #461: on a loaded machine the lock wait below ran out, the assert threw, and the daemon
+    // it had spawned lived on holding its temp store (16 minutes, until killed by hand). Whatever
+    // this iteration ends with, its daemon does not outlive it.
+    try {
+      let row = null;
+      for (let t = 0; t < 2000 && !row; t += 1) {
+        row = lockRow(dbPath);
+        if (!row) await sleep(2);
+      }
+      assert.equal(row?.holder_pid, child.pid, 'the daemon took the lock (the condition under test was reached)');
 
-    child.kill('SIGTERM');
-    await exited;
-    if (lockRow(dbPath)) leftover += 1;
+      child.kill('SIGTERM');
+      await exited;
+      if (lockRow(dbPath)) leftover += 1;
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGKILL');
+        await exited;
+      }
+    }
   }
 
   assert.equal(leftover, 0, `${leftover}/${runs} daemons died holding the lock`);

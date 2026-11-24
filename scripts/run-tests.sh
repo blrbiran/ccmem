@@ -73,6 +73,12 @@ if [ -z "$node_bin" ]; then
   exit 127
 fi
 
+# Tester #461: the daemon-loop tests' loop guard (tests/helpers/loop-timeout.mjs) is 1000 ms when a
+# file runs alone; a suite run at default concurrency on a loaded machine missed that budget in 43
+# tests. The suite gets 5000 ms unless the caller chose a budget.
+CCMEM_TEST_LOOP_TIMEOUT_MS=${CCMEM_TEST_LOOP_TIMEOUT_MS:-5000}
+export CCMEM_TEST_LOOP_TIMEOUT_MS
+
 env -u CCMEM_CONFIG_PATH -u CODEX_HOME -u CCMEM_OMP_AGENT_DIR -u PI_CODING_AGENT_DIR \
   -u OMP_PROFILE -u PI_PROFILE -u PI_CONFIG_DIR -u CCMEM_LAUNCHAGENT_DIR \
   HOME="$test_home" TMPDIR="$test_tmp" CCMEM_DATA_ROOT="$data_root" PATH="$stub_bin:$PATH" "$node_bin" --test "$@"

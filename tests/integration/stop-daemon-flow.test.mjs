@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { raceLoop } from '../helpers/loop-timeout.mjs';
 
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-daemon-'));
@@ -210,25 +211,23 @@ function countAutoMemories(db) {
 function runUntilFirstTask(db) {
   let stop = false;
 
-  return Promise.race([
+  return raceLoop(
     mainLoop(db, () => stop, async (loopDb, task) => {
       await dispatchTask(loopDb, task);
       stop = true;
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 }
 
 function runUntilFailure(db) {
   let stop = false;
 
-  return Promise.race([
+  return raceLoop(
     mainLoop(db, () => stop, async (loopDb, task) => {
       stop = true;
       await dispatchTask(loopDb, task);
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-  ]);
+    })
+  );
 }
 
 function assertWakeAndApplied(db, sessionId, expectedContent) {
@@ -1037,7 +1036,7 @@ test('stop hook wake re-enqueues the same seq after a completed bridge run and l
     });
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -1048,9 +1047,8 @@ test('stop hook wake re-enqueues the same seq after a completed bridge run and l
         ) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -1268,7 +1266,7 @@ test('stop hook wake supersedes a stale bridge result when a newer stop seq arri
     setBridgeCommand(script);
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -1279,9 +1277,8 @@ test('stop hook wake supersedes a stale bridge result when a newer stop seq arri
         ) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -1386,7 +1383,7 @@ test('stop hook wake re-enqueues the same seq after a bridge failure and later a
     setBridgeCommand(script);
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -1397,9 +1394,8 @@ test('stop hook wake re-enqueues the same seq after a bridge failure and later a
         ) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -1525,7 +1521,7 @@ test('stop hook wake applies summarize_pending after a timeout-scheduled retry l
     ).run(Date.now() - 1, 's-flow-bridge-timeout-retry');
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -1536,9 +1532,8 @@ test('stop hook wake applies summarize_pending after a timeout-scheduled retry l
         ) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -1644,7 +1639,7 @@ test('stop hook wake supersedes a stale timeout-scheduled retry when a newer sto
     });
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -1660,9 +1655,8 @@ test('stop hook wake supersedes a stale timeout-scheduled retry when a newer sto
         if (payload.last_message_seq === 3) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -1784,7 +1778,7 @@ test('stop hook wake applies summarize_pending after a rate-limit-scheduled retr
     ).run(Date.now() - 1, 's-flow-bridge-rate-limit-retry');
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -1795,9 +1789,8 @@ test('stop hook wake applies summarize_pending after a rate-limit-scheduled retr
         ) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -1889,7 +1882,7 @@ test('stop hook wake supersedes a stale queued retry when a newer stop seq arriv
     setBridgeCommand(script);
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -1906,9 +1899,8 @@ test('stop hook wake supersedes a stale queued retry when a newer stop seq arriv
         if (payload.last_message_seq === 3) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -2030,7 +2022,7 @@ test('stop hook wake applies summarize_pending after a default-rate-limit retry 
     ).run(Date.now() - 1, 's-flow-bridge-rate-limit-default-retry');
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -2041,9 +2033,8 @@ test('stop hook wake applies summarize_pending after a default-rate-limit retry 
         ) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -2135,7 +2126,7 @@ test('stop hook wake supersedes a stale default-rate-limit retry when a newer st
     setBridgeCommand(script);
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -2152,9 +2143,8 @@ test('stop hook wake supersedes a stale default-rate-limit retry when a newer st
         if (payload.last_message_seq === 3) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -2276,7 +2266,7 @@ test('stop hook wake applies summarize_pending after a second-based retry-after 
     ).run(Date.now() - 1, 's-flow-bridge-rate-limit-seconds-retry');
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -2287,9 +2277,8 @@ test('stop hook wake applies summarize_pending after a second-based retry-after 
         ) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -2381,7 +2370,7 @@ test('stop hook wake supersedes a stale second-based retry when a newer stop seq
     setBridgeCommand(script);
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -2398,9 +2387,8 @@ test('stop hook wake supersedes a stale second-based retry when a newer stop seq
         if (payload.last_message_seq === 3) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -2522,7 +2510,7 @@ test('stop hook wake applies summarize_pending after a minute-based retry-after 
     ).run(Date.now() - 1, 's-flow-bridge-rate-limit-minutes-retry');
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -2533,9 +2521,8 @@ test('stop hook wake applies summarize_pending after a minute-based retry-after 
         ) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -2627,7 +2614,7 @@ test('stop hook wake supersedes a stale minute-based retry when a newer stop seq
     setBridgeCommand(script);
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -2644,9 +2631,8 @@ test('stop hook wake supersedes a stale minute-based retry when a newer stop seq
         if (payload.last_message_seq === 3) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -2768,7 +2754,7 @@ test('stop hook wake applies summarize_pending after a too-many-requests retry l
     ).run(Date.now() - 1, 's-flow-bridge-too-many-requests-retry');
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -2779,9 +2765,8 @@ test('stop hook wake applies summarize_pending after a too-many-requests retry l
         ) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }
@@ -2873,7 +2858,7 @@ test('stop hook wake supersedes a stale too-many-requests retry when a newer sto
     setBridgeCommand(script);
 
     let stop = false;
-    await Promise.race([
+    await raceLoop(
       mainLoop(db, () => stop, async (loopDb, task) => {
         await dispatchTask(loopDb, task);
         const payload = JSON.parse(task.payload ?? '{}');
@@ -2890,9 +2875,8 @@ test('stop hook wake supersedes a stale too-many-requests retry when a newer sto
         if (payload.last_message_seq === 3) {
           stop = true;
         }
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('loop timeout')), 1000))
-    ]);
+      })
+    );
   } finally {
     clearClaudeBridgeEnv();
   }

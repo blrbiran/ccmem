@@ -197,8 +197,8 @@ Session start injects one short instruction to read a per-session file, `.ccmem/
 ### Background LLM backend
 
 The daemon's summarization and synthesis tasks run through `llm.backend` (`claude`, `codex`, or `omp`). Related config:
-`llm.backend_order`, `llm.models` (codex defaults to `gpt-6-luna`; `null` or `""` omits `-m`, leaving that CLI's own
-default), `llm.commands` (the executable per backend; `CCMEM_CLAUDE_P_COMMAND` also overrides `claude`).
+`llm.backend_order`, `llm.models` (every backend defaults to `null`; `null` or `""` omits `-m`, leaving that CLI's own
+default; codex defaulted to `gpt-6-luna` until tester #459, which a provider without that model answered with 404), `llm.commands` (the executable per backend; `CCMEM_CLAUDE_P_COMMAND` also overrides `claude`).
 
 ```bash
 ccmem admin llm status

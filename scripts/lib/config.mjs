@@ -146,7 +146,8 @@ export const DEFAULT_CONFIG = {
     // null = no --model flag: the CLI's own default (OMP: its default role).
     models: {
       claude: null,
-      codex: 'gpt-6-luna',
+      // Tester #459: was 'gpt-6-luna'; a provider that does not serve it answered 404 to every call.
+      codex: null,
       omp: null
     },
     // Executable per backend. CCMEM_CLAUDE_P_COMMAND still overrides claude.

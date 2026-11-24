@@ -88,7 +88,8 @@ test('without the approval flag it names the backends and transcripts, then call
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stdout, /2 transcript\(s\) x 2 backend\(s\) = 4 summarize call\(s\)/);
   assert.match(result.stdout, new RegExp(`claude \\(command ${FAKE_CLAUDE}`));
-  assert.match(result.stdout, new RegExp(`codex \\(command ${FAKE_CODEX}, gpt-6-luna\\)`));
+  // Tester #459: the codex default model is null (the CLI's own), so the plan says so instead of naming one.
+  assert.match(result.stdout, new RegExp(`codex \\(command ${FAKE_CODEX}, its default model\\)`));
   assert.match(result.stdout, /rollout\.jsonl \(codex\)/);
   assert.match(result.stdout, /omp\.jsonl \(omp\)/);
   assert.match(result.stdout, /--i-approve-paid-calls/);

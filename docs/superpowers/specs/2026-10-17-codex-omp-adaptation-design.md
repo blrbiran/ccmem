@@ -320,3 +320,10 @@ wording differs; whether to improve input selection.
   `scripts/handlers/*.mjs`, `scripts/lib/transcript.mjs`,
   `scripts/daemon/claude-p.mjs`, `scripts/lib/llm-parse.mjs`,
   `scripts/migrations/001_initial.sql:23-47` (no agent column).
+
+## Correction (2026-11-24, Orca session after `221948a1`, tester #459)
+
+The Codex default model `gpt-6-luna` (above) is withdrawn: on a machine whose Codex provider does not serve that model,
+every daemon summarize call answered 404 and memory extraction stayed at zero for three months. `llm.models.codex`
+now defaults to `null` like the other backends (no `-m`; the user's own Codex default). Human: 「有问题先按你的建议执行」.
+The text above is kept as written.

@@ -222,7 +222,10 @@ test('codex and omp invocations carry recursion guards', async () => {
   assert.deepEqual(llmTmpEntries(), [], 'every per-call work dir is removed after the call');
 });
 
-test('codex: the answer is read from last.txt, model defaults to gpt-6-luna, schema goes to a file', async () => {
+// Ruling (tester #459, human 2026-11-24 「有问题先按你的建议执行」): the shipped default was codex 'gpt-6-luna', and a provider
+// that does not serve that model answered 404 to every summarize call -- extraction at zero for three months. The default
+// is null now, like claude and omp: no -m, the user's own Codex default. Rewritten from "model defaults to gpt-6-luna".
+test('codex: the answer is read from last.txt, no -m by default (the CLI picks its own model), schema goes to a file', async () => {
   useFakes('codex');
   const schema = { type: 'object', additionalProperties: false, required: ['content'], properties: { content: { type: 'string' } } };
 
@@ -230,7 +233,8 @@ test('codex: the answer is read from last.txt, model defaults to gpt-6-luna, sch
 
   assert.equal(result, 'codex answer', 'callers parse the answer, not the JSONL event stream');
   const { args, schema: written, cwd } = recorded();
-  assert.equal(args[args.indexOf('-m') + 1], 'gpt-6-luna');
+  // mutation: restore the 'gpt-6-luna' default -> -m is passed, red
+  assert.equal(args.includes('-m'), false, `no -m by default: ${args.join(' ')}`);
   assert.deepEqual(JSON.parse(written), schema);
   const real = (p) => p.replace(/^\/private/, '');
   assert.equal(real(path.dirname(args[args.indexOf('-o') + 1])), real(cwd), 'last.txt lives in the per-call work dir');

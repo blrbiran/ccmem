@@ -134,7 +134,7 @@
     "backend_order": ["claude", "codex", "omp"],
     "models": {
       "claude": null,
-      "codex": "gpt-6-luna",
+      "codex": null,
       "omp": null
     },
     "commands": {

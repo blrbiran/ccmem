@@ -1,4 +1,5 @@
-import { readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import path from 'node:path';
 import { isLockRowAlive } from '../../daemon/lock.mjs';
 import { probeFile } from '../../daemon/tasks/embed-latency-probe.mjs';
 import { writeAudit } from '../audit.mjs';
@@ -7,7 +8,7 @@ import { collectConfigDeltas } from '../config-delta.mjs';
 import { getDbPath, getSchemaVersion, ftsDiagnostics } from '../db.mjs';
 import { getProvider } from '../embedding/provider.mjs';
 import { currentEmbeddingSig } from '../embedding/signature.mjs';
-import { codexHookTrust } from '../install/codex.mjs';
+import { codexHookTrust, getCodexHome } from '../install/codex.mjs';
 import { daemonCostFile, decisionDataFile, decisionDataSizeBytes, metricsFile } from '../metrics.mjs';
 import { fallbackProjectKey, resolveProjectKey } from '../project-key.mjs';
 import { collectInjectionRows, countNeverInjected } from '../recent-injections.mjs';
@@ -1208,6 +1209,42 @@ function getInjectionDiagnostics(db, { days = 14, cfg = loadConfig() } = {}) {
   };
 }
 
+// Tester #452: a ccmem hook Codex skips (not approved, hooks off for that run, a broken command) leaves no trace --
+// Codex logs nothing and ccmem never hears of the session. Codex's own rollout files
+// ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-<time>-<session id>.jsonl) say which sessions ran; every session whose
+// hooks ran has a session_context row (SessionStart writes one). Read-only: names and mtimes only, never contents.
+const ROLLOUT_NAME = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+
+export function codexSessionReach(db, { codexHome = getCodexHome(), now = Date.now(), windowMs = 24 * 60 * 60 * 1000 } = {}) {
+  const since = now - windowMs;
+  const pad = (n) => String(n).padStart(2, '0');
+  // The day directories a file touched in the window can sit in (a session started the day before and still
+  // writing counts too), whichever clock Codex names them by; points 12 h apart cover every date of a 24 h window.
+  const days = new Set();
+  for (const t of [since - windowMs, since, (since + now) / 2, now]) {
+    const d = new Date(t);
+    days.add(path.join(String(d.getFullYear()), pad(d.getMonth() + 1), pad(d.getDate())));
+    days.add(path.join(String(d.getUTCFullYear()), pad(d.getUTCMonth() + 1), pad(d.getUTCDate())));
+  }
+  const ids = new Set();
+  for (const day of days) {
+    const dir = path.join(codexHome, 'sessions', day);
+    let names = [];
+    try { names = readdirSync(dir); } catch { continue; }
+    for (const name of names) {
+      const match = ROLLOUT_NAME.exec(name);
+      if (!match) continue;
+      try {
+        if (statSync(path.join(dir, name)).mtimeMs >= since) ids.add(match[1].toLowerCase());
+      } catch { /* vanished between readdir and stat */ }
+    }
+  }
+  const seen = db.prepare('SELECT 1 FROM session_context WHERE session_id = ?');
+  let missed = 0;
+  for (const id of ids) if (!seen.get(id)) missed += 1;
+  return { sessions: ids.size, missed };
+}
+
 export async function cmdAdminDiagnose(
   db,
   {
@@ -1293,6 +1330,7 @@ export async function cmdAdminDiagnose(
     // #416: installed vs approved, so "hooks are installed but Codex never runs them" is a line
     // rather than a guess. Never reads or prints a trusted_hash value.
     codex_hooks: codexHookTrust(),
+    codex_sessions_24h: codexSessionReach(db),
     daemon: {
       alive: daemonAlive,
       pid: lock?.holder_pid ?? null,

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -114,6 +114,38 @@ test('admin diagnose prints the runtime and the Codex trust state', () => {
   assert.match(out, /^Runtime {2}: node v\d+\.\d+\.\d+ \| sqlite \d+\.\d+\.\d+ \| fts5 ready$/m);
   // mutation (print "all approved" without comparing counts) -> red.
   assert.match(out, /^Codex {4}: hooks installed, 2 of 3 approved — open codex and run \/hooks$/m);
+});
+
+// Tester #452: an unapproved (or otherwise skipped) ccmem hook leaves no trace anywhere -- Codex logs nothing and ccmem
+// never hears of the session. Diagnose now compares Codex's own rollout files from the last 24 h with the sessions
+// ccmem's hooks recorded, so "approved but nothing reaches ccmem" is a number instead of a guess.
+test('admin diagnose counts the last 24 h of Codex sessions that never reached the ccmem hooks (#452)', () => {
+  writeCodexHome({ approve: 3, quoted: true });
+  const now = new Date();
+  const day = path.join(codexHome, 'sessions', String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0'));
+  mkdirSync(day, { recursive: true });
+  const ids = ['01a20c3c-d332-74c0-9671-f8e51f5648b0', '01a20946-90c5-7c51-b779-5a4c67fb9e08', '01a2089c-5c99-7920-81ce-d62ab4c8070b'];
+  ids.forEach((id, i) => writeFileSync(path.join(day, `rollout-2026-11-24T14-2${i}-00-${id}.jsonl`), '{}\n'));
+  const old = path.join(day, 'rollout-2026-11-20T09-00-00-01a1ffff-0000-7000-8000-000000000000.jsonl');
+  writeFileSync(old, '{}\n');
+  const twoDaysAgo = (Date.now() - 48 * 3600 * 1000) / 1000;
+  utimesSync(old, twoDaysAgo, twoDaysAgo);
+  const db = openDb();
+  try {
+    db.prepare(`INSERT INTO session_context (session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at, agent)
+      VALUES (?, 'p', 0, 0, 0, 0, ?, 'codex')`).run(ids[0], Date.now());
+  } finally {
+    db.close();
+  }
+  try {
+    const out = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose'], { cwd, env, encoding: 'utf8' });
+    assert.match(out, /^Codex {4}: hooks installed, all approved$/m);
+    // mutation: count every rollout file (drop the 24 h mtime filter) -> 4 sessions, red;
+    // mutation: count sessions without the session_context lookup -> 0 or 3 missed, red
+    assert.match(out, /^Codex {4}: last 24h 3 sessions, 2 never reached the ccmem hooks \(not approved, hooks disabled for that run, or a broken hook command\)$/m);
+  } finally {
+    rmSync(path.join(codexHome, 'sessions'), { recursive: true, force: true });
+  }
 });
 
 test('admin diagnose says so when the Codex hooks are not installed at all', () => {

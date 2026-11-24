@@ -1466,6 +1466,10 @@ try {
       if (hooks.installed) {
         const approved = hooks.approved === hooks.total ? 'all approved' : `${hooks.approved} of ${hooks.total} approved — open codex and run /hooks`;
         process.stdout.write(`Codex    : hooks installed, ${approved}\n`);
+        // Tester #452: approved is not the same as running -- count the sessions the hooks never saw.
+        const reach = result.codex_sessions_24h;
+        const missed = reach.missed ? ' (not approved, hooks disabled for that run, or a broken hook command)' : '';
+        process.stdout.write(`Codex    : last 24h ${reach.sessions} sessions, ${reach.missed} never reached the ccmem hooks${missed}\n`);
       } else if (hooks.home_exists) {
         process.stdout.write('Codex    : ccmem hooks are not installed (ccmem install codex)\n');
       }

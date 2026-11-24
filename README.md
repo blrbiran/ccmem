@@ -243,6 +243,22 @@ notice when the log is over 10 MiB; it never rotates automatically.
 
 `ccmem admin daemon status` may show `running=none`. That is normal when the daemon is alive but currently idle.
 
+## Database upgrades
+
+On a fresh install, ccmem initializes its empty database. After updating an
+existing install, run `ccmem admin migrate` when ccmem reports a pending schema
+upgrade. Stop any running daemon with `ccmem admin daemon stop`, then run the
+upgrade once from a terminal. It verifies and saves a full pre-upgrade snapshot
+as `global.db.bak.<epoch-ms>` before applying the migrations. Large stores can
+take time to back up. Start the daemon again after the upgrade. Existing backup
+retention policy still applies during daily maintenance.
+
+While an upgrade is pending, hooks return empty context and skip memory
+processing. The CLI and daemon report the command to run. If the upgrade fails,
+keep the published backup and the active database together with its SQLite
+sidecars. Restore a verified backup with all ccmem processes stopped and the
+current database files moved aside.
+
 ## Running the tests
 
 ```bash

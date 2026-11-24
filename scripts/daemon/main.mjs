@@ -1,5 +1,5 @@
 import { ConfigError, loadConfig } from '../lib/config.mjs';
-import { openDb } from '../lib/db.mjs';
+import { MigrationRequiredError, openDb } from '../lib/db.mjs';
 import { getProvider } from '../lib/embedding/provider.mjs';
 import { currentEmbeddingSig } from '../lib/embedding/signature.mjs';
 import { recordDaemonStart } from './crash-guard.mjs';
@@ -93,7 +93,14 @@ try {
   process.exit(1);
 }
 
-const db = openDb();
+let db;
+try {
+  db = openDb();
+} catch (error) {
+  if (!(error instanceof MigrationRequiredError)) throw error;
+  process.stderr.write(`ccmem: daemon not starting — ${error.message}\n`);
+  process.exit(1);
+}
 let currentTask = null;
 let stop = false;
 let timer = null;

@@ -81,7 +81,7 @@ test('partial schema-14 database is repaired to schema 15', () => {
   `);
   seed.close();
 
-  let db = openDb();
+  let db = openDb({ migrate: true });
   assert.equal(getSchemaVersion(db), 20);
   assert.ok(columns(db, 'memories').includes('summary_meta'));
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='query_embedding_cache'").get());

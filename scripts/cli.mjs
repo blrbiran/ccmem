@@ -5,7 +5,7 @@ import { cmdAdminDiagnose, cmdDiagnoseCost, cmdDiagnoseFeedback } from './lib/ad
 import { cmdAdminLlm, formatLlmStatus } from './lib/admin/llm.mjs';
 import { cmdRetrievalCheck } from './lib/admin/retrieval-check.mjs';
 import { cmdAdminSemantic } from './lib/admin/semantic.mjs';
-import { openDb } from './lib/db.mjs';
+import { getSchemaVersion, MigrationRequiredError, openDb } from './lib/db.mjs';
 import { readFileSync } from 'node:fs';
 import { cmdAuditShow } from './lib/cmd/audit.mjs';
 import { cmdExport } from './lib/cmd/export.mjs';
@@ -33,7 +33,13 @@ const args = rawArgs[0] === '--' ? rawArgs.slice(1) : rawArgs;
 
 function getDb() {
   if (!db) {
-    db = openDb();
+    try {
+      db = openDb({ forDaemonStop: verb === 'admin' && args[0] === 'daemon' && args[1] === 'stop' });
+    } catch (error) {
+      if (!(error instanceof MigrationRequiredError)) throw error;
+      process.stderr.write(`ccmem: ${error.message}\n`);
+      process.exit(1);
+    }
   }
 
   return db;
@@ -55,6 +61,7 @@ function printHelp() {
     '  mode [active|shadow|off]\n' +
     '  audit show <id>\n' +
     '  admin daemon <status|start|stop|restart|install|uninstall|rotate-log [--keep-bytes N]>\n' +
+    '  admin migrate           back up and upgrade an existing database\n' +
     '  admin cron <list|run>\n' +
     '             list [--issues] [--history N --task <type>] [--verbose]\n' +
     '             run <type> [--session <id>]   (summarize_pending needs the session)\n' +
@@ -73,6 +80,26 @@ function printHelp() {
 
 if (!verb || verb === '--help' || verb === '-h' || verb === 'help') {
   printHelp();
+  process.exit(0);
+}
+
+if (verb === 'admin' && args[0] === 'migrate') {
+  if (args.length !== 1) {
+    const help = args.length === 2 && ['--help', '-h'].includes(args[1]);
+    (help ? process.stdout : process.stderr).write('Usage: ccmem admin migrate\n');
+    process.exit(help ? 0 : 64);
+  }
+  try {
+    const migrated = openDb({ migrate: true });
+    try {
+      process.stdout.write(`ccmem: database schema is ${getSchemaVersion(migrated)}\n`);
+    } finally {
+      migrated.close();
+    }
+  } catch (error) {
+    process.stderr.write(`ccmem: ${error.message}\n`);
+    process.exit(1);
+  }
   process.exit(0);
 }
 

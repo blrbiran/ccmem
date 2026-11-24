@@ -41,7 +41,7 @@ test('openDb creates DB file and applies the latest schema', () => {
   db.close();
 });
 
-test('openDb repairs a partially applied v0.6 migration and finishes schema upgrade', () => {
+test('explicit migration repairs a partially applied v0.6 migration and finishes schema upgrade', () => {
   const tempRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-db-v06-'));
 
   try {
@@ -60,7 +60,7 @@ test('openDb repairs a partially applied v0.6 migration and finishes schema upgr
       seed.exec('DROP TRIGGER IF EXISTS memories_ai');
       seed.close();
 
-      const repaired = openDb();
+      const repaired = openDb({ migrate: true });
       assert.equal(getSchemaVersion(repaired), 20);
       assert.equal(
         repaired.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'memories_ai'").get().name,

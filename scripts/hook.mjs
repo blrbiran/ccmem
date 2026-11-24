@@ -72,33 +72,44 @@ async function isBlacklistedSession(sessionId) {
   }
 }
 
-if (process.env.CCMEM_INTERNAL === '1' || await isBlacklistedSession(hookData.session_id)) {
+async function runHook() {
+  if (process.env.CCMEM_INTERNAL === '1' || await isBlacklistedSession(hookData.session_id)) {
+    await writeHookOutput(mode, '');
+    process.exit(0);
+  }
+
+  if (mode === 'session-start') {
+    const { withHookSafety, HOOK_BUDGET_MS } = await import('./lib/hook-safety.mjs');
+    const { handleSessionStart } = await import('./handlers/session-start.mjs');
+    await withHookSafety('session_start', HOOK_BUDGET_MS.session_start, () => handleSessionStart(hookData), T_ENTRY);
+  }
+
+  if (mode === 'prompt-submit') {
+    const { withHookSafety, PROMPT_SUBMIT_BUDGET_MS } = await import('./lib/hook-safety.mjs');
+    const { handlePromptSubmit } = await import('./handlers/prompt-submit.mjs');
+    await withHookSafety('prompt_submit', PROMPT_SUBMIT_BUDGET_MS, () => handlePromptSubmit(hookData), T_ENTRY);
+  }
+
+  if (mode === 'stop') {
+    const { withHookSafety, HOOK_BUDGET_MS } = await import('./lib/hook-safety.mjs');
+    const { openDb } = await import('./lib/db.mjs');
+    const { handleStop } = await import('./handlers/stop.mjs');
+    const db = openDb();
+    await withHookSafety('stop', HOOK_BUDGET_MS.stop, async () => {
+      try {
+        return await handleStop(db, hookData);
+      } finally {
+        db.close();
+      }
+    }, T_ENTRY);
+  }
+}
+
+try {
+  await runHook();
+} catch (error) {
+  const { MigrationRequiredError } = await import('./lib/db.mjs');
+  if (!(error instanceof MigrationRequiredError)) throw error;
+  process.stderr.write(`ccmem: ${error.message}\n`);
   await writeHookOutput(mode, '');
-  process.exit(0);
-}
-
-if (mode === 'session-start') {
-  const { withHookSafety, HOOK_BUDGET_MS } = await import('./lib/hook-safety.mjs');
-  const { handleSessionStart } = await import('./handlers/session-start.mjs');
-  await withHookSafety('session_start', HOOK_BUDGET_MS.session_start, () => handleSessionStart(hookData), T_ENTRY);
-}
-
-if (mode === 'prompt-submit') {
-  const { withHookSafety, PROMPT_SUBMIT_BUDGET_MS } = await import('./lib/hook-safety.mjs');
-  const { handlePromptSubmit } = await import('./handlers/prompt-submit.mjs');
-  await withHookSafety('prompt_submit', PROMPT_SUBMIT_BUDGET_MS, () => handlePromptSubmit(hookData), T_ENTRY);
-}
-
-if (mode === 'stop') {
-  const { withHookSafety, HOOK_BUDGET_MS } = await import('./lib/hook-safety.mjs');
-  const { openDb } = await import('./lib/db.mjs');
-  const { handleStop } = await import('./handlers/stop.mjs');
-  const db = openDb();
-  await withHookSafety('stop', HOOK_BUDGET_MS.stop, async () => {
-    try {
-      return await handleStop(db, hookData);
-    } finally {
-      db.close();
-    }
-  }, T_ENTRY);
 }

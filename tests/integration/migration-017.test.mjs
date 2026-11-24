@@ -72,7 +72,7 @@ test('a v16 database is upgraded to 17 using the documented rollback as the down
   assert.ok(!cols(db, 'memories').includes('origin_agent'));
   db.close();
 
-  const upgraded = openDb();
+  const upgraded = openDb({ migrate: true });
   assert.equal(getSchemaVersion(upgraded), 20);
   assert.ok(cols(upgraded, 'memories').includes('origin_agent'));
   assert.ok(cols(upgraded, 'session_context').includes('agent'));

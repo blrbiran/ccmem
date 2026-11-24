@@ -112,7 +112,7 @@ function publishMigrationSnapshot(snapshotPath, dbPath, initialTs = Date.now(), 
   throw new Error('migration-backup-name-exhausted');
 }
 
-function createMigrationBackup(dbPath = getDbPath(), sourceDb = null) {
+function createMigrationBackup(dbPath = getDbPath(), sourceDb = null, { prune = true } = {}) {
   if (!existsSync(dbPath)) {
     return null;
   }
@@ -137,7 +137,7 @@ function createMigrationBackup(dbPath = getDbPath(), sourceDb = null) {
     const backupPath = publishMigrationSnapshot(snapshotPath, dbPath);
     const dir = openSync(path.dirname(dbPath), 'r');
     try { fsyncSync(dir); } finally { closeSync(dir); }
-    pruneMigrationBackups(dbPath);
+    if (prune) pruneMigrationBackups(dbPath);
     return backupPath;
   } finally {
     if (sourceDb === null) db.close();
@@ -643,37 +643,69 @@ function runSpecialMigration(db, toVersion) {
   return false;
 }
 
-export function runMigration(db) {
-  let currentVersion = getSchemaVersion(db);
-  const files = readdirSync(MIGRATIONS_DIR)
-    .filter((file) => file.endsWith('.sql') || file.endsWith('.cjs'))
-    .sort();
-  const pending = files.filter((file) => Number(file.split('_', 1)[0]) > currentVersion);
+export class MigrationRequiredError extends Error {
+  constructor(currentVersion, targetVersion) {
+    super(`schema migration required (${currentVersion} → ${targetVersion}); run \`ccmem admin migrate\``);
+  }
+}
 
-  if (!pending.length) {
+function migrationPlan(db) {
+  const version = getSchemaVersion(db);
+  const pending = readdirSync(MIGRATIONS_DIR)
+    .filter((file) => /\.(sql|cjs)$/.test(file) && Number(file.split('_', 1)[0]) > version)
+    .sort();
+  const populated = pending.length > 0 && (version > 0 || Boolean(db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE substr(name, 1, 7) <> 'sqlite_' LIMIT 1"
+  ).get()));
+  return { version, pending, populated };
+}
+
+function assertDaemonStopped(db) {
+  if (!tableExists(db, 'daemon_lock')) return;
+  const owner = db.prepare('SELECT holder_pid, hostname, heartbeat_at FROM daemon_lock WHERE id = 1').get();
+  if (!owner) return;
+  if (owner.hostname === os.hostname() && owner.holder_pid > 0) {
+    try { process.kill(owner.holder_pid, 0); }
+    catch (error) { if (error.code === 'ESRCH') return; }
+  } else if (Date.now() - owner.heartbeat_at >= 60_000) {
     return;
   }
+  throw new Error('stop the running daemon with `ccmem admin daemon stop` before upgrading');
+}
 
-  if (currentVersion > 0) {
-    createMigrationBackup(getDbPath(), db);
+export function runMigration(db, { migrate = false, plan = migrationPlan(db) } = {}) {
+  const { version, pending, populated } = plan;
+  if (!pending.length) return;
+  if (populated && !migrate) throw new MigrationRequiredError(version, Number(pending.at(-1).split('_', 1)[0]));
+
+  if (version >= 15 && pending.every((file) => file.endsWith('.sql'))) {
+    // Reserve the writer before taking the snapshot through a separate reader.
+    // The snapshot and all the pending SQL see the same committed starting state.
+    return runInTransaction(db, () => {
+      const current = getSchemaVersion(db);
+      const remaining = pending.filter((file) => Number(file.split('_', 1)[0]) > current);
+      if (!remaining.length) return;
+      assertDaemonStopped(db);
+      createMigrationBackup(getDbPath(), null, { prune: false });
+      for (const file of remaining) db.exec(readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8'));
+    });
   }
 
+  // Legacy migration handlers own their individual transactions.
+  if (populated) {
+    assertDaemonStopped(db);
+    createMigrationBackup(getDbPath(), db, { prune: false });
+  }
   for (const file of pending) {
     const toVersion = Number(file.split('_', 1)[0]);
-    if (runSpecialMigration(db, toVersion)) {
-      currentVersion = getSchemaVersion(db);
-      continue;
-    }
-
-    runVersionedMigration(db, file);
-    currentVersion = getSchemaVersion(db);
+    if (!runSpecialMigration(db, toVersion)) runVersionedMigration(db, file);
   }
 }
 
 export { createMigrationBackup, findReusableMigrationBackup, listMigrationBackups, pruneMigrationBackups, publishMigrationSnapshot };
 
-export function ensureSchema(db) {
-  runMigration(db);
+export function ensureSchema(db, options) {
+  runMigration(db, options);
   reconcileFtsArtifacts(db);
 }
 
@@ -692,14 +724,27 @@ export function isDatabaseBusy(error) {
   return BUSY_ERRCODES.has(error?.errcode);
 }
 
-export function openDb() {
+export function openDb({ migrate = false, forDaemonStop = false } = {}) {
   mkdirSync(getDataRoot(), { recursive: true });
   const db = new DatabaseSync(getDbPath());
-  // busy_timeout 必须先装：打开/恢复 WAL 要拿排它锁，而 `PRAGMA journal_mode = WAL`
-  // 在 busy handler 装上之前执行的话，任何并发开库都会让它 0ms 抛 `database is locked`
-  // （实测 errcode 5 与 261 SQLITE_BUSY_RECOVERY），配置好的 5 秒容忍度形同虚设。
-  db.exec(`PRAGMA busy_timeout = ${DB_BUSY_TIMEOUT_MS};`);
-  db.exec('PRAGMA journal_mode = WAL;');
-  ensureSchema(db);
-  return db;
+  try {
+    // busy_timeout 必须先装：打开/恢复 WAL 要拿排它锁，而 `PRAGMA journal_mode = WAL`
+    // 在 busy handler 装上之前执行的话，任何并发开库都会让它 0ms 抛 `database is locked`
+    // （实测 errcode 5 与 261 SQLITE_BUSY_RECOVERY），配置好的 5 秒容忍度形同虚设。
+    db.exec(`PRAGMA busy_timeout = ${DB_BUSY_TIMEOUT_MS};`);
+    // An older populated store is refused before the journal-mode write: a refusal must not
+    // change the file it refuses (a DELETE-mode store stays DELETE until `admin migrate`).
+    const plan = migrationPlan(db);
+    if (plan.populated) {
+      if (forDaemonStop) return db;
+      if (!migrate) throw new MigrationRequiredError(plan.version, Number(plan.pending.at(-1).split('_', 1)[0]));
+      assertDaemonStopped(db);
+    }
+    db.exec('PRAGMA journal_mode = WAL;');
+    ensureSchema(db, { migrate, plan });
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }

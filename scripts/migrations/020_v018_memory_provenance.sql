@@ -26,7 +26,7 @@
 ALTER TABLE memories ADD COLUMN session_id TEXT;
 ALTER TABLE memories ADD COLUMN transcript_path TEXT;
 
-CREATE INDEX idx_memories_session_id ON memories (session_id) WHERE session_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_memories_session_id ON memories (session_id) WHERE session_id IS NOT NULL;
 
 UPDATE schema_meta SET version = 20, applied_at = strftime('%s','now') * 1000;
 INSERT INTO schema_migrations (from_version, to_version, description, applied_at, applied_by)

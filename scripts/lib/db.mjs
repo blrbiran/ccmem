@@ -265,9 +265,20 @@ function runInTransaction(db, work) {
   }
 }
 
+// Tester #454: a store built by another ccmem lineage can already hold a column a later migration adds
+// (session_context.transcript_path existed at version 3 there), and SQLite has no ADD COLUMN IF NOT EXISTS.
+// A statement-level `ALTER TABLE <t> ADD COLUMN <c> ...;` at the start of a line is dropped when <c> is
+// already there; everything else in the file runs as written.
+function migrationSql(db, file) {
+  return readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8').replace(
+    /^ALTER TABLE (\w+) ADD COLUMN (\w+)\b[^;]*;/gm,
+    (statement, table, column) => (tableExists(db, table) && columnExists(db, table, column) ? '' : statement)
+  );
+}
+
 function runSqlMigration(db, file) {
   runInTransaction(db, () => {
-    db.exec(readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8'));
+    db.exec(migrationSql(db, file));
   });
 }
 
@@ -687,7 +698,7 @@ export function runMigration(db, { migrate = false, plan = migrationPlan(db) } =
       if (!remaining.length) return;
       assertDaemonStopped(db);
       createMigrationBackup(getDbPath(), null, { prune: false });
-      for (const file of remaining) db.exec(readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8'));
+      for (const file of remaining) db.exec(migrationSql(db, file));
     });
   }
 

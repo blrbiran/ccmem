@@ -120,3 +120,24 @@ test('daemon stop remains available while schema upgrade is pending', (t) => {
   assert.equal(version(), 19);
   assert.deepEqual(backups(), []);
 });
+
+// Tester #454: a store built by another ccmem lineage already carried session_context.transcript_path at
+// version 18, so 019's plain ADD COLUMN failed with "duplicate column name" and the upgrade could never finish.
+test('admin migrate completes on a version-18 store that already has a column a later migration adds', (t) => {
+  const { cli, version, open } = fixture(t);
+  const db = open();
+  db.exec(`DELETE FROM schema_migrations WHERE to_version = 19; UPDATE schema_meta SET version = 18;`);
+  db.close();
+  const result = cli('admin', 'migrate');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(version(), 20);
+  const after = open();
+  try {
+    const columns = (table) => after.prepare(`SELECT name FROM pragma_table_info('${table}')`).all().map((row) => row.name);
+    assert.equal(columns('session_context').filter((name) => name === 'transcript_path').length, 1);
+    assert.ok(columns('memories').includes('session_id'));
+    assert.equal(after.prepare('SELECT COUNT(*) AS n FROM schema_migrations WHERE to_version IN (19, 20)').get().n, 2);
+  } finally {
+    after.close();
+  }
+});

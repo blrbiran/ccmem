@@ -64,11 +64,11 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.000000000000000 2026-11-24 上午（Orca 会话续做，`221948a1` 之后）—— hook 全部超时的事故与修法：迁移只走 `ccmem admin migrate`
+### 1.000000000000000 2026-11-24 全天（Orca 会话续做，`221948a1` 之后；**本节全部已推**，`/usr/bin/git ls-remote` 现测）—— hook 全部超时的事故与修法：迁移只走 `ccmem admin migrate`
 
 - **事故（现测）**：上一轮加了 019/020，但真实库还没升级。每次 `openDb()` 都先跑 `createMigrationBackup` ⇒ 对 1.73 GB 的库做 `VACUUM INTO`，实测 **12.04 s**；而三个 hook 的时限只有 2／5／3 s ⇒ hook 做到一半就被杀，迁移永远落不了库，下一次 hook 又从头再来。当天所有 Claude 会话都报 `UserPromptSubmit … timed out after 5s`。这类事故按 018、019、020 三次各发生过一次，`.partial` 的 mtime 分布与三次迁移的应用时间对得上。**最后是一次 CLI（`admin daemon status`，不受 5 s 时限）在 08:24:30 把库升到了 20**，hook 随之恢复。
-- **清理**：先确认 226 个 `.global.db.backup-*.partial*`（131,532,564,480 B）没有进程打开（`lsof` 空），且最近 15 分钟内没有变动，然后 `trash` 进废纸篓（可还原；清空废纸篓归人）。另做一份维护备份 `global.db.bak.1795482388243`（`quick_check` ok，schema 20）。
-- **同一天的后续（同一会话，按测试者台账优先级）**，主题行都以 `(tester #NNN)` 结尾；截至写本条时 origin 停在 #455 那笔，其后各笔**未推**（以 `/usr/bin/git ls-remote` 现测）：
+- **清理**：先确认 226 个 `.global.db.backup-*.partial*`（131,532,564,480 B）没有进程打开（`lsof` 空），且最近 15 分钟内没有变动，然后 `trash` 进废纸篓；**人已于当天清空废纸篓**（不可再还原）。另做一份维护备份 `global.db.bak.1795482388243`（`quick_check` ok，schema 20）。
+- **同一天的后续（同一会话，按测试者台账优先级）**，主题行都以 `(tester #NNN)` 结尾（人已手动推送）：
   - **#454**：测试者的库由另一条分支 `ccmem_ali` 的迁移链建成，v18 时已带 `session_context.transcript_path` ⇒ 019 报 `duplicate column name`，`admin migrate` 永远失败（且每次留一份 1.7 GB 备份）。现在行首的 `ALTER TABLE … ADD COLUMN` 若列已存在就跳过；020 的索引改 `IF NOT EXISTS`。**登记未修**：017/018 的 `CREATE TABLE`/`CREATE INDEX` 遇异链同名对象仍会报「已存在」（测试者的库已过 018，未做）；迁移只比版本号、不比身份；被 Ctrl-C 的 `admin migrate` 仍可能留 `.partial`，无清扫。本机不受影响（无 `ccmem_ali`，迁移记录是本链）。
   - **#455**：18 个测试文件写死 `/usr/local/bin/node` ⇒ 改 `process.execPath`。**登记**：`run-tests.sh` 的候选只查 `-x` 不试跑，坏的 homebrew node 会被选中（未修）。
   - **#445**：`admin daemon status` 多一行 `memory extraction last_success=… failed_24h=… last_error=…`，只读 `tasks`、不调 LLM。真库 `tasks` 330 万行、无可用索引，全表扫实测 24.68 s ⇒ 只扫按 rowid 最新的 200000 行（0.36 s、答案相同），窗口内无成功时打 `none-in-last-200000-tasks` 而不是 `never`。真库实测整条 status 5.94 s（load ~100）。未做：`diagnose --llm` 真探针（付费）。
@@ -76,10 +76,11 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
   - **#453**：注入不再「不管相关与否塞满 6 条」。新配置 `retrieval.min_cosine_by_signature`（按 embedding 签名），只对 prompt hook 与 retrieval-check 生效；`list`/搜索不变；没校准的模型行为不变。bge-m3 出厂 0.60：在真库副本（16.7k 向量）上用 24 条无关 prompt 对 80 条真实 prompt 校准，0.60 时无关行留 1/144、真实 prompt 被清空 1/80。metric 行多 `retrieval_gated`。**为什么不用测试者提的 fused≥0.20**：cosine 尺度随模型变（bge-m3 无关文本 ~0.4–0.6，OpenAI 的远低于此）。
   - **新发现、登记未修**：`sanitizeFtsQuery` 把每个词加引号后用空格连 ⇒ FTS5 里是 AND；trigram 下 <3 字符的词不命中、整句中文不命中 ⇒ 校准的 104 条 prompt **fts 全为 0**，词面检索对自然语言 prompt 实际从不命中。这在 #414 之前就是 AND，不是 #414 引入。改成 OR 会改变所有人的排序，需单独设计。
   - 门：全量 `npm test` **1093/1093**。
-- **修法**（主题行 `fix(db): only \`ccmem admin migrate\` upgrades an existing store; …`，已在本地 main，**未推**）：已有数据的旧库，`openDb()` 一律拒绝（`MigrationRequiredError`），并且在切 WAL 之前就拒、不改文件。hook 返回空上下文，stderr 写一行指路；CLI 与 daemon 以 exit 1 退出；`admin daemon stop` 在待迁移状态下仍可用。`ccmem admin migrate` 发现 daemon 还活着就拒绝；SQL 迁移先拿写锁再做快照，迁移过程中不删旧备份。空库仍会自动初始化。判据 `tests/integration/explicit-migration.test.mjs` 10 条，原 8 条先在基线上见红、审阅补的 2 条先在修前见红；全量 **1084/1084**。计划与审阅裁定在 `docs/superpowers/plans/2026-11-24-explicit-schema-migration.md`（As built 节）。
+- **修法**（主题行 `fix(db): only \`ccmem admin migrate\` upgrades an existing store; …`，已推）：已有数据的旧库，`openDb()` 一律拒绝（`MigrationRequiredError`），并且在切 WAL 之前就拒、不改文件。hook 返回空上下文，stderr 写一行指路；CLI 与 daemon 以 exit 1 退出；`admin daemon stop` 在待迁移状态下仍可用。`ccmem admin migrate` 发现 daemon 还活着就拒绝；SQL 迁移先拿写锁再做快照，迁移过程中不删旧备份。空库仍会自动初始化。判据 `tests/integration/explicit-migration.test.mjs` 10 条，原 8 条先在基线上见红、审阅补的 2 条先在修前见红；全量 **1084/1084**。计划与审阅裁定在 `docs/superpowers/plans/2026-11-24-explicit-schema-migration.md`（As built 节）。
 - **以后加迁移**：顺序是先 `admin daemon stop`，再 `admin migrate`，最后 `admin daemon start`，并且要写进 handoff。**不要再假设 hook 会帮你迁移。**
 - **登记**：daily maintenance 仍按 `migration_backup.max_keep` 修剪备份（属于用户配置的保留策略，裁定保留）；全新空库被多进程同时首次初始化的竞态没修（§2.4 已有登记）。daemon pid 59824 是 08:24 起的旧代码进程，库已是 20，不需要重启。
-- **#444 那 38 行不在本机**：本机 `tasks` 没有 CHECK 约束，相关行数为 0。那 38 行在测试者机器上（任务 42340–42343 等），修复步骤已交给人，转给测试者的 agent 执行。
+- **#444 那 38 行不在本机**：本机 `tasks` 没有 CHECK 约束，相关行数为 0。那 38 行在测试者机器上（任务 42340–42343 等），修复步骤已交给人，转给测试者的 agent 执行：pull 后 `admin daemon stop` → 确认无进程持有后 `trash` 掉 `.global.db.backup-*.partial*` → `admin migrate` → 用 `error_excerpt LIKE 'CHECK constraint failed:%status IN (%'` 预览计数、导出 CSV、再 `UPDATE … SET status='success', error_excerpt=NULL`，`changes()` 必须等于预览数，不等就停 → `admin daemon start`。只匹配 `status IN (` 是为了不误伤别的列的 CHECK 失败。
+- **daemon**：本机 daemon 仍是 08:24 起的进程，跑的是本节各笔之前的代码（`daemon status` 的提取健康行、#453 的门在 hook 侧已即时生效；daemon 侧本轮无行为依赖）。下次重启照 Rule 13 先备份。
 
 ### 1.00000000000000 2026-11-24（Orca 会话 `221948a1`）—— 测试者 #444 #448 #447 #435 #451 #436 #446 P0；全量 1075/1075
 
@@ -401,7 +402,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-24（本轮，Orca 会话 `221948a1`；本节原位滚动，上一版是 `ec9efff6`）：**export 契约（§6.1）不变**。本轮七件：#444（成功任务记成 failed 的根因是早期库的 `CHECK (status … 'success')`，现已写 `success` 且成功记账移出 dispatch 的 catch）、#448（失败摘录在 stderr 空时读 stdout 的结构化错误）、#447（`summarize_pending` 可人工按 `--session` 跑，lease 缺失时 `last=`/`--history`/`--issues` 回退读 task 行，`cron run` 唤醒 daemon，未知子命令 exit 64）、#435（`semantic off` 后 `on` 不再 TypeError；`<verb> --help` 不执行）、#451（`run-tests.sh` 解释器不再写死 `/usr/local/bin/node`）、#436（README 补 ollama/orca-outcome/orca-correction/list --json/npm test，三个只读未声明的 embedding 键进默认配置）、#446 P0（迁移 019 `session_context.transcript_path`、020 `memories.session_id`+`transcript_path`；抽取 schema 要求 `learned`）。全量 **1075/1075**。**真实库未应用 019/020，需先备份再由人跑**；**#446 存量行保持 NULL，audit 回填未做**。仍成立：§6.5 magpie 实验须在干净会话按步骤关存档；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#418 的 `--since` 取 `recorded_at`；#415 P2 external-content **不排期**。
+2026-11-24 全天（Orca 会话 `221948a1` 及其续做；本节原位滚动）：**export 契约（§6.1）不变**。本日 ccmem 的全部改动见 §1 最新两节：#444 #448 #447 #435 #451 #436 #446 P0（上午）；hook 超时事故与「迁移只走 `ccmem admin migrate`」、#454 #455 #445 #452 #453（续做）。**Orca 侧要知道的**：① 以后 ccmem 加迁移，已有库在 `admin migrate` 之前 hook 返回空上下文、CLI/daemon exit 1——Orca 调 `ccmem export`/`orca-outcome` 会以非零失败，需人先迁移；② #453 之后注入条数可能为 0（Orca bundle 走 export，不受影响）；③ FTS AND 问题登记未修。仍成立：Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#415 P2 external-content 不排期。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

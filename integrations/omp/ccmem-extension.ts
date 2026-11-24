@@ -117,9 +117,9 @@ export function createCcmemExtension(opts: CcmemExtensionOptions): (pi: OmpExten
         child.stdin?.on('error', () => {});
         child.stdin?.end(JSON.stringify(input));
 
-        // Unref'd: an abandoned handler must not keep OMP alive at exit.
+        // Tester #458: not unref'd. An unref'd timer let the event loop empty with the hook still pending, and the handler
+        // never returned; finish() clears it, so it holds the process for at most timeoutMs after a hook hangs.
         timer = setTimeout(abandon, timeoutMs);
-        timer.unref?.();
         if (signal?.aborted) {
           abandon();
         } else {

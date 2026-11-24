@@ -287,6 +287,33 @@ test('extension swallows hook failure and timeout', { timeout: 10_000 }, async (
   assert.deepEqual(pi.sent, []);
 });
 
+// Tester #458: the timeout timer was unref'd, so in a process where nothing else held the event loop (OMP exiting, or a
+// test with a stand-in child that holds no handle) a hanging hook's promise was never settled: the loop emptied first
+// and the handler never returned. The in-runner row above passes only while the runner keeps the loop alive, so this row
+// runs the hang in a child process that holds nothing else. Node exits 13 ("unsettled top-level await") when the loop
+// empties with the await pending.
+test('a hanging hook resolves at the timeout even when nothing else keeps the event loop alive', { timeout: 20_000 }, async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { writeFileSync } = await import('node:fs');
+  const dir = mkdtempSync(path.join(tmpdir(), 'ccmem-omp-hang-'));
+  const script = path.join(dir, 'hang.mjs');
+  writeFileSync(script, `
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+const { createCcmemExtension } = await import(${JSON.stringify(path.join(ROOT, 'integrations/omp/ccmem-extension.ts'))});
+const spawnImpl = () => { const c = new EventEmitter(); c.stdin = new PassThrough(); c.stdout = new PassThrough(); c.kill = () => true; return c; };
+const handlers = {};
+createCcmemExtension({ node: process.execPath, hookScript: '/nonexistent', timeoutMs: 200, spawnImpl })({ on: (n, h) => { handlers[n] = h; }, sendMessage() {} });
+const ctx = { cwd: '/w', mode: 'tui', agent: { kind: 'main', id: 'Main', name: 'main', depth: 0 }, sessionManager: { getSessionId: () => 's1', getSessionFile: () => '/f.jsonl' } };
+await handlers.before_agent_start({ type: 'before_agent_start', prompt: 'p', systemPrompt: [] }, ctx);
+console.log('resolved');
+`);
+  const r = spawnSync(process.execPath, ['--no-warnings', script], { encoding: 'utf8', timeout: 15_000 });
+  // mutation: restore timer.unref() -> the child exits 13 without printing "resolved", red
+  assert.equal(r.stdout.trim(), 'resolved', `exit ${r.status}; stderr: ${r.stderr}`);
+  assert.equal(r.status, 0);
+});
+
 test('a sendMessage that throws does not escape session_start', async () => {
   const { spawnImpl } = fakeSpawn({ stdout: hookOutput('SessionStart', INSTRUCTION) });
   const pi = load(spawnImpl);

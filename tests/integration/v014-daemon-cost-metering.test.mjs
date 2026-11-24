@@ -47,7 +47,7 @@ function rows() {
 }
 
 function withStub(stub, extraArgs = []) {
-  process.env.CCMEM_CLAUDE_P_COMMAND = '/usr/local/bin/node';
+  process.env.CCMEM_CLAUDE_P_COMMAND = process.execPath;
   process.env.CCMEM_CLAUDE_P_ARGS_JSON = JSON.stringify([stub, ...extraArgs]);
 }
 

@@ -19,7 +19,7 @@ const env = {
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = dataRoot;
 
-const NODE = '/usr/local/bin/node';
+const NODE = process.execPath;
 const CLI = path.join(REPO_ROOT, 'scripts/cli.mjs');
 
 const { openDb } = await import('../../scripts/lib/db.mjs');

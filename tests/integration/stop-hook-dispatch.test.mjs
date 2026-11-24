@@ -18,7 +18,7 @@ const env = {
   CCMEM_DATA_ROOT: dataRoot
 };
 
-const NODE = '/usr/local/bin/node';
+const NODE = process.execPath;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const HOOK = path.join(ROOT, 'scripts/hook.mjs');
 

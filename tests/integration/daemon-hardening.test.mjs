@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
-const NODE = '/usr/local/bin/node';
+const NODE = process.execPath;
 const CLI = path.join(REPO_ROOT, 'scripts/cli.mjs');
 const MAIN = path.join(REPO_ROOT, 'scripts/daemon/main.mjs');
 

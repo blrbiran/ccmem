@@ -17,7 +17,7 @@ const env = {
   CCMEM_DATA_ROOT: dataRoot
 };
 
-const NODE = '/usr/local/bin/node';
+const NODE = process.execPath;
 const TEST_CWD = REPO_ROOT;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const CLI = path.join(ROOT, 'scripts/cli.mjs');

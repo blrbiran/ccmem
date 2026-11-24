@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-orca-outcome-'));
 
-const NODE = '/usr/local/bin/node';
+const NODE = process.execPath;
 const ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 const CLI = path.join(ROOT, 'scripts/cli.mjs');
 

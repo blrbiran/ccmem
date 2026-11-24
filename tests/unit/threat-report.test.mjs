@@ -72,7 +72,7 @@ test('importing the report module runs nothing', () => {
     const importer = join(dir, 'importer.mjs');
     const target = new URL('../../scripts/threat-report.mjs', import.meta.url).href;
     writeFileSync(importer, `await import(${JSON.stringify(target)});\n`);
-    assert.equal(execFileSync('/usr/local/bin/node', [importer], { encoding: 'utf8' }), '');
+    assert.equal(execFileSync(process.execPath, [importer], { encoding: 'utf8' }), '');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

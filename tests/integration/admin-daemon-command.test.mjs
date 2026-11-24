@@ -218,7 +218,7 @@ const env = {
 };
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const NODE = '/usr/local/bin/node';
+const NODE = process.execPath;
 const CLI = path.join(ROOT, 'scripts/cli.mjs');
 const BIN = path.join(ROOT, 'bin/ccmem');
 

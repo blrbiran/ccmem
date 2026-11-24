@@ -10,7 +10,7 @@ const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-flow-'));
 
-const NODE = '/usr/local/bin/node';
+const NODE = process.execPath;
 const TEST_CWD = REPO_ROOT;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const CLI = path.join(ROOT, 'scripts/cli.mjs');

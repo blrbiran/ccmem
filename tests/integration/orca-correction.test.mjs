@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-orca-corr-'));
 
-const NODE = '/usr/local/bin/node';
+const NODE = process.execPath;
 const ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 const CLI = path.join(ROOT, 'scripts/cli.mjs');
 const PROJECT_KEY = 'github.com/example/orca-corr-target';

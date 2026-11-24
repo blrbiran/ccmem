@@ -88,8 +88,9 @@ test('result.config carries paths only, never the values behind them', async () 
 // It runs scripts/cli.mjs directly rather than ./bin/ccmem: bin/ccmem ends with
 // `exec node …`, and the `node` on PATH here is nvm v22.13.1, a different
 // interpreter from the /usr/local/bin/node v24.13.0 that npm test and the real
-// daemon use.
-const NODE = '/usr/local/bin/node';
+// daemon use. Tester #455: that path is this machine's, so the interpreter this suite already runs on
+// (run-tests.sh picks it, with FTS5) is used instead.
+const NODE = process.execPath;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const CLI = path.join(ROOT, 'scripts/cli.mjs');
 

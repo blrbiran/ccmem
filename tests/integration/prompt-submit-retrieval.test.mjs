@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-retrieval-'));
 
-const NODE = '/usr/local/bin/node';
+const NODE = process.execPath;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const HOOK = path.join(ROOT, 'scripts/hook.mjs');
 

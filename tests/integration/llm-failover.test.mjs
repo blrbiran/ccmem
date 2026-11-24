@@ -101,6 +101,11 @@ if (mode === 'limit') {
   out({ type: 'error', message: "You've hit your usage limit. Try again at Oct 22nd, 2099 2:13 PM." });
   process.exit(1);
 }
+if (mode === 'broken') {
+  // Tester #445: codex 0.170 could not start past a dangling ~/.codex/skills/.system symlink.
+  process.stderr.write('ERROR codex_skills_extension::host_service: failed to install system skills: io error while create system skills dir: File exists (os error 17)');
+  process.exit(1);
+}
 out({ type: 'item.completed', item: { id: 'i1', type: 'agent_message', text: 'codex answer' } });
 fs.writeFileSync(at('-o'), 'codex answer');
 `);
@@ -408,6 +413,49 @@ test('status output shows the backend, the exhaustion and the open proposal', as
   const daemon = cli('admin', 'daemon', 'status');
   assert.equal(daemon.status, 0, daemon.stderr);
   assert.match(daemon.stdout, /^ccmem: llm backend=claude .*proposal=claude->codex$/m);
+});
+
+// Tester #445: codex exited 1 at startup on every call for days, and status read `exhausted=none proposal=none` -- the
+// failure was not a quota limit, so nothing recorded it. Calls that fail that way in a row now mark the backend
+// unhealthy in the status output; no proposal opens (another backend would not fix this machine) and a call that
+// answers clears it.
+test('a backend whose calls keep failing without a quota limit reads as unhealthy, until one answers (#445)', async () => {
+  reset({ codex: 'broken' });
+  writeConfig({ backend: 'codex' });
+  const fail = () => assert.rejects(callClaudeP('audit this', { taskType: 'security_audit' }), /os error 17/);
+  await fail();
+  await fail();
+  const early = cli('admin', 'daemon', 'status');
+  assert.doesNotMatch(early.stdout, /unhealthy/, 'two failures are not yet a pattern');
+  await fail();
+
+  const daemon = cli('admin', 'daemon', 'status');
+  assert.equal(daemon.status, 0, daemon.stderr);
+  // mutation: drop the failure record in claude-p.mjs (or the status line) -> no unhealthy line, red
+  assert.match(daemon.stdout, /^ccmem: llm backend=codex .*exhausted=none proposal=none$/m, 'not a quota limit: no exhaustion, no proposal');
+  assert.match(daemon.stdout, /^ccmem: llm unhealthy codex — 3 calls in a row failed without a quota limit since \d{4}-\S+; last: .*os error 17/m);
+  const llm = cli('admin', 'llm', 'status');
+  assert.match(llm.stdout, /^ccmem: llm unhealthy codex — 3 calls/m, 'the same line in admin llm status');
+  withDb((db) => assert.equal(openProposals(db).length, 0));
+
+  process.env.CCMEM_FAKE_CODEX = 'ok';
+  assert.equal(await callClaudeP('audit this', { taskType: 'security_audit' }), 'codex answer');
+  // mutation: drop the clear on success -> the line survives a working backend, red
+  assert.doesNotMatch(cli('admin', 'daemon', 'status').stdout, /unhealthy/, 'a call that answers clears it');
+});
+
+test('a backend command that cannot be spawned counts once per call toward unhealthy (#445)', async () => {
+  reset();
+  writeConfig({ backend: 'codex', commands: { ...COMMANDS, codex: path.join(fakeDir, 'no-such-codex') } });
+  try {
+    for (let i = 0; i < 3; i += 1) {
+      await assert.rejects(callClaudeP('audit this', { taskType: 'security_audit' }), /ENOENT/);
+    }
+    // mutation: drop the record on the spawn 'error' path -> no line, red; record it in 'close' too -> 6 calls, red
+    assert.match(cli('admin', 'llm', 'status').stdout, /^ccmem: llm unhealthy codex — 3 calls in a row/m);
+  } finally {
+    withDb((db) => db.exec("DELETE FROM config_kv WHERE key LIKE 'llm_backend.%'"));
+  }
 });
 
 test('admin llm use and order back up config.json and keep the rest of it', () => {

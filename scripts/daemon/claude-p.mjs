@@ -8,10 +8,13 @@ import { loadConfig } from '../lib/config.mjs';
 import { getDataRoot } from '../lib/paths.mjs';
 import { recordDaemonCost } from '../lib/metrics.mjs';
 import {
+  clearBackendFailures,
   clearExhaustion,
   exhaustedError,
   exhaustedRetryDelay,
   exhaustedUntil,
+  hasFailureStreak,
+  recordBackendFailure,
   recordExhaustion,
   resolveActiveBackend
 } from './backend-state.mjs';
@@ -52,7 +55,7 @@ function resolveBackend(cfg) {
     if (until != null && id !== 'claude') {
       throw exhaustedError(id, until, now);
     }
-    return { backend, recordedExhausted: until != null };
+    return { backend, recordedExhausted: until != null, recordedFailures: hasFailureStreak(db, id) };
   } finally {
     db.close();
   }
@@ -151,7 +154,7 @@ function registerBlacklistedSession(sessionId) {
 
 function runClaudeP(prompt, opts, queuedAt) {
   const cfg = loadConfig();
-  const { backend, recordedExhausted } = resolveBackend(cfg);
+  const { backend, recordedExhausted, recordedFailures } = resolveBackend(cfg);
   const workDir = backend.isolatedCwd ? makeWorkDir(backend.id) : null;
   let invocation;
   try {
@@ -265,7 +268,11 @@ function runClaudeP(prompt, opts, queuedAt) {
       stderr += String(chunk);
     });
 
-    child.on('error', (error) => finish(reject, error, { exitCode: null, timedOut: false }));
+    child.on('error', (error) => {
+      // Tester #445: a command that cannot be spawned is a backend that cannot start.
+      if (!settled) withDb((db) => recordBackendFailure(db, backend.id, { error: error?.message ?? error }));
+      finish(reject, error, { exitCode: null, timedOut: false });
+    });
     child.on('close', (code) => {
       if (code === 0) {
         // Read before finish(): finish removes the work dir the file lives in.
@@ -281,6 +288,7 @@ function runClaudeP(prompt, opts, queuedAt) {
           // and with it the question put to the human.
           withDb((db) => clearExhaustion(db, backend.id));
         }
+        if (recordedFailures) withDb((db) => clearBackendFailures(db, backend.id));
         finish(resolve, result, { exitCode: 0, timedOut: false });
         return;
       }
@@ -307,6 +315,10 @@ function runClaudeP(prompt, opts, queuedAt) {
         // delay is null when the state DB could not be written: the task must
         // still wait and stay queued, so it gets the reset-based wait instead.
         retryAfter = delay ?? Math.max(60000, retryAfter ?? retryAfterFromReset(exhaustion.resetAt));
+      } else {
+        // Tester #445: not a quota limit -- a backend that exits non-zero is counted toward unhealthy, unless the
+        // call was already settled ('error' after a failed spawn recorded it; a timeout is load, not the backend).
+        if (!settled) withDb((db) => recordBackendFailure(db, backend.id, { error: excerpt }));
       }
       if (retryAfter != null) {
         error.retryAfter = retryAfter;

@@ -88,6 +88,56 @@ export function resolveActiveBackend(db, config, now = Date.now()) {
   return active;
 }
 
+// Tester #445: codex exited 1 at startup (a dangling ~/.codex/skills/.system symlink) on every call for days, and
+// status read `exhausted=none proposal=none`: a failure that is not a quota limit was recorded nowhere. Each call
+// that exits non-zero without a quota limit, or cannot be spawned, adds to that backend's streak in config_kv
+// (timeouts do not: they are the machine's load, not the backend); from UNHEALTHY_AFTER in a row the backend is
+// reported unhealthy. Nothing switches and no proposal opens -- another backend would not fix this machine. A call
+// that answers clears the streak.
+const UNHEALTHY_AFTER = 3;
+const FAILURE_KEY_PREFIX = 'llm_backend.';
+const FAILURE_KEY_SUFFIX = '.failures';
+const failureKey = (backend) => `${FAILURE_KEY_PREFIX}${backend}${FAILURE_KEY_SUFFIX}`;
+
+export function hasFailureStreak(db, backend) {
+  return db.prepare(`SELECT 1 FROM config_kv WHERE key = ?`).get(failureKey(backend)) != null;
+}
+
+export function recordBackendFailure(db, backend, { error = null, now = Date.now() } = {}) {
+  let previous = null;
+  try {
+    previous = JSON.parse(db.prepare(`SELECT value FROM config_kv WHERE key = ?`).get(failureKey(backend))?.value ?? 'null');
+  } catch {
+    previous = null;
+  }
+  const streak = {
+    failures: Number(previous?.failures ?? 0) + 1,
+    since: Number(previous?.since ?? now),
+    last_error: error == null ? null : String(error).replace(/\s+/g, ' ').trim().slice(0, 200)
+  };
+  db.prepare(
+    `INSERT INTO config_kv (key, value, set_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
+  ).run(failureKey(backend), JSON.stringify(streak), now);
+  return streak;
+}
+
+export function clearBackendFailures(db, backend) {
+  db.prepare(`DELETE FROM config_kv WHERE key = ?`).run(failureKey(backend));
+}
+
+function unhealthyBackends(db) {
+  return db.prepare(`SELECT key, value FROM config_kv WHERE key LIKE ? ORDER BY key`).all(`${FAILURE_KEY_PREFIX}%${FAILURE_KEY_SUFFIX}`)
+    .map((row) => {
+      try {
+        return { backend: row.key.slice(FAILURE_KEY_PREFIX.length, -FAILURE_KEY_SUFFIX.length), ...JSON.parse(row.value) };
+      } catch {
+        return null;
+      }
+    })
+    .filter((row) => row && Number(row.failures) >= UNHEALTHY_AFTER);
+}
+
 // For status output; writes nothing.
 export function describeBackendState(db, config, now = Date.now()) {
   const exhausted = db.prepare(
@@ -101,7 +151,8 @@ export function describeBackendState(db, config, now = Date.now()) {
     active: pickActiveBackend(db, config, now),
     order: backendOrder(config),
     exhausted,
-    proposal: openProposal(db)
+    proposal: openProposal(db),
+    unhealthy: unhealthyBackends(db)
   };
 }
 

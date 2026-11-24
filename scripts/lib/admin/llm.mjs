@@ -43,13 +43,18 @@ function assertBackend(id) {
   }
 }
 
-// One line, shared with `admin daemon status`.
+// One line (plus one per unhealthy backend), shared with `admin daemon status`.
 export function formatLlmStatus(state) {
   const exhausted = state.exhausted.length
     ? state.exhausted.map((row) => `${row.backend}@${new Date(row.exhausted_until).toISOString()}`).join(',')
     : 'none';
   const proposal = state.proposal ? `${state.proposal.from_backend}->${state.proposal.to_backend}` : 'none';
-  return `ccmem: llm backend=${state.active} preferred=${state.preferred} order=${state.order.join(',')} exhausted=${exhausted} proposal=${proposal}`;
+  const line = `ccmem: llm backend=${state.active} preferred=${state.preferred} order=${state.order.join(',')} exhausted=${exhausted} proposal=${proposal}`;
+  // Tester #445: a backend failing without a quota limit gets its own line, only while it is unhealthy.
+  const unhealthy = (state.unhealthy ?? []).map((row) =>
+    `\nccmem: llm unhealthy ${row.backend} — ${row.failures} calls in a row failed without a quota limit since ${new Date(row.since).toISOString()}; last: ${row.last_error ?? 'unknown'}`
+  );
+  return line + unhealthy.join('');
 }
 
 export function cmdAdminLlm(db, { verb, value = null } = {}) {

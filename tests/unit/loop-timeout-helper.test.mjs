@@ -29,10 +29,12 @@ test('raceLoop returns the loop result and leaves no timer behind (#461)', async
   assert.equal(timers(), before, 'the guard must not keep the event loop alive after the loop finished');
 });
 
-test('raceLoop keeps its budget while a test has replaced global setTimeout (#461)', async () => {
+// The test's own timeout: a guard that followed the mock would never fire, and the row must fail, not hang.
+test('raceLoop keeps its budget while a test has replaced global setTimeout (#461)', { timeout: 5000 }, async () => {
   const original = globalThis.setTimeout;
   globalThis.setTimeout = () => 0; // a mock that never fires, like the daemon-loop tests install
   try {
+    // mutation: arm the guard through globalThis.setTimeout at call time -> it never fires, the row times out, red
     await assert.rejects(raceLoop(new Promise(() => {}), 20), /loop timeout/);
   } finally {
     globalThis.setTimeout = original;

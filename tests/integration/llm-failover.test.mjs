@@ -101,6 +101,10 @@ if (mode === 'limit') {
   out({ type: 'error', message: "You've hit your usage limit. Try again at Oct 22nd, 2099 2:13 PM." });
   process.exit(1);
 }
+if (mode === 'hang') {
+  setTimeout(() => {}, 60_000);
+  return;
+}
 if (mode === 'broken') {
   // Tester #445: codex 0.170 could not start past a dangling ~/.codex/skills/.system symlink.
   process.stderr.write('ERROR codex_skills_extension::host_service: failed to install system skills: io error while create system skills dir: File exists (os error 17)');
@@ -421,6 +425,7 @@ test('status output shows the backend, the exhaustion and the open proposal', as
 // answers clears it.
 test('a backend whose calls keep failing without a quota limit reads as unhealthy, until one answers (#445)', async () => {
   reset({ codex: 'broken' });
+  withDb((db) => db.exec("DELETE FROM config_kv WHERE key LIKE 'llm_backend.%'"));
   writeConfig({ backend: 'codex' });
   const fail = () => assert.rejects(callClaudeP('audit this', { taskType: 'security_audit' }), /os error 17/);
   await fail();
@@ -444,17 +449,35 @@ test('a backend whose calls keep failing without a quota limit reads as unhealth
   assert.doesNotMatch(cli('admin', 'daemon', 'status').stdout, /unhealthy/, 'a call that answers clears it');
 });
 
-test('a backend command that cannot be spawned counts once per call toward unhealthy (#445)', async () => {
+const clearFailureStreaks = () => withDb((db) => db.exec("DELETE FROM config_kv WHERE key LIKE 'llm_backend.%'"));
+
+test('a backend command that cannot be spawned counts toward unhealthy (#445)', async () => {
   reset();
+  clearFailureStreaks();
   writeConfig({ backend: 'codex', commands: { ...COMMANDS, codex: path.join(fakeDir, 'no-such-codex') } });
   try {
     for (let i = 0; i < 3; i += 1) {
       await assert.rejects(callClaudeP('audit this', { taskType: 'security_audit' }), /ENOENT/);
     }
-    // mutation: drop the record on the spawn 'error' path -> no line, red; record it in 'close' too -> 6 calls, red
+    // mutation: drop the record on the spawn 'error' path -> no line, red
     assert.match(cli('admin', 'llm', 'status').stdout, /^ccmem: llm unhealthy codex — 3 calls in a row/m);
   } finally {
-    withDb((db) => db.exec("DELETE FROM config_kv WHERE key LIKE 'llm_backend.%'"));
+    clearFailureStreaks();
+  }
+});
+
+test('a call that times out does not count toward unhealthy: that is load, not the backend (#445)', async () => {
+  reset({ codex: 'hang' });
+  clearFailureStreaks();
+  writeConfig({ backend: 'codex' });
+  try {
+    for (let i = 0; i < 3; i += 1) {
+      await assert.rejects(callClaudeP('audit this', { taskType: 'security_audit', timeoutMs: 200 }), /timeout after 200ms/);
+    }
+    // mutation: record in the 'close' handler even after the timeout settled the call -> unhealthy line, red
+    assert.doesNotMatch(cli('admin', 'llm', 'status').stdout, /unhealthy/);
+  } finally {
+    clearFailureStreaks();
   }
 });
 

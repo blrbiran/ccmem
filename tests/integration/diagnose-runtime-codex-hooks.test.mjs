@@ -35,7 +35,7 @@ test.after(() => {
   for (const dir of [dataRoot, codexHome, cwd]) rmSync(dir, { recursive: true, force: true });
 });
 
-function writeCodexHome({ approve }) {
+function writeCodexHome({ approve, quoted = false }) {
   mkdirSync(codexHome, { recursive: true });
   const hook = (mode) => ({
     type: 'command',
@@ -55,7 +55,8 @@ function writeCodexHome({ approve }) {
     `${target}:user_prompt_submit:0:0`,
     `${target}:stop:0:0`
   ];
-  const state = keys.slice(0, approve).map((key) => `[hooks.state."${key}"]\ntrusted_hash = "sha256:test"\n`).join('\n');
+  const header = (key) => (quoted ? `["hooks"."state"."${key}"]` : `[hooks.state."${key}"]`);
+  const state = keys.slice(0, approve).map((key) => `${header(key)}\ntrusted_hash = "sha256:test"\n`).join('\n');
   writeFileSync(path.join(codexHome, 'config.toml'), `model = "gpt-test"\n\n[hooks.state]\n\n${state}`);
   return keys;
 }
@@ -85,6 +86,25 @@ test('codexHookTrust counts approved keys against the groups that carry ccmem co
   // mutation (parse only the first state table) -> the second key is missing from this set, red.
   const trusted = trustedHookKeys('[hooks.state]\n\n[hooks.state."a:b:0:0"]\ntrusted_hash = "x"\n\n[hooks.state."c:d:0:0"]\ntrusted_hash = "y"\n');
   assert.deepEqual([...trusted].sort(), ['a:b:0:0', 'c:d:0:0']);
+});
+
+// Tester #464: real Codex 0.170.0 writes every header segment quoted -- `["hooks"."state"."<key>"]` -- and the parser
+// matched only the bare `[hooks.state."<key>"]` this file's fixture imagined, so a person who approved all three hooks
+// read "0 of 3 approved". The fixture's own shape could never catch it; this row uses the shape Codex writes.
+test('trustedHookKeys reads the header shape Codex 0.170 writes: every segment quoted, single or double, spaced or not', () => {
+  const real = '[hooks]\n\n["hooks"."state"]\n\n["hooks"."state"."/h/hooks.json:session_start:0:0"]\ntrusted_hash = "sha256:a"\n\n'
+    + "[ 'hooks' . state . \"/h/hooks.json:stop:0:0\" ]\ntrusted_hash = \"sha256:b\"\n\n"
+    + '["hooks".state]\n"/h/hooks.json:user_prompt_submit:0:0" = { trusted_hash = "sha256:c" }\n\n'
+    + '["hooks"."other"."not-a-trust-key"]\nx = 1\n';
+  // mutation: match only the bare `[hooks.state."k"]` header (the old regex) -> an empty set, red
+  assert.deepEqual([...trustedHookKeys(real)].sort(), [
+    '/h/hooks.json:session_start:0:0', '/h/hooks.json:stop:0:0', '/h/hooks.json:user_prompt_submit:0:0',
+  ]);
+  const keys = writeCodexHome({ approve: 3, quoted: true });
+  const trust = codexHookTrust({ codexHome });
+  assert.equal(trust.approved, 3);
+  assert.deepEqual(trust.missing, []);
+  assert.equal(keys.length, 3);
 });
 
 test('admin diagnose prints the runtime and the Codex trust state', () => {

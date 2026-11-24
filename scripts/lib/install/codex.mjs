@@ -155,9 +155,40 @@ function hookKeys(target, hooksFile, entries) {
 }
 
 /**
+ * One TOML key segment at the start of `text` -- bare (A-Za-z0-9_-), "basic" (with \" and \\ escapes) or 'literal' --
+ * as [value, rest], or null.
+ */
+function keySegment(text) {
+  const bare = text.match(/^[A-Za-z0-9_-]+/);
+  if (bare) return [bare[0], text.slice(bare[0].length)];
+  const literal = text.match(/^'([^']*)'/);
+  if (literal) return [literal[1], text.slice(literal[0].length)];
+  const basic = text.match(/^"((?:[^"\\]|\\.)*)"/);
+  if (basic) return [basic[1].replace(/\\(["\\])/g, '$1'), text.slice(basic[0].length)];
+  return null;
+}
+
+/** A dotted TOML key (`a."b".'c'`, whitespace allowed around dots) as its segments, or null if it is not one. */
+function dottedKey(text) {
+  const segments = [];
+  let rest = text.trim();
+  for (;;) {
+    const segment = keySegment(rest);
+    if (segment === null) return null;
+    segments.push(segment[0]);
+    rest = segment[1].trimStart();
+    if (rest === '') return segments;
+    if (!rest.startsWith('.')) return null;
+    rest = rest.slice(1).trimStart();
+  }
+}
+
+/**
  * #416: the keys Codex records in `config.toml` once the human approved a hook. Handles both
  * shapes Codex writes: a table per key (`[hooks.state."<key>"]`) and a quoted key inside
  * `[hooks.state]`. The values (trusted hashes) are never read or printed.
+ * Tester #464: a header's segments are parsed one by one, bare or quoted -- Codex 0.170.0 writes
+ * `["hooks"."state"."<key>"]`, which the bare-only pattern read as nothing.
  */
 export function trustedHookKeys(tomlText) {
   const keys = new Set();
@@ -166,18 +197,17 @@ export function trustedHookKeys(tomlText) {
     const line = raw.trim();
     if (line === '' || line.startsWith('#')) continue;
     if (line.startsWith('[')) {
-      const table = line.match(/^\[hooks\.state\.(?:"([^"]+)"|'([^']+)')\]\s*$/);
-      if (table) {
-        keys.add(table[1] ?? table[2]);
-        inState = false;
-        continue;
-      }
-      inState = /^\[hooks\.state\]\s*$/.test(line);
+      const header = line.match(/^\[(?!\[)(.*)\]\s*(?:#.*)?$/);
+      const segments = header ? dottedKey(header[1]) : null;
+      const state = segments !== null && segments[0] === 'hooks' && segments[1] === 'state';
+      if (state && segments.length === 3) keys.add(segments[2]);
+      inState = state && segments.length === 2;
       continue;
     }
     if (inState) {
-      const inline = line.match(/^(?:"([^"]+)"|'([^']+)')\s*=/);
-      if (inline) keys.add(inline[1] ?? inline[2]);
+      const eq = line.indexOf('=');
+      const key = eq > 0 ? dottedKey(line.slice(0, eq)) : null;
+      if (key !== null && key.length === 1 && /^\s*["']/.test(line)) keys.add(key[0]);
     }
   }
   return keys;

@@ -64,7 +64,13 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.最新 2026-11-25（Orca 会话 `5d3d0c09`）—— #475 可打断的空闲休眠、#464 点号键、#452 off 模式、#453 有界内联（开关默认关）；daemon 已重启；全量 1117/1117
+### 1.最新 2026-11-25 晚（Orca 会话 `dee8a34f`）—— #496 提取跳过可见，#492 校验语料按内容解析
+
+- **#496**（`fix(daemon): a summarize task with no transcript is skipped, not counted a success (tester #496)`）：Stop 未获 transcript 路径时不入队；旧队列中的坏 payload 记 `skipped` 并保留审计。带旧版 CHECK 的库回落到 `failed`，保留跳过原因。状态视图报 24 h 的 `skipped_24h` 与 `bad_payload_24h`，历史行不重算。本会话未重启 daemon。
+- **#492**（`fix(retrieval-check): resolve benchmark expectations against the current store (tester #492)`）：语料用 `expected_substring`，正例须命中活动记忆，否则报 `E_CORPUS_STALE`。内置为合成示例，实际库用与该库相符的 `--corpus`。输出带 `retrievalPath`、`gated`、`total`。旧 `expected_ids` 报 `E_CORPUS_FORMAT`。关 embedding 后词法路径不走语义分数下限。
+- **门**：#496 与 #492 的原实现合跑 `env -u CCMEM_CONFIG_PATH CCMEM_INSTALL_NODE_PATH=/usr/local/bin/node NODE_OPTIONS=--no-warnings npm test` 1135/1135（观测点 `a58604d`，此分支留本地）；合成语料替换后同环境用 `sh scripts/run-tests.sh tests/integration/retrieval-check.test.mjs tests/integration/admin-diagnose-command.test.mjs` 40/40。生产库未写。§6.2 的 Orca 接口不变。
+
+### 1.上一轮 2026-11-25（Orca 会话 `5d3d0c09`）—— #475 可打断的空闲休眠、#464 点号键、#452 off 模式、#453 有界内联（开关默认关）；daemon 已重启；全量 1117/1117
 
 - **#475**（`fix(daemon): a wake ends the idle sleep; daemon status names the oldest queued task (tester #475)`＋`test(daemon): a wake criterion that fails stops its loop…`）：`scripts/daemon/wake.mjs` 的 `idleSleep` 以 3 s 为片检查两个 wake 文件。Stop 写 `daemon.wake` ⇒ 在**第一次** wake 的 mtime＋30 s 醒（后来的 wake 不往后推；保留「新快照取代旧快照」的去重）；`admin cron run` 另写 `daemon.wake.now` ⇒ 一片之内醒。主 tick 不缩短（到期查询是全表扫）。`admin daemon status` 多一行 `queue due=N oldest_age_sec=S [OVERDUE] last_wake_sec=S`（只扫最新 20 万行）。`cron.mjs` 里 #447 那句「wake 已修好手动跑的等待」的错注释已改正。`daemon-loop.test.mjs` 4 条休眠长度判据改写（带 Ruling 行）。**现测效果**：summarize 从到期到开始的等待，重启前最近 199 个 p50 199 s／p90 723 s，重启后 53 个 p50 58 s／p90 194 s；剩下的等待是 daemon 串行跑任务（单次 summarize 最长 120 s）造成的，与 wake 无关。
 - **#464 余项**（`fix(install): read Codex trust keys written as flat dotted keys (tester #464)`）：`trustedHookKeys` 把当前表头的段与每行的点号键拼起来，三种扁平写法都认；模块注释的旧形状已改。

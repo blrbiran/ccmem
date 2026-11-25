@@ -20,7 +20,8 @@ import {
  * file Codex discovers next to config.toml) and removes exactly them again.
  *
  * config.toml is never edited. Codex keeps its hook trust state there
- * (`[hooks.state."<key>"] trusted_hash = ...`), and the trust gate is the
+ * (`["hooks"."state"."<key>"]` then `trusted_hash = ...`, or the same path as one
+ * flat dotted key -- see trustedHookKeys), and the trust gate is the
  * human's: ccmem never writes trusted_hash and never bypasses the gate. The
  * human approves the hooks in Codex's `/hooks` view.
  */
@@ -189,26 +190,33 @@ function dottedKey(text) {
  * `[hooks.state]`. The values (trusted hashes) are never read or printed.
  * Tester #464: a header's segments are parsed one by one, bare or quoted -- Codex 0.170.0 writes
  * `["hooks"."state"."<key>"]`, which the bare-only pattern read as nothing.
+ * Tester #464 (gap): Codex also writes the whole path as one flat dotted key -- observed at top
+ * level as `"hooks"."state"."<key>"."trusted_hash" = ...` -- and TOML allows any split between the
+ * header and the key (`"<key>".trusted_hash` under `[hooks.state]`, `state."<key>".trusted_hash`
+ * under `[hooks]`). So the current header's segments and the line's dotted key are joined, and a
+ * full path of `hooks.state.<key>` (a table or inline-table value) or `hooks.state.<key>.trusted_hash`
+ * names a trusted key.
  */
 export function trustedHookKeys(tomlText) {
   const keys = new Set();
-  let inState = false;
+  const addIfTrustPath = (segments) => {
+    if (segments[0] !== 'hooks' || segments[1] !== 'state') return;
+    if (segments.length === 3 || (segments.length === 4 && segments[3] === 'trusted_hash')) keys.add(segments[2]);
+  };
+  let table = [];
   for (const raw of String(tomlText).split(/\r?\n/)) {
     const line = raw.trim();
     if (line === '' || line.startsWith('#')) continue;
     if (line.startsWith('[')) {
       const header = line.match(/^\[(?!\[)(.*)\]\s*(?:#.*)?$/);
-      const segments = header ? dottedKey(header[1]) : null;
-      const state = segments !== null && segments[0] === 'hooks' && segments[1] === 'state';
-      if (state && segments.length === 3) keys.add(segments[2]);
-      inState = state && segments.length === 2;
+      // An array-of-tables header or one that does not parse: no key under it is a trust key.
+      table = (header ? dottedKey(header[1]) : null) ?? [null];
+      if (table.length === 3) addIfTrustPath(table);
       continue;
     }
-    if (inState) {
-      const eq = line.indexOf('=');
-      const key = eq > 0 ? dottedKey(line.slice(0, eq)) : null;
-      if (key !== null && key.length === 1 && /^\s*["']/.test(line)) keys.add(key[0]);
-    }
+    const eq = line.indexOf('=');
+    const key = eq > 0 ? dottedKey(line.slice(0, eq)) : null;
+    if (key !== null) addIfTrustPath([...table, ...key]);
   }
   return keys;
 }

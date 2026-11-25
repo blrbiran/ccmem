@@ -107,6 +107,42 @@ test('trustedHookKeys reads the header shape Codex 0.170 writes: every segment q
   assert.equal(keys.length, 3);
 });
 
+// Tester #464 (gap): Codex 0.172 also writes the trust path as ONE flat dotted key -- the 15:02 snapshot held
+// `"hooks"."state"."<key>"."trusted_hash" = ...` at top level -- and TOML lets the header carry any prefix of that
+// path. Each split below returned 0 keys while the header-only parser was in place; every one must read its keys.
+test('trustedHookKeys reads flat dotted trust keys at any split between header and key', () => {
+  const shapes = {
+    // The tester's 15:02 snapshot shape: other tools' keys only (10 in the real file), no ccmem key, top level.
+    topLevel: 'model = "gpt-test"\n'
+      + '"hooks"."state"."/h/hooks.json:session_start:3:0"."trusted_hash" = "sha256:a"\n'
+      + "hooks.state.'/h/hooks.json:stop:1:0'.trusted_hash = \"sha256:b\"\n\n"
+      + '[projects."/tmp/p"]\ntrust_level = "trusted"\n',
+    underState: '[hooks.state]\n"/h/hooks.json:session_start:3:0".trusted_hash = "sha256:a"\n'
+      + '"/h/hooks.json:stop:1:0" . "trusted_hash" = "sha256:b"\n',
+    underHooks: '["hooks"]\nstate."/h/hooks.json:session_start:3:0".trusted_hash = "sha256:a"\n'
+      + '"state"."/h/hooks.json:stop:1:0"."trusted_hash" = "sha256:b"\n',
+  };
+  for (const [name, text] of Object.entries(shapes)) {
+    // mutation: read keys only from a header (the pre-gap parser) -> an empty set, red
+    assert.deepEqual([...trustedHookKeys(text)].sort(), ['/h/hooks.json:session_start:3:0', '/h/hooks.json:stop:1:0'], name);
+  }
+  // Not a trust key: another field under the key, a key under another table, an array-of-tables entry.
+  const decoys = '"hooks"."state"."/h/a:0:0"."enabled" = true\n[hooks.other]\n"/h/b:0:0".trusted_hash = "x"\n'
+    + '[[hooks.state]]\n"/h/c:0:0" = { trusted_hash = "y" }\n';
+  assert.deepEqual([...trustedHookKeys(decoys)], []);
+
+  // The two snapshots the tester compared must read differently: ccmem's keys absent (15:02) -> 0 of 3,
+  // present in the same flat shape -> 3 of 3.
+  const keys = writeCodexHome({ approve: 0 });
+  const flat = (key) => `"hooks"."state"."${key}"."trusted_hash" = "sha256:test"\n`;
+  writeFileSync(path.join(codexHome, 'config.toml'), `model = "gpt-test"\n${flat('/h/hooks.json:session_start:3:0')}`);
+  assert.equal(codexHookTrust({ codexHome }).approved, 0);
+  writeFileSync(path.join(codexHome, 'config.toml'), `model = "gpt-test"\n${keys.map(flat).join('')}`);
+  const trust = codexHookTrust({ codexHome });
+  assert.equal(trust.approved, 3);
+  assert.deepEqual(trust.missing, []);
+});
+
 test('admin diagnose prints the runtime and the Codex trust state', () => {
   writeCodexHome({ approve: 2 });
   const out = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose'], { cwd, env, encoding: 'utf8' });

@@ -44,7 +44,7 @@ embedding 回填、revalidation、每日维护。存储是 SQLite（`node:sqlite
 | daemon 状态 | `/Users/biran/code/skills/orca/ccmem/bin/ccmem admin daemon status` **＋** `daemon_lock` 的 `holder_pid`／`heartbeat_at` 年龄（`sqlite3 "file:$HOME/.claude/ccmem/global.db?mode=ro"`） | 单次 CLI 读数在负载下有假阴性；`plist=in_sync` **只是报警轴，不等于字节相等**（§5.2）——差异的 key 名打在 stderr 那行 `plist differs …`（只打 key 名、不打值） |
 | daemon 进程数 | `pgrep -f 'scripts/daemon/main.mjs'` | 🔴 **Claude Code 沙箱里 `ps -e` 是残的，会把泄漏数成 0**；`pgrep -f ccmem` 会把带 `--plugin-dir …/ccmem` 的会话数进来 |
 | 机器忙不忙 | `uptime` **加** `top -l 1 \| grep "CPU usage"` | load average 残留极久，单看 load 会误判 |
-| 套件 | `npm test`（= `scripts/run-tests.sh`：`/usr/local/bin/node --test`、隔离 data root、`-u CCMEM_CONFIG_PATH`、收尾删目录） | 最近记录 **968/968**（2026-10-27，`fix(cli): parse memory ids strictly…` 之上；**PATH 最前必须是一个能用的 nvm node**——当时是 22.13.1，2026-11-07 起 nvm default 是 22.23.4——否则 `bin ccmem` 的 `exec node` 撞坏的 homebrew node）。**不是稳定绿**，见 §4 |
+| 套件 | `npm test`（= `scripts/run-tests.sh`：`/usr/local/bin/node --test`、隔离 data root、`-u CCMEM_CONFIG_PATH`、收尾删目录） | 最近记录 **1147/1147**（2026-11-26，tester batch 70 之上；**PATH 最前必须是一个能用的 nvm node**——当时是 22.13.1，2026-11-07 起 nvm default 是 22.23.4——否则 `bin ccmem` 的 `exec node` 撞坏的 homebrew node）。**不是稳定绿**，见 §4 |
 | 单文件隔离跑 | `env -u CCMEM_CONFIG_PATH CCMEM_DATA_ROOT="$(mktemp -d)" /usr/local/bin/node --test <文件>` | 两个变量缺一不可；**必须显式 `/usr/local/bin/node`** |
 | 插件链接 | `ls -la ~/.claude/plugins/ \| grep ccmem` | 应指向 `/Users/biran/code/skills/orca/ccmem` |
 | LLM 任务有没有在成功 | 只读 `~/.claude/ccmem/daemon-cost.jsonl`（`timed_out`、`exit_code`、`timeout_ms`、`monotonic_ms`） | **别直接数 `timed_out`**：机器睡眠会饿死定时器，产生 `1974s` 这种"超时" |
@@ -64,7 +64,14 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.最新 2026-11-25 晚（Orca 会话 `dee8a34f`）—— #496 提取跳过可见，#492 校验语料按内容解析
+### 1.最新 2026-11-26 凌晨（Orca 会话 tester-ledger-batch-70）—— #507 守卫/指标/保留、#452 关闭请求单列、#445 超时独立计量
+
+- **#507**（`fix(daemon): deduplicate backfill and isolate task history (tester #507)`）：`enqueueVecBackfill` 统一启动与续队守卫（启动时不豁免任何行；续队只豁免当前 running 行），孤儿 running 行不再与主队列互相看不见；无 provider 或凭据缺失 ⇒ 结果带 `why:"no-provider"`、不续队；`llm_*` 指标只统计真正的生成任务（summarize/weekly/monthly/security/contradiction），`vec_backfill`／embed／维护不再计入；`reclaimOrphanedTasks` 把经过时间写进新列 `reclaimed_ms`、`duration_ms=0`，迁移 **021**（rollback 注释在文件头）。**没有自动删除**：新增 `ccmem admin tasks-prune --failed-days N --success-days N [--dry-run|--apply]`，默认 dry-run，`--apply` 先备份再删过期的 failed/success 行，`daily_maintenance` 不调用它。**迁移 021 尚未在生产库执行**；部署顺序仍是 stop daemon → `admin migrate` → start daemon，先备份。
+- **#452**（`fix(diagnose): report Codex sessions requesting hooks off (tester #452)`）：`codex_sessions_24h` 从 rollout 首行读 `features.hooks=false`（或 `config_overrides`），把「请求关闭」单列，不再混进「从未到达 hook」；有 hook 行的会话优先算已到。真实 Codex rollout 是否写这些字段只有 fixture 证据，待真会话复核。
+- **#445**（`fix(status): count extraction timeouts independently (tester #445)`）：抽取健康多 `timeouts_24h`（读活动＋轮转 cost 日志，含重试；不可读时显示 unavailable），超时不计入后端非额度失败阈值；三次非额度失败的 `llm unhealthy` 规则不变。
+- **门**：本分支 `npm test` **1147/1147**（0 fail／0 skip）；`admin tasks-prune` 与迁移只在隔离库跑。生产 daemon **未重启**、生产库**未迁移**。
+
+### 1.上一轮 2026-11-25 晚（Orca 会话 `dee8a34f`）—— #496 提取跳过可见，#492 校验语料按内容解析
 
 - **#496**（`fix(daemon): a summarize task with no transcript is skipped, not counted a success (tester #496)`）：Stop 未获 transcript 路径时不入队；旧队列中的坏 payload 记 `skipped` 并保留审计。带旧版 CHECK 的库回落到 `failed`，保留跳过原因。状态视图报 24 h 的 `skipped_24h` 与 `bad_payload_24h`，历史行不重算。本会话未重启 daemon。
 - **#492**（`fix(retrieval-check): resolve benchmark expectations against the current store (tester #492)`）：语料用 `expected_substring`，正例须命中活动记忆，否则报 `E_CORPUS_STALE`。内置为合成示例，实际库用与该库相符的 `--corpus`。输出带 `retrievalPath`、`gated`、`total`。旧 `expected_ids` 报 `E_CORPUS_FORMAT`。关 embedding 后词法路径不走语义分数下限。
@@ -323,7 +330,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-25 晚（Orca 会话 `dee8a34f`）。§1.最新记录 #496 的提取状态和 #492 的检索校验，§6.1 的 export 契约继续适用。已有库如有待迁移项，先 `admin migrate` 再调用 `ccmem export` 或 `orca-outcome`。FTS 默认仍 AND。Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。付费真跑会写真 `~/.orca`，应与测试门分时。#415 P2 external-content 未排期。
+2026-11-26 凌晨（Orca 会话 tester-ledger-batch-70）。§1.最新记录 #507/#452/#445；#507 带迁移 021 与 opt-in `admin tasks-prune`，生产库尚未迁移、daemon 未重启，已有库先 `admin migrate` 再调用 `ccmem export`／`orca-outcome`。FTS 默认仍 AND。Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。付费真跑会写真 `~/.orca`，应与测试门分时。#415 P2 external-content 未排期。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

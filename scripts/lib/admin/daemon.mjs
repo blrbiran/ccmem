@@ -7,6 +7,8 @@ import { describeBackendState } from '../../daemon/backend-state.mjs';
 import { clearStartHistory } from '../../daemon/crash-guard.mjs';
 import { isLockRowAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
+import { QUEUE_OVERDUE_MS } from './cron.mjs';
+import { lastWakeAt } from '../../daemon/wake.mjs';
 import { DB_BUSY_TIMEOUT_MS, getDataRoot } from '../db.mjs';
 import {
   comparePlist,
@@ -1227,6 +1229,28 @@ export function describeExtractionHealth(db, now = Date.now(), scanRows = EXTRAC
   };
 }
 
+// Tester #475: "queued" alone could not tell a task waiting out the idle sleep from one the daemon
+// would never pick up. Age of the oldest due task plus the age of the last wake; `overdue` uses the
+// same threshold as `admin cron --issues`. Bounded like describeExtractionHealth: `tasks` has no
+// index on status, and an unbounded scan of the real store took 24.68 s.
+export function describeQueue(db, now = Date.now(), scanRows = EXTRACTION_SCAN_ROWS) {
+  const floor = Number(db.prepare('SELECT COALESCE(MAX(id), 0) AS n FROM tasks').get().n) - scanRows;
+  const row = db.prepare(
+    `SELECT COUNT(*) AS n, MIN(scheduled_for) AS oldest FROM tasks
+     WHERE id > ? AND status = 'queued' AND scheduled_for <= ?`
+  ).get(floor, now);
+  const due = Number(row?.n ?? 0);
+  const oldestAgeMs = due > 0 ? Math.max(0, now - Number(row.oldest)) : null;
+  const wakeAt = lastWakeAt();
+  return {
+    due,
+    oldest_age_ms: oldestAgeMs,
+    overdue: oldestAgeMs !== null && oldestAgeMs >= QUEUE_OVERDUE_MS,
+    last_wake_age_ms: wakeAt === null ? null : Math.max(0, Math.round(now - wakeAt)),
+    scanned_rows: floor > 0 ? scanRows : null
+  };
+}
+
 export async function cmdAdminDaemon(db, { verb, keepBytes } = {}) {
   if (verb === 'status') {
     const status = loadDaemonStatus(db);
@@ -1236,7 +1260,8 @@ export async function cmdAdminDaemon(db, { verb, keepBytes } = {}) {
       ...status,
       plist_drift: describePlistDrift(),
       llm: describeBackendState(db, loadConfig()),
-      extraction: describeExtractionHealth(db)
+      extraction: describeExtractionHealth(db),
+      queue: describeQueue(db)
     };
   }
 

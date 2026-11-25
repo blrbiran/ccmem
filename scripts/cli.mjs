@@ -994,6 +994,11 @@ try {
       process.stdout.write(
         `ccmem: memory extraction last_success=${lastSuccess} failed_24h=${extraction.failed_24h} last_error=${extraction.last_error ?? 'none'}\n`
       );
+      const queue = result.queue;
+      const sec = (ms) => (ms === null ? null : Math.round(ms / 1000));
+      process.stdout.write(
+        `ccmem: queue due=${queue.due} oldest_age_sec=${sec(queue.oldest_age_ms) ?? 'none'}${queue.overdue ? ' OVERDUE' : ''} last_wake_sec=${sec(queue.last_wake_age_ms) ?? 'never'}${queue.scanned_rows === null ? '' : ` scanned_rows=${queue.scanned_rows}`}\n`
+      );
     } else if (result.status === 'already_running') {
       process.stdout.write(`ccmem: daemon already running pid=${result.pid}\n`);
     } else if (result.status === 'started') {

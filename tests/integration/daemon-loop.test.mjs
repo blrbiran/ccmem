@@ -129,7 +129,9 @@ test('mainLoop in off mode skips dispatching queued tasks and only sleeps', asyn
     await raceLoop(
       mainLoop(db, () => stop, async (_db, task) => {
         seen.push(task.type);
-      })
+      // Ruling (tester #475, session 5d3d0c09): the idle sleep now runs in wake-poll slices; an
+      // infinite poll keeps it one slice so this test still reads the sleep length it plans.
+      }, { wake: { pollMs: Infinity } })
     );
   } finally {
     global.setTimeout = originalSetTimeout;
@@ -193,7 +195,9 @@ test('mainLoop in off mode does not enqueue cron tasks or leases before sleeping
     await raceLoop(
       mainLoop(db, () => stop, async () => {
         throw new Error('off mode should not dispatch cron work');
-      })
+      // Ruling (tester #475, session 5d3d0c09): the idle sleep now runs in wake-poll slices; an
+      // infinite poll keeps it one slice so this test still reads the sleep length it plans.
+      }, { wake: { pollMs: Infinity } })
     );
   } finally {
     global.Date = OriginalDate;
@@ -234,7 +238,9 @@ test('mainLoop shortens idle sleep to 30 seconds when wake file is recent', asyn
     await raceLoop(
       mainLoop(db, () => stop, async () => {
         throw new Error('idle wake branch should not dispatch work');
-      })
+      // Ruling (tester #475, session 5d3d0c09): the idle sleep now runs in wake-poll slices; an
+      // infinite poll keeps it one slice so this test still reads the sleep length it plans.
+      }, { wake: { pollMs: Infinity } })
     );
   } finally {
     global.setTimeout = originalSetTimeout;
@@ -270,7 +276,9 @@ test('mainLoop in off mode also shortens sleep to 30 seconds when wake file is r
     await raceLoop(
       mainLoop(db, () => stop, async () => {
         throw new Error('off mode wake branch should not dispatch work');
-      })
+      // Ruling (tester #475, session 5d3d0c09): the idle sleep now runs in wake-poll slices; an
+      // infinite poll keeps it one slice so this test still reads the sleep length it plans.
+      }, { wake: { pollMs: Infinity } })
     );
   } finally {
     global.setTimeout = originalSetTimeout;

@@ -721,6 +721,47 @@ test('cli admin daemon status says never when memory extraction has never succee
   assert.match(output, /^ccmem: memory extraction last_success=never failed_24h=0 last_error=none$/m);
 });
 
+// Tester #475: a summarize_pending sat 'queued' for 242 s and nothing said whether it was waiting
+// or lost. Status names the oldest due task's age, marks it past the cron --issues threshold, and
+// says how long ago the daemon was last woken. A task scheduled in the future is not due yet.
+test('cli admin daemon status reports the oldest due queued task and the last wake', () => {
+  const now = Date.now();
+  const db = openDb();
+  resetAdminTables(db);
+  seedAliveDaemon(db, now);
+  const insert = db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status) VALUES (?, '{}', ?, ?, 'queued')`
+  );
+  insert.run('summarize_pending', now - 400 * 1000, now - 400 * 1000);
+  insert.run('summarize_pending', now - 10 * 1000, now - 10 * 1000);
+  insert.run('vec_backfill', now + 3600 * 1000, now);
+  db.close();
+  rmSync(path.join(dataRoot, 'daemon.wake'), { force: true });
+  rmSync(path.join(dataRoot, 'daemon.wake.now'), { force: true });
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'status'], { cwd: REPO_ROOT, env, encoding: 'utf8' });
+
+  const line = output.split('\n').find((l) => l.startsWith('ccmem: queue '));
+  assert.ok(line, `no queue line in:\n${output}`);
+  assert.match(line, /^ccmem: queue due=2 oldest_age_sec=(400|401|402) OVERDUE last_wake_sec=never$/);
+});
+
+test('cli admin daemon status queue line has no overdue mark when the queue is fresh', () => {
+  const now = Date.now();
+  const db = openDb();
+  resetAdminTables(db);
+  seedAliveDaemon(db, now);
+  db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status) VALUES ('summarize_pending', '{}', ?, ?, 'queued')`
+  ).run(now - 20 * 1000, now - 20 * 1000);
+  db.close();
+  writeFileSync(path.join(dataRoot, 'daemon.wake'), String(now));
+
+  const output = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'status'], { cwd: REPO_ROOT, env, encoding: 'utf8' });
+
+  assert.match(output, /^ccmem: queue due=1 oldest_age_sec=(20|21|22) last_wake_sec=\d+$/m);
+});
+
 // The real store holds millions of task rows with no index on (type, status, finished_at): a full scan took
 // 24.68 s there, so status reads only the newest rows by rowid, and says so instead of claiming "never".
 test('extraction health reads only the newest tasks and names the window when no success is inside it', async () => {

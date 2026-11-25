@@ -56,8 +56,13 @@ test('a manual cron run wakes the daemon instead of waiting out the idle tick', 
   db.prepare('DELETE FROM tasks').run();
   db.prepare('DELETE FROM task_runs').run();
   rmSync(path.join(dataRoot, 'daemon.wake'), { force: true });
+  rmSync(path.join(dataRoot, 'daemon.wake.now'), { force: true });
   await cmdAdminCron(db, { verb: 'run', taskType: 'daily_maintenance' });
   assert.ok(existsSync(path.join(dataRoot, 'daemon.wake')), 'the wake file is written');
+  // Tester #475: the plain wake only shortens the NEXT idle sleep or waits out the Stop debounce;
+  // a person waiting on a manual run needs the immediate wake (daemon-wake-interrupt.test.mjs
+  // proves it ends the sleep).
+  assert.ok(existsSync(path.join(dataRoot, 'daemon.wake.now')), 'the immediate wake is written');
   db.close();
 });
 

@@ -16,7 +16,7 @@ const TRACKED_TYPES = [
   'vec_backfill'
 ];
 const MANUAL_RUN_TYPES = ['daily_maintenance', 'summarize_pending', 'weekly_synthesis', 'security_audit', 'contradiction_audit', 'cross_project_patterns', 'monthly_meta_synthesis', 'revalidation_audit', 'vec_backfill'];
-const QUEUE_OVERDUE_MS = 5 * 60 * 1000;
+export const QUEUE_OVERDUE_MS = 5 * 60 * 1000;
 const RUNNING_ZOMBIE_MS = 10 * 60 * 1000;
 const RUN_AUDIT_BY_TASK = Object.freeze({
   summarize_pending: 'summarize_pending_applied',
@@ -346,7 +346,7 @@ function runCronTask(db, taskType, sessionId = null) {
       `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
        VALUES (?, ?, ?, ?, 'queued')`
     ).run(taskType, JSON.stringify(payload), nowMs, nowMs);
-    touchWakeFile();
+    touchWakeFile({ immediate: true });
     return { task_id: Number(inserted.lastInsertRowid), type: taskType, scheduled_for: nowMs, enqueued_at: nowMs, status: 'queued' };
   }
 
@@ -369,9 +369,11 @@ function runCronTask(db, taskType, sessionId = null) {
      VALUES (?, ?, ?, ?, 'queued')`
   ).run(taskType, JSON.stringify(payload), nowMs, nowMs);
 
-  // Tester #447: enqueueing without waking the daemon left a manual run waiting out
-  // the idle tick -- 300 s idle, observed live as 21:42:43 enqueued, 21:48 claimed.
-  touchWakeFile();
+  // Tester #447 wrote the wake here believing it ended the wait (21:42:43 enqueued, 21:48 claimed);
+  // it did not -- the idle sleep was one uncancellable setTimeout and the wake only shortened the
+  // NEXT sleep (tester #475: 242 s measured). Since #475 the idle sleep polls the wake files, and
+  // an immediate wake ends it within one poll (WAKE_POLL_MS) instead of the Stop debounce.
+  touchWakeFile({ immediate: true });
 
   return {
     task_id: Number(result.lastInsertRowid),

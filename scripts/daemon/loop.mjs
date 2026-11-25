@@ -3,7 +3,7 @@ import { isDatabaseBusy } from '../lib/db.mjs';
 import { writeAudit } from '../lib/audit.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { RAN_BY, tryClaimLease } from '../lib/task-runs.mjs';
-import { wakeRecently } from './wake.mjs';
+import { idleSleep, wakeRecently } from './wake.mjs';
 import { EXHAUSTED_RETRY_MARK } from './backend-state.mjs';
 
 const ERROR_EXCERPT_MAX = 200;
@@ -512,10 +512,12 @@ export async function runTask(db, task, dispatch, { afterTask } = {}) {
   }
 }
 
-export async function mainLoop(db, shouldStop, dispatch, { afterTask } = {}) {
+// `wake` ({ pollMs, debounceMs }) overrides idleSleep's pacing; tests use it, the daemon does not.
+export async function mainLoop(db, shouldStop, dispatch, { afterTask, wake } = {}) {
   while (!shouldStop()) {
+    const tickStartedAt = Date.now();
     if (getMode(db) === 'off') {
-      await new Promise((resolve) => setTimeout(resolve, wakeRecently() ? 30000 : 300000));
+      await idleSleep(wakeRecently() ? 30000 : 300000, { ...wake, shouldStop, since: tickStartedAt });
       continue;
     }
 
@@ -539,7 +541,7 @@ export async function mainLoop(db, shouldStop, dispatch, { afterTask } = {}) {
     }
 
     if (!due.length) {
-      await new Promise((resolve) => setTimeout(resolve, wakeRecently() ? 30000 : 300000));
+      await idleSleep(wakeRecently() ? 30000 : 300000, { ...wake, shouldStop, since: tickStartedAt });
       continue;
     }
 

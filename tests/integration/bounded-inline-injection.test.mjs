@@ -104,7 +104,8 @@ test('switch on: prompt submit inlines only the retrieved rows, within the retri
   assert.match(additionalContext, /zebrafish research notes/);
   // The stable section is inlined once at session start, not every turn.
   assert.doesNotMatch(additionalContext, /PINNED-MARKER|stable context|HUGE-CACHE/);
-  // mutation: inline every retrieved row untrimmed (40 x ~470 B) -> over the cap, red
+  // mutation: inline every retrieved row untrimmed (40 x ~470 B) -> over the 12288 B guard, which falls back to ''
+  // and the first assertion above is red (seen); the cap below is what the guard enforces for smaller overruns
   assert.ok(bytes(additionalContext) <= bytes('## ccmem context\n') + RETRIEVED_BOUND, `${bytes(additionalContext)} B`);
 
   const none = await promptSubmit('qqqq wwww unrelated');
@@ -116,7 +117,7 @@ test('switch off (absent or false): both hooks emit exactly what they emit today
     seed();
     writeConfig(injection);
     const start = await sessionStart();
-    // mutation: treat the switch as on by default -> the stable section instead of the instruction, red
+    // mutation: default inline_bounded to true in DEFAULT_CONFIG -> the stable section instead of the instruction, red
     assert.equal(start.additionalContext, buildReadInstruction(SESSION_ID, 'claude-code'), JSON.stringify(injection));
     const prompt = await promptSubmit();
     assert.equal(prompt.additionalContext, '', JSON.stringify(injection));

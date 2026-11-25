@@ -42,7 +42,7 @@ export const jinaEmbedding = {
   async load(override = null) {
     const cfg = this.applyConfig(override);
     if (!cfg.apiKey) {
-      throw new Error('JINA_API_KEY not set');
+      throw Object.assign(new Error('JINA_API_KEY not set'), { code: 'EMBEDDING_CREDENTIALS_MISSING' });
     }
     loaded = true;
   },

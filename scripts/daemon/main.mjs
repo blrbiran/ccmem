@@ -5,7 +5,7 @@ import { currentEmbeddingSig } from '../lib/embedding/signature.mjs';
 import { recordDaemonStart } from './crash-guard.mjs';
 import { acquireDaemonLock, refreshHeartbeat, releaseDaemonLock } from './lock.mjs';
 import { dispatchTask } from './dispatch.mjs';
-import { pendingEmbeddings } from './tasks/vec-backfill.mjs';
+import { enqueueVecBackfill, pendingEmbeddings } from './tasks/vec-backfill.mjs';
 import {
   checkPendingRestart,
   checkSchemaStaleness,
@@ -42,20 +42,7 @@ async function warmSemanticProvider(db) {
     return;
   }
 
-  const queued = Number(db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM tasks
-     WHERE type = 'vec_backfill'
-       AND status IN ('queued', 'running')`
-  ).get()?.n ?? 0);
-
-  if (queued === 0) {
-    const now = Date.now();
-    db.prepare(
-      `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
-       VALUES ('vec_backfill', '{}', ?, ?, 'queued')`
-    ).run(now, now);
-  }
+  enqueueVecBackfill(db);
 }
 
 // Before anything claims a resource: launchd restarts an exiting daemon forever

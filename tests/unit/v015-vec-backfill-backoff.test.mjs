@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,6 +27,7 @@ test.after(() => {
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { runVecBackfill } = await import('../../scripts/daemon/tasks/vec-backfill.mjs');
+const { openaiEmbedding } = await import('../../scripts/lib/embedding/openai.mjs');
 const { _resetProviderCache } = await import('../../scripts/lib/embedding/provider.mjs');
 
 function seedPendingMemory(db) {
@@ -63,6 +64,7 @@ function kv(db, key) {
 // (30s, doubling, capped at 1h) and stop writing a line per attempt.
 test('the second consecutive failure schedules the continuation later and logs nothing', async () => {
   const db = openDb();
+  const load = mock.method(openaiEmbedding, 'load', async () => { throw new Error('429 rate limited'); });
   const written = [];
   const realWrite = process.stderr.write.bind(process.stderr);
   process.stderr.write = (chunk, ...rest) => { written.push(String(chunk)); return realWrite(chunk, ...rest); };
@@ -73,7 +75,7 @@ test('the second consecutive failure schedules the continuation later and logs n
     seedPendingMemory(db);
     _resetProviderCache();
 
-    await assert.rejects(runVecBackfill(db), 'the batch must fail — no API key is configured');
+    await assert.rejects(runVecBackfill(db), /429 rate limited/);
 
     const first = queuedContinuation(db);
     assert.ok(first, 'the first failure must still queue a continuation');
@@ -95,7 +97,7 @@ test('the second consecutive failure schedules the continuation later and logs n
     db.prepare(`UPDATE tasks SET status = 'running' WHERE id = ?`).run(first.id);
     const loggedAfterFirst = written.length;
 
-    await assert.rejects(runVecBackfill(db), 'the continuation must fail again');
+    await assert.rejects(runVecBackfill(db, { id: first.id, type: 'vec_backfill' }), /429 rate limited/);
 
     const second = queuedContinuation(db);
     assert.ok(second, 'a repeated failure must still queue the next continuation');
@@ -107,6 +109,7 @@ test('the second consecutive failure schedules the continuation later and logs n
       'the second consecutive failure must not add another stderr line'
     );
   } finally {
+    load.mock.restore();
     process.stderr.write = realWrite;
     db.close();
     _resetProviderCache();
@@ -115,6 +118,7 @@ test('the second consecutive failure schedules the continuation later and logs n
 
 test('the delay doubles up to the one-hour cap', async () => {
   const db = openDb();
+  const load = mock.method(openaiEmbedding, 'load', async () => { throw new Error('429 rate limited'); });
   const realWrite = process.stderr.write.bind(process.stderr);
   // This test is about spacing, not lines; the previous test covers the log.
   process.stderr.write = () => true;
@@ -125,19 +129,23 @@ test('the delay doubles up to the one-hour cap', async () => {
     _resetProviderCache();
 
     let lastDelay = 0;
+    let current = null;
     for (let attempt = 1; attempt <= 9; attempt += 1) {
-      await assert.rejects(runVecBackfill(db), 'the batch must fail — no API key is configured');
+      await assert.rejects(runVecBackfill(db, current), /429 rate limited/);
+      if (current) db.prepare(`UPDATE tasks SET status = 'failed' WHERE id = ?`).run(current.id);
       const task = queuedContinuation(db);
       assert.ok(task, `attempt ${attempt} must queue its continuation`);
       lastDelay = task.scheduled_for - task.enqueued_at;
       if (attempt < 9) {
         db.prepare(`UPDATE tasks SET status = 'running' WHERE id = ?`).run(task.id);
+        current = { id: task.id, type: 'vec_backfill' };
       }
     }
 
     assert.equal(kv(db, 'vec_backfill.consecutive_failures'), '9');
     assert.equal(lastDelay, 60 * 60 * 1000, 'the delay stops growing at one hour');
   } finally {
+    load.mock.restore();
     process.stderr.write = realWrite;
     db.close();
     _resetProviderCache();

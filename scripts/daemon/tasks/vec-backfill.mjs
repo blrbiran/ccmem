@@ -20,35 +20,18 @@ export function pendingEmbeddings(db, sig) {
   ).get(sig)?.n ?? 0);
 }
 
-/**
- * Queue the next batch when a run finishes with work still outstanding.
- *
- * One run only ever processes one backfill_batch_size batch, and vec_backfill
- * is on no recurring schedule — before this it was queued only at daemon
- * startup, so a store with 4,494 memories needed ~90 daemon restarts before the
- * semantic lane came back, degrading silently to lexical-only in the meantime.
- *
- * The guard counts only 'queued', deliberately NOT 'running': the run calling
- * this IS the running one, so including 'running' would make the condition
- * permanently true and the chain would never continue. daemon/main.mjs's
- * startup guard correctly counts both, because nothing is running there.
- */
-function enqueueContinuation(db, delayMs = 0, now = Date.now()) {
-  const alreadyQueued = Number(db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM tasks
-     WHERE type = 'vec_backfill'
-       AND status = 'queued'`
-  ).get()?.n ?? 0);
-  if (alreadyQueued > 0) {
-    return false;
-  }
-
-  db.prepare(
+// At startup no row is exempt. During continuation only the current running
+// row is exempt, so queued rows and any other running row still block an insert.
+export function enqueueVecBackfill(db, { delayMs = 0, now = Date.now(), excludeTaskId = null } = {}) {
+  return db.prepare(
     `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status)
-     VALUES ('vec_backfill', '{}', ?, ?, 'queued')`
-  ).run(now + Math.max(0, delayMs), now);
-  return true;
+     SELECT 'vec_backfill', '{}', ?, ?, 'queued'
+     WHERE NOT EXISTS (
+       SELECT 1 FROM tasks
+       WHERE type = 'vec_backfill'
+         AND (status = 'queued' OR (status = 'running' AND id IS NOT ?))
+     )`
+  ).run(now + Math.max(0, delayMs), now, excludeTaskId).changes > 0;
 }
 
 // A 429 (or any other repeated provider failure) used to queue the next
@@ -123,7 +106,7 @@ export function backfillEmbeddingConfig(cfg) {
   };
 }
 
-export async function runVecBackfill(db, _task = null) {
+export async function runVecBackfill(db, task = null) {
   const cfg = loadConfig();
   const startedAt = Date.now();
   // The override must reach load() and embed() too, not just getProvider():
@@ -133,16 +116,17 @@ export async function runVecBackfill(db, _task = null) {
   const backfillCfg = backfillEmbeddingConfig(cfg);
   const provider = getProvider(backfillCfg);
   const sig = currentEmbeddingSig(provider, cfg);
+  // daily_maintenance calls this with ITS OWN task object; only a vec_backfill
+  // row is the run's own and must be excluded from the continuation guard.
+  const selfTaskId = task?.type === 'vec_backfill' ? task.id ?? null : null;
 
-  if (!provider) {
-    const remaining = pendingEmbeddings(db, sig);
-    writeAudit(db, 'vec_backfill_run', null, {
-      embedded: 0,
-      remaining,
-      duration_ms: 0
-    });
-    return { embedded: 0, remaining, duration_ms: 0 };
+  function stopWithoutProvider(error = null) {
+    const result = { embedded: 0, remaining: pendingEmbeddings(db, sig), duration_ms: 0, why: 'no-provider' };
+    writeAudit(db, 'vec_backfill_run', null, error ? { ...result, error } : result);
+    return result;
   }
+
+  if (!provider) return stopWithoutProvider();
 
   // Prefer rows whose signature doesn't match the current provider (NULL —
   // never embedded — or stale from a prior provider/model/dim) over rows
@@ -196,8 +180,8 @@ export async function runVecBackfill(db, _task = null) {
     const durationMs = Date.now() - startedAt;
     const remaining = pendingEmbeddings(db, sig);
     if (remaining > 0) {
-      const chained = enqueueContinuation(db);
-      process.stderr.write(`ccmem: vec_backfill embedded ${rows.length}, ${remaining} still pending under signature ${sig} — ${chained ? 'continuation queued' : 'continuation already queued'}\n`);
+      const chained = enqueueVecBackfill(db, { excludeTaskId: selfTaskId });
+      process.stderr.write(`ccmem: vec_backfill embedded ${rows.length}, ${remaining} still pending under signature ${sig} — ${chained ? 'continuation queued' : 'another batch queued or running'}\n`);
     }
     writeAudit(db, 'vec_backfill_run', null, {
       embedded: rows.length,
@@ -207,6 +191,7 @@ export async function runVecBackfill(db, _task = null) {
     return { embedded: rows.length, remaining, duration_ms: durationMs };
   } catch (error) {
     const message = String(error?.message ?? error).slice(0, 200);
+    if (error?.code === 'EMBEDDING_CREDENTIALS_MISSING') return stopWithoutProvider(message);
     writeAudit(db, 'vec_backfill_error', null, {
       error: message,
       embedded_before_fail: 0
@@ -223,10 +208,10 @@ export async function runVecBackfill(db, _task = null) {
     // and the stderr line is written once per backoff window, not per attempt.
     const now = Date.now();
     const backoff = recordFailureBackoff(db, now);
-    const chained = enqueueContinuation(db, backoff.delayMs, now);
+    const chained = enqueueVecBackfill(db, { delayMs: backoff.delayMs, now, excludeTaskId: selfTaskId });
     if (backoff.shouldLog) {
       process.stderr.write(
-        `ccmem: vec_backfill failed (attempt ${backoff.failures}): ${message} — next attempt in ${Math.round(backoff.delayMs / 1000)}s, ${chained ? 'continuation queued' : 'continuation already queued'}\n`
+        `ccmem: vec_backfill failed (attempt ${backoff.failures}): ${message} — next attempt in ${Math.round(backoff.delayMs / 1000)}s, ${chained ? 'continuation queued' : 'another batch queued or running'}\n`
       );
     }
     throw error;

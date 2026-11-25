@@ -1,3 +1,4 @@
+import { cmdAdminTasksPrune, TASKS_PRUNE_USAGE } from './lib/admin/tasks-prune.mjs';
 import { cmdAdminAlias } from './lib/admin/alias.mjs';
 import { cmdAdminCron } from './lib/admin/cron.mjs';
 import { cmdAdminDaemon } from './lib/admin/daemon.mjs';
@@ -62,6 +63,7 @@ function printHelp() {
     '  audit show <id>\n' +
     '  admin daemon <status|start|stop|restart|install|uninstall|rotate-log [--keep-bytes N]>\n' +
     '  admin migrate           back up and upgrade an existing database\n' +
+    `  ${TASKS_PRUNE_USAGE.slice('ccmem '.length)}   (default: dry-run)\n` +
     '  admin cron <list|run>\n' +
     '             list [--issues] [--history N --task <type>] [--verbose]\n' +
     '             run <type> [--session <id>]   (summarize_pending needs the session)\n' +
@@ -1089,6 +1091,19 @@ try {
     } else {
       process.stderr.write(`ccmem: daemon ${daemonVerb} failed\n`);
       process.exitCode = 1;
+    }
+  } else if (verb === 'admin' && args[0] === 'tasks-prune') {
+    const options = args.slice(1);
+    if (options.length === 1 && options[0] === '--help') {
+      process.stdout.write(`Usage: ${TASKS_PRUNE_USAGE}\nDefault: dry-run. --apply backs up the database before deleting.\n`);
+    } else {
+      try {
+        const { apply, failed, success, backup } = cmdAdminTasksPrune(options);
+        process.stdout.write(`ccmem: tasks-prune ${apply ? 'applied' : 'dry-run'} failed=${failed} success=${success}${backup ? ` backup=${backup}` : ''}\n`);
+      } catch (error) {
+        process.stderr.write(`ccmem: ${error.message}\nUsage: ${TASKS_PRUNE_USAGE}\n`);
+        process.exitCode = error.code === 'ERR_SQLITE_ERROR' ? 1 : 64;
+      }
     }
   } else if (verb === 'admin' && args[0] === 'llm') {
     const llmVerb = args[1];

@@ -40,7 +40,8 @@ test('startup reclaims running tasks whose owner died', () => {
   const db = openDb();
   try {
     const orphan = insertTask(db, 'vec_backfill', 'running');
-    const otherOrphan = insertTask(db, 'summarize_pending', 'running');
+    const monthsAgo = Date.now() - 150 * 86_400_000;
+    const otherOrphan = insertTask(db, 'summarize_pending', 'running', monthsAgo);
     const queued = insertTask(db, 'vec_backfill', 'queued');
     const done = insertTask(db, 'vec_backfill', 'completed');
 
@@ -48,10 +49,14 @@ test('startup reclaims running tasks whose owner died', () => {
 
     assert.equal(reclaimed, 2, 'both ownerless rows are reclaimed, whatever their type');
 
-    const read = (id) => db.prepare(`SELECT status, error_excerpt FROM tasks WHERE id = ?`).get(id);
+    const read = (id) => db.prepare(`SELECT status, error_excerpt, duration_ms, finished_at FROM tasks WHERE id = ?`).get(id);
     assert.equal(read(orphan).status, 'failed', 'a task whose process died did fail — say so');
     assert.match(read(orphan).error_excerpt ?? '', /daemon/i, 'the reason must be legible, not blank');
-    assert.equal(read(otherOrphan).status, 'failed');
+    const reclaimedRow = read(otherOrphan);
+    assert.equal(reclaimedRow.status, 'failed');
+    assert.equal(reclaimedRow.duration_ms, 0, 'orphan age must not be stored as execution time');
+    assert.equal(db.prepare('SELECT reclaimed_ms FROM tasks WHERE id = ?').get(otherOrphan).reclaimed_ms,
+      reclaimedRow.finished_at - monthsAgo);
 
     assert.equal(read(queued).status, 'queued', 'queued work is untouched — it never had an owner');
     assert.equal(read(done).status, 'completed', 'terminal rows are untouched');

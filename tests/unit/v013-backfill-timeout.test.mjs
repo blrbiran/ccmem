@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { backfillEmbeddingConfig } from '../../scripts/daemon/tasks/vec-backfill.mjs';
 import { DEFAULT_CONFIG } from '../../scripts/lib/config.mjs';
@@ -76,6 +76,8 @@ test('a failed batch still queues a continuation and says so on stderr', async (
   const { runVecBackfill } = await import('../../scripts/daemon/tasks/vec-backfill.mjs');
   const { _resetProviderCache } = await import('../../scripts/lib/embedding/provider.mjs');
 
+  const { openaiEmbedding } = await import('../../scripts/lib/embedding/openai.mjs');
+  const load = mock.method(openaiEmbedding, 'load', async () => { throw new Error('Request timed out'); });
   const db = openDb();
   const written = [];
   const realWrite = process.stderr.write.bind(process.stderr);
@@ -96,7 +98,7 @@ test('a failed batch still queues a continuation and says so on stderr', async (
     ).run(now);
     _resetProviderCache();
 
-    await assert.rejects(runVecBackfill(db), 'the batch must fail — no API key is configured');
+    await assert.rejects(runVecBackfill(db), /Request timed out/);
 
     const queued = db.prepare(
       `SELECT COUNT(*) n FROM tasks WHERE type = 'vec_backfill' AND status = 'queued'`
@@ -109,6 +111,7 @@ test('a failed batch still queues a continuation and says so on stderr', async (
       'the failure must be visible where the successes are, not only in audit_log'
     );
   } finally {
+    load.mock.restore();
     process.stderr.write = realWrite;
     db.close();
     _resetProviderCache();

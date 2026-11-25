@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -254,7 +254,7 @@ test('cmdAdminDiagnose returns db health, daemon status, and fallback project ke
   const result = await cmdAdminDiagnose(db, { cwd: diagnoseCwd });
 
   assert.equal(result.db.health, 'ok');
-  assert.equal(result.db.schema_version, 20);
+  assert.equal(result.db.schema_version, 21);
   assert.equal(result.daemon.startup_schema_version, 12);
   assert.equal(typeof result.daemon.uptime_sec, 'number');
   assert.equal(result.daemon.alive, true);
@@ -283,7 +283,7 @@ test('cmdAdminDiagnose returns migration history when requested', async () => {
     applied_at: result.migrations[0].applied_at,
     applied_by: 'ccmem-cli'
   });
-  assert.equal(result.migrations.at(-1).to_version, 20);
+  assert.equal(result.migrations.at(-1).to_version, 21);
   db.close();
 });
 
@@ -344,7 +344,7 @@ test('cli admin diagnose prints default diagnostics', () => {
     encoding: 'utf8'
   });
 
-  assert.match(output, /ccmem: db ok schema=20/);
+  assert.match(output, /ccmem: db ok schema=21/);
   assert.match(output, /ccmem: daemon alive pid=2468 host=diagnose-host/);
   assert.match(output, /startup_schema=12/);
   assert.match(output, /uptime_sec=\d+/);
@@ -583,7 +583,7 @@ test('the latency probe does not contaminate the daily LLM rollup', () => {
     `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, status, started_at, finished_at)
      VALUES (?, '{}', ?, ?, ?, ?, ?)`
   );
-  insert.run('daily_maintenance', dayStart, dayStart, 'done', dayStart + 1000, dayStart + 3000);
+  insert.run('summarize_pending', dayStart, dayStart, 'success', dayStart + 1000, dayStart + 3000);
   insert.run('embed_latency_probe', dayStart, dayStart, 'done', dayStart + 4000, dayStart + 4700);
   insert.run('embed_latency_probe', dayStart, dayStart, 'failed', dayStart + 5000, dayStart + 15000);
   writeMetricsDailyRollup(db);
@@ -598,6 +598,91 @@ test('the latency probe does not contaminate the daily LLM rollup', () => {
   assert.equal(row.llm_total_duration_ms, 2000, 'the probe\'s own latency must not be summed into the LLM duration trend');
   assert.equal(row.llm_failures, 0, 'a probe timeout is the sample being collected, not an LLM task failure');
   db.close();
+});
+
+test('daily LLM rollup excludes a 41,218-row backfill burst and other non-LLM work (#507)', () => {
+  const db = openDb();
+  try {
+    resetDiagnoseTables(db);
+    const now = new Date();
+    const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1);
+    db.prepare(`WITH RECURSIVE burst(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM burst WHERE n < 41218)
+      INSERT INTO tasks (type, scheduled_for, enqueued_at, started_at, finished_at, status, attempts)
+      SELECT 'vec_backfill', ?, ?, ?, ?, 'failed', 3 FROM burst`).run(start, start, start, start + 17_000);
+    const insert = db.prepare(`INSERT INTO tasks (type, scheduled_for, enqueued_at, started_at, finished_at, status, attempts)
+      VALUES (?, ?, ?, ?, ?, ?, 3)`);
+    for (const type of ['embed_fixture', 'daily_maintenance', 'revalidation_audit', 'cross_project_patterns']) {
+      insert.run(type, start, start, start, start + 250, 'failed');
+    }
+    insert.run('summarize_pending', start, start, start, start + 2_000, 'success');
+    for (const status of ['skipped', 'superseded']) {
+      insert.run('summarize_pending', start, start, start, start + 250, status);
+    }
+    writeMetricsDailyRollup(db);
+    const row = db.prepare('SELECT * FROM metrics_daily_rollup').get();
+    assert.equal(row.llm_calls, 1, 'only a generative task belongs in the LLM rollup');
+    assert.equal(row.llm_failures, 0);
+    assert.equal(row.llm_dead_letters, 0);
+    assert.equal(row.llm_total_duration_ms, 2_000);
+  } finally {
+    db.close();
+  }
+});
+
+test('a historical reclaimed task contributes no wall time to the LLM rollup (#507)', () => {
+  const db = openDb();
+  try {
+    resetDiagnoseTables(db);
+    const now = new Date();
+    const yesterday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1) + 1_000;
+    const age = 7359 * 3_600_000;
+    db.prepare(`INSERT INTO tasks (type, scheduled_for, enqueued_at, started_at, finished_at, status, duration_ms, error_excerpt)
+      VALUES ('summarize_pending', ?, ?, ?, ?, 'failed', ?, 'daemon exited while this task was running')`)
+      .run(yesterday - age, yesterday - age, yesterday - age, yesterday, age);
+    writeMetricsDailyRollup(db);
+    assert.equal(db.prepare('SELECT llm_total_duration_ms FROM metrics_daily_rollup').get().llm_total_duration_ms, 0,
+      'time waiting for a new daemon is not model runtime');
+  } finally {
+    db.close();
+  }
+});
+
+test('admin tasks-prune previews by default and only applies the two explicit cutoffs (#507)', () => {
+  const db = openDb();
+  const now = Date.now();
+  const ago = (days) => now - days * 86_400_000;
+  const prune = (...options) => spawnSync(NODE, [CLI, 'admin', 'tasks-prune', ...options], {
+    cwd: diagnoseCwd, env, encoding: 'utf8'
+  });
+  try {
+    resetDiagnoseTables(db);
+    const insert = db.prepare(`INSERT INTO tasks (type, scheduled_for, enqueued_at, finished_at, status)
+      VALUES ('summarize_pending', ?, ?, ?, ?) RETURNING id`);
+    const gone = [insert.get(ago(22), ago(22), ago(22), 'failed').id, insert.get(ago(8), ago(8), ago(8), 'success').id];
+    const kept = [['failed', 20], ['success', 6], ['skipped', 70], ['completed', 70], ['queued', 70], ['running', 70], ['failed', null]]
+      .map(([status, days]) => insert.get(ago(70), ago(70), days == null ? null : ago(days), status).id);
+    const ids = () => db.prepare('SELECT id FROM tasks ORDER BY id').all().map((row) => row.id);
+    const thresholds = ['--failed-days', '21', '--success-days', '7'];
+    for (const options of [thresholds, [...thresholds, '--dry-run']]) {
+      const preview = prune(...options);
+      assert.equal(preview.status, 0, preview.stderr);
+      assert.match(preview.stdout, /dry-run.*failed=1.*success=1/);
+      assert.deepEqual(ids(), [...gone, ...kept], 'a preview must preserve all tasks');
+    }
+    for (const options of [[], ['--apply'], ['--apply', '--failed-days', '21'], [...thresholds, '--apply', '--dry-run'],
+      ['--apply', '--failed-days', '0', '--success-days', '7'], [...thresholds, '--apply', '--typo']]) {
+      const refused = prune(...options);
+      assert.equal(refused.status, 64, `must refuse ${options.join(' ')}`);
+      assert.deepEqual(ids(), [...gone, ...kept]);
+    }
+    const applied = prune('--apply', ...thresholds);
+    assert.equal(applied.status, 0, applied.stderr);
+    assert.match(applied.stdout, /applied.*failed=1.*success=1/);
+    assert.deepEqual(ids(), kept, 'recent, unfinished and other-status tasks must remain');
+    assert.match(applied.stdout, /backup=.*global\.db\.bak\.\d+/);
+  } finally {
+    db.close();
+  }
 });
 
 test('cli admin diagnose --retrieval shows kv-aware embedding state and open circuit', async () => {

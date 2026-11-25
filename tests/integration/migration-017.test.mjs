@@ -29,7 +29,7 @@ function cli(...args) {
 
 test('migration 017 brings a fresh root to 17 with the new columns and tables', () => {
   const db = openDb();
-  assert.equal(getSchemaVersion(db), 20);
+  assert.equal(getSchemaVersion(db), 21);
   assert.ok(cols(db, 'memories').includes('origin_agent'));
   assert.ok(cols(db, 'session_context').includes('agent'));
   assert.deepEqual(cols(db, 'llm_backend_state'), ['backend', 'exhausted_until', 'last_error', 'updated_at']);
@@ -43,7 +43,7 @@ test('migration 017 brings a fresh root to 17 with the new columns and tables', 
 test('migration 017 is idempotent across reopens', () => {
   openDb().close();
   const db = openDb();
-  assert.equal(getSchemaVersion(db), 20);
+  assert.equal(getSchemaVersion(db), 21);
   const n = db.prepare(`SELECT COUNT(*) c FROM schema_migrations WHERE to_version = 17`).get().c;
   assert.equal(n, 1);
   db.close();
@@ -62,7 +62,8 @@ test('a v16 database is upgraded to 17 using the documented rollback as the down
     ALTER TABLE session_context DROP COLUMN transcript_path;
     ALTER TABLE session_context DROP COLUMN agent;
     ALTER TABLE memories DROP COLUMN origin_agent;
-    DELETE FROM schema_migrations WHERE to_version = 20;
+    ALTER TABLE tasks DROP COLUMN reclaimed_ms;
+    DELETE FROM schema_migrations WHERE to_version IN (20, 21);
     DELETE FROM schema_migrations WHERE to_version = 19;
     DELETE FROM schema_migrations WHERE to_version = 18;
     DELETE FROM schema_migrations WHERE to_version = 17;
@@ -73,7 +74,7 @@ test('a v16 database is upgraded to 17 using the documented rollback as the down
   db.close();
 
   const upgraded = openDb({ migrate: true });
-  assert.equal(getSchemaVersion(upgraded), 20);
+  assert.equal(getSchemaVersion(upgraded), 21);
   assert.ok(cols(upgraded, 'memories').includes('origin_agent'));
   assert.ok(cols(upgraded, 'session_context').includes('agent'));
   upgraded.close();

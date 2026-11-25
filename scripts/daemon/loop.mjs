@@ -120,8 +120,8 @@ function timeReached(date, hour, minute) {
  * Paying that for an unused guarantee is pointless, not dangerous.
  *
  * The growth this does NOT avoid, disclosed here because it is real: each
- * probe inserts a row into `tasks`, and no `DELETE FROM tasks` exists anywhere
- * in scripts/. With the activity gate below, that is ≈44 rows/day (≈16k/year)
+ * probe inserts a row into `tasks`, and daemon maintenance never prunes tasks.
+ * With the activity gate below, that is ≈44 rows/day (≈16k/year)
  * — derived from a frozen `metrics.jsonl` snapshot taken 2026-08-05, so treat
  * it as a dated measurement of an ongoing process, not a constant — in a
  * table whose only index is uniq_tasks_summarize_session_seq — so mainLoop's
@@ -401,12 +401,8 @@ function scheduleRetry(db, task, error, currentAttempt) {
 }
 
 /**
- * A 'running' row whose process died is never reclaimed by anything, and two
- * individually-correct guards then deadlock on it: enqueueContinuation counts only
- * 'queued' (counting 'running' would make the condition permanently true for the
- * run doing the counting), while daemon startup counts 'queued' OR 'running' and so
- * reads the orphan as work already scheduled. Observed live: a daemon restart
- * mid-batch froze the backfill chain at 1159 pending with no error and no log line.
+ * Reclaim tasks left by a dead daemon so an orphan does not block a new batch.
+ * The interval to reclaim is diagnostic age, not measured execution time.
  *
  * Safe to do unconditionally at startup: acquireDaemonLock throws unless the
  * previous lock is stale, so once it returns there is no other daemon and every
@@ -420,9 +416,10 @@ export function reclaimOrphanedTasks(db) {
     `UPDATE tasks
      SET status = 'failed',
          finished_at = ?,
-         duration_ms = CASE
+         duration_ms = 0,
+         reclaimed_ms = CASE
            WHEN started_at IS NOT NULL AND ? >= started_at THEN ? - started_at
-           ELSE 0
+           ELSE NULL
          END,
          error_excerpt = 'daemon exited while this task was running'
      WHERE status = 'running'`

@@ -83,11 +83,16 @@ export function aggregateHookLatencies(startMs, endMs) {
   return output;
 }
 
+// This rollup uses settled generative task rows as a proxy for calls. Embedding,
+// probes, and heuristic maintenance have their own metrics and audit actions.
+const LLM_TASK = `type IN ('summarize_pending', 'weekly_synthesis', 'monthly_meta_synthesis',
+  'security_audit', 'contradiction_audit') AND status NOT IN ('skipped', 'superseded')`;
+
 export function detectLLMDeadLetters(db, startMs, endMs) {
   const rows = db.prepare(
     `SELECT type, COUNT(*) AS n
      FROM tasks
-     WHERE status = 'failed'
+     WHERE ${LLM_TASK} AND status = 'failed'
        AND attempts >= 3
        AND finished_at >= ?
        AND finished_at < ?
@@ -149,25 +154,16 @@ export function writeMetricsDailyRollup(db) {
   const { dayKey, dayStartMs, dayEndMs } = yesterdayWindow();
   const hookStats = aggregateHookLatencies(dayStartMs, dayEndMs);
   const retrievalStats = aggregateRetrievalPaths(dayStartMs, dayEndMs);
-  // embed_latency_probe is excluded from all three: it makes no LLM call, and
-  // at ~288 rows/day it would swamp a metric that otherwise sits in single
-  // digits — and fold its own measured latency into the duration trend, where
-  // the contamination would be invisible in the persisted rollup row.
-  const llmCalls = Number(db.prepare(
-    `SELECT COUNT(*) AS n
+  const llm = db.prepare(
+    `SELECT COUNT(*) AS calls,
+            COUNT(*) FILTER (WHERE status = 'failed') AS failures,
+            COALESCE(SUM(CASE
+              WHEN reclaimed_ms IS NULL AND error_excerpt IS NOT 'daemon exited while this task was running'
+              THEN finished_at - started_at
+            END), 0) AS duration
      FROM tasks
-     WHERE finished_at >= ? AND finished_at < ? AND type != 'embed_latency_probe'`
-  ).get(dayStartMs, dayEndMs)?.n ?? 0);
-  const llmDuration = Number(db.prepare(
-    `SELECT COALESCE(SUM(finished_at - started_at), 0) AS d
-     FROM tasks
-     WHERE finished_at >= ? AND finished_at < ? AND started_at IS NOT NULL AND type != 'embed_latency_probe'`
-  ).get(dayStartMs, dayEndMs)?.d ?? 0);
-  const llmFailures = Number(db.prepare(
-    `SELECT COUNT(*) AS n
-     FROM tasks
-     WHERE status = 'failed' AND finished_at >= ? AND finished_at < ? AND type != 'embed_latency_probe'`
-  ).get(dayStartMs, dayEndMs)?.n ?? 0);
+     WHERE ${LLM_TASK} AND finished_at >= ? AND finished_at < ?`
+  ).get(dayStartMs, dayEndMs);
   const llmDeadLetters = detectLLMDeadLetters(db, dayStartMs, dayEndMs);
 
   const secStats = db.prepare(
@@ -303,9 +299,9 @@ export function writeMetricsDailyRollup(db) {
     hookStats.prompt_submit?.p95 ?? null,
     hookStats.stop?.p50 ?? null,
     hookStats.stop?.p95 ?? null,
-    llmCalls,
-    llmDuration,
-    llmFailures,
+    llm.calls,
+    llm.duration,
+    llm.failures,
     llmDeadLetters,
     Number(secStats?.q ?? 0),
     Number(secStats?.a ?? 0),

@@ -29,7 +29,8 @@ function fixture(t) {
     DROP INDEX idx_memories_session_id;
     ALTER TABLE memories DROP COLUMN session_id;
     ALTER TABLE memories DROP COLUMN transcript_path;
-    DELETE FROM schema_migrations WHERE to_version = 20;
+    ALTER TABLE tasks DROP COLUMN reclaimed_ms;
+    DELETE FROM schema_migrations WHERE to_version IN (20, 21);
     UPDATE schema_meta SET version = 19;
     CREATE TABLE migration_sentinel (value TEXT);
     INSERT INTO migration_sentinel VALUES ('preserve me');
@@ -86,7 +87,7 @@ test('admin migrate publishes a pre-upgrade snapshot and is idempotent', (t) => 
   for (const file of existing) copyFileSync(path.join(root, 'global.db'), path.join(root, file));
   const result = cli('admin', 'migrate');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(version(), 20);
+  assert.equal(version(), 21);
   const names = backups();
   const added = names.filter((name) => !existing.includes(name));
   for (const name of existing) assert.ok(names.includes(name), `keeps ${name}`);
@@ -130,7 +131,7 @@ test('admin migrate completes on a version-18 store that already has a column a 
   db.close();
   const result = cli('admin', 'migrate');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(version(), 20);
+  assert.equal(version(), 21);
   const after = open();
   try {
     const columns = (table) => after.prepare(`SELECT name FROM pragma_table_info('${table}')`).all().map((row) => row.name);
@@ -139,5 +140,27 @@ test('admin migrate completes on a version-18 store that already has a column a 
     assert.equal(after.prepare('SELECT COUNT(*) AS n FROM schema_migrations WHERE to_version IN (19, 20)').get().n, 2);
   } finally {
     after.close();
+  }
+});
+
+
+test('migration 21 relabels old reclaimed age without changing ordinary task duration (#507)', (t) => {
+  const { cli, open } = fixture(t);
+  const db = open();
+  db.exec(`INSERT INTO tasks (type, status, scheduled_for, enqueued_at, started_at, finished_at, duration_ms, error_excerpt)
+    VALUES ('summarize_pending', 'failed', 1, 1, 1, 26492400001, 26492400000, 'daemon exited while this task was running'),
+           ('summarize_pending', 'success', 1, 1, 1, 2501, 2500, NULL)`);
+  db.close();
+  const result = cli('admin', 'migrate');
+  assert.equal(result.status, 0, result.stderr);
+  const migrated = open();
+  try {
+    const [orphan, normal] = migrated.prepare('SELECT duration_ms, reclaimed_ms FROM tasks ORDER BY id').all();
+    assert.equal(orphan.duration_ms, 0, 'the historical reclaim age must leave the runtime column');
+    assert.equal(orphan.reclaimed_ms, 26492400000);
+    assert.equal(normal.duration_ms, 2500);
+    assert.equal(normal.reclaimed_ms, null);
+  } finally {
+    migrated.close();
   }
 });

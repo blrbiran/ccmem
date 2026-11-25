@@ -152,7 +152,7 @@ try {
     async (loopDb, task) => {
       currentTask = { id: task.id, type: task.type };
       try {
-        await dispatchTask(loopDb, task);
+        return await dispatchTask(loopDb, task);
       } finally {
         currentTask = null;
       }

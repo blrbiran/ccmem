@@ -721,6 +721,49 @@ test('cli admin daemon status says never when memory extraction has never succee
   assert.match(output, /^ccmem: memory extraction last_success=never failed_24h=0 last_error=none$/m);
 });
 
+// Tester #496: a summarize task with no transcript was recorded 'success', so the
+// extraction line stayed green while nothing was extracted. A bad payload in the
+// last 24h must produce a warn line naming it.
+test('cli admin daemon status warns when a summarize task had no transcript', () => {
+  const now = Date.now();
+  const db = openDb();
+  resetAdminTables(db);
+  seedAliveDaemon(db, now);
+  db.prepare(
+    `INSERT INTO tasks (type, payload, scheduled_for, enqueued_at, started_at, finished_at, status, error_excerpt)
+     VALUES ('summarize_pending', '{}', ?, ?, ?, ?, 'skipped', 'skipped: no-transcript')`
+  ).run(now - 2000, now - 2000, now - 1000, now - 1000);
+  db.prepare(
+    `INSERT INTO audit_log (ts, action, affected_ids, details) VALUES (?, 'summarize_pending_bad_payload', NULL, '{"reason":"no-transcript"}')`
+  ).run(now - 1000);
+  db.close();
+
+  try {
+    const result = spawnSync(NODE, [CLI, 'admin', '--', 'daemon', 'status'], { cwd: REPO_ROOT, env, encoding: 'utf8' });
+
+    assert.match(result.stderr, /^ccmem: warn 1 summarize task\(s\) in the last 24h had no transcript/m);
+    assert.match(result.stderr, /skipped_24h=1/);
+  } finally {
+    // resetAdminTables clears tasks, not the audit rows this fixture wrote; a
+    // leaked bad-payload row would make every later status read warn.
+    const cleanup = openDb();
+    cleanup.prepare(`DELETE FROM audit_log WHERE action = 'summarize_pending_bad_payload'`).run();
+    cleanup.close();
+  }
+});
+
+test('cli admin daemon status stays quiet when every summarize task had a transcript', () => {
+  const now = Date.now();
+  const db = openDb();
+  resetAdminTables(db);
+  seedAliveDaemon(db, now);
+  db.close();
+
+  const result = spawnSync(NODE, [CLI, 'admin', '--', 'daemon', 'status'], { cwd: REPO_ROOT, env, encoding: 'utf8' });
+
+  assert.ok(!/had no transcript/.test(result.stderr), `unexpected warn line:\n${result.stderr}`);
+});
+
 // Tester #475: a summarize_pending sat 'queued' for 242 s and nothing said whether it was waiting
 // or lost. Status names the oldest due task's age, marks it past the cron --issues threshold, and
 // says how long ago the daemon was last woken. A task scheduled in the future is not due yet.
@@ -777,7 +820,19 @@ test('extraction health reads only the newest tasks and names the window when no
   insert.run('vec_backfill', now - 2000, now - 2000, now - 2000, now - 2000, 'failed', '429');
   insert.run('summarize_pending', now - 1000, now - 1000, now - 1000, now - 1000, 'failed', 'exit 1');
   try {
-    assert.deepEqual(describeExtractionHealth(db, now, 2), { last_success_at: null, failed_24h: 1, last_error: 'exit 1', scanned_rows: 2 });
+    // Ruling: tester #496 — describeExtractionHealth now also counts what it used to
+    // call a success: a summarize task with no transcript is 'skipped', and the
+    // bad-payload audit it still writes is counted. The two zeroes below are the
+    // point (this fixture has neither), so the shape assertion gains them rather
+    // than being loosened.
+    assert.deepEqual(describeExtractionHealth(db, now, 2), {
+      last_success_at: null,
+      failed_24h: 1,
+      skipped_24h: 0,
+      bad_payload_24h: 0,
+      last_error: 'exit 1',
+      scanned_rows: 2
+    });
     assert.equal(describeExtractionHealth(db, now, 10).last_success_at, now - 5000);
     // A window wider than the table's highest id covers every row, so the answer is not windowed.
     assert.equal(describeExtractionHealth(db, now, Number.MAX_SAFE_INTEGER).scanned_rows, null);

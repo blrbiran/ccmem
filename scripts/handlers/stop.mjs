@@ -78,28 +78,35 @@ export async function handleStop(db, hookData, deps = {}) {
   // row is left alone, as before). Superseding by time here turned every repeat
   // Stop into a second row.
 
-  db.prepare(
-    `INSERT OR IGNORE INTO tasks (type, payload, scheduled_for, enqueued_at, status)
-     VALUES ('summarize_pending', ?, ?, ?, 'queued')`
-  ).run(
-    JSON.stringify({
-      session_id: hookData.session_id,
-      transcript_path: hookData.transcript_path,
-      last_message_seq: seq,
-      snapshot_observed_at: observedAt,
-      agent,
-      ...(transcriptWindow.startByte === undefined ? {} : {
-        transcript_window: {
-          startByte: transcriptWindow.startByte,
-          endByte: transcriptWindow.endByte,
-          completeLinesOnly: transcriptWindow.completeLinesOnly,
-          complete: transcriptWindow.complete
-        }
-      })
-    }),
-    Date.now(),
-    Date.now()
-  );
+  // Tester #496: a Stop carrying no transcript_path cannot ever produce an
+  // extraction, and the daemon used to record the resulting row as 'success' --
+  // the one thing it was not. The hook is the earliest place that knows, so it
+  // refuses to enqueue; the daemon still settles a row queued by an older build
+  // (see runSummarizePending's bad-payload branch).
+  if (typeof hookData.transcript_path === 'string' && hookData.transcript_path !== '') {
+    db.prepare(
+      `INSERT OR IGNORE INTO tasks (type, payload, scheduled_for, enqueued_at, status)
+       VALUES ('summarize_pending', ?, ?, ?, 'queued')`
+    ).run(
+      JSON.stringify({
+        session_id: hookData.session_id,
+        transcript_path: hookData.transcript_path,
+        last_message_seq: seq,
+        snapshot_observed_at: observedAt,
+        agent,
+        ...(transcriptWindow.startByte === undefined ? {} : {
+          transcript_window: {
+            startByte: transcriptWindow.startByte,
+            endByte: transcriptWindow.endByte,
+            completeLinesOnly: transcriptWindow.completeLinesOnly,
+            complete: transcriptWindow.complete
+          }
+        })
+      }),
+      Date.now(),
+      Date.now()
+    );
+  }
 
   inferFromTranscript(db, hookData.session_id, hookData.transcript_path, agent, entries);
   inferL25FromTranscript(db, hookData.session_id, hookData.transcript_path, agent, entries);

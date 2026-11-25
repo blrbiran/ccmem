@@ -3388,10 +3388,7 @@ test('dispatchTask marks bad summarize payload via audit', async () => {
   let stop = false;
 
   await raceLoop(
-    mainLoop(db, () => stop, async (loopDb, task) => {
-      await dispatchTask(loopDb, task);
-      stop = true;
-    })
+    mainLoop(db, () => stop, dispatchTask, { afterTask: () => { stop = true; } })
   );
 
   const task = db.prepare(
@@ -3408,7 +3405,8 @@ test('dispatchTask marks bad summarize payload via audit', async () => {
   ).get();
   const details = JSON.parse(audit.details);
 
-  assert.equal(task.status, 'success');
+  // Ruling: tester #496 — a bad payload never ran extraction.
+  assert.equal(task.status, 'skipped');
   assert.equal(audit.action, 'summarize_pending_bad_payload');
   assert.equal(details.task_id > 0, true);
   db.close();

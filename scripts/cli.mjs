@@ -994,6 +994,13 @@ try {
       process.stdout.write(
         `ccmem: memory extraction last_success=${lastSuccess} failed_24h=${extraction.failed_24h} last_error=${extraction.last_error ?? 'none'}\n`
       );
+      // Tester #496: bad-payload summarize tasks used to be recorded 'success', so
+      // "nothing was extracted" and "extraction worked" read identically. Say it.
+      if (extraction.bad_payload_24h > 0) {
+        process.stderr.write(
+          `ccmem: warn ${extraction.bad_payload_24h} summarize task(s) in the last 24h had no transcript to extract from (skipped_24h=${extraction.skipped_24h}); extraction never ran for them\n`
+        );
+      }
       const queue = result.queue;
       const sec = (ms) => (ms === null ? null : Math.round(ms / 1000));
       process.stdout.write(

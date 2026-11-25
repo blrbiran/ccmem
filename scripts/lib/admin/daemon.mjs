@@ -1221,9 +1221,24 @@ export function describeExtractionHealth(db, now = Date.now(), scanRows = EXTRAC
      WHERE id > ? AND type = 'summarize_pending' AND status = 'failed'
      ORDER BY id DESC LIMIT 1`
   ).get(floor);
+  // Tester #496: a summarize task with no transcript could only ever be recorded
+  // 'success', so "nothing was extracted" and "extraction worked" read the same.
+  // The task is 'skipped' now; both counts come straight from the rows they name,
+  // so a store full of them can no longer look green.
+  const skipped24h = db.prepare(
+    `SELECT COUNT(*) AS n FROM tasks
+     WHERE id > ? AND type = 'summarize_pending' AND status = 'skipped' AND finished_at >= ?`
+  ).get(floor, now - 24 * 60 * 60 * 1000);
+  // The audit also covers bad payloads that older builds recorded as successes.
+  const badPayload24h = db.prepare(
+    `SELECT COUNT(*) AS n FROM audit_log
+     WHERE action = 'summarize_pending_bad_payload' AND ts >= ?`
+  ).get(now - 24 * 60 * 60 * 1000);
   return {
     last_success_at: lastSuccess?.at ?? null,
     failed_24h: Number(failed24h?.n ?? 0),
+    skipped_24h: Number(skipped24h?.n ?? 0),
+    bad_payload_24h: Number(badPayload24h?.n ?? 0),
     last_error: lastFailed ? String(lastFailed.error_excerpt ?? '').replace(/\s+/g, ' ').trim().slice(0, 120) : null,
     scanned_rows: floor > 0 ? scanRows : null
   };

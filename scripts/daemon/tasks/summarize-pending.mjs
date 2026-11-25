@@ -217,8 +217,11 @@ export async function runSummarizePending(db, task) {
   const cfg = loadConfig();
 
   if (!sessionId || !transcriptPath || !Number.isFinite(lastMessageSeq)) {
+    // Tester #496: this used to return silently, and the daemon then recorded the
+    // row 'success' -- counting an extraction that never happened. The sentinel is
+    // what makes the settle say 'skipped'; the audit keeps the row diagnosable.
     writeAudit(db, 'summarize_pending_bad_payload', null, { task_id: task.id });
-    return;
+    return { skipped: 'no-transcript' };
   }
 
   db.prepare(

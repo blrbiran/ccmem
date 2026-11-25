@@ -453,8 +453,9 @@ export async function runTask(db, task, dispatch, { afterTask } = {}) {
 
   let dispatched = false;
   let dispatchError = null;
+  let dispatchResult = null;
   try {
-    await dispatch(db, task);
+    dispatchResult = await dispatch(db, task);
     dispatched = true;
   } catch (error) {
     dispatchError = error;
@@ -463,6 +464,49 @@ export async function runTask(db, task, dispatch, { afterTask } = {}) {
   try {
     const finishedAt = Date.now();
     if (dispatched) {
+      // Tester #496: a summarize task with no transcript settles without extraction.
+      const skippedReason = dispatchResult?.skipped;
+      if (task.type === 'summarize_pending' && skippedReason === 'no-transcript') {
+        try {
+          db.prepare(
+            `UPDATE tasks
+             SET status = 'skipped',
+                 finished_at = ?,
+                 duration_ms = CASE
+                   WHEN started_at IS NOT NULL AND ? >= started_at THEN ? - started_at
+                   ELSE 0
+                 END,
+                 error_excerpt = ?
+             WHERE id = ? AND status = 'running'`
+          ).run(finishedAt, finishedAt, finishedAt, `skipped: ${skippedReason}`, task.id);
+          return true;
+        } catch (error) {
+          // A database built from the v0.1 spec carries a `tasks.status` CHECK
+          // that predates 'skipped' (see the #444 note below). A skip must never
+          // crash the loop, and must never become green either: record it failed
+          // with the reason, which is what a health read will surface.
+          if (!/CHECK constraint failed/.test(String(error?.message))) throw error;
+          db.prepare(
+            `UPDATE tasks
+             SET status = 'failed',
+                 finished_at = ?,
+                 duration_ms = CASE
+                   WHEN started_at IS NOT NULL AND ? >= started_at THEN ? - started_at
+                   ELSE 0
+                 END,
+                 error_excerpt = ?
+             WHERE id = ? AND status = 'running'`
+          ).run(
+            finishedAt,
+            finishedAt,
+            finishedAt,
+            `skipped: ${skippedReason} (this tasks.status CHECK cannot store 'skipped')`,
+            task.id
+          );
+          return true;
+        }
+      }
+
       // Issue #444: this write is deliberately OUTSIDE the dispatch catch. A database
       // built from the v0.1 spec carries `tasks.status CHECK (…, 'success', …)`; writing
       // 'completed' there threw, the catch then recorded a task that had SUCCEEDED as

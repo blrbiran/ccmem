@@ -43,7 +43,12 @@ async function runUntilSentinel(db, wake, enqueueAndWake) {
     ).run(Date.now(), Date.now());
     return enqueueAndWake();
   })();
-  await raceLoop(Promise.all([loop, driver]));
+  try {
+    await raceLoop(Promise.all([loop, driver]));
+  } finally {
+    // A loop that missed the wake must not keep running into the next test (it would hang the file).
+    stop = true;
+  }
   return { dispatchedAt, wokeAt: await driver };
 }
 

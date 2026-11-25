@@ -64,138 +64,32 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.00000000000000000 2026-11-25 凌晨（Orca 会话 `6add92a5`）—— #460 restart、#445 unhealthy、#452 codex 24 h、#461 共享超时；FTS 设计稿；全量 1108/1108
+### 1.最新 2026-11-25（Orca 会话 `5d3d0c09`）—— #475 可打断的空闲休眠、#464 点号键、#452 off 模式、#453 有界内联（开关默认关）；daemon 已重启；全量 1117/1117
 
-- **#460 余项**（`fix(daemon): restart refuses to boot out a launchd daemon that serves another data root…`）：`daemon restart` 走与 stop 同一个 `launchdDataRootRefusal`，拒绝时 launchctl 一次都不调；plist-drift 的 7 条 restart 夹具改指本文件真实用的数据根（带 Ruling 行），纯比较判据仍用 `/tmp/root`。
-- **#445 余项**（`fix(daemon): a backend failing without a quota limit reads as unhealthy in status…`）：非额度的非零退出或 spawn 失败给该后端连续失败计数（`config_kv` 的 `llm_backend.<id>.failures`，无迁移），超时不计，成功清零；连续 3 次 ⇒ `admin daemon status`／`admin llm status` 多一行 `llm unhealthy`。不切换、不开提案、无付费探针。**计数在 daemon 内（`claude-p.mjs`），daemon 未重启 ⇒ 尚未开始记**；重启照 §0.2 先备份。
-- **#452 余项**（`fix(diagnose): count the last 24 h of Codex sessions that never reached the ccmem hooks…`）：`admin diagnose` 读 `$CODEX_HOME/sessions/Y/M/D/rollout-*-<uuid>.jsonl` 的文件名与 mtime，对 SessionStart 的 `session_context`；以「hook 是否跑到」判定。已知噪声：Orca 派发的 hook 关闭的 codex 会话也计入。
-- **#461**（`test(daemon): one shared loop-timeout guard, 5000 ms for a suite run, and no orphan daemon`）：`tests/helpers/loop-timeout.mjs` 的 `raceLoop` 换掉 54 处写死 1000 ms；默认 1000，`CCMEM_TEST_LOOP_TIMEOUT_MS` 可覆盖，`run-tests.sh` 整轮给 5000；`daemon-sigterm-window` 在 `finally` 里 SIGKILL。
-- **设计稿（未实现，待人审）**：`docs/superpowers/specs/2026-11-25-fts-or-relevance-gate-design.md`（FTS 改 OR＋停用词／文档频率过滤，门「cosine 过下限 **或** 命中词数过线」，embedding-free 路径同用词数门，dedup 仍 AND；默认值先在库副本上校准）。
-- **门（现测）**：Orca 控制器在 rebase 后的分支上跑 `npm test` **1108/1108**（fail 0／cancelled 0／skipped 0），结束后无残留 `daemon/main.mjs`；12 个变异（子 agent，clone 内）各只打红自己（M2e 删状态行打红两条读该行的判据，预期）。
-- **仍未修（登记）**：FTS AND（见设计稿）；#454 的 017/018 `CREATE` 不幂等。
+- **#475**（`fix(daemon): a wake ends the idle sleep; daemon status names the oldest queued task (tester #475)`＋`test(daemon): a wake criterion that fails stops its loop…`）：`scripts/daemon/wake.mjs` 的 `idleSleep` 以 3 s 为片检查两个 wake 文件。Stop 写 `daemon.wake` ⇒ 在**第一次** wake 的 mtime＋30 s 醒（后来的 wake 不往后推；保留「新快照取代旧快照」的去重）；`admin cron run` 另写 `daemon.wake.now` ⇒ 一片之内醒。主 tick 不缩短（到期查询是全表扫）。`admin daemon status` 多一行 `queue due=N oldest_age_sec=S [OVERDUE] last_wake_sec=S`（只扫最新 20 万行）。`cron.mjs` 里 #447 那句「wake 已修好手动跑的等待」的错注释已改正。`daemon-loop.test.mjs` 4 条休眠长度判据改写（带 Ruling 行）。**现测效果**：summarize 从到期到开始的等待，重启前最近 199 个 p50 199 s／p90 723 s，重启后 53 个 p50 58 s／p90 194 s；剩下的等待是 daemon 串行跑任务（单次 summarize 最长 120 s）造成的，与 wake 无关。
+- **#464 余项**（`fix(install): read Codex trust keys written as flat dotted keys (tester #464)`）：`trustedHookKeys` 把当前表头的段与每行的点号键拼起来，三种扁平写法都认；模块注释的旧形状已改。
+- **#452 余项**（`fix(diagnose): Codex reach names ccmem's mode instead of blaming approval (tester #452)`）：mode 不是 `active` 时不计数，只说「ccmem mode 为 off/shadow 时 hook 不记会话」。
+- **#453**（`feat(inject): bounded inline injection behind injection.inline_bounded, default off (tester #453)`）：设计稿 `docs/superpowers/specs/2026-11-25-bounded-inline-injection-design.md`。开关 `injection.inline_bounded`（默认 **false**，只在 `file_based` 开时有意义）：SessionStart 内联有界 stable 段（≤4096 B），UserPromptSubmit 内联过门的检索行（≤8160 B），总量硬上限 12288 B、超了回落到今天的输出；从不读 `rendered_text`（无上限，实测 1.5–1.8 MB）。开关关时两个 hook 输出与改前逐字节相同。**人裁（2026-11-25）**：「如果你觉得合适，那我同意」—— 默认值要等**付费 A/B**（设计稿里有协议）决定，本轮未跑。
+- **daemon 重启（本会话两次，人授权）**：第一次 07:45（#445 计数），备份 `global.db.bak.1795563914074`；第二次合入 #475 后，备份 `global.db.bak.1795566600165`（都 `quick_check ok`）。⚠️ 第一次因命令路径写错退回用 agent shell 的环境，**plist 的 `PATH` 被重写**（去掉了 cmux 的会话级 shim 目录，`claude`/`codex` 改为直接解析到 nvm 的；`CCMEM_CLAUDE_P_COMMAND` 不变；无 `ANTHROPIC_*`）。原 plist 备份 `~/.claude/ccmem/com.ccmem.daemon.plist.bak.1795563914074`。第二次用 plist 自己的四个环境值重启，plist 字节未变。**以后重启的稳妥写法**：用 `PlistBuddy` 读出 plist 的 `PATH`／`CCMEM_DATA_ROOT`／`CCMEM_CLAUDE_P_COMMAND`／`CCMEM_CONFIG_PATH` 作为该命令的环境再 `admin daemon restart`。
+- **#445 计数**：重启后到本节写下时没有非额度失败（提取一直成功），`config_kv` 里尚无 `llm_backend.*.failures` 行——属正常，不是没生效。
+- **新发现（登记未修）**：`ccmem admin daemon status | head -1` 在管道被提前关闭时抛出未处理的 `EPIPE` 崩溃（`cli.mjs` 写 stdout 未处理 EPIPE）。
+- **门（现测）**：子 agent 在分支上 `npm test` **1117/1117**（fail 0／skipped 0，load 35–61）；各新判据先在旧码上见红，变异在 `git clone --local` 副本内。
+- **FTS OR 开关**（`feat(retrieval): FTS OR mode and a two-signal relevance gate behind retrieval.fts.mode, default "and" (FTS OR switch)`＋校准一笔）：人 2026-11-25 批「放开关后、默认仍 AND、先在真库副本上校准」。键 `retrieval.fts.mode`（默认 `"and"`，golden 判据钉住默认逐字节不变）、`retrieval.fts.max_df_ratio`（0.2）、`retrieval.gate.min_fts_terms`（2）。trigram 分词下 df 用一次子串扫描计（p50 60 ms／p90 ~85 ms）。**校准（真库副本，80 条真实 prompt＋24 条无关，bge-m3 0.60）**：今天 embedding 路径无关 0/144、真实 prompt 有 FTS 命中 0/80；OR 后 53–58/80 有命中，但无关行最少也漏 3/144（df 0.1、min 3），**没有设置达到设计标准（≤1/144）⇒ 默认不翻**；embedding-free 路径今天漏 140/144，开门后又会清空 53–60/80 真实 prompt。下一步（未做）：给「新增行」标相关性样本；考虑只给 embedding-free 路径加门。数字在设计稿 Calibration 节。
+- **仍未做**：#454 的 017/018 `CREATE` 不幂等；#445 付费探针（`diagnose --llm`）要不要做另定。
 
-### 1.0000000000000000 2026-11-24 晚（Orca 会话 `d7ca40c0`→`6f9b7b78`）—— 测试者 #459 #464 #458 #460；全量 1098/1098；已由人推送
+### 1.A 2026-11-07 → 11-25 凌晨各轮仍成立的结论（2026-11-25 会话 `5d3d0c09` 压缩；过程原文见 §7，取本节压缩提交的父提交）
 
-- **#459**（`fix(config): codex runs on its own default model unless one is configured`）：`llm.models.codex` 默认由 `'gpt-6-luna'` 改为 `null`（不传 `-m`），与 claude/omp 一致；两条判据改写（带 Ruling 行），codex-omp 适配 spec 追加具名更正。**daemon 未重启**：只在 `llm.backend` 走 codex 的机器上有效果，重启时照 §0.2 先备份。
-- **#464**（`fix(diagnose): read Codex's trust table headers segment by segment…`）：`trustedHookKeys` 逐段解析 TOML 表头（bare／"basic"／'literal'，点两侧可有空格），认 Codex 0.170 的 `["hooks"."state"."<key>"]`；新判据用真实形状，旧码下是空集。
-- **#458**（`fix(omp): a hanging hook resolves at its timeout…`）：去掉 `timer.unref()`；本机测试 runner 复现不了，新判据在子进程里跑挂起 hook（旧码 exit 13）。
-- **#460**（`fix(daemon): stop signals only this host's ccmem daemon…` 与 follow-up）：`daemon stop` 在锁行 pid 活着且 hostname 不是本机、或该 pid 的命令不是 `daemon/main.mjs`（或读不到）时拒绝并不发信号；pid 已不存活的陈旧行照旧经 ESRCH 清掉；launchd 分支在 plist 的 `CCMEM_DATA_ROOT` 不是当前数据根时拒绝 bootout —— **只在 `stop` 做，`restart` 未做**（plist-drift 夹具故意写 `/tmp/root`，留作余项）。CLI 打 `daemon stop refused — …`、exit 1。
-- **门（现测）**：`npm test` **1098/1098**（load≈300）。
-- **仍未修（登记，2026-11-25 更新）**：#445／#452／#461 余项已在上一节做完；FTS 见设计稿；#454 的 017/018 `CREATE` 仍不幂等。
-- **已有库升级的约定（沿用）**：只由 `ccmem admin migrate` 升级，顺序 `daemon stop` → `migrate` → `start`；待迁移时 hook 返回空上下文，CLI 与 daemon exit 1。
+- **迁移**：已有库**只由 `ccmem admin migrate` 升级**，顺序 `admin daemon stop` → `admin migrate` → `admin daemon start`；待迁移时 hook 返回空上下文，CLI 与 daemon exit 1。起因：`openDb()` 曾在 hook 里对 1.73 GB 库做 `VACUUM INTO`（12 s，超 hook 时限），留下 226 个 `.partial`（131 GB，已删）。#454：行首 `ADD COLUMN` 列已存在即跳过、020 索引 `IF NOT EXISTS`；017/018 的 `CREATE` 遇异链对象仍不幂等（登记）。
+- **daemon 健康可见性**：`admin daemon status` 有提取健康行（只扫最新 20 万行，0.36 s）；#445 非额度失败连续 3 次 ⇒ `llm unhealthy`（超时不计、成功清零、只报不切）；#448 codex 失败摘录读 stdout 的 `turn.failed.error.message`；#444 成功写 `'success'` 并移出 dispatch 的 try/catch（测试者机器那 38 行的修复 SQL 已交人）。
+- **daemon 生命周期**：#460 `stop`／`restart` 在锁行是别的主机、别的进程或 plist 的数据根不同时拒绝，不发信号；#396 install／restart 先 `stat` 程序路径，plist 带 `ThrottleInterval 60`，`crash-guard` 1 h 内第 11 次启动拒绝；日志轮转 `admin daemon rotate-log`（不自动轮转，日志是人的数据）；vec_backfill 429 指数退避（30 s 起、封顶 1 h）。重启时 shell 里的 `ANTHROPIC_*` 会被复制进 plist —— 必须先 unset（本会话起改为用 plist 自己的值，见上）。
+- **summarize**：Stop 只读 transcript 末尾 ≤2 MiB 一次（#395），任务带字节范围，daemon 只读该范围；`last_message_seq` 是全文计数；取代按 task 行 id；`admin cron run summarize_pending --session <id>` 可人工跑（#447）；记忆带 `session_id`／`transcript_path` 溯源（#446 P0，迁移 020，存量行 NULL，audit 回填归人）。
+- **检索/注入**：#414 FTS 查询逐 token 引号字面量；#415 探针在 temp schema、daily `optimize`；#453 按 embedding 签名的 cosine 下限（bge-m3 0.60，真库副本校准）；FTS 默认 AND，自然语言 prompt 几乎从不命中词面（OR 开关与校准见 §1.最新、设计稿 `2026-11-25-fts-or-relevance-gate-design.md`）；渲染不再给模型 score 后缀；magpie 度量：注入中位 ~1.2k tok、从不打断缓存前缀（§6.5）。
+- **embedding**：本机已切原生 ollama（`bge-m3`，1024 维，签名 `ollama:bge-m3:1024`），openai 键保留以便回滚；`list/show --json` 给 Orca 面板。
+- **Codex**：`trustedHookKeys` 认表头逐段与扁平点号键；`admin diagnose` 报 Runtime／Codex 行与近 24 h 未到 hook 的 codex 会话（Orca 派发的 hook 关闭会话计入，已知噪声）；codex 默认不传 `-m`（#459）。
+- **测试**：`run-tests.sh` 解释器候选＋具名报错（#451）、整轮 loop 超时 5000 ms（#461 `raceLoop`）；测试子进程用 `process.execPath`。
+- **Orca 接口**：`orca-outcome upsert|list`（迁移 018）、`orca-correction`、`export --json`。
 
-### 1.000000000000000 2026-11-24 全天（Orca 会话续做，`221948a1` 之后；**本节全部已推**，`/usr/bin/git ls-remote` 现测）—— hook 全部超时的事故与修法：迁移只走 `ccmem admin migrate`
-
-- **事故（现测）**：上一轮加了 019/020，但真实库还没升级。每次 `openDb()` 都先跑 `createMigrationBackup` ⇒ 对 1.73 GB 的库做 `VACUUM INTO`，实测 **12.04 s**；而三个 hook 的时限只有 2／5／3 s ⇒ hook 做到一半就被杀，迁移永远落不了库，下一次 hook 又从头再来。当天所有 Claude 会话都报 `UserPromptSubmit … timed out after 5s`。这类事故按 018、019、020 三次各发生过一次，`.partial` 的 mtime 分布与三次迁移的应用时间对得上。**最后是一次 CLI（`admin daemon status`，不受 5 s 时限）在 08:24:30 把库升到了 20**，hook 随之恢复。
-- **清理**：先确认 226 个 `.global.db.backup-*.partial*`（131,532,564,480 B）没有进程打开（`lsof` 空），且最近 15 分钟内没有变动，然后 `trash` 进废纸篓；**人已于当天清空废纸篓**（不可再还原）。另做一份维护备份 `global.db.bak.1795482388243`（`quick_check` ok，schema 20）。
-- **同一天的后续（同一会话，按测试者台账优先级）**，主题行都以 `(tester #NNN)` 结尾（人已手动推送）：
-  - **#454**：测试者的库由另一条分支 `ccmem_ali` 的迁移链建成，v18 时已带 `session_context.transcript_path` ⇒ 019 报 `duplicate column name`，`admin migrate` 永远失败（且每次留一份 1.7 GB 备份）。现在行首的 `ALTER TABLE … ADD COLUMN` 若列已存在就跳过；020 的索引改 `IF NOT EXISTS`。**登记未修**：017/018 的 `CREATE TABLE`/`CREATE INDEX` 遇异链同名对象仍会报「已存在」（测试者的库已过 018，未做）；迁移只比版本号、不比身份；被 Ctrl-C 的 `admin migrate` 仍可能留 `.partial`，无清扫。本机不受影响（无 `ccmem_ali`，迁移记录是本链）。
-  - **#455**：18 个测试文件写死 `/usr/local/bin/node` ⇒ 改 `process.execPath`。**登记**：`run-tests.sh` 的候选只查 `-x` 不试跑，坏的 homebrew node 会被选中（未修）。
-  - **#445**：`admin daemon status` 多一行 `memory extraction last_success=… failed_24h=… last_error=…`，只读 `tasks`、不调 LLM。真库 `tasks` 330 万行、无可用索引，全表扫实测 24.68 s ⇒ 只扫按 rowid 最新的 200000 行（0.36 s、答案相同），窗口内无成功时打 `none-in-last-200000-tasks` 而不是 `never`。真库实测整条 status 5.94 s（load ~100）。未做：`diagnose --llm` 真探针（付费）。
-  - **#452**：README 与 `install codex` 输出说明 `codex exec` 会静默跳过未批准的 hook，须在交互式 Codex 里 `/hooks` 批准一次。
-  - **#453**：注入不再「不管相关与否塞满 6 条」。新配置 `retrieval.min_cosine_by_signature`（按 embedding 签名），只对 prompt hook 与 retrieval-check 生效；`list`/搜索不变；没校准的模型行为不变。bge-m3 出厂 0.60：在真库副本（16.7k 向量）上用 24 条无关 prompt 对 80 条真实 prompt 校准，0.60 时无关行留 1/144、真实 prompt 被清空 1/80。metric 行多 `retrieval_gated`。**为什么不用测试者提的 fused≥0.20**：cosine 尺度随模型变（bge-m3 无关文本 ~0.4–0.6，OpenAI 的远低于此）。
-  - **新发现、登记未修**：`sanitizeFtsQuery` 把每个词加引号后用空格连 ⇒ FTS5 里是 AND；trigram 下 <3 字符的词不命中、整句中文不命中 ⇒ 校准的 104 条 prompt **fts 全为 0**，词面检索对自然语言 prompt 实际从不命中。这在 #414 之前就是 AND，不是 #414 引入。改成 OR 会改变所有人的排序，需单独设计。
-  - 门：全量 `npm test` **1093/1093**。
-- **修法**（主题行 `fix(db): only \`ccmem admin migrate\` upgrades an existing store; …`，已推）：已有数据的旧库，`openDb()` 一律拒绝（`MigrationRequiredError`），并且在切 WAL 之前就拒、不改文件。hook 返回空上下文，stderr 写一行指路；CLI 与 daemon 以 exit 1 退出；`admin daemon stop` 在待迁移状态下仍可用。`ccmem admin migrate` 发现 daemon 还活着就拒绝；SQL 迁移先拿写锁再做快照，迁移过程中不删旧备份。空库仍会自动初始化。判据 `tests/integration/explicit-migration.test.mjs` 10 条，原 8 条先在基线上见红、审阅补的 2 条先在修前见红；全量 **1084/1084**。计划与审阅裁定在 `docs/superpowers/plans/2026-11-24-explicit-schema-migration.md`（As built 节）。
-- **测试分档（人 2026-11-24：下一轮最先做，跨四仓）**：日常只跑改动部分、全量单独成 `npm run test:full`（发布或人要求时跑）。本仓全量约 1,090 条、低负载约 40 s，不是瓶颈，可最后做；分析在 Orca 仓 `docs/superpowers/specs/2026-11-24-test-time-analysis.md`。
-- **以后加迁移**：顺序是先 `admin daemon stop`，再 `admin migrate`，最后 `admin daemon start`，并且要写进 handoff。**不要再假设 hook 会帮你迁移。**
-- **登记**：daily maintenance 仍按 `migration_backup.max_keep` 修剪备份（属于用户配置的保留策略，裁定保留）；全新空库被多进程同时首次初始化的竞态没修（§2.4 已有登记）。daemon pid 59824 是 08:24 起的旧代码进程，库已是 20，不需要重启。
-- **#444 那 38 行不在本机**：本机 `tasks` 没有 CHECK 约束，相关行数为 0。那 38 行在测试者机器上（任务 42340–42343 等），修复步骤已交给人，转给测试者的 agent 执行：pull 后 `admin daemon stop` → 确认无进程持有后 `trash` 掉 `.global.db.backup-*.partial*` → `admin migrate` → 用 `error_excerpt LIKE 'CHECK constraint failed:%status IN (%'` 预览计数、导出 CSV、再 `UPDATE … SET status='success', error_excerpt=NULL`，`changes()` 必须等于预览数，不等就停 → `admin daemon start`。只匹配 `status IN (` 是为了不误伤别的列的 CHECK 失败。
-- **daemon**：本机 daemon 仍是 08:24 起的进程，跑的是本节各笔之前的代码（`daemon status` 的提取健康行、#453 的门在 hook 侧已即时生效；daemon 侧本轮无行为依赖）。下次重启照 Rule 13 先备份。
-
-### 1.00000000000000 2026-11-24（Orca 会话 `221948a1`）—— 测试者 #444 #448 #447 #435 #451 #436 #446 P0；全量 1075/1075
-
-- **#444（读数）**：成功路径原本写 `tasks.status='completed'`，而 v0.1 spec 的 `tasks` CHECK 只许 `'success'` —— 该约束**从未进过仓库的迁移**（`git log -S "CHECK (status"` 只命中 spec 文档），是早期库带进来的。在带该约束的库上 UPDATE 抛错、catch 把**跑成功**的任务记成 `failed`（本机 38 行 `error_excerpt LIKE 'CHECK%'`）。现在写 `'success'`；成功记账**移出** dispatch 的 try/catch（记账失败不会再被报成任务失败）；`cron list` 两种词都认。改写过的判据都带 `Ruling (#444)` 注释。
-- **#448**：新 `scripts/daemon/failure-excerpt.mjs`。`claude -p` 写 stderr，`codex exec --json` 把错误全写 stdout 且 stderr 为 0 字节 ⇒ 摘录只有 `codex exec exit 1: `。stderr 为空时读 stdout，取 `turn.failed.error.message` / 最后一条 `error` item，而不是 900 字节 JSON 行。
-- **#447**：`summarize_pending` 可人工跑（`admin cron run summarize_pending --session <id>`，payload 由 Stop hook 记下的 `session_context` 构造）；lease 无行时 `last=`/`--history`/`--issues` 回退读 task 行；`cron run` 入队后 `touchWakeFile()`；help 补齐 flag；未知子命令 exit 64 + usage。**改写两条既有判据**（`cmdAdminCron run` 与 CLI 各一条，`Ruling (#447)`）。
-- **#435**：`semantic off`→`on` 抛 `TypeError … reading 'load'`：`resolveEnabled` 先读 config_kv，`off` 留下 `enabled=false` ⇒ `getProvider` 返 null。现在先写 kv 再解析，失败回滚两者；`<verb> --help` 不再执行该 verb。
-- **#451**：`scripts/run-tests.sh` 解释器改为「`CCMEM_INSTALL_NODE_PATH` → 三个平台候选 → `PATH` → 具名报错 exit 127」；`package.json` 两个 threat 脚本同改。`CCMEM_STRICT_INTERPRETER=1` 强制走拒绝分支，好让这条在有任何回落的机器上也能钉住。宿主测试要删子进程的 `NODE_TEST_CONTEXT`，否则内层 `node --test` 不向 stdout 输出。
-- **#436**：README 补 `ollama`（三个键）、`orca-outcome`/`orca-correction`/`list --json`、`npm test` 一节；`embedding.remote_host`/`remote_path_template`/`ollama_timeout_ms` 三个**代码读、两处配置都不声明**的键补进 `config.default.json` 与 `DEFAULT_CONFIG`（`v013-config-sync` 抓到了后一半）。
-- **#446 P0（迁移 019、020）**：019 给 `session_context` 加 `transcript_path`（Stop 写入；也是 #447 人工跑 summarize 的 payload 来源）。020 给 `memories` 加 `session_id`/`transcript_path`（可空 + 部分索引），`insertMemory` 收可选 `provenance`，summarize 的写入点填它；抽取 schema 把 `learned` 列入 `required`，prompt 要求 `learned`/`investigated`。**存量行保持 NULL**；从 audit 回填是单独的可选步骤（会重写用户数据），归人。~~真实库未应用 019/020~~ **已过期**：019 于 11-24 00:56、020 于 08:24:30 由 CLI 进程应用（见上一节的事故）。
-- **门（现测）**：`npm test` **1075/1075**；迁移相关 schema 断言与「降级到 v16 再升级」判据已按 019/020 更新。
-- **登记**：`admin cron` 的 `--issues` 对 `summarize_pending` 仍只报 `failed`/`zombie`（现读得到 task 行，行为正确但未加判据）；`semantic off` 的 kv 行与 config 文件的优先级仍是既有设计，未改。
-
-### 1.0000000000000 2026-11-23 深夜（会话 `ec9efff6` 续做）—— daemon 已重启到范围读代码；两处 worktree 已清
-
-- **daemon 重启**（人授权）。备份 `~/.claude/ccmem/global.db.bak.1795444654000`（1.65 GB，`PRAGMA quick_check` = ok）。重启时**显式 unset 了 9 个 `ANTHROPIC_*`**（本 shell 有 6 个），否则会被复制进 plist。`admin daemon restart` 报 `start_timeout`——**这是超时不是失败**：sleep 5 后 `status` / `daemon_lock.holder_pid` / `pgrep` 三处都是 pid **19687**，一致。
-- **行为验证（不看 pid）**：①`plutil -p` plist 里 `ANTHROPIC_*` 计数 **0**（凭据没被复制）；②重启后新入队的 `summarize_pending` 任务 `transcript_window` 与 `snapshot_observed_at` 都在；③重启之后有 `summarize_pending_applied` 审计行（ts 晚于 `acquired_at`），说明新 daemon 真的按记录范围读完了任务。**结论：范围读已生效**，`incomplete-snapshot` 审计为 0（没有短读/不完整快照被跳过）。
-- **worktree 已清**：`ccmem/.worktrees/stop-tail-395-032cc670` 删除前先把未跟踪的 plan 文件提交并 cherry-pick 进 main（`docs(plan): the Stop tail-bound plan this round implemented`），再用不带 force 的 `git worktree remove` 移除。`ccloop/.worktrees/tester-issues-20261123` 的未提交 handoff 行（上一轮 `fc492f1b` 写的、内容已过期）存进 `ccloop` 的 `stash@{0}` 后移除，需要时可 `git stash show -p stash@{0}` 取回。
-
-### 1.000000000000 2026-11-23（Orca 会话 `fc492f1b`）—— #395 第 2 条：Stop 尾部 2 MiB 窗口与摘要快照；全量 1038/1038
-
-- **#395 第 2 条已实现**（提交主题行 `feat(transcript): bound Stop transcript window`、`fix(transcript): cap and report bounded reads`、`fix(summarize): consume Stop snapshot ranges`）：`parseTranscriptWindow` 只读末尾 ≤2 MiB（调用方给更大值会被夹到 2 MiB），从完整 JSONL 行开始、UTF-8 安全；`open` 遇 ENOENT 返回空快照，短读不把未读字节当成已覆盖。`handleStop` 的统计、两条推断、L2.5 探针与入队元数据共用这一次窗口读；任务带 `{startByte,endByte}`，`runSummarizePending` 只读该字节范围（Stop 之后追加的内容不进摘要），旧 payload 无范围时保持原全量路径。
-- **窗口滑动的排序修正**：保留 entry 数可能随窗口前进而变小，因此摘要任务的新旧/取代不再按 `last_message_seq` 比较，改按单调 task 行 id。
-- **⚠️ 更正（2026-11-23，Orca 会话 `ec9efff6`）—— 上面「旧 daemon 继续走旧全量路径，行为不坏」是错的，已修**（主题行 `fix(summarize): the window stays inside the Stop hook, and retries keep their snapshot`）：旧 daemon 不认识 `transcript_window`、会全量解析再 `slice(0, last_message_seq)`，而当时 `last_message_seq` 是**窗口内** entry 数 ⇒ 它摘要的是会话**开头**那几条，内容悄悄错掉。现在 `last_message_seq` 与 `session_context` 的两个计数**恢复「全文」含义**（新 `scanTranscript`：一次流式扫描，只数完整行，按各 agent 的归一化规则计数、不留正文），窗口只喂推断与入队元数据。同笔：重试走 `insertRetryTask`（同一 payload ⇒ 保留原 `snapshot_observed_at`；已陈旧则不入队，运行中的陈旧行标 superseded），Stop 自身不再 supersede（唯一索引照旧去重）。判据 `scanTranscript` 三 agent 等价 + 「剥掉 `transcript_window` 的 payload 仍摘要到最新一轮」（变异回窗口计数即红）。
-- **诚实边界**：尾部窗口会丢掉超长会话最开头几轮的推断输入（推断只关心最后一条 assistant 消息）；`deps.parseTranscript` 测试注入路径不带快照元数据（生产路径不走它）；**daemon 未重启**——Stop hook 是每次新进程、已即时用新代码，`runSummarizePending` 在新旧 daemon 下**现在都对**（新 daemon 读记录的字节范围，旧 daemon 全量解析 + 全文 `last_message_seq`），所以重启只影响是否启用范围读，不影响正确性。
-- **门**：全量 `npm test` **1,046/1,046**（2026-11-23 会话 `ec9efff6` 现测；本修正前 1,038）；包没有 `build` 脚本，用 `node --check` 校验改动文件。判据覆盖默认/恰好 2 MiB、UTF-8 切分、末行不完整、短读、ENOENT、追加后只读原范围、两次 Stop 的排序、重试继承快照、旧 daemon 兼容。
-- 测试者 #416：仍等其在自己的 Codex `/hooks` 批准一次；#412–#415 的前置已在此前轮修完。
-
-### 1.00000000000 2026-11-21（Orca 会话 `cf2d6dfd` 之后）—— #418 `orca-outcome`、#415 D／#416 可见性；全量 1028/1028
-
-- **#418 run/task 回写（ccmem 半边）**：新 verb `ccmem orca-outcome upsert`（stdin 一个 `orca-run-outcome-v1`，cwd 定项目键，`(project_key, run_id)` 唯一；同体 `unchanged`、异体 `refused` 且不覆盖；exit 0／64／1）与只读 `list [--project] [--since] [--json]`（按 `recorded_at` 过滤，选择已写在代码与帮助里）。迁移 018 新增 `orca_run_outcomes`（不改 export／retrieval／稳定段）；Phase 1 不动 trust。判据 `tests/integration/orca-outcome.test.mjs` 6 条先红后绿；trust 写入与覆盖两条变异见红。
-- **#415 D／#416 可见性**：`admin diagnose` 新增 `Runtime` 行（node／SQLite／FTS5 状态与降级原因）和 `Codex` 行（hooks 已装、Codex 的 trust key 几条已批准；未装时点名 `ccmem install codex`）。只读 `config.toml` 的 key 名，从不读／打印 `trusted_hash` 的值。判据 `tests/integration/diagnose-runtime-codex-hooks.test.mjs` 4 条。
-- **门**：全量 `npm test` **1028/1028**（另修 `self-restart` 的 schema 断言 17→18）。真实库**已由 hook 升到 18**（`orca_run_outcomes` 已存在）；备份 `~/.claude/ccmem/global.db.bak.1795271000180`（`quick_check ok`，备份时 schema 17）。**daemon 未重启**（新 verb 是一次性 CLI，不需要）。
-- **登记**：`--since` 取 `recorded_at`（若本意是 run 的 `observed_at`，改一行）；真实库的 018 迁移只在临时库验过；Orca 的 outbox 用注入 runner 验过，未在真 ccmem + 真面板上跑过。
-
-### 1.0000000000 2026-11-21（Orca 会话 `0677fe2a`）—— #413 真实 Ollama 链路、#395 stop 单次解析、#415 P3 optimize；全量 1018/1018
-
-- **#413 已切真实配置**：`ollama pull bge-m3` 完成（467 MB、1024 维）；`~/.claude/ccmem/config.json` 改为 `embedding.provider=ollama`、`ollama_model=bge-m3`、`ollama_dim=1024`，**保留 openai 键**以便回滚；备份 `config.json.bak.1795194943994`、`global.db.bak.1795194943994`（`quick_check ok`）、plist `.bak.1795194943994`。daemon 重启为 pid 60721（重启前显式 unset 了 `ANTHROPIC_*`）；wide 门期间为降负载停过一次，门后重启为 pid 72748。`admin semantic status`：`reachable=true`、`health=http://localhost:11434 serves bge-m3`、`model=bge-m3 dim=1024`；签名从 `openai:…` 变为 `ollama:bge-m3:1024`，vec_backfill 正在重嵌（交接时 pending≈14k，每批 50；**未等到 pending=0**）。
-- **#395（设计稿第 1 条）**：`scripts/handlers/stop.mjs` 现在只 `parseTranscript` 一次，stats／seq／`inferFromTranscript`／`inferL25FromTranscript`／`recordL25Probe` 都消费同一份 entries；`transcript.mjs` 拆出 `*Of(entries)`，`feedback.mjs` 的 helpers 加可选 `entries` 参数。判据 `tests/integration/stop-hook-parse-once.test.mjs`（注入 reader，断言只读一次且 `session_context` 行不变）；既有 stop／feedback／transcript 43/43。**未做**：设计稿第 2 条按字节尾部截断；prompt_submit 的 embedding 熔断本来就有（`B-circuit`）。
-- **#415 P3**：`optimizeFts(db)` 在 daily maintenance 末尾执行 FTS5 `optimize`，只在索引缩小时写 `fts_optimized` 审计（不缩就不写，避免审计膨胀）。真实库备份实测 **26,136,576 B → 25,870,336 B**（−266 KB），`MATCH 'ccmem'` 20 次均值 **0.34 ms → 0.14 ms**，`quick_check ok`。判据 `tests/integration/fts-optimize.test.mjs`（2）＋`fts-daily-maintenance.test.mjs`（1，变异删掉调用见红）。**P2 external-content 未做**（要迁移用户库，单独裁）。
-- 全量 `npm test` **1018/1018**（2026-11-21，`env -u CCMEM_CONFIG_PATH` 隔离跑）。
-
-### 1.000000000 2026-11-20（Orca 会话 `cc03e171`）—— 原生 ollama provider（#413）、只读 JSON 读路径（#418）、#416 度量与两处省 context 改动
-
-- **代码在 main，已推**（人本轮 `allow-push`）：`3c8eac8`（ollama provider）、`35bd82c`（#413 review：观测维数胜配置、失败回滚 `active_provider`、status 重算 pending、latency probe 标签）、`a489916`（#418 `list/show --json`）、`788a450`（magpie 度量修正）、`301e37f`（渲染去掉 score 后缀）。全量 `npm test` **1014/1014**（2026-11-20）。
-- **#413**：`embedding.provider: "ollama"`，键 `ollama_base_url`（默认 `http://localhost:11434`）、`ollama_model`（**无默认，必须给**，不在代码里 pin 模型）、`ollama_dim`（只是猜测，首次 `/api/embed` 后以响应维数为准）。`admin semantic on --provider ollama` 可用；`semantic status` 报 `reachable/health`；未装模型时报 `ollama pull <model>`；失败时回滚 `active_provider`。**本机 Ollama 当前 0 个模型（`ollama list` 空，`bge-m3` 不在）**，因此没有切换真实配置：`~/.claude/ccmem/config.json` 仍是 `provider=openai`＋真实 key。要用：`ollama pull bge-m3`，改 config 的 `provider/ollama_model/ollama_dim`，重启 daemon；签名会从 `openai:…` 变 `ollama:bge-m3:1024`，backfill 会重嵌。
-- **#418**：`ccmem list [query] --json [--limit --offset --scope]` 与 `show <id> --json`；返回 export 行形状＋`score`，不跑 tier15 写维护；文本输出逐字未变。Orca 面板每次 list/search/get 只起一个 ccmem 进程，按 fused 排序；旧 ccmem（不认 `--json`）回退两次 export。**注意**：面板 search 现在走 ccmem 的语义检索，开了 embedding 时可能触发一次 provider 调用（查询缓存命中则不再调用），这是「与 agent 检索一致」的代价。
-- **#416 度量（magpie 请求存档，2026-11-20 快照）**：存档只有 11-11／11-20 两天且在按 1 GiB 上限淘汰；claude×dfmodel／gpt-6-sol 的 ccmem 中位 **~1.2k tok / 0.4–0.6% prompt**，真实注入体（routing files 项）中位 **1214 tok**、最大 2715；**2367 对相邻请求里 `ccmem@diff=YES` 为 0**（注入从不打断缓存前缀）；`recent_injections` 相邻复用 16.1%、会话内复用 32.3%。**旧读数 opus 7.8% 是量具 bug**：`## ccmem context` 没有闭合 reminder，`ccmemSegment` 把后续用户正文算成 ccmem；`788a450` 已改为读指令止于首个空行、其余块 16 KiB 封顶。codex 仍 0 标记（存档当时未开，无法证实）。
-- **省 context 的结论**：真实成本很小，ref+按需取回（P2）与摘要优先（P3）**不值得做**；去重门最多省 32% 槽位（~几百 tok），未实现。已做：渲染不再把 `score fused/fts/…` 给模型（`recent_injections` 已存分数）；曾试「retrieved 去重 stable」，因既有判据把「唯一命中也是 pinned」当 retrieved 块而回退，留作单独改动。
-- **daemon 未因本轮代码重启**：改了 provider/status/latency probe（daemon 侧），但配置未切到 ollama，所以不急着重启；下次重启前照 Rule 13 备份。
-- **给下一轮**：#416 的 P0（Codex 真接入与 A/B）仍需测试者在自己的 Codex `/hooks` 批准一次；`#416` 的 P1 去重门若要做的先读 `recent_injections` 现成字段；#413 的真实 Ollama 链路要先 `ollama pull bge-m3`。
-
-### 1.00000000 2026-11-20（Orca 会话 `48bc4690`）—— #414 查询转义、#415 probe 改 temp、#420 测试 node；daemon 已重启（退避生效）
-
-- **代码在 main 并已推**（人 `allow-push`）：
-  - **#414**：`sanitizeFtsQuery` 不再把 prompt 原样交给 `MATCH`——token 去掉唯一能破坏引号字面量的 `"`、去掉首尾分隔标点，再逐 token 包成引号字面量（`+ - ^ : ( ) *` 都成字面量）；纯标点丢弃，内部标点保留（`C++`、`a:b`、`-bar` 仍指名）。`legacySubstringSearch` 改用新导出的 `ftsTokens`（不带引号）。判据 `tests/unit/fts-query-syntax.test.mjs` 三条，先红在 `fts5: syntax error near "+"`。
-  - **#415**：可用性探针改在 `temp.ccmem_fts_probe` 建/删，主库 schema 不再每次短进程 +2；旧版本崩溃留下的主库 probe 表仍在缓存冷时清掉。判据两条（`fts-probe-temp`／`fts-probe-legacy`），前者用 cache-cold 的模块实例量 `PRAGMA schema_version`。**其余优化（FTS 重复存 content、无 optimize）未做**。
-  - **#420**：rotate-log 测试的子进程改用 `process.execPath`。
-  - 全量 `npm test` **1000/1000**。
-- **daemon 已重启**（人本轮「这一轮可以做」）：重启前 `sqlite3 .backup` 到 `global.db.bak.1795183564694`（integrity ok）；plist 备份 `com.ccmem.daemon.plist.bak.20261120`。`admin daemon restart` 报 **G1 未重写 plist**（plist 有 `CCMEM_CONFIG_PATH`、会话 shell 没有）——plist 字节未动，只换了进程（pid 以 `admin daemon status` 现测，`running=vec_backfill`）。**行为判别**：`config_kv` 出现 `vec_backfill.consecutive_failures=1` 与 `next_attempt_at` ⇒ 429 退避已在跑。`status` 仍报 `plist=drifted`（只差 `CCMEM_CONFIG_PATH`，预期）。
-- **未做**：**#413**（原生 ollama embedding provider；`openai`＋`openai_base_url`＋dummy key＋`openai_dim` 的兼容层仍可用，是否做归人裁）；**#416**（Codex 接入与省 context：其 P0 度量要先在该机器的 Codex `/hooks` 里人工批准一次，测试者自己未跑；依赖 #414/#415，两者已修）。
-- **退避的第二个判别（现测）**：重启后 20 s 内 `daemon.err.log` 字节数 **delta=0**（5,945,218 → 5,945,218）；旧代码在同一时段每几秒写一行。
-- **给下一轮**：若裁 #413，照 `scripts/lib/embedding/{jina,openai}.mjs` 的 provider 形状加一个 `/api/embed` 适配（无 key、维数取自响应），`embedding.provider` 增加 `ollama`。若做 #416 的 P1（去重/新颖度门），先读 `recent_injections` 的现有字段，别新造探针。
-
-### 1.0000000 2026-11-20（Orca 会话 `c8fc876f`）—— 日志轮转、vec_backfill 退避（#396）、stop hook 单次解析的设计；**代码在 main、未推；daemon 未重启**
-
-- **日志轮转（已生效，无需重启）**：新 CLI `ccmem admin daemon rotate-log [--keep-bytes N]`（默认保留 5 MiB）：把日志尾部复制到 `<path>.<epoch-ms>.tail`（0600、`wx` 不覆盖），再**原地 truncate**（不 rename——launchd 与 daemon 持有该 fd）；缺文件 exit 1。`admin daemon install` 在日志 >10 MiB 时打一行大小提示，**不自动轮转**（日志是人的数据）。**本轮已对真实日志执行一次**：616,109,244 B → 0 B，保留 5.0 MB 到 `daemon.err.log.1795142086727.tail`。
-- **vec_backfill 429 退避（需重启 daemon 才生效）**：连续失败指数退避 30 s 起、翻倍、封顶 1 h，状态在 `config_kv`（`vec_backfill.consecutive_failures` / `next_attempt_at`），continuation 按 `now + delay` 排队；stderr 只记第一次与每第 10 次；成功一批清零。此前每个 429 都立即重排并各写一行 ⇒ 日志每几秒一条、一小时数十 MB。
-- **判据**：`tests/integration/admin-daemon-rotate-log.test.mjs`（7）与 `tests/unit/v015-vec-backfill-backoff.test.mjs`（2，含第二次失败 +60 s 且不写 stderr、封顶）；全量 `npm test` **995/995**（2026-11-20）。两个新文件单独复跑 9/9。
-- **等人**：`ccmem admin daemon restart` 让退避进运行中的 daemon（本轮没重启：daemon 活着 pid 67171、正在跑 vec_backfill；重启前按 Rule 13 先备份 1.6 GB 的 global.db，本轮没做）。推送归人／按 `allow-push` 可代推。
-- **#395（hook 延迟）只到设计**：`.superpowers/sdd/plan/design-395-hooks.md`（在 Orca 仓）。要点：stop 目前把 transcript **解析 5 次**（stats、count、两条 infer、probe）；先「解析一次、entries 贯穿」，再考虑按字节截尾与 embedding 熔断时跳过网络。未改代码。
-
-### 1.000000 2026-11-20（Orca 会话 `57896c64`；其后 `9299e610` 重启 daemon）—— #396 安装/重启校验、diagnose、崩溃退避（代码在 main 且已推；daemon 已重启）
-
-- **2026-11-20 后续（会话 `9299e610`）**：daemon 已重启到含 `a9ba63e` 的代码（pid 67171）；plist 重写后带 `ThrottleInterval 60`；`admin diagnose` ok；旧 `daemon.err.log` 未轮转/截断（83MB 类现场仍在），需要时人工处理。
-
-- 测试者 #396：plist 的 ProgramArguments 指向已搬走的仓库时，KeepAlive 每 ~30 s 重启并无限追加 `MODULE_NOT_FOUND`（报告里 83 MB；本机日志已 609 MB——测试者是另一台机器，本机 plist 与心跳都正常）。改动：install／restart 在写盘/加载前 `stat` 每个程序路径，缺失即 exit 1、点名路径并给迁移提示（不写 plist、不调 launchctl、不写 install-state）；`admin diagnose` 对「程序缺失」或「last exit code 非 0」报 FAIL 并 exit 1；新 plist 带 `ThrottleInterval 60`；`scripts/daemon/crash-guard.mjs` 在 1 小时内第 11 次启动时拒绝（状态在 `CCMEM_DATA_ROOT/daemon-start-history.json`，目录 0700／文件 0600，显式 install／restart 清空）。**用户日志一字未动，也没有轮转/截断。**
-- 判据：新增 `tests/integration/daemon-hardening.test.mjs` 11 条；既有 `plist-drift.test.mjs` 的 fixture 默认 node 路径从写死的 `/usr/bin/node` 改为 `process.execPath`（新校验会先拦下它，注释说明）。全量 `npm test` **986/986**（2026-11-20）。
-- ⚠️ **daemon 侧改动要重启才生效**（崩溃守卫在 `main.mjs`；ThrottleInterval 要重装 plist 才进旧 plist）。本轮没有重启 daemon：需要时在本人终端 `ccmem admin daemon restart`，或 `uninstall && install`。旧 plist 若程序已不存在，新代码根本没机会跑——只能靠 diagnose 的 FAIL 或 restart 的拒绝把人引到重装。
-
-### 1.000000 2026-11-07（Orca 会话 `b5e3c5a8`）—— 环境轮，代码无改动；代码状态仍看 §1.00000
-
-- 人把 nvm default 升到 22.23.4。daemon 本身跑 `/usr/local/bin/node`，不受影响；但它 plist 里的 `CCMEM_CLAUDE_P_COMMAND` 仍指向 22.13.1 下的 claude。人让改配置后，在 agent 会话里跑了 `admin daemon restart` 重写 plist，过程：
-  - 先等 `running=none`；备份 `global.db.bak.1793982395154`（integrity ok）与 `~/Library/LaunchAgents/com.ccmem.daemon.plist.bak.20261107`；
-  - **显式 unset 了 shell 里的 `ANTHROPIC_*`**：agent 会话带着它自己的端点，不 unset 就会被复制进 plist（§0.1）或被 G2 拦下。
-- 结果：
-  - `CCMEM_CLAUDE_P_COMMAND`＝`~/.nvm/versions/node/v22.23.4/bin/claude`；`PATH` 里的 22.13.1 换成 22.23.4，并去掉了 cmux 的会话级 shim 目录；
-  - plist 只剩 4 个键（`CCMEM_CLAUDE_P_COMMAND`、`CCMEM_CONFIG_PATH`、`CCMEM_DATA_ROOT`、`PATH`），`ProgramArguments` 未改。
-- 判别：
-  - launchd pid、锁行 holder 和重启输出三者一致；`acquired_at` 1793982432270 晚于备份；
-  - **重启后 `daemon-cost.jsonl` 有 3 条 `summarize_pending`，都是 `exit_code=0`**（2026-11-06T16:29Z，按 `ts` 晚于 `acquired_at` 取），说明新 claude 的 `claude -p` 能用。
-- ⚠️ 之后在任何带 `ANTHROPIC_*` 的 shell 里跑 `admin daemon status`，都会报 `plist=drifted`（`ANTHROPIC_BASE_URL` 与四个 model 键）：比的是 shell 和 plist，属预期，不要照着去同步。
-
-### 1.00000 2026-10-27（Orca 会话 `7753e97d`）—— 代码状态**先读这一节**（上面 §1.000000 只是环境轮）
+### 1.00000 2026-10-27（Orca 会话 `7753e97d`）—— 代码状态**先读这一节**（2026-11-07 的环境轮已压进 §1.A）
 
 - **`forget` 改为归档**（人裁原话「forget 同意改成归档」；主题行 `fix(forget): archive the memory instead of deleting it, and audit it`，已在本地 main、**未推**）：不再 `DELETE`，改设 `decay_status='archived'`＋`updated_at`，写 `writeAudit(db,'forget',id,{user_action,scope,type,previous_decay_status})`，重建注入缓存；CLI 打印 `forgot memory #mN (…; archived, see ccmem audit show K)`。检索、注入缓存、export 只读 `active`/`probation` ⇒ 归档行不再出现。**不再写 trash 文件**（归档行就是备份；实现席判断，可逆）。⚠️ 实测：**代码里没有任何地方硬删归档行**（原以为维护会删），所以归档行永久保留；**没有 un-archive 的 CLI**，恢复＝按审计行的 `previous_decay_status` 手工 SQL。规格更正追加在 `docs/ccmem-v0.1-spec.md` 附录 F（§5.4 原文不动）。
 - **id 严格解析**（主题行 `fix(cli): parse memory ids strictly and refuse malformed ones with exit 64`）：共用 `scripts/lib/memory-id.mjs` 的 `parseMemoryId`（只收 `123`／`m123`），替换 forget／pin／show／promote 四处 `parseInt`；CLI 在开库前拒坏 id、exit 64（原来 `forget 1abc` 会忘掉 #1）。
@@ -423,7 +317,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-24 全天（Orca 会话 `221948a1` 及其续做；本节原位滚动）：**export 契约（§6.1）不变**。本日 ccmem 的全部改动见 §1 最新两节：#444 #448 #447 #435 #451 #436 #446 P0（上午）；hook 超时事故与「迁移只走 `ccmem admin migrate`」、#454 #455 #445 #452 #453（续做）。**Orca 侧要知道的**：① 以后 ccmem 加迁移，已有库在 `admin migrate` 之前 hook 返回空上下文、CLI/daemon exit 1——Orca 调 `ccmem export`/`orca-outcome` 会以非零失败，需人先迁移；② #453 之后注入条数可能为 0（Orca bundle 走 export，不受影响）；③ FTS AND 问题登记未修。仍成立：Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#415 P2 external-content 不排期。
+2026-11-25（Orca 会话 `5d3d0c09`；本节原位滚动）：**export 契约（§6.1）不变**。本轮 ccmem 改动见 §1.最新（#475 #464 #452 #453 开关），结论汇总在 §1.A。**Orca 侧要知道的**：① 已有库加迁移时，`admin migrate` 之前 hook 返回空上下文、CLI/daemon exit 1 —— Orca 调 `ccmem export`/`orca-outcome` 会非零失败，需人先迁移；② #453 之后注入条数可能为 0（Orca bundle 走 export，不受影响）；③ FTS 默认仍 AND（OR 开关已实现、校准后不翻默认，见 §1.最新）。仍成立：Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#415 P2 external-content 不排期。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

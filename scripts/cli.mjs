@@ -994,7 +994,7 @@ try {
         lastSuccess = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
       }
       process.stdout.write(
-        `ccmem: memory extraction last_success=${lastSuccess} failed_24h=${extraction.failed_24h} last_error=${extraction.last_error ?? 'none'}\n`
+        `ccmem: memory extraction last_success=${lastSuccess} failed_24h=${extraction.failed_24h} timeouts_24h=${extraction.timeouts_24h ?? 'unavailable'} last_error=${extraction.last_error ?? 'none'}\n`
       );
       // Tester #496: bad-payload summarize tasks used to be recorded 'success', so
       // "nothing was extracted" and "extraction worked" read identically. Say it.

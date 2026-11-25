@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -11,6 +11,7 @@ test.after(() => rmSync(dataRoot, { recursive: true, force: true }));
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { describeExtractionHealth } = await import('../../scripts/lib/admin/daemon.mjs');
+const { daemonCostFile } = await import('../../scripts/lib/metrics.mjs');
 const { writeAudit } = await import('../../scripts/lib/audit.mjs');
 
 const HOUR = 60 * 60 * 1000;
@@ -80,4 +81,40 @@ test('a success is still a success (#496)', () => {
   assert.equal(health.skipped_24h, 0);
   assert.equal(health.bad_payload_24h, 0);
   db.close();
+});
+
+test('extraction timeout counts use the last 24 hours across cost log rotation (#445)', () => {
+  const now = Date.now();
+  const db = openDb();
+  const file = daemonCostFile();
+  const timeout = (ts, task_type = 'summarize_pending') => ({ ts, task_type, timed_out: true });
+  const rows = (events) => events.map((event) => JSON.stringify(event)).join('\n');
+  try {
+    writeFileSync(`${file}.1`, rows([timeout(now - 30 * HOUR), timeout(now - 24 * HOUR)]));
+    writeFileSync(file, `${rows([
+      timeout(now - HOUR), timeout(now - HOUR, 'security_audit'), timeout(now + HOUR),
+      { ...timeout(now - HOUR), timed_out: false }
+    ])}\ninvalid JSON\n`);
+    assert.equal(describeExtractionHealth(db, now).timeouts_24h, 2);
+  } finally {
+    db.close();
+  }
+});
+
+
+test('an unreadable cost log leaves the rest of extraction health available (#445)', () => {
+  const db = openDb();
+  const file = daemonCostFile();
+  try {
+    rmSync(file, { force: true });
+    mkdirSync(file); // Reading a directory as a file gives EISDIR.
+    reset(db);
+    const now = Date.now();
+    insertTask(db, { now, status: 'success', finishedAt: now - HOUR });
+    const health = describeExtractionHealth(db, now);
+    assert.equal(health.timeouts_24h, null);
+    assert.equal(health.last_success_at, now - HOUR);
+  } finally {
+    db.close();
+  }
 });

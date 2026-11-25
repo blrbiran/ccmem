@@ -705,7 +705,7 @@ test('cli admin daemon status shows when memory extraction last succeeded and re
   assert.ok(line, `no memory extraction line in:\n${output}`);
   assert.equal(
     line,
-    `ccmem: memory extraction last_success=${expectedTime} failed_24h=2 last_error=${newestError.slice(0, 120)}`
+    `ccmem: memory extraction last_success=${expectedTime} failed_24h=2 timeouts_24h=0 last_error=${newestError.slice(0, 120)}`
   );
 });
 
@@ -718,7 +718,7 @@ test('cli admin daemon status says never when memory extraction has never succee
 
   const output = execFileSync(NODE, [CLI, 'admin', '--', 'daemon', 'status'], { cwd: REPO_ROOT, env, encoding: 'utf8' });
 
-  assert.match(output, /^ccmem: memory extraction last_success=never failed_24h=0 last_error=none$/m);
+  assert.match(output, /^ccmem: memory extraction last_success=never failed_24h=0 timeouts_24h=0 last_error=none$/m);
 });
 
 // Tester #496: a summarize task with no transcript was recorded 'success', so the
@@ -828,6 +828,7 @@ test('extraction health reads only the newest tasks and names the window when no
     assert.deepEqual(describeExtractionHealth(db, now, 2), {
       last_success_at: null,
       failed_24h: 1,
+      timeouts_24h: 0,
       skipped_24h: 0,
       bad_payload_24h: 0,
       last_error: 'exit 1',

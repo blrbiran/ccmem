@@ -7,6 +7,7 @@ import { describeBackendState } from '../../daemon/backend-state.mjs';
 import { clearStartHistory } from '../../daemon/crash-guard.mjs';
 import { isLockRowAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
+import { daemonCostFile } from '../metrics.mjs';
 import { QUEUE_OVERDUE_MS } from './cron.mjs';
 import { lastWakeAt } from '../../daemon/wake.mjs';
 import { DB_BUSY_TIMEOUT_MS, getDataRoot } from '../db.mjs';
@@ -1196,6 +1197,33 @@ function describePlistDrift() {
   return comparePlist(onDisk, expected);
 }
 
+// Count actual extraction calls killed by their timeout, including retries.
+// Cost telemetry records the typed outcome even if task settlement fails.
+function countExtractionTimeouts(since, now) {
+  const file = daemonCostFile();
+  let count = 0;
+  // The logger retains the active file and one rotated generation.
+  for (const filename of [`${file}.1`, file]) {
+    let raw;
+    try {
+      raw = readFileSync(filename, 'utf8');
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      return null; // telemetry may be unavailable while daemon status is readable
+    }
+    for (const line of raw.split('\n')) {
+      if (!line) continue;
+      let event;
+      try { event = JSON.parse(line); } catch { continue; }
+      if (event?.task_type === 'summarize_pending' && event.timed_out === true &&
+          typeof event.ts === 'number' && event.ts >= since && event.ts <= now) {
+        count += 1;
+      }
+    }
+  }
+  return count;
+}
+
 // Tester #445: a live daemon whose every summarize_pending run fails (backend
 // exit 1) looked healthy for weeks. Read the outcome straight from `tasks`; no
 // LLM probe (it would cost money). Successful rows are 'success' since #444;
@@ -1206,6 +1234,7 @@ function describePlistDrift() {
 const EXTRACTION_SCAN_ROWS = 200000;
 
 export function describeExtractionHealth(db, now = Date.now(), scanRows = EXTRACTION_SCAN_ROWS) {
+  const since = now - 24 * 60 * 60 * 1000;
   const floor = Number(db.prepare('SELECT COALESCE(MAX(id), 0) AS n FROM tasks').get().n) - scanRows;
   const lastSuccess = db.prepare(
     `SELECT finished_at AS at FROM tasks
@@ -1215,7 +1244,7 @@ export function describeExtractionHealth(db, now = Date.now(), scanRows = EXTRAC
   const failed24h = db.prepare(
     `SELECT COUNT(*) AS n FROM tasks
      WHERE id > ? AND type = 'summarize_pending' AND status = 'failed' AND finished_at >= ?`
-  ).get(floor, now - 24 * 60 * 60 * 1000);
+  ).get(floor, since);
   const lastFailed = db.prepare(
     `SELECT error_excerpt FROM tasks
      WHERE id > ? AND type = 'summarize_pending' AND status = 'failed'
@@ -1228,15 +1257,16 @@ export function describeExtractionHealth(db, now = Date.now(), scanRows = EXTRAC
   const skipped24h = db.prepare(
     `SELECT COUNT(*) AS n FROM tasks
      WHERE id > ? AND type = 'summarize_pending' AND status = 'skipped' AND finished_at >= ?`
-  ).get(floor, now - 24 * 60 * 60 * 1000);
+  ).get(floor, since);
   // The audit also covers bad payloads that older builds recorded as successes.
   const badPayload24h = db.prepare(
     `SELECT COUNT(*) AS n FROM audit_log
      WHERE action = 'summarize_pending_bad_payload' AND ts >= ?`
-  ).get(now - 24 * 60 * 60 * 1000);
+  ).get(since);
   return {
     last_success_at: lastSuccess?.at ?? null,
     failed_24h: Number(failed24h?.n ?? 0),
+    timeouts_24h: countExtractionTimeouts(since, now),
     skipped_24h: Number(skipped24h?.n ?? 0),
     bad_payload_24h: Number(badPayload24h?.n ?? 0),
     last_error: lastFailed ? String(lastFailed.error_excerpt ?? '').replace(/\s+/g, ' ').trim().slice(0, 120) : null,

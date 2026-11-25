@@ -466,16 +466,30 @@ test('a backend command that cannot be spawned counts toward unhealthy (#445)', 
   }
 });
 
-test('a call that times out does not count toward unhealthy: that is load, not the backend (#445)', async () => {
-  reset({ codex: 'hang' });
+test('an extraction timeout has its own metric and does not advance the non-quota streak (#445)', async () => {
+  reset({ codex: 'broken' });
   clearFailureStreaks();
   writeConfig({ backend: 'codex' });
+  const fail = () => assert.rejects(callClaudeP('extract this', { taskType: 'summarize_pending' }), /os error 17/);
   try {
-    for (let i = 0; i < 3; i += 1) {
-      await assert.rejects(callClaudeP('audit this', { taskType: 'security_audit', timeoutMs: 200 }), /timeout after 200ms/);
-    }
-    // mutation: record in the 'close' handler even after the timeout settled the call -> unhealthy line, red
-    assert.doesNotMatch(cli('admin', 'llm', 'status').stdout, /unhealthy/);
+    await fail();
+    await fail();
+    process.env.CCMEM_FAKE_CODEX = 'hang';
+    await assert.rejects(callClaudeP('audit this', { taskType: 'security_audit', timeoutMs: 200 }), /timeout after 200ms/);
+    await assert.rejects(callClaudeP('extract this', { taskType: 'summarize_pending', timeoutMs: 200 }), /timeout after 200ms/);
+
+    const afterTimeout = cli('admin', 'daemon', 'status');
+    assert.equal(afterTimeout.status, 0, afterTimeout.stderr);
+    assert.doesNotMatch(afterTimeout.stdout, /unhealthy/, 'a timeout must not turn two failures into three');
+    assert.match(afterTimeout.stdout, /^ccmem: memory extraction .*timeouts_24h=1\b/m);
+    assert.doesNotMatch(cli('admin', 'llm', 'status').stdout, /timeouts_24h|unhealthy/);
+
+    process.env.CCMEM_FAKE_CODEX = 'broken';
+    await fail();
+    const afterThirdFailure = cli('admin', 'llm', 'status');
+    assert.match(afterThirdFailure.stdout, /^ccmem: llm unhealthy codex — 3 calls in a row/m);
+    assert.match(afterThirdFailure.stdout, /^ccmem: llm backend=codex .*exhausted=none proposal=none$/m);
+    withDb((db) => assert.equal(openProposals(db).length, 0));
   } finally {
     clearFailureStreaks();
   }

@@ -12,6 +12,7 @@ import { codexHookTrust, getCodexHome } from '../install/codex.mjs';
 import { daemonCostFile, decisionDataFile, decisionDataSizeBytes, metricsFile } from '../metrics.mjs';
 import { fallbackProjectKey, resolveProjectKey } from '../project-key.mjs';
 import { collectInjectionRows, countNeverInjected } from '../recent-injections.mjs';
+import { getMode } from '../mode.mjs';
 import { maybeRunTier15 } from '../tier15.mjs';
 import { describeInstalledPlistHealth } from './daemon.mjs';
 
@@ -1239,10 +1240,15 @@ export function codexSessionReach(db, { codexHome = getCodexHome(), now = Date.n
       } catch { /* vanished between readdir and stat */ }
     }
   }
+  // Tester #452 (nit): SessionStart returns before writing session_context when ccmem's mode is
+  // off or shadow, so outside 'active' every session would count as missed and be blamed on
+  // approval or a broken hook. `missed` is then null: not measurable, and the mode says why.
+  const mode = getMode(db);
+  if (mode !== 'active') return { sessions: ids.size, missed: null, mode };
   const seen = db.prepare('SELECT 1 FROM session_context WHERE session_id = ?');
   let missed = 0;
   for (const id of ids) if (!seen.get(id)) missed += 1;
-  return { sessions: ids.size, missed };
+  return { sessions: ids.size, missed, mode };
 }
 
 export async function cmdAdminDiagnose(

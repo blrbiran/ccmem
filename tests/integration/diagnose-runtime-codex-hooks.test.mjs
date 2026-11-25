@@ -29,6 +29,7 @@ process.env.CCMEM_TEST_MODE = '1';
 process.env.CCMEM_DATA_ROOT = dataRoot;
 
 const { openDb, ftsDiagnostics } = await import('../../scripts/lib/db.mjs');
+const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { codexHookTrust, trustedHookKeys } = await import('../../scripts/lib/install/codex.mjs');
 
 test.after(() => {
@@ -179,7 +180,20 @@ test('admin diagnose counts the last 24 h of Codex sessions that never reached t
     // mutation: count every rollout file (drop the 24 h mtime filter) -> 4 sessions, red;
     // mutation: count sessions without the session_context lookup -> 0 or 3 missed, red
     assert.match(out, /^Codex {4}: last 24h 3 sessions, 2 never reached the ccmem hooks \(not approved, hooks disabled for that run, or a broken hook command\)$/m);
+
+    // Tester #452 (nit): SessionStart writes no session_context while ccmem is off or in shadow, so the same three
+    // sessions must not read as "never reached ... not approved"; the line names the mode instead.
+    // mutation: ignore the mode -> "3 sessions, 2 never reached" again, red
+    for (const mode of ['off', 'shadow']) {
+      const modeDb = openDb();
+      try { setMode(modeDb, mode); } finally { modeDb.close(); }
+      const offOut = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose'], { cwd, env, encoding: 'utf8' });
+      assert.doesNotMatch(offOut, /never reached the ccmem hooks/, mode);
+      assert.match(offOut, new RegExp(`^Codex {4}: last 24h 3 sessions; not checked against the ccmem hooks while ccmem mode is ${mode} \\(hooks record no session then; ccmem mode active\\)$`, 'm'));
+    }
   } finally {
+    const modeDb = openDb();
+    try { setMode(modeDb, 'active'); } finally { modeDb.close(); }
     rmSync(path.join(codexHome, 'sessions'), { recursive: true, force: true });
   }
 });

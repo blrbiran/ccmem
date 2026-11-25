@@ -1473,8 +1473,14 @@ try {
         process.stdout.write(`Codex    : hooks installed, ${approved}\n`);
         // Tester #452: approved is not the same as running -- count the sessions the hooks never saw.
         const reach = result.codex_sessions_24h;
-        const missed = reach.missed ? ' (not approved, hooks disabled for that run, or a broken hook command)' : '';
-        process.stdout.write(`Codex    : last 24h ${reach.sessions} sessions, ${reach.missed} never reached the ccmem hooks${missed}\n`);
+        if (reach.missed === null) {
+          // Tester #452 (nit): with ccmem off or in shadow the hooks run but record no session, so
+          // "never reached" would blame approval for what is only the mode.
+          process.stdout.write(`Codex    : last 24h ${reach.sessions} sessions; not checked against the ccmem hooks while ccmem mode is ${reach.mode} (hooks record no session then; ccmem mode active)\n`);
+        } else {
+          const missed = reach.missed ? ' (not approved, hooks disabled for that run, or a broken hook command)' : '';
+          process.stdout.write(`Codex    : last 24h ${reach.sessions} sessions, ${reach.missed} never reached the ccmem hooks${missed}\n`);
+        }
       } else if (hooks.home_exists) {
         process.stdout.write('Codex    : ccmem hooks are not installed (ccmem install codex)\n');
       }

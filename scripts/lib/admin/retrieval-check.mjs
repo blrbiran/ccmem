@@ -30,22 +30,42 @@ export async function cmdRetrievalCheck(db, { corpus = null, k = null, cwd = pro
     }
   };
   const projectKey = resolveProjectKey(cwd);
-  const results = [];
 
-  for (const item of items) {
-    const { rows } = await retrieveMemories(db, item.prompt, projectKey, config, { relevanceFloor: true });
-    const expected = new Set(Array.isArray(item.expected_ids) ? item.expected_ids.map((id) => Number(id)) : []);
-    const retrievedIds = rows.map((row) => Number(row.id));
-    const firstHitIndex = retrievedIds.findIndex((id) => expected.has(id));
-    results.push({
-      first_hit_rank: firstHitIndex >= 0 ? firstHitIndex + 1 : null
-    });
+  // A superseded or archived row cannot satisfy a benchmark expectation.
+  const matchSubstring = db.prepare(
+    `SELECT id FROM memories
+     WHERE status = 'active'
+       AND decay_status IN ('active', 'probation')
+       AND instr(content, ?) > 0`
+  );
+  const expected = items.map((item) => {
+    if (Object.hasOwn(item, 'expected_ids')) {
+      throw new Error('E_CORPUS_FORMAT: replace expected_ids with expected_substring for positive cases');
+    }
+    const needle = item.expected_substring;
+    if (needle === undefined) return null;
+
+    const matches = matchSubstring.all(needle);
+    if (!matches.length) {
+      throw new Error(`E_CORPUS_STALE: expected "${needle}" matched no memory`);
+    }
+    return new Set(matches.map((row) => row.id));
+  });
+
+  const runs = [];
+  for (const [index, item] of items.entries()) {
+    const { rows, retrievalPath, gated, total } = await retrieveMemories(
+      db, item.prompt, projectKey, config, { relevanceFloor: true }
+    );
+    const firstHitIndex = rows.findIndex((row) => expected[index]?.has(row.id));
+    runs.push({ first_hit_rank: firstHitIndex >= 0 ? firstHitIndex + 1 : null });
+    process.stdout.write(`run ${index + 1}: retrievalPath=${retrievalPath ?? 'n/a'} gated=${gated ?? 0} total=${total}\n`);
   }
 
   const metrics = ks.map((value) => {
-    const hits = results.filter((result) => result.first_hit_rank != null && result.first_hit_rank <= value).length;
-    const recall = results.length ? hits / results.length : 0;
-    const precision = results.length ? hits / (value * results.length) : 0;
+    const hits = runs.filter((run) => run.first_hit_rank != null && run.first_hit_rank <= value).length;
+    const recall = runs.length ? hits / runs.length : 0;
+    const precision = runs.length ? hits / (value * runs.length) : 0;
     return { k: value, recall, precision };
   });
 
@@ -59,7 +79,7 @@ export async function cmdRetrievalCheck(db, { corpus = null, k = null, cwd = pro
 
   return {
     total: items.length,
-    adversarial: items.filter((item) => !Array.isArray(item.expected_ids) || item.expected_ids.length === 0).length,
+    adversarial: expected.filter((ids) => ids === null).length,
     metrics,
     recall_at_3: recallAt3,
     run_at: runAt,

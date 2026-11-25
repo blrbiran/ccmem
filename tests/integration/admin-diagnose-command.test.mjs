@@ -678,13 +678,13 @@ test('cli admin diagnose --embedding-circuit can open report and close circuit s
 test('cli admin retrieval-check prints recall and writes retrieval_check_run audit', async () => {
   const db = openDb();
   resetDiagnoseTables(db);
-  const memA = await cmdSave(db, { cwd: diagnoseCwd, content: 'pnpm workspace install command', scope: 'project', type: 'fact' });
-  const memB = await cmdSave(db, { cwd: diagnoseCwd, content: 'auth retry failures use bounded timeout handling', scope: 'project', type: 'fact' });
+  await cmdSave(db, { cwd: diagnoseCwd, content: 'pnpm workspace install command', scope: 'project', type: 'fact' });
+  await cmdSave(db, { cwd: diagnoseCwd, content: 'auth retry failures use bounded timeout handling', scope: 'project', type: 'fact' });
   const corpusPath = path.join(dataRoot, 'retrieval-corpus.json');
   writeFileSync(corpusPath, JSON.stringify([
-    { prompt: 'pnpm workspace install command', expected_ids: [memA.id], note: 'workspace' },
-    { prompt: 'auth retry failures', expected_ids: [memB.id], note: 'auth' },
-    { prompt: 'totally unrelated adversarial query', expected_ids: [], note: 'adversarial' }
+    { prompt: 'pnpm workspace install command', expected_substring: 'pnpm workspace install command', note: 'workspace' },
+    { prompt: 'auth retry failures', expected_substring: 'auth retry failures', note: 'auth' },
+    { prompt: 'totally unrelated adversarial query', note: 'adversarial' }
   ]));
   db.close();
 

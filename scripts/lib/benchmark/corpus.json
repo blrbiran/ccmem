@@ -1,17 +1,16 @@
 [
   {
     "prompt": "pnpm workspace install command",
-    "expected_ids": [1],
-    "note": "workspace tooling"
+    "expected_substring": "pnpm workspace install command",
+    "note": "synthetic workspace tooling example"
   },
   {
     "prompt": "auth retry failures",
-    "expected_ids": [2],
-    "note": "auth retry handling"
+    "expected_substring": "auth retry failures",
+    "note": "synthetic auth retry example"
   },
   {
     "prompt": "totally unrelated adversarial query",
-    "expected_ids": [],
     "note": "adversarial miss"
   }
 ]

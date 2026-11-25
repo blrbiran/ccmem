@@ -25,6 +25,78 @@ export function sanitizeFtsQuery(prompt) {
   return ftsTokens(prompt).map((token) => `"${token}"`).join(' ');
 }
 
+/**
+ * FTS OR switch (docs/superpowers/specs/2026-11-25-fts-or-relevance-gate-design.md). Function words carry no
+ * topic, so in "or" mode they are never searched and never count as lexical evidence. Only words of 2+
+ * characters reach this list (tokenize drops shorter ones and splits on apostrophes).
+ */
+const STOP_WORDS = new Set([
+  'a', 'an', 'the', 'and', 'or', 'but', 'nor', 'so', 'if', 'then', 'than', 'else', 'is', 'are', 'was', 'were',
+  'be', 'been', 'being', 'am', 'to', 'of', 'in', 'on', 'at', 'for', 'with', 'by', 'from', 'as', 'into', 'onto',
+  'about', 'over', 'under', 'it', 'its', 'this', 'that', 'these', 'those', 'there', 'here', 'what',
+  'which', 'who', 'whom', 'whose', 'how', 'why', 'when', 'where', 'do', 'does', 'did', 'done', 'doing', 'can',
+  'could', 'should', 'would', 'will', 'shall', 'may', 'might', 'must', 'have', 'has', 'had', 'not', 'no', 'yes',
+  'me', 'my', 'mine', 'you', 'your', 'yours', 'he', 'him', 'his', 'she', 'her', 'we', 'us', 'our', 'they', 'them',
+  'their', 'just', 'also', 'too', 'very', 'please', 'let', 'lets', 'now', 'all', 'any', 'some', 'more',
+  'most', 'again', 'up', 'out', 'off', 'only', 'other', 'such', 'same', 'own', 'each', 'both', 'few', 'don', 'doesn', 'isn', 'ok', 'okay',
+  '的', '了', '是', '在', '我', '你', '他', '她', '它', '我们', '你们', '他们', '这', '那', '这个', '那个', '这些',
+  '那些', '一个', '什么', '怎么', '怎么样', '为什么', '吗', '呢', '吧', '啊', '和', '与', '或', '或者', '也', '都',
+  '就', '还', '要', '会', '能', '可以', '把', '被', '给', '对', '从', '到', '让', '请', '一下', '现在', '然后',
+  '如果', '因为', '所以', '但是', '没有', '不是', '有', '一些', '已经', '还是', '就是', '这样', '那样'
+]);
+
+// Gate bar for long prompts: a row must hold this share of the discriminative words when there are more than 6.
+const LONG_PROMPT_TERMS = 6;
+const LONG_PROMPT_TERM_SHARE = 0.3;
+
+function ftsModeOr(config) {
+  return config?.retrieval?.fts?.mode === 'or';
+}
+
+function lexicalTermHits(content, tokens) {
+  const text = String(content ?? '').toLowerCase();
+  return tokens.reduce((sum, token) => sum + (text.includes(token) ? 1 : 0), 0);
+}
+
+/**
+ * The "or" mode's lexical evidence. Tokens come from `tokenize` (the Jaccard tokens; CJK goes through
+ * Intl.Segmenter), minus stop words, minus any word held by more than `retrieval.fts.max_df_ratio` of the
+ * memories this prompt can retrieve. Document frequency is counted by substring in one scan of that population —
+ * the same test `lexicalTermHits` applies and the trigram index matches; `fts5vocab` over a trigram table lists
+ * trigrams, not words, so it cannot answer this. The MATCH query keeps only words of 3+ characters, because the
+ * trigram tokenizer matches nothing shorter.
+ */
+export function discriminativeTerms(db, promptText, projectKey, config, disableScopeIsolation = false) {
+  const candidates = tokenize(promptText).filter((token) => !STOP_WORDS.has(token)).slice(0, 20);
+  let tokens = candidates;
+  const maxDf = Number(config?.retrieval?.fts?.max_df_ratio ?? 0.2);
+  if (candidates.length && Number.isFinite(maxDf)) {
+    const scopeClause = disableScopeIsolation ? '' : "AND (scope = 'global' OR project_key = ?)";
+    const scopeParams = disableScopeIsolation ? [] : [projectKey];
+    const counts = candidates.map((_, index) => `SUM(instr(lower(content), ?) > 0) AS d${index}`).join(', ');
+    const row = db.prepare(
+      `SELECT COUNT(*) AS n, ${counts}
+       FROM memories
+       WHERE status = 'active'
+         AND decay_status IN ('active', 'probation')
+         ${scopeClause}`
+    ).get(...candidates, ...scopeParams);
+    const n = Number(row?.n ?? 0);
+    if (n > 0) {
+      tokens = candidates.filter((_, index) => (Number(row[`d${index}`] ?? 0) / n) <= maxDf);
+    }
+  }
+  const minFtsTerms = Number(config?.retrieval?.gate?.min_fts_terms ?? 2);
+  const minTerms = tokens.length > LONG_PROMPT_TERMS
+    ? Math.max(minFtsTerms, Math.ceil(LONG_PROMPT_TERM_SHARE * tokens.length))
+    : minFtsTerms;
+  return {
+    tokens,
+    query: tokens.filter((token) => [...token].length >= 3).map((token) => `"${token.replace(/"/g, '')}"`).join(' OR '),
+    minTerms
+  };
+}
+
 const CJK_RANGE = /[㐀-鿿]/u;
 let cachedSegmenter = undefined;
 
@@ -309,7 +381,15 @@ function compareScored(fusedFirst) {
     || (Number(b.last_touched_at ?? 0) - Number(a.last_touched_at ?? 0));
 }
 
-function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery, fusedFirst = false) {
+/** "or" mode's relevance gate on the embedding-free path: only the lexical half applies (there is no cosine). */
+function lexicalGate(rows, gate) {
+  if (!gate) {
+    return rows;
+  }
+  return rows.filter((row) => lexicalTermHits(row.content, gate.tokens) >= gate.minTerms);
+}
+
+function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery, fusedFirst = false, gate = null) {
   const disableScopeIsolation = config?.eval?.disable_scope_isolation === true;
   let ftsRows = useFts && ftsQuery ? ftsSearch(db, ftsQuery, projectKey, limit * 3, disableScopeIsolation) : [];
   let candidateRows = ftsRows;
@@ -328,7 +408,8 @@ function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit
   }
 
   if (!candidateRows.length) {
-    const fallbackRows = legacySubstringSearch(db, promptText, projectKey, limit, disableScopeIsolation);
+    const rescued = legacySubstringSearch(db, promptText, projectKey, limit, disableScopeIsolation);
+    const fallbackRows = lexicalGate(rescued, gate);
     const fallbackScored = fallbackRows.map((row) => ({ ...row, fused: Number(row.tokenHits ?? 0) }));
     if (fusedFirst) {
       fallbackScored.sort(compareScored(true));
@@ -341,6 +422,7 @@ function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit
         semantic: 0
       })),
       total: fallbackRows.length,
+      ...(gate ? { gated: rescued.length - fallbackRows.length } : {}),
       timing: null
     };
   }
@@ -361,15 +443,17 @@ function lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit
   });
 
   scored.sort(compareScored(fusedFirst));
+  const kept = lexicalGate(scored, gate);
 
   return {
-    rows: scored.slice(0, limit).map((row) => renderRow(row, {
+    rows: kept.slice(0, limit).map((row) => renderRow(row, {
       fused: row.fused,
       fts: row.ftsScore,
       jaccard: row.jaccardScore,
       semantic: 0
     })),
-    total: scored.length,
+    total: kept.length,
+    ...(gate ? { gated: scored.length - kept.length } : {}),
     timing: null
   };
 }
@@ -394,7 +478,11 @@ export async function retrieveMemories(db, prompt, projectKey, config, options =
   }
 
   const promptTokens = new Set(promptTokenList);
-  const ftsQuery = sanitizeFtsQuery(promptText);
+  // FTS OR switch: "and" (the default) is the pre-switch query, untouched; "or" searches the discriminative words
+  // and, for the agent-facing callers, lets lexical evidence keep a row the cosine floor would drop.
+  const orTerms = ftsModeOr(config) ? discriminativeTerms(db, promptText, projectKey, config, disableScopeIsolation) : null;
+  const ftsQuery = orTerms ? orTerms.query : sanitizeFtsQuery(promptText);
+  const gate = orTerms && options?.relevanceFloor ? orTerms : null;
   const useFts = hasUsableFts(db);
   const baseProvider = getProvider(config);
   // Signature reflects the configured provider's identity (provider:model:dim),
@@ -422,10 +510,11 @@ export async function retrieveMemories(db, prompt, projectKey, config, options =
   }
 
   if (!useEmbedding) {
-    const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery, fusedFirst);
+    const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery, fusedFirst, gate);
     return {
       rows: lexical.rows,
       total: lexical.total,
+      ...(gate ? { gated: lexical.gated } : {}),
       queryVec: null,
       cosineContribution: null,
       timing: lexical.timing,
@@ -447,10 +536,11 @@ export async function retrieveMemories(db, prompt, projectKey, config, options =
       embedMs = Date.now() - tEmbed;
       recordEmbedFailure(db, config);
       process.stderr.write(`ccmem: embedding API failed (${error.message}), falling back to lexical retrieval\n`);
-      const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery, fusedFirst);
+      const lexical = lexicalRetrieve(db, promptText, promptTokens, projectKey, config, limit, useFts, ftsQuery, fusedFirst, gate);
       return {
         rows: lexical.rows,
         total: lexical.total,
+        ...(gate ? { gated: lexical.gated } : {}),
         queryVec: null,
         cosineContribution: null,
         retrievalPath: 'B-fail',
@@ -538,7 +628,13 @@ export async function retrieveMemories(db, prompt, projectKey, config, options =
   // under OpenAI's), so the floor is configured per signature from a calibration on real prompts; a model with no
   // calibrated floor keeps every candidate. Only the agent-facing callers ask for it; search and list do not.
   const floor = options?.relevanceFloor ? relevanceFloorFor(config, sig) : null;
-  const relevant = floor == null ? scored : scored.filter((row) => row.cosineScore >= floor);
+  // FTS OR switch: a row is kept when either signal clears its bar. With no calibrated floor the cosine half keeps
+  // every row, as it does without the switch.
+  const relevant = floor == null
+    ? scored
+    : gate
+      ? scored.filter((row) => row.cosineScore >= floor || lexicalTermHits(row.content, gate.tokens) >= gate.minTerms)
+      : scored.filter((row) => row.cosineScore >= floor);
   const selected = relevant.slice(0, limit);
   const cosineContribution = selected.length
     ? selected.reduce((sum, row) => sum + (row.fused > 0 ? ((row.cosineScore * weights.semantic) / row.fused) : 0), 0) / selected.length

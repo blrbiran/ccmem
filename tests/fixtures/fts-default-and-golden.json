@@ -1,0 +1,170 @@
+[
+ [
+  "lexical",
+  "how long is the prompt cache TTL for hooks",
+  false,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.08571428571428572,\"fts\":0,\"jaccard\":0.42857142857142855,\"semantic\":0}},{\"id\":7,\"type\":\"fact\",\"content\":\"This is the thing that is in the place for the time and of the day.\",\"scope\":\"global\",\"score\":{\"fused\":0.03333333333333333,\"fts\":0,\"jaccard\":0.16666666666666666,\"semantic\":0}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.011111111111111112,\"fts\":0,\"jaccard\":0.05555555555555555,\"semantic\":0}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.011111111111111112,\"fts\":0,\"jaccard\":0.05555555555555555,\"semantic\":0}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.010526315789473684,\"fts\":0,\"jaccard\":0.05263157894736842,\"semantic\":0}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.010526315789473684,\"fts\":0,\"jaccard\":0.05263157894736842,\"semantic\":0}}],\"total\":6,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "how long is the prompt cache TTL for hooks",
+  true,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.08571428571428572,\"fts\":0,\"jaccard\":0.42857142857142855,\"semantic\":0}},{\"id\":7,\"type\":\"fact\",\"content\":\"This is the thing that is in the place for the time and of the day.\",\"scope\":\"global\",\"score\":{\"fused\":0.03333333333333333,\"fts\":0,\"jaccard\":0.16666666666666666,\"semantic\":0}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.011111111111111112,\"fts\":0,\"jaccard\":0.05555555555555555,\"semantic\":0}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.011111111111111112,\"fts\":0,\"jaccard\":0.05555555555555555,\"semantic\":0}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.010526315789473684,\"fts\":0,\"jaccard\":0.05263157894736842,\"semantic\":0}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.010526315789473684,\"fts\":0,\"jaccard\":0.05263157894736842,\"semantic\":0}}],\"total\":6,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "what should I do before a daemon restart and reading the plist",
+  false,
+  "{\"rows\":[{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.08571428571428572,\"fts\":0,\"jaccard\":0.42857142857142855,\"semantic\":0}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.022222222222222223,\"fts\":0,\"jaccard\":0.1111111111111111,\"semantic\":0}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.021052631578947368,\"fts\":0,\"jaccard\":0.10526315789473684,\"semantic\":0}},{\"id\":7,\"type\":\"fact\",\"content\":\"This is the thing that is in the place for the time and of the day.\",\"scope\":\"global\",\"score\":{\"fused\":0.020000000000000004,\"fts\":0,\"jaccard\":0.1,\"semantic\":0}},{\"id\":8,\"type\":\"fact\",\"content\":\"Quokka marmalade recipe needs zebra stripes and walrus butter.\",\"scope\":\"global\",\"score\":{\"fused\":0.011111111111111112,\"fts\":0,\"jaccard\":0.05555555555555555,\"semantic\":0}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.010000000000000002,\"fts\":0,\"jaccard\":0.05,\"semantic\":0}}],\"total\":7,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "what should I do before a daemon restart and reading the plist",
+  true,
+  "{\"rows\":[{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.08571428571428572,\"fts\":0,\"jaccard\":0.42857142857142855,\"semantic\":0}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.022222222222222223,\"fts\":0,\"jaccard\":0.1111111111111111,\"semantic\":0}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.021052631578947368,\"fts\":0,\"jaccard\":0.10526315789473684,\"semantic\":0}},{\"id\":7,\"type\":\"fact\",\"content\":\"This is the thing that is in the place for the time and of the day.\",\"scope\":\"global\",\"score\":{\"fused\":0.020000000000000004,\"fts\":0,\"jaccard\":0.1,\"semantic\":0}},{\"id\":8,\"type\":\"fact\",\"content\":\"Quokka marmalade recipe needs zebra stripes and walrus butter.\",\"scope\":\"global\",\"score\":{\"fused\":0.011111111111111112,\"fts\":0,\"jaccard\":0.05555555555555555,\"semantic\":0}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.010000000000000002,\"fts\":0,\"jaccard\":0.05,\"semantic\":0}}],\"total\":7,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "copy the database with sqlite backup before running migration tests and release tagging checks today",
+  false,
+  "{\"rows\":[{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.07368421052631578,\"fts\":0,\"jaccard\":0.3684210526315789,\"semantic\":0}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.0380952380952381,\"fts\":0,\"jaccard\":0.19047619047619047,\"semantic\":0}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.017391304347826087,\"fts\":0,\"jaccard\":0.08695652173913043,\"semantic\":0}},{\"id\":7,\"type\":\"fact\",\"content\":\"This is the thing that is in the place for the time and of the day.\",\"scope\":\"global\",\"score\":{\"fused\":0.016,\"fts\":0,\"jaccard\":0.08,\"semantic\":0}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.008,\"fts\":0,\"jaccard\":0.04,\"semantic\":0}},{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.008,\"fts\":0,\"jaccard\":0.04,\"semantic\":0}}],\"total\":6,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "copy the database with sqlite backup before running migration tests and release tagging checks today",
+  true,
+  "{\"rows\":[{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.07368421052631578,\"fts\":0,\"jaccard\":0.3684210526315789,\"semantic\":0}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.0380952380952381,\"fts\":0,\"jaccard\":0.19047619047619047,\"semantic\":0}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.017391304347826087,\"fts\":0,\"jaccard\":0.08695652173913043,\"semantic\":0}},{\"id\":7,\"type\":\"fact\",\"content\":\"This is the thing that is in the place for the time and of the day.\",\"scope\":\"global\",\"score\":{\"fused\":0.016,\"fts\":0,\"jaccard\":0.08,\"semantic\":0}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.008,\"fts\":0,\"jaccard\":0.04,\"semantic\":0}},{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.008,\"fts\":0,\"jaccard\":0.04,\"semantic\":0}}],\"total\":6,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "unrelated question about cooking pasta tonight",
+  false,
+  "{\"rows\":[],\"total\":0,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "unrelated question about cooking pasta tonight",
+  true,
+  "{\"rows\":[],\"total\":0,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "C++",
+  false,
+  "{\"rows\":[],\"total\":0,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "C++",
+  true,
+  "{\"rows\":[],\"total\":0,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "记忆检索",
+  false,
+  "{\"rows\":[{\"id\":6,\"type\":\"fact\",\"content\":\"记忆检索使用三元组分词，中文整句不命中。\",\"scope\":\"global\",\"score\":{\"fused\":0.45,\"fts\":1,\"jaccard\":0.25,\"semantic\":0}}],\"total\":1,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "记忆检索",
+  true,
+  "{\"rows\":[{\"id\":6,\"type\":\"fact\",\"content\":\"记忆检索使用三元组分词，中文整句不命中。\",\"scope\":\"global\",\"score\":{\"fused\":0.45,\"fts\":1,\"jaccard\":0.25,\"semantic\":0}}],\"total\":1,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "the and of to in",
+  false,
+  "{\"rows\":[{\"id\":7,\"type\":\"fact\",\"content\":\"This is the thing that is in the place for the time and of the day.\",\"scope\":\"global\",\"score\":{\"fused\":0.46153846153846156,\"fts\":1,\"jaccard\":0.3076923076923077,\"semantic\":0}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.4285714285714286,\"fts\":1,\"jaccard\":0.14285714285714285,\"semantic\":0}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.4285714285714286,\"fts\":1,\"jaccard\":0.14285714285714285,\"semantic\":0}},{\"id\":8,\"type\":\"fact\",\"content\":\"Quokka marmalade recipe needs zebra stripes and walrus butter.\",\"scope\":\"global\",\"score\":{\"fused\":0.4153846153846154,\"fts\":1,\"jaccard\":0.07692307692307693,\"semantic\":0}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.4142857142857143,\"fts\":1,\"jaccard\":0.07142857142857142,\"semantic\":0}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.4142857142857143,\"fts\":1,\"jaccard\":0.07142857142857142,\"semantic\":0}}],\"total\":7,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "lexical",
+  "the and of to in",
+  true,
+  "{\"rows\":[{\"id\":7,\"type\":\"fact\",\"content\":\"This is the thing that is in the place for the time and of the day.\",\"scope\":\"global\",\"score\":{\"fused\":0.46153846153846156,\"fts\":1,\"jaccard\":0.3076923076923077,\"semantic\":0}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.4285714285714286,\"fts\":1,\"jaccard\":0.14285714285714285,\"semantic\":0}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.4285714285714286,\"fts\":1,\"jaccard\":0.14285714285714285,\"semantic\":0}},{\"id\":8,\"type\":\"fact\",\"content\":\"Quokka marmalade recipe needs zebra stripes and walrus butter.\",\"scope\":\"global\",\"score\":{\"fused\":0.4153846153846154,\"fts\":1,\"jaccard\":0.07692307692307693,\"semantic\":0}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.4142857142857143,\"fts\":1,\"jaccard\":0.07142857142857142,\"semantic\":0}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.4142857142857143,\"fts\":1,\"jaccard\":0.07142857142857142,\"semantic\":0}}],\"total\":7,\"retrievalPath\":\"B-off\"}"
+ ],
+ [
+  "embedded",
+  "how long is the prompt cache TTL for hooks",
+  false,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.44571428305860405,\"fts\":0,\"jaccard\":0.42857142857142855,\"semantic\":0.8999999933607958}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.2705263143804878,\"fts\":0,\"jaccard\":0.05263157894736842,\"semantic\":0.6499999964775354}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.23111111227790362,\"fts\":0,\"jaccard\":0.05555555555555555,\"semantic\":0.5500000029169813}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.21052631848170844,\"fts\":0,\"jaccard\":0.05263157894736842,\"semantic\":0.5000000067305869}},{\"id\":8,\"type\":\"fact\",\"content\":\"Quokka marmalade recipe needs zebra stripes and walrus butter.\",\"scope\":\"global\",\"score\":{\"fused\":0.17999999582333367,\"fts\":0,\"jaccard\":0,\"semantic\":0.44999998955833415}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.13111111567576192,\"fts\":0,\"jaccard\":0.05555555555555555,\"semantic\":0.300000011411627}}],\"total\":8,\"gated\":0,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "how long is the prompt cache TTL for hooks",
+  true,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.44571428305860405,\"fts\":0,\"jaccard\":0.42857142857142855,\"semantic\":0.8999999933607958}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.2705263143804878,\"fts\":0,\"jaccard\":0.05263157894736842,\"semantic\":0.6499999964775354}}],\"total\":2,\"gated\":6,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "what should I do before a daemon restart and reading the plist",
+  false,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.3699999973443184,\"fts\":0,\"jaccard\":0.05,\"semantic\":0.8999999933607958}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.30571428688107827,\"fts\":0,\"jaccard\":0.42857142857142855,\"semantic\":0.5500000029169813}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.26999999859101415,\"fts\":0,\"jaccard\":0.05,\"semantic\":0.6499999964775354}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.22105263427118213,\"fts\":0,\"jaccard\":0.10526315789473684,\"semantic\":0.5000000067305869}},{\"id\":8,\"type\":\"fact\",\"content\":\"Quokka marmalade recipe needs zebra stripes and walrus butter.\",\"scope\":\"global\",\"score\":{\"fused\":0.19111110693444477,\"fts\":0,\"jaccard\":0.05555555555555555,\"semantic\":0.44999998955833415}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.14222222678687305,\"fts\":0,\"jaccard\":0.1111111111111111,\"semantic\":0.300000011411627}}],\"total\":8,\"gated\":0,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "what should I do before a daemon restart and reading the plist",
+  true,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.3699999973443184,\"fts\":0,\"jaccard\":0.05,\"semantic\":0.8999999933607958}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.26999999859101415,\"fts\":0,\"jaccard\":0.05,\"semantic\":0.6499999964775354}}],\"total\":2,\"gated\":6,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "copy the database with sqlite backup before running migration tests and release tagging checks today",
+  false,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.3679999973443184,\"fts\":0,\"jaccard\":0.04,\"semantic\":0.8999999933607958}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.2736842132185505,\"fts\":0,\"jaccard\":0.3684210526315789,\"semantic\":0.5000000067305869}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.26799999859101414,\"fts\":0,\"jaccard\":0.04,\"semantic\":0.6499999964775354}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.23739130551461862,\"fts\":0,\"jaccard\":0.08695652173913043,\"semantic\":0.5500000029169813}},{\"id\":8,\"type\":\"fact\",\"content\":\"Quokka marmalade recipe needs zebra stripes and walrus butter.\",\"scope\":\"global\",\"score\":{\"fused\":0.18869564799724672,\"fts\":0,\"jaccard\":0.043478260869565216,\"semantic\":0.44999998955833415}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.15809524265988892,\"fts\":0,\"jaccard\":0.19047619047619047,\"semantic\":0.300000011411627}}],\"total\":8,\"gated\":0,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "copy the database with sqlite backup before running migration tests and release tagging checks today",
+  true,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.3679999973443184,\"fts\":0,\"jaccard\":0.04,\"semantic\":0.8999999933607958}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.26799999859101414,\"fts\":0,\"jaccard\":0.04,\"semantic\":0.6499999964775354}}],\"total\":2,\"gated\":6,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "unrelated question about cooking pasta tonight",
+  false,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.35999999734431837,\"fts\":0,\"jaccard\":0,\"semantic\":0.8999999933607958}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.25999999859101414,\"fts\":0,\"jaccard\":0,\"semantic\":0.6499999964775354}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.22000000116679252,\"fts\":0,\"jaccard\":0,\"semantic\":0.5500000029169813}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.20000000269223475,\"fts\":0,\"jaccard\":0,\"semantic\":0.5000000067305869}},{\"id\":8,\"type\":\"fact\",\"content\":\"Quokka marmalade recipe needs zebra stripes and walrus butter.\",\"scope\":\"global\",\"score\":{\"fused\":0.17999999582333367,\"fts\":0,\"jaccard\":0,\"semantic\":0.44999998955833415}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.12000000456465082,\"fts\":0,\"jaccard\":0,\"semantic\":0.300000011411627}}],\"total\":8,\"gated\":0,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "unrelated question about cooking pasta tonight",
+  true,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.35999999734431837,\"fts\":0,\"jaccard\":0,\"semantic\":0.8999999933607958}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.25999999859101414,\"fts\":0,\"jaccard\":0,\"semantic\":0.6499999964775354}}],\"total\":2,\"gated\":6,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "C++",
+  false,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.35999999734431837,\"fts\":0,\"jaccard\":0,\"semantic\":0.8999999933607958}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.25999999859101414,\"fts\":0,\"jaccard\":0,\"semantic\":0.6499999964775354}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.22000000116679252,\"fts\":0,\"jaccard\":0,\"semantic\":0.5500000029169813}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.20000000269223475,\"fts\":0,\"jaccard\":0,\"semantic\":0.5000000067305869}},{\"id\":8,\"type\":\"fact\",\"content\":\"Quokka marmalade recipe needs zebra stripes and walrus butter.\",\"scope\":\"global\",\"score\":{\"fused\":0.17999999582333367,\"fts\":0,\"jaccard\":0,\"semantic\":0.44999998955833415}},{\"id\":4,\"type\":\"fact\",\"content\":\"Always run the full test suite before tagging a release build.\",\"scope\":\"global\",\"score\":{\"fused\":0.12000000456465082,\"fts\":0,\"jaccard\":0,\"semantic\":0.300000011411627}}],\"total\":8,\"gated\":0,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "C++",
+  true,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.35999999734431837,\"fts\":0,\"jaccard\":0,\"semantic\":0.8999999933607958}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.25999999859101414,\"fts\":0,\"jaccard\":0,\"semantic\":0.6499999964775354}}],\"total\":2,\"gated\":6,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "记忆检索",
+  false,
+  "{\"rows\":[{\"id\":6,\"type\":\"fact\",\"content\":\"记忆检索使用三元组分词，中文整句不命中。\",\"scope\":\"global\",\"score\":{\"fused\":0.5300000030215525,\"fts\":1,\"jaccard\":0.25,\"semantic\":0.2000000075538811}},{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.35999999734431837,\"fts\":0,\"jaccard\":0,\"semantic\":0.8999999933607958}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.25999999859101414,\"fts\":0,\"jaccard\":0,\"semantic\":0.6499999964775354}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.22000000116679252,\"fts\":0,\"jaccard\":0,\"semantic\":0.5500000029169813}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.20000000269223475,\"fts\":0,\"jaccard\":0,\"semantic\":0.5000000067305869}},{\"id\":8,\"type\":\"fact\",\"content\":\"Quokka marmalade recipe needs zebra stripes and walrus butter.\",\"scope\":\"global\",\"score\":{\"fused\":0.17999999582333367,\"fts\":0,\"jaccard\":0,\"semantic\":0.44999998955833415}}],\"total\":8,\"gated\":0,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "记忆检索",
+  true,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.35999999734431837,\"fts\":0,\"jaccard\":0,\"semantic\":0.8999999933607958}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.25999999859101414,\"fts\":0,\"jaccard\":0,\"semantic\":0.6499999964775354}}],\"total\":2,\"gated\":6,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "the and of to in",
+  false,
+  "{\"rows\":[{\"id\":7,\"type\":\"fact\",\"content\":\"This is the thing that is in the place for the time and of the day.\",\"scope\":\"global\",\"score\":{\"fused\":0.5015384624834912,\"fts\":1,\"jaccard\":0.3076923076923077,\"semantic\":0.10000000236257423}},{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.3733333306776517,\"fts\":0,\"jaccard\":0.06666666666666667,\"semantic\":0.8999999933607958}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.2885714271624427,\"fts\":0,\"jaccard\":0.14285714285714285,\"semantic\":0.6499999964775354}},{\"id\":2,\"type\":\"fact\",\"content\":\"Daemon restart requires reading the plist environment before admin daemon restart.\",\"scope\":\"global\",\"score\":{\"fused\":0.23428571545250682,\"fts\":0,\"jaccard\":0.07142857142857142,\"semantic\":0.5500000029169813}},{\"id\":3,\"type\":\"fact\",\"content\":\"Use sqlite backup to copy the database before any migration test.\",\"scope\":\"global\",\"score\":{\"fused\":0.22857143126366333,\"fts\":0,\"jaccard\":0.14285714285714285,\"semantic\":0.5000000067305869}},{\"id\":8,\"type\":\"fact\",\"content\":\"Quokka marmalade recipe needs zebra stripes and walrus butter.\",\"scope\":\"global\",\"score\":{\"fused\":0.19538461120794906,\"fts\":0,\"jaccard\":0.07692307692307693,\"semantic\":0.44999998955833415}}],\"total\":8,\"gated\":0,\"retrievalPath\":\"A\"}"
+ ],
+ [
+  "embedded",
+  "the and of to in",
+  true,
+  "{\"rows\":[{\"id\":1,\"type\":\"fact\",\"content\":\"The prompt cache TTL is five minutes for every hook invocation.\",\"scope\":\"global\",\"score\":{\"fused\":0.3733333306776517,\"fts\":0,\"jaccard\":0.06666666666666667,\"semantic\":0.8999999933607958}},{\"id\":5,\"type\":\"fact\",\"content\":\"Retrieval gate drops rows below the cosine floor of the embedding model.\",\"scope\":\"global\",\"score\":{\"fused\":0.2885714271624427,\"fts\":0,\"jaccard\":0.14285714285714285,\"semantic\":0.6499999964775354}}],\"total\":2,\"gated\":6,\"retrievalPath\":\"A\"}"
+ ]
+]

@@ -66,6 +66,17 @@ export const DEFAULT_CONFIG = {
     // 0.60 kept 1/144 off-topic rows and emptied 1/80 real prompts.
     min_cosine_by_signature: {
       'ollama:bge-m3:1024': 0.6
+    },
+    // FTS OR switch (docs/superpowers/specs/2026-11-25-fts-or-relevance-gate-design.md). "and" is the pre-switch
+    // query; "or" searches the prompt's discriminative words (stop words and words held by more than
+    // max_df_ratio of the store dropped) and lets a row holding min_fts_terms of them (30% when there are more
+    // than 6) pass the relevance gate below the cosine floor. Human ruling 2026-11-25: default stays "and".
+    fts: {
+      mode: 'and',
+      max_df_ratio: 0.2
+    },
+    gate: {
+      min_fts_terms: 2
     }
   },
   feedback: {

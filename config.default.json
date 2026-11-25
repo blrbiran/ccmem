@@ -62,6 +62,14 @@
     },
     "min_cosine_by_signature": {
       "ollama:bge-m3:1024": 0.6
+    },
+    "fts": {
+      "_comment": "mode \"and\" (default) matches every prompt word; \"or\" matches any discriminative word (stop words and words in more than max_df_ratio of the store dropped), and a row holding gate.min_fts_terms of them (30% when more than 6) passes the relevance gate below the cosine floor. See docs/superpowers/specs/2026-11-25-fts-or-relevance-gate-design.md.",
+      "mode": "and",
+      "max_df_ratio": 0.2
+    },
+    "gate": {
+      "min_fts_terms": 2
     }
   },
   "feedback": {

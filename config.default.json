@@ -7,7 +7,8 @@
     "max_chars_per_memory": 500
   },
   "injection": {
-    "file_based": true
+    "file_based": true,
+    "inline_bounded": false
   },
   "eval": {
     "_comment": "评测专用。true 会关掉跨项目 scope 隔离，让本机所有项目的记忆互相可见。默认 false，不要在真实数据目录上打开。",

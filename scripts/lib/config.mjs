@@ -5,7 +5,7 @@ export const DEFAULT_CONFIG = {
   version: '0.14',
   inject: { max_per_prompt: 6 },
   save: { max_chars_per_memory: 500 },
-  injection: { file_based: true },
+  injection: { file_based: true, inline_bounded: false },
   eval: {
     disable_scope_isolation: false
   },

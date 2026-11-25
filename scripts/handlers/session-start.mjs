@@ -8,6 +8,7 @@ import { writeRecentInjection } from '../lib/recent-injections.mjs';
 import { runSessionStartMiniPrelude } from '../lib/tier15.mjs';
 import { proposalNotice } from '../daemon/backend-state.mjs';
 import {
+  boundedInlineContext,
   cleanupStaleContextFiles,
   contextFileName,
   getContextFilePath,
@@ -96,6 +97,9 @@ export async function handleSessionStart(hookData) {
     const config = loadConfig();
     const disableScopeIsolation = config?.eval?.disable_scope_isolation === true;
     const useFileBased = config.injection?.file_based !== false;
+    // #453: the capped stable section goes into additionalContext instead of a read instruction.
+    // Off by default; see docs/superpowers/specs/2026-11-25-bounded-inline-injection-design.md.
+    const inlineBounded = useFileBased && config.injection?.inline_bounded === true;
     const scopeClause = disableScopeIsolation ? '' : "WHERE scope = 'global' OR scope = ?";
     const scopeParams = disableScopeIsolation ? [] : [`project:${projectKey}`];
     // File-based (default): the stable rules go into the context file, ranked
@@ -125,6 +129,7 @@ export async function handleSessionStart(hookData) {
     upsertSessionContext(db, hookData.session_id, projectKey, agent);
 
     let notice = null;
+    let inlineStable = '';
     if (useFileBased) {
       cleanupStaleContextFiles(hookData.cwd, hookData.session_id);
       let injectedIds = [];
@@ -141,6 +146,7 @@ export async function handleSessionStart(hookData) {
         try {
           const result = writeContextFile(hookData.cwd, [], hookData.session_id, db, { stableRows, projectKey, notice });
           injectedIds = result.stableIds;
+          inlineStable = result.stableText;
         } catch (error) {
           process.stderr.write(`ccmem: context file write failed (${error.message})\n`);
         }
@@ -166,6 +172,9 @@ export async function handleSessionStart(hookData) {
     const additionalContext = useFileBased
       ? [buildReadInstruction(hookData.session_id, agent), notice].filter(Boolean).join('\n')
       : stableContext;
+    if (inlineBounded) {
+      return { additionalContext: boundedInlineContext([notice, inlineStable], additionalContext) };
+    }
     return { additionalContext };
   } finally {
     db.close();

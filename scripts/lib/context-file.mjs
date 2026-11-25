@@ -347,8 +347,31 @@ function recordWriteHistory(db, sessionId, contentHash, content, bytes, written)
   }
 }
 
+// #453 (injection.inline_bounded): the most a hook may inline. The texts inlined are the file's own
+// capped sections (stable <= STABLE_SECTION_MAX_BYTES, retrieved <= RETRIEVED_MAX_BYTES), so this cannot
+// be reached today; it is checked on the final string so a later change to those builders cannot bring
+// back the unbounded 1.9 MB SessionStart output (codex-omp spec §5.2).
+export const INLINE_MAX_BYTES = MAX_CONTEXT_FILE_BYTES;
+
+// The inline payload for `additionalContext`: '' when there is nothing to say, `fallback` (today's
+// output) when over the bound.
+export function boundedInlineContext(sections, fallback) {
+  const body = sections.filter(Boolean).join('\n\n');
+  if (!body) {
+    return '';
+  }
+  const text = `## ccmem context\n${body}`;
+  const bytes = Buffer.byteLength(text, 'utf8');
+  if (bytes > INLINE_MAX_BYTES) {
+    process.stderr.write(`ccmem: inline context ${bytes}B > ${INLINE_MAX_BYTES}B, not inlined\n`);
+    return fallback;
+  }
+  return text;
+}
+
 // stableIds in the result are the stable rows that actually landed in the
-// file (after the byte cap), for injection telemetry.
+// file (after the byte cap), for injection telemetry. stableText and
+// retrievedText are the capped sections as written, for inline injection.
 export function writeContextFile(cwd, rows, sessionId = null, db = null, { stableRows = null, projectKey = null, notice = null } = {}) {
   const dir = getContextDir(cwd);
   mkdirSync(dir, { recursive: true });
@@ -360,18 +383,24 @@ export function writeContextFile(cwd, rows, sessionId = null, db = null, { stabl
     process.stderr.write(`ccmem: ${contextFileName(sessionId)} exceeded ${RETRIEVED_MAX_BYTES}B, trimmed to ${truncated.rows.length} mems\n`);
   }
 
+  const sections = {
+    stableIds: stable.ids,
+    stableText: stable.text,
+    retrievedText: truncated.rows.length ? renderRetrievedBlock(truncated.rows) : ''
+  };
+
   const existing = readExistingContext(filePath);
   if (existing && extractContentHash(existing) === truncated.hash) {
     const bytes = Buffer.byteLength(existing, 'utf8');
     recordWriteHistory(db, sessionId, truncated.hash, truncated.body, bytes, false);
-    return { written: false, bytes, skipped: true, stableIds: stable.ids };
+    return { written: false, bytes, skipped: true, ...sections };
   }
 
   writeFileSync(filePath, truncated.fullContent, 'utf8');
   ensureIgnoreRule(cwd);
   const bytes = Buffer.byteLength(truncated.fullContent, 'utf8');
   recordWriteHistory(db, sessionId, truncated.hash, truncated.body, bytes, true);
-  return { written: true, bytes, skipped: false, stableIds: stable.ids };
+  return { written: true, bytes, skipped: false, ...sections };
 }
 
 export function clearContextFile(cwd, sessionId = null, db = null) {

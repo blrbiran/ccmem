@@ -2,7 +2,7 @@ import { proposalNotice } from '../daemon/backend-state.mjs';
 import { openDb } from '../lib/db.mjs';
 import { inferPositiveFeedback, inferPrevTurnOutcome } from '../lib/feedback.mjs';
 import { loadConfig } from '../lib/config.mjs';
-import { clearContextFile, contextFileName, selectStableRows, writeContextFile } from '../lib/context-file.mjs';
+import { boundedInlineContext, clearContextFile, contextFileName, selectStableRows, writeContextFile } from '../lib/context-file.mjs';
 import { getMode } from '../lib/mode.mjs';
 import { resolveProjectKey } from '../lib/project-key.mjs';
 import { getNextPromptIdx, writeRecentInjection } from '../lib/recent-injections.mjs';
@@ -72,8 +72,11 @@ export async function handlePromptSubmit(hookData) {
 
     const rows = retrieval.rows;
     const useFileBased = config.injection?.file_based !== false;
+    // #453: the gated, capped retrieved rows go into additionalContext too (default off).
+    const inlineBounded = useFileBased && config.injection?.inline_bounded === true;
     let contextFileWritten = false;
     let contextFileBytes = 0;
+    let inlineRetrieved = '';
 
     if (useFileBased) {
       try {
@@ -92,6 +95,7 @@ export async function handlePromptSubmit(hookData) {
           const result = writeContextFile(hookData.cwd, rows, hookData.session_id, db, { stableRows, projectKey, notice });
           contextFileWritten = result.written;
           contextFileBytes = result.bytes;
+          inlineRetrieved = result.retrievedText;
         } else {
           contextFileBytes = clearContextFile(hookData.cwd, hookData.session_id, db);
         }
@@ -139,8 +143,12 @@ export async function handlePromptSubmit(hookData) {
     const embedError = retrieval.timing?.embedError ?? null;
     const fallback = path === 'B-fail';
 
+    const additionalContext = inlineBounded
+      ? boundedInlineContext([inlineRetrieved], '')
+      : (useFileBased ? '' : (rows.length ? renderRetrievedBlock(rows) : ''));
+
     return {
-      additionalContext: useFileBased ? '' : (rows.length ? renderRetrievedBlock(rows) : ''),
+      additionalContext,
       _metricFields: {
         matched: rows.length,
         retrieval_gated: retrieval.gated ?? null,
@@ -157,7 +165,7 @@ export async function handlePromptSubmit(hookData) {
         retrieval_fallback: fallback,
         context_file_written: useFileBased ? contextFileWritten : false,
         context_file_bytes: useFileBased ? contextFileBytes : null,
-        additional_context_empty: useFileBased
+        additional_context_empty: inlineBounded ? additionalContext === '' : useFileBased
       }
     };
   } finally {

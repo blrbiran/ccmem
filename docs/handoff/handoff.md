@@ -323,7 +323,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-25（Orca 会话 `5d3d0c09`；本节原位滚动）：**export 契约（§6.1）不变**。本轮 ccmem 改动见 §1.最新（#475 #464 #452 #453 开关），结论汇总在 §1.A。**Orca 侧要知道的**：① 已有库加迁移时，`admin migrate` 之前 hook 返回空上下文、CLI/daemon exit 1 —— Orca 调 `ccmem export`/`orca-outcome` 会非零失败，需人先迁移；② #453 之后注入条数可能为 0（Orca bundle 走 export，不受影响）；③ FTS 默认仍 AND（OR 开关已实现、校准后不翻默认，见 §1.最新）。仍成立：Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑会写真 `~/.orca`，别和 Orca 的测试门同时跑；#415 P2 external-content 不排期。
+2026-11-25 晚（Orca 会话 `dee8a34f`）。§1.最新记录 #496 的提取状态和 #492 的检索校验，§6.1 的 export 契约继续适用。已有库如有待迁移项，先 `admin migrate` 再调用 `ccmem export` 或 `orca-outcome`。FTS 默认仍 AND。Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。付费真跑会写真 `~/.orca`，应与测试门分时。#415 P2 external-content 未排期。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

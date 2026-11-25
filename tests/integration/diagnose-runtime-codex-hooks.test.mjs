@@ -161,8 +161,14 @@ test('admin diagnose counts the last 24 h of Codex sessions that never reached t
   const now = new Date();
   const day = path.join(codexHome, 'sessions', String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0'));
   mkdirSync(day, { recursive: true });
-  const ids = ['01a20c3c-d332-74c0-9671-f8e51f5648b0', '01a20946-90c5-7c51-b779-5a4c67fb9e08', '01a2089c-5c99-7920-81ce-d62ab4c8070b'];
-  ids.forEach((id, i) => writeFileSync(path.join(day, `rollout-2026-11-24T14-2${i}-00-${id}.jsonl`), '{}\n'));
+  const ids = ['01a20c3c-d332-74c0-9671-f8e51f5648b0', '01a20946-90c5-7c51-b779-5a4c67fb9e08', '01a2089c-5c99-7920-81ce-d62ab4c8070b', '01a20c3c-d332-74c0-9671-f8e51f5648b1'];
+  const rolloutRows = [
+    { type: 'session_meta', payload: { features: { hooks: false } } }, // an observed hook wins over config
+    { type: 'session_meta', payload: { config_overrides: ['features.hooks=false'] } },
+    { type: 'response_item', payload: { text: 'example command: -c features.hooks=false' } },
+    { type: 'session_meta', payload: { features: { hooks: false } } }
+  ];
+  ids.forEach((id, i) => writeFileSync(path.join(day, `rollout-2026-11-24T14-2${i}-00-${id}.jsonl`), `${JSON.stringify(rolloutRows[i])}\n`));
   const old = path.join(day, 'rollout-2026-11-20T09-00-00-01a1ffff-0000-7000-8000-000000000000.jsonl');
   writeFileSync(old, '{}\n');
   const twoDaysAgo = (Date.now() - 48 * 3600 * 1000) / 1000;
@@ -177,19 +183,19 @@ test('admin diagnose counts the last 24 h of Codex sessions that never reached t
   try {
     const out = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose'], { cwd, env, encoding: 'utf8' });
     assert.match(out, /^Codex {4}: hooks installed, all approved$/m);
-    // mutation: count every rollout file (drop the 24 h mtime filter) -> 4 sessions, red;
-    // mutation: count sessions without the session_context lookup -> 0 or 3 missed, red
-    assert.match(out, /^Codex {4}: last 24h 3 sessions, 2 never reached the ccmem hooks \(not approved, hooks disabled for that run, or a broken hook command\)$/m);
+    // mutation: count every rollout file (drop the 24 h mtime filter) -> 5 sessions, red;
+    // mutation: count sessions without the session_context lookup -> 0 or 4 missed, red
+    assert.match(out, /^Codex {4}: last 24h 4 sessions, 2 requested hooks off for that run, 1 never reached the ccmem hooks \(check hook approval and the hook command\)$/m);
 
-    // Tester #452 (nit): SessionStart writes no session_context while ccmem is off or in shadow, so the same three
+    // Tester #452 (nit): SessionStart writes no session_context while ccmem is off or in shadow, so the same four
     // sessions must not read as "never reached ... not approved"; the line names the mode instead.
-    // mutation: ignore the mode -> "3 sessions, 2 never reached" again, red
+    // mutation: ignore the mode -> a missed count again, red
     for (const mode of ['off', 'shadow']) {
       const modeDb = openDb();
       try { setMode(modeDb, mode); } finally { modeDb.close(); }
       const offOut = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose'], { cwd, env, encoding: 'utf8' });
       assert.doesNotMatch(offOut, /never reached the ccmem hooks/, mode);
-      assert.match(offOut, new RegExp(`^Codex {4}: last 24h 3 sessions; not checked against the ccmem hooks while ccmem mode is ${mode} \\(hooks record no session then; ccmem mode active\\)$`, 'm'));
+      assert.match(offOut, new RegExp(`^Codex {4}: last 24h 4 sessions; not checked against the ccmem hooks while ccmem mode is ${mode} \\(hooks record no session then; ccmem mode active\\)$`, 'm'));
     }
   } finally {
     const modeDb = openDb();

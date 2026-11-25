@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { isLockRowAlive } from '../../daemon/lock.mjs';
 import { probeFile } from '../../daemon/tasks/embed-latency-probe.mjs';
@@ -1210,11 +1210,32 @@ function getInjectionDiagnostics(db, { days = 14, cfg = loadConfig() } = {}) {
   };
 }
 
-// Tester #452: a ccmem hook Codex skips (not approved, hooks off for that run, a broken command) leaves no trace --
-// Codex logs nothing and ccmem never hears of the session. Codex's own rollout files
-// ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-<time>-<session id>.jsonl) say which sessions ran; every session whose
-// hooks ran has a session_context row (SessionStart writes one). Read-only: names and mtimes only, never contents.
+// Rollout names and mtimes identify recent sessions. Inspect only the bounded
+// session header of an unseen rollout for an explicit per-run config override.
 const ROLLOUT_NAME = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+
+function rolloutRequestedHooksOff(file) {
+  const buffer = Buffer.alloc(64 * 1024);
+  let fd;
+  try {
+    fd = openSync(file, 'r');
+    const bytes = readSync(fd, buffer, 0, buffer.length, 0);
+    const end = buffer.subarray(0, bytes).indexOf(0x0a);
+    if (end < 0) return false;
+    const header = JSON.parse(buffer.toString('utf8', 0, end));
+    if (header?.type !== 'session_meta') return false;
+    const { features, config_overrides: overrides } = header.payload ?? {};
+    if (typeof features?.hooks === 'boolean') return features.hooks === false;
+    // The last explicit override wins if a launcher supplied the flag twice.
+    if (!Array.isArray(overrides)) return false;
+    const hooks = overrides.findLast((value) => typeof value === 'string' && /^features\.hooks\s*=/.test(value));
+    return /^features\.hooks\s*=\s*false\s*$/.test(hooks ?? '');
+  } catch {
+    return false; // an unreadable or incomplete header is not opt-out evidence
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
 
 export function codexSessionReach(db, { codexHome = getCodexHome(), now = Date.now(), windowMs = 24 * 60 * 60 * 1000 } = {}) {
   const since = now - windowMs;
@@ -1227,7 +1248,7 @@ export function codexSessionReach(db, { codexHome = getCodexHome(), now = Date.n
     days.add(path.join(String(d.getFullYear()), pad(d.getMonth() + 1), pad(d.getDate())));
     days.add(path.join(String(d.getUTCFullYear()), pad(d.getUTCMonth() + 1), pad(d.getUTCDate())));
   }
-  const ids = new Set();
+  const rollouts = new Map();
   for (const day of days) {
     const dir = path.join(codexHome, 'sessions', day);
     let names = [];
@@ -1236,7 +1257,13 @@ export function codexSessionReach(db, { codexHome = getCodexHome(), now = Date.n
       const match = ROLLOUT_NAME.exec(name);
       if (!match) continue;
       try {
-        if (statSync(path.join(dir, name)).mtimeMs >= since) ids.add(match[1].toLowerCase());
+        const file = path.join(dir, name);
+        const stat = statSync(file);
+        if (!stat.isFile() || stat.mtimeMs < since) continue;
+        const id = match[1].toLowerCase();
+        if (!rollouts.has(id) || rollouts.get(id).mtime < stat.mtimeMs) {
+          rollouts.set(id, { file, mtime: stat.mtimeMs });
+        }
       } catch { /* vanished between readdir and stat */ }
     }
   }
@@ -1244,11 +1271,16 @@ export function codexSessionReach(db, { codexHome = getCodexHome(), now = Date.n
   // off or shadow, so outside 'active' every session would count as missed and be blamed on
   // approval or a broken hook. `missed` is then null: not measurable, and the mode says why.
   const mode = getMode(db);
-  if (mode !== 'active') return { sessions: ids.size, missed: null, mode };
+  if (mode !== 'active') return { sessions: rollouts.size, hooks_off: null, missed: null, mode };
   const seen = db.prepare('SELECT 1 FROM session_context WHERE session_id = ?');
   let missed = 0;
-  for (const id of ids) if (!seen.get(id)) missed += 1;
-  return { sessions: ids.size, missed, mode };
+  let hooksOff = 0;
+  for (const [id, { file }] of rollouts) {
+    if (seen.get(id)) continue; // observed hook execution wins (tester #493)
+    if (rolloutRequestedHooksOff(file)) hooksOff += 1;
+    else missed += 1;
+  }
+  return { sessions: rollouts.size, hooks_off: hooksOff, missed, mode };
 }
 
 export async function cmdAdminDiagnose(

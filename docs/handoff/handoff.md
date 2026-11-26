@@ -330,7 +330,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-26 凌晨（Orca 会话 tester-ledger-batch-70）。§1.最新记录 #507/#452/#445；#507 带迁移 021 与 opt-in `admin tasks-prune`，生产库尚未迁移、daemon 未重启，已有库先 `admin migrate` 再调用 `ccmem export`／`orca-outcome`。FTS 默认仍 AND。Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`。付费真跑会写真 `~/.orca`，应与测试门分时。#415 P2 external-content 未排期。
+2026-11-27（ccmem Batch 71＋Orca #498/#508 完成）。本仓状态不变：§1.最新记录 #507/#452/#445；#507 的迁移 021 尚未在生产库执行、daemon 未重启，已有库先 `ccmem admin migrate` 再调用 `ccmem export`／`orca-outcome`；FTS 默认仍 AND；Orca 隔离测试显式 unset `ORCA_CCMEM_BIN`／`CCMEM_CONFIG_PATH`；付费真跑需与测试门分时；#415 P2 external-content 未排期。Orca #498/#508 已在隔离 worktree `worktree-acceptance-baselines` 完成 Task 1–5、commit 并 `--ff-only` 合入 Orca main；push 待自动发布面审查后由人决定；没有 ccmem 接口或代码改动。下一步见 Orca handoff 最新节。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

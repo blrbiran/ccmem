@@ -15,6 +15,7 @@ test.after(() => rmSync(dataRoot, { recursive: true, force: true }));
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { runSummarizePending } = await import('../../scripts/daemon/tasks/summarize-pending.mjs');
 const { runTask } = await import('../../scripts/daemon/loop.mjs');
+const { insertMemory } = await import('../../scripts/lib/cmd/save.mjs');
 
 /**
  * Spec A2: what the summarizer produced must reach memory whole, or not at
@@ -68,6 +69,7 @@ async function withConfig(summarizeOverrides, fn) {
   // The quality gate is off so that a missing row can only mean the refine
   // path kept it out, never that the gate happened to reject the fragment.
   writeFileSync(configPath, JSON.stringify({
+    embedding: { enabled: false },
     summarize: {
       min_transcript_after_clean: 1,
       quality_gate: { enabled: false },
@@ -242,6 +244,101 @@ async function withExhaustedLlm(fn) {
     }
   }
 }
+
+test('SQLite insert failures fail the task and audit only safe error codes', async () => {
+  const db = openDb();
+  try {
+    await withConfig({}, async () => {
+      const content = 'marker-sqlite-failure: database write failure must stay visible.';
+      const task = seedTask(db, {
+        sessionId: 's-sqlite-failure',
+        synthesized: [{ content, type: 'rule', scope: 'project', tags: [] }]
+      });
+      db.exec(`CREATE TRIGGER reject_summary_insert BEFORE INSERT ON memories
+        BEGIN SELECT RAISE(ABORT, 'synthetic sqlite failure'); END`);
+
+      await runTask(db, task, runSummarizePending);
+      const taskFailure = db.prepare('SELECT status, error_excerpt FROM tasks WHERE id = ?').get(task.id);
+      assert.equal(taskFailure.status, 'failed');
+      assert.match(taskFailure.error_excerpt, /sqlite_code=ERR_SQLITE_ERROR.*sqlite_errcode=1811/);
+      assert.equal(taskFailure.error_excerpt.includes(content), false);
+      assert.equal(taskFailure.error_excerpt.includes('synthetic sqlite failure'), false);
+      const failure = db.prepare(
+        `SELECT details FROM audit_log WHERE action = 'summarize_pending_insert_failed' ORDER BY id DESC LIMIT 1`
+      ).get();
+      assert.ok(failure);
+      const details = JSON.parse(failure.details);
+      assert.equal(details.sqlite_code, 'ERR_SQLITE_ERROR');
+      assert.equal(details.sqlite_errcode, 1811);
+      assert.equal(JSON.stringify(details).includes(content), false);
+      assert.equal(JSON.stringify(details).includes('synthetic sqlite failure'), false);
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'summarize_pending_applied' AND json_extract(details, '$.session_id') = 's-sqlite-failure'").get().n, 0);
+    });
+  } finally {
+    db.exec('DROP TRIGGER IF EXISTS reject_summary_insert');
+    db.close();
+  }
+});
+
+test('a summarize dedupe remains an ordinary skipped item', async () => {
+  const db = openDb();
+  try {
+    await withConfig({}, async () => {
+      const content = 'marker-summary-dedupe: this memory already exists.';
+      const task = seedTask(db, {
+        sessionId: 's-summary-dedupe',
+        synthesized: [{ content, type: 'rule', scope: 'project', tags: [] }]
+      });
+      await insertMemory(db, {
+        cwd: process.cwd(), content, scope: 'project', projectKey: 'demo/repo',
+        source: 'auto_inferred', embedSync: false
+      });
+      await runSummarizePending(db, task);
+
+      const audit = db.prepare(
+        `SELECT details FROM audit_log WHERE action = 'summarize_pending_applied'
+          AND json_extract(details, '$.session_id') = 's-summary-dedupe' ORDER BY id DESC LIMIT 1`
+      ).get();
+      assert.ok(audit);
+      assert.equal(JSON.parse(audit.details).inserted_count, 0);
+      assert.equal(JSON.parse(audit.details).skipped_count, 1);
+      assert.equal(db.prepare(
+        `SELECT COUNT(*) AS n FROM audit_log WHERE action = 'summarize_pending_insert_failed'
+          AND json_extract(details, '$.session_id') = 's-summary-dedupe'`
+      ).get().n, 0);
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test('a SQLite insert ignored by a trigger is a no-write skip, not an inserted memory', async () => {
+  const db = openDb();
+  try {
+    await withConfig({}, async () => {
+      const content = 'marker-summary-no-write: a trigger ignored this insert.';
+      const task = seedTask(db, {
+        sessionId: 's-summary-no-write',
+        synthesized: [{ content, type: 'rule', scope: 'project', tags: [] }]
+      });
+      db.exec(`CREATE TRIGGER ignore_summary_insert BEFORE INSERT ON memories
+        BEGIN SELECT RAISE(IGNORE); END`);
+      await runSummarizePending(db, task);
+
+      const audit = db.prepare(
+        `SELECT details FROM audit_log WHERE action = 'summarize_pending_applied'
+          AND json_extract(details, '$.session_id') = 's-summary-no-write' ORDER BY id DESC LIMIT 1`
+      ).get();
+      assert.ok(audit);
+      assert.equal(JSON.parse(audit.details).inserted_count, 0);
+      assert.equal(JSON.parse(audit.details).skipped_count, 1);
+      assert.equal(db.prepare('SELECT COUNT(*) AS n FROM memories WHERE content = ?').get(content).n, 0);
+    });
+  } finally {
+    db.exec('DROP TRIGGER IF EXISTS ignore_summary_insert');
+    db.close();
+  }
+});
 
 test('an exhausted backend during the refine leaves the task to be retried, not the memory rejected', async () => {
   const db = openDb();

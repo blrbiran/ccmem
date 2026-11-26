@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -71,6 +71,9 @@ test('ftsDiagnostics names why FTS is or is not usable', () => {
     assert.equal(fts.supported, true);
     assert.equal(fts.table_present, true);
     assert.equal(fts.disabled_by_env, false);
+    assert.equal(fts.trigger_health, 'ready');
+    assert.deepEqual(fts.triggers_present, ['memories_ai', 'memories_ad', 'memories_au']);
+    assert.deepEqual(fts.legacy_triggers, []);
   } finally {
     db.close();
   }
@@ -156,6 +159,26 @@ test('admin diagnose prints the runtime and the Codex trust state', () => {
 // Tester #452: an unapproved (or otherwise skipped) ccmem hook leaves no trace anywhere -- Codex logs nothing and ccmem
 // never hears of the session. Diagnose now compares Codex's own rollout files from the last 24 h with the sessions
 // ccmem's hooks recorded, so "approved but nothing reaches ccmem" is a number instead of a guess.
+test('admin diagnose fails with a redacted legacy FTS trigger health report', () => {
+  const db = openDb();
+  try {
+    db.exec(`CREATE TRIGGER memories_fts_insert AFTER INSERT ON memories BEGIN
+      INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+    END`);
+  } finally {
+    db.close();
+  }
+  try {
+    const result = spawnSync(NODE, [CLI, 'admin', 'diagnose'], { cwd, env, encoding: 'utf8' });
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /^FTS triggers: repair-needed \(legacy=memories_fts_insert, missing=none, unrecognized=none\)$/m);
+    assert.equal(result.stdout.includes('content'), false);
+  } finally {
+    const cleanup = openDb();
+    try { cleanup.exec('DROP TRIGGER IF EXISTS memories_fts_insert'); } finally { cleanup.close(); }
+  }
+});
+
 test('admin diagnose counts the last 24 h of Codex sessions that never reached the ccmem hooks (#452)', () => {
   writeCodexHome({ approve: 3, quoted: true });
   const now = new Date();

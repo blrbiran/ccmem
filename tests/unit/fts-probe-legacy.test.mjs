@@ -12,12 +12,16 @@ process.env.CCMEM_DATA_ROOT = mkdtempSync(path.join(tmpdir(), 'ccmem-fts-probe-l
 
 const { openDb, hasUsableFts } = await import('../../scripts/lib/db.mjs');
 
-test('a probe table a crash left in the main database is removed', () => {
+test('ordinary FTS probes preserve a stale main-schema probe until explicit maintenance', () => {
   const db = openDb();
   db.exec("CREATE VIRTUAL TABLE ccmem_fts_probe USING fts5(content, tokenize='trigram')");
   assert.equal(hasUsableFts(db), true);
-  assert.equal(Boolean(db.prepare("SELECT 1 FROM main.sqlite_master WHERE name = 'ccmem_fts_probe' LIMIT 1").get()), false);
+  assert.equal(Boolean(db.prepare("SELECT 1 FROM main.sqlite_master WHERE name = 'ccmem_fts_probe' LIMIT 1").get()), true);
   db.close();
+
+  const repaired = openDb({ migrate: true });
+  assert.equal(Boolean(repaired.prepare("SELECT 1 FROM main.sqlite_master WHERE name = 'ccmem_fts_probe' LIMIT 1").get()), false);
+  repaired.close();
 });
 
 test.after(() => rmSync(process.env.CCMEM_DATA_ROOT, { recursive: true, force: true }));

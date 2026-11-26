@@ -92,9 +92,11 @@ if (verb === 'admin' && args[0] === 'migrate') {
     process.exit(help ? 0 : 64);
   }
   try {
-    const migrated = openDb({ migrate: true });
+    const migrationReport = {};
+    const migrated = openDb({ migrate: true, migrationReport });
     try {
       process.stdout.write(`ccmem: database schema is ${getSchemaVersion(migrated)}\n`);
+      process.stdout.write(`ccmem: dropped ${migrationReport.droppedLegacyFtsTriggers} legacy FTS triggers\n`);
     } finally {
       migrated.close();
     }
@@ -1489,6 +1491,12 @@ try {
       const fts = result.runtime.fts;
       const ftsText = fts.status === 'ready' ? 'ready' : `${fts.status} (retrieval falls back to LIKE)`;
       process.stdout.write(`Runtime  : node ${result.runtime.node} | sqlite ${result.runtime.sqlite} | fts5 ${ftsText}\n`);
+      if (fts.trigger_health === 'repair-needed') {
+        process.stdout.write(`FTS triggers: repair-needed (legacy=${fts.legacy_triggers.join(',') || 'none'}, missing=${fts.missing_triggers.join(',') || 'none'}, unrecognized=${fts.trigger_name_conflicts.join(',') || 'none'})\n`);
+        process.exitCode = 1;
+      } else {
+        process.stdout.write(`FTS triggers: ${fts.trigger_health}\n`);
+      }
       const hooks = result.codex_hooks;
       if (hooks.installed) {
         const approved = hooks.approved === hooks.total ? 'all approved' : `${hooks.approved} of ${hooks.total} approved — open codex and run /hooks`;

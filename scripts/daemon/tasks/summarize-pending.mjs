@@ -434,7 +434,29 @@ export async function runSummarizePending(db, task) {
         provenance: { sessionId, transcriptPath }
       });
       insertedIds.push(inserted.id);
-    } catch {
+    } catch (error) {
+      if (error?.code === 'CCMEM_NO_INSERT') {
+        skippedCount += 1;
+        continue;
+      }
+      if (error?.ccmemInsertFailure === true && Number.isInteger(error.errcode) && error.errcode > 0) {
+        const sqliteCode = typeof error.code === 'string' ? error.code : 'unknown';
+        const safeError = Object.assign(
+          new Error(`SQLite insert failed (sqlite_code=${sqliteCode}, sqlite_errcode=${error.errcode})`),
+          { code: sqliteCode, errcode: error.errcode }
+        );
+        try {
+          writeAudit(db, 'summarize_pending_insert_failed', null, {
+            task_id: task.id,
+            session_id: sessionId,
+            sqlite_code: sqliteCode,
+            sqlite_errcode: error.errcode
+          });
+        } catch {
+          throw safeError;
+        }
+        throw safeError;
+      }
       skippedCount += 1;
     }
   }

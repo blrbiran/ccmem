@@ -79,7 +79,7 @@ function triggerExists(db, name) {
   return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ? LIMIT 1").get(name));
 }
 
-test('ensureSchema holds the write lock from BEGIN, so a rival commit cannot poison it', () => {
+test('explicit FTS maintenance holds the write lock from BEGIN, so a rival commit cannot poison it', () => {
   openDb().close();
 
   const writer = new DatabaseSync(getDbPath());
@@ -93,13 +93,15 @@ test('ensureSchema holds the write lock from BEGIN, so a rival commit cannot poi
     // 制造一件"事务必须写"的事：FTS 关着而触发器还在 ⇒ reconcileFtsArtifacts 必须把它丢掉。
     // 没有这一步，稳态下压根不会进事务（db.mjs 的 ftsReconcileNeeded 会挡在门外），测试就测不到东西。
     db.exec('DROP TRIGGER IF EXISTS memories_ai');
-    db.exec('CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN SELECT 1; END');
+    db.exec(`CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+      INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+    END`);
 
     const seam = withConcurrentCommitDuringTransaction(db, writer);
 
     let thrown = null;
     try {
-      ensureSchema(seam);
+      ensureSchema(seam, { migrate: true });
     } catch (error) {
       thrown = error;
     }
@@ -138,6 +140,96 @@ test('ensureSchema holds the write lock from BEGIN, so a rival commit cannot poi
   } finally {
     writer.close();
     db.close();
+  }
+});
+
+test('FTS repair rechecks the daemon lock inside its own transaction after a schema upgrade', () => {
+  const db = openDb();
+  const writer = new DatabaseSync(getDbPath());
+  try {
+    db.exec(`
+      ALTER TABLE tasks DROP COLUMN reclaimed_ms;
+      DELETE FROM schema_migrations WHERE to_version = 21;
+      UPDATE schema_meta SET version = 20;
+      CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+      END;
+    `);
+    let transactions = 0;
+    const seam = {
+      prepare: db.prepare.bind(db),
+      exec(sql) {
+        if (sql === 'BEGIN IMMEDIATE' && ++transactions === 2) {
+          const now = Date.now();
+          writer.prepare(`INSERT INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive)
+            VALUES (1, ?, 'test-daemon', ?, ?, 1)`).run(process.pid, now, now);
+        }
+        return db.exec(sql);
+      }
+    };
+
+    assert.throws(() => ensureSchema(seam, { migrate: true }), /stop the running daemon/);
+    assert.equal(transactions, 2);
+    assert.equal(db.prepare('SELECT version FROM schema_meta').get().version, 21);
+    assert.equal(triggerExists(db, 'memories_ai'), true, 'an active daemon prevents the FTS repair');
+  } finally {
+    db.exec('DELETE FROM daemon_lock');
+    writer.close();
+    db.close();
+  }
+});
+
+test('ordinary open without the FTS5 module removes only built-in canonical triggers without a backup', async () => {
+  const previous = process.env.CCMEM_DISABLE_FTS5;
+  delete process.env.CCMEM_DISABLE_FTS5;
+  const ftsDb = await import('../../scripts/lib/db.mjs?no-fts5-module');
+  const seed = new DatabaseSync(getDbPath());
+  try {
+    seed.exec(`
+      CREATE VIRTUAL TABLE memories_fts USING fts5(content, tokenize='trigram');
+      DROP TRIGGER IF EXISTS memories_ai;
+      CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+      END;
+      CREATE TRIGGER memories_au AFTER UPDATE OF content ON memories BEGIN SELECT 1; END;
+    `);
+    const before = ftsDb.listMigrationBackups();
+    const prepare = DatabaseSync.prototype.prepare;
+    const exec = DatabaseSync.prototype.exec;
+    DatabaseSync.prototype.prepare = function (sql) {
+      return prepare.call(this, sql.includes('pragma_module_list')
+        ? sql.replace('pragma_module_list', "(SELECT 'not-fts5' AS name)") : sql);
+    };
+    DatabaseSync.prototype.exec = function (sql) {
+      if (/USING fts5|VACUUM INTO/.test(sql)) {
+        throw Object.assign(new Error('no such module: fts5'), { errcode: 1 });
+      }
+      return exec.call(this, sql);
+    };
+    try {
+      const db = ftsDb.openDb();
+      try {
+        assert.equal(triggerExists(db, 'memories_ai'), false);
+        assert.equal(triggerExists(db, 'memories_au'), true);
+        db.exec(`INSERT INTO memories (scope, type, content, source, last_touched_at, created_at, updated_at)
+          VALUES ('global', 'rule', 'write without FTS5', 'user_explicit', 1, 1, 1)`);
+        assert.ok(db.prepare("SELECT id FROM memories WHERE content = 'write without FTS5'").get());
+      } finally { db.close(); }
+      seed.exec(`CREATE TRIGGER memories_fts_insert AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+      END`);
+      const reopened = ftsDb.openDb();
+      try {
+        assert.equal(triggerExists(reopened, 'memories_fts_insert'), true);
+      } finally { reopened.close(); }
+      assert.deepEqual(ftsDb.listMigrationBackups(), before);
+    } finally {
+      DatabaseSync.prototype.prepare = prepare;
+      DatabaseSync.prototype.exec = exec;
+    }
+  } finally {
+    process.env.CCMEM_DISABLE_FTS5 = previous;
+    seed.close();
   }
 });
 

@@ -92,6 +92,8 @@ ccmem admin daemon status
 ccmem admin diagnose
 ```
 
+`admin diagnose` reports an unhealthy FTS trigger set and exits nonzero. Stop the daemon, then run `ccmem admin migrate` to back up the database and repair the known legacy triggers transactionally.
+
 ### Promote or review memories
 
 ```bash

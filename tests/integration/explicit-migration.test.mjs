@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -19,6 +19,7 @@ function fixture(t) {
   };
   delete env.CCMEM_CONFIG_PATH;
   delete env.CCMEM_INTERNAL;
+  writeFileSync(path.join(root, 'config.json'), JSON.stringify({ embedding: { enabled: false } }));
   const run = (script, args, input) => spawnSync(process.execPath, ['--no-warnings', path.join(scripts, script), ...args], {
     encoding: 'utf8', env, input, timeout: 20_000
   });
@@ -124,6 +125,33 @@ test('daemon stop remains available while schema upgrade is pending', (t) => {
 
 // Tester #454: a store built by another ccmem lineage already carried session_context.transcript_path at
 // version 18, so 019's plain ADD COLUMN failed with "duplicate column name" and the upgrade could never finish.
+test('admin migrate refuses FTS maintenance while the daemon is running before taking a backup', (t) => {
+  const { cli, backups, open } = fixture(t);
+  assert.equal(cli('admin', 'migrate').status, 0);
+  const db = open();
+  db.exec(`
+    CREATE TRIGGER memories_fts_insert AFTER INSERT ON memories BEGIN
+      INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+    END;
+  `);
+  const now = Date.now();
+  db.prepare(`INSERT INTO daemon_lock (id, holder_pid, hostname, acquired_at, heartbeat_at, alive)
+    VALUES (1, 999999, 'fixture', ?, ?, 1)`).run(now, now);
+  db.close();
+
+  const before = backups();
+  const result = cli('admin', 'migrate');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /stop the running daemon/);
+  assert.deepEqual(backups(), before);
+  const unchanged = open();
+  try {
+    assert.equal(Boolean(unchanged.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='memories_fts_insert'").get()), true);
+  } finally {
+    unchanged.close();
+  }
+});
+
 test('admin migrate completes on a version-18 store that already has a column a later migration adds', (t) => {
   const { cli, version, open } = fixture(t);
   const db = open();
@@ -143,6 +171,133 @@ test('admin migrate completes on a version-18 store that already has a column a 
   }
 });
 
+
+test('ordinary opens leave stale FTS artifacts untouched; admin migrate backs up and repairs only known legacy triggers', (t) => {
+  const { root, cli, backups, open } = fixture(t);
+  assert.equal(cli('admin', 'migrate').status, 0);
+  const db = open();
+  try {
+    const now = Date.now();
+    db.prepare(`INSERT INTO memories (scope, type, content, source, last_touched_at, created_at, updated_at)
+      VALUES ('global', 'rule', 'fts repair sentinel', 'user_explicit', ?, ?, ?)`).run(now, now, now);
+    db.exec(`
+      CREATE TRIGGER memories_fts_insert AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+      END;
+      CREATE TRIGGER memories_fts_delete AFTER DELETE ON memories BEGIN
+        DELETE FROM memories_fts WHERE rowid = old.id;
+      END;
+      CREATE TRIGGER memories_fts_update AFTER UPDATE OF content ON memories BEGIN
+        UPDATE memories_fts SET content = new.content WHERE rowid = new.id;
+      END;
+      CREATE TRIGGER custom_memories_trigger AFTER UPDATE OF content ON memories BEGIN SELECT 1; END;
+      DELETE FROM memories_fts;
+    `);
+  } finally {
+    db.close();
+  }
+
+  const before = backups();
+  const regularOpen = cli('stats');
+  assert.equal(regularOpen.status, 0, regularOpen.stderr);
+  const unchanged = open();
+  try {
+    assert.equal(unchanged.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='memories_fts_insert'").get() != null, true);
+    assert.equal(Boolean(unchanged.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='memories_ai'").get()), true);
+    assert.throws(() => unchanged.exec(`INSERT INTO memories (scope, type, content, source, last_touched_at, created_at, updated_at)
+      VALUES ('global', 'rule', 'double-write probe', 'user_explicit', 1, 1, 1)`), { errcode: 19 });
+    assert.equal(unchanged.prepare('SELECT COUNT(*) AS n FROM memories_fts').get().n, 0);
+  } finally {
+    unchanged.close();
+  }
+  assert.deepEqual(backups(), before, 'ordinary opens must not snapshot or repair FTS');
+
+  const repaired = cli('admin', 'migrate');
+  assert.equal(repaired.status, 0, repaired.stderr);
+  assert.match(repaired.stdout, /dropped 3 legacy FTS triggers/);
+  const saved = cli('save', 'fts repair post-migration write');
+  assert.equal(saved.status, 0, saved.stderr);
+  const after = open();
+  try {
+    assert.equal(after.prepare('SELECT COUNT(*) AS n FROM memories_fts').get().n, 2);
+    assert.equal(after.prepare('SELECT COUNT(*) AS n FROM memories_fts').get().n, after.prepare('SELECT COUNT(*) AS n FROM memories').get().n);
+    assert.equal(Boolean(after.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name IN ('memories_fts_insert', 'memories_fts_update', 'memories_fts_delete') LIMIT 1").get()), false);
+    assert.equal(after.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='custom_memories_trigger'").get() != null, true);
+  } finally {
+    after.close();
+  }
+  const added = backups().filter((name) => !before.includes(name));
+  assert.equal(added.length, 1);
+  const snapshot = new DatabaseSync(path.join(root, added[0]), { readOnly: true });
+  try {
+    assert.equal(snapshot.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='memories_fts_insert'").get() != null, true);
+    assert.equal(snapshot.prepare('SELECT COUNT(*) AS n FROM memories_fts').get().n, 0);
+  } finally {
+    snapshot.close();
+  }
+  const stableBackups = backups();
+  const repeated = cli('admin', 'migrate');
+  assert.equal(repeated.status, 0, repeated.stderr);
+  assert.match(repeated.stdout, /dropped 0 legacy FTS triggers/);
+  assert.deepEqual(backups(), stableBackups, 'a second maintenance pass makes no new snapshot');
+});
+
+test('failed FTS rebuild rolls back trigger deletion and leaves a recoverable snapshot', (t) => {
+  const { root, cli, backups, open } = fixture(t);
+  assert.equal(cli('admin', 'migrate').status, 0);
+  const db = open();
+  try {
+    db.exec(`
+      DROP TABLE memories_fts;
+      CREATE TABLE memories_fts (content TEXT);
+      INSERT INTO memories_fts VALUES ('custom table payload');
+      CREATE TRIGGER memories_fts_insert AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+      END;
+    `);
+  } finally {
+    db.close();
+  }
+
+  const before = backups();
+  const result = cli('admin', 'migrate');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /not a recognized FTS5 table/);
+  const added = backups().filter((name) => !before.includes(name));
+  assert.equal(added.length, 1);
+  for (const file of ['global.db', added[0]]) {
+    const copy = new DatabaseSync(path.join(root, file), { readOnly: true });
+    try {
+      assert.equal(copy.prepare('SELECT content FROM memories_fts').get().content, 'custom table payload');
+      assert.equal(Boolean(copy.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='memories_fts_insert'").get()), true);
+    } finally {
+      copy.close();
+    }
+  }
+});
+
+test('admin migrate preserves a custom trigger that only reuses a legacy FTS name', (t) => {
+  const { cli, backups, open } = fixture(t);
+  assert.equal(cli('admin', 'migrate').status, 0);
+  const db = open();
+  db.exec(`CREATE TRIGGER memories_fts_insert AFTER INSERT ON memories BEGIN SELECT 1; END`);
+  db.close();
+
+  const before = backups();
+  const diagnosis = cli('admin', 'diagnose');
+  assert.equal(diagnosis.status, 1);
+  assert.match(diagnosis.stdout, /unrecognized=memories_fts_insert/);
+  const maintenance = cli('admin', 'migrate');
+  assert.equal(maintenance.status, 0, maintenance.stderr);
+  assert.deepEqual(backups(), before);
+
+  const after = open();
+  try {
+    assert.equal(Boolean(after.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='memories_fts_insert'").get()), true);
+  } finally {
+    after.close();
+  }
+});
 
 test('migration 21 relabels old reclaimed age without changing ordinary task duration (#507)', (t) => {
   const { cli, open } = fixture(t);

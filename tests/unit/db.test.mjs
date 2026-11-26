@@ -109,7 +109,7 @@ test('openDb drops legacy FTS triggers when FTS5 is unavailable so writes still 
 
     await withEnv('CCMEM_DATA_ROOT', tempRoot, async () => {
       await withEnv('CCMEM_DISABLE_FTS5', '1', async () => {
-        const db = openDb();
+        const db = openDb({ migrate: true });
         assert.equal(
           db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger' AND name IN ('memories_ai', 'memories_ad', 'memories_au')").get().n,
           0

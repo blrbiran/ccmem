@@ -112,57 +112,67 @@ export async function insertMemory(db, {
   const resolvedParentIds = Array.isArray(parentIds) && parentIds.length ? JSON.stringify(parentIds.map((id) => Number(id))) : null;
   const resolvedSummaryMeta = typeof summaryMeta === 'string' && summaryMeta.trim() ? summaryMeta : null;
   const resolvedTemporalType = ['permanent', 'temporary', 'time-bound'].includes(temporalType) ? temporalType : null;
-  const result = db.prepare(
-    `INSERT INTO memories (
-      scope,
-      project_key,
-      type,
+  let result;
+  try {
+    result = db.prepare(
+      `INSERT INTO memories (
+        scope,
+        project_key,
+        type,
+        content,
+        temporal_type,
+        summary_meta,
+        embedding,
+        embedding_sig,
+        pinned,
+        source,
+        trust_score,
+        consolidation_depth,
+        parent_ids,
+        status,
+        tags,
+        decay_status,
+        quarantined_at,
+        last_touched_at,
+        origin_agent,
+        session_id,
+        transcript_path,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      resolvedScope,
+      resolvedProjectKey,
+      resolvedType,
       content,
-      temporal_type,
-      summary_meta,
+      resolvedTemporalType,
+      resolvedSummaryMeta,
       embedding,
-      embedding_sig,
-      pinned,
+      embeddingSig,
+      Number(pinned) ? 1 : 0,
       source,
-      trust_score,
-      consolidation_depth,
-      parent_ids,
+      trustScore,
+      resolvedDepth,
+      resolvedParentIds,
       status,
-      tags,
-      decay_status,
-      quarantined_at,
-      last_touched_at,
-      origin_agent,
-      session_id,
-      transcript_path,
-      created_at,
-      updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    resolvedScope,
-    resolvedProjectKey,
-    resolvedType,
-    content,
-    resolvedTemporalType,
-    resolvedSummaryMeta,
-    embedding,
-    embeddingSig,
-    Number(pinned) ? 1 : 0,
-    source,
-    trustScore,
-    resolvedDepth,
-    resolvedParentIds,
-    status,
-    JSON.stringify(resolvedTags),
-    resolvedDecayStatus,
-    resolvedQuarantinedAt,
-    touchedAt,
-    originAgent ?? null,
-    typeof provenance?.sessionId === 'string' && provenance.sessionId ? provenance.sessionId : null,
-    typeof provenance?.transcriptPath === 'string' && provenance.transcriptPath ? provenance.transcriptPath : null,
-    now,
-    now
-  );
+      JSON.stringify(resolvedTags),
+      resolvedDecayStatus,
+      resolvedQuarantinedAt,
+      touchedAt,
+      originAgent ?? null,
+      typeof provenance?.sessionId === 'string' && provenance.sessionId ? provenance.sessionId : null,
+      typeof provenance?.transcriptPath === 'string' && provenance.transcriptPath ? provenance.transcriptPath : null,
+      now,
+      now
+    );
+  } catch (error) {
+    error.ccmemInsertFailure = true;
+    throw error;
+  }
+
+  if (Number(result.changes) !== 1) {
+    throw Object.assign(new Error('ccmem: memory insert did not write a row'), { code: 'CCMEM_NO_INSERT' });
+  }
 
   const id = Number(result.lastInsertRowid);
   rebuildInjectionCache(db, resolvedScope === 'global' ? null : resolvedProjectKey);

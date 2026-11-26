@@ -12,7 +12,21 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.resolve(HERE, '../migrations');
 const require = createRequire(import.meta.url);
 const BACKUP_DEDUPE_WINDOW_MS = 60_000;
+const FTS_TRIGGER_SQL = {
+  memories_ai: 'CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END',
+  memories_ad: 'CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN DELETE FROM memories_fts WHERE rowid = old.id; END',
+  memories_au: 'CREATE TRIGGER memories_au AFTER UPDATE OF content ON memories BEGIN DELETE FROM memories_fts WHERE rowid = old.id; INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END'
+};
+const FTS_TRIGGER_NAMES = Object.keys(FTS_TRIGGER_SQL);
+// These are the complete trigger bodies shipped in the early ccmem designs.
+const LEGACY_FTS_TRIGGER_SQL = {
+  memories_fts_insert: 'CREATE TRIGGER memories_fts_insert AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END',
+  memories_fts_update: 'CREATE TRIGGER memories_fts_update AFTER UPDATE OF content ON memories BEGIN UPDATE memories_fts SET content = new.content WHERE rowid = new.id; END',
+  memories_fts_delete: 'CREATE TRIGGER memories_fts_delete AFTER DELETE ON memories BEGIN DELETE FROM memories_fts WHERE rowid = old.id; END'
+};
+const LEGACY_FTS_TRIGGER_NAMES = Object.keys(LEGACY_FTS_TRIGGER_SQL);
 let cachedFtsSupport;
+let cachedFts5ModulePresent;
 
 // Defined in paths.mjs so config.mjs can share it without importing this
 // module (which imports config.mjs). Re-exported here because six modules
@@ -157,8 +171,38 @@ function triggerExists(db, triggerName) {
   return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ? LIMIT 1").get(triggerName));
 }
 
+function normalizedSql(sql) {
+  return String(sql ?? '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/\s*([(),;=])\s*/g, '$1').replace(/;$/, '');
+}
+
+function matchingFtsTriggers(db, definitions) {
+  const lookup = db.prepare("SELECT tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name = ?");
+  return Object.keys(definitions).filter((name) => {
+    const trigger = lookup.get(name);
+    return trigger?.tbl_name === 'memories' && normalizedSql(trigger.sql) === normalizedSql(definitions[name]);
+  });
+}
+
 function tableSql(db, tableName) {
   return db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1").get(tableName)?.sql ?? '';
+}
+
+function dropCanonicalFtsTriggersWithoutModule(db) {
+  if (ftsDisabledByEnv()) return;
+  cachedFts5ModulePresent ??= Boolean(db.prepare("SELECT 1 FROM pragma_module_list WHERE name = 'fts5'").get());
+  if (cachedFts5ModulePresent || matchingFtsTriggers(db, FTS_TRIGGER_SQL).length === 0) return;
+
+  // An SQLite build without FTS5 cannot write through these triggers or reliably
+  // snapshot the virtual table using VACUUM INTO. Keep the index for explicit repair
+  // with an FTS5-capable build and allow writes through the historical LIKE fallback.
+  runInTransaction(db, () => {
+    for (const name of matchingFtsTriggers(db, FTS_TRIGGER_SQL)) dropTriggerIfExists(db, name);
+  });
+}
+
+function hasLegacyFtsProbe(db) {
+  return normalizedSql(tableSql(db, 'ccmem_fts_probe'))
+    === "create virtual table ccmem_fts_probe using fts5(content,tokenize='trigram')";
 }
 
 function dropTriggerIfExists(db, triggerName) {
@@ -175,18 +219,13 @@ function ftsDisabledByEnv() {
   return process.env.CCMEM_DISABLE_FTS5 === '1';
 }
 
-function supportsFts(db) {
+function supportsFts(db, { cleanupMainProbe = false } = {}) {
   if (ftsDisabledByEnv()) {
     return false;
   }
-  // Issue 415: older builds answered this probe with CREATE/DROP in the main schema, so a process
-  // killed in between left an empty virtual table behind. The probe owns that cleanup; the lookup is
-  // a single sqlite_master read and only writes when the leftover is really there.
-  try {
-    if (tableExists(db, 'ccmem_fts_probe')) {
-      db.exec('DROP TABLE ccmem_fts_probe');
-    }
-  } catch {}
+  if (cleanupMainProbe && hasLegacyFtsProbe(db)) {
+    db.exec('DROP TABLE ccmem_fts_probe');
+  }
   if (cachedFtsSupport !== undefined) {
     return cachedFtsSupport;
   }
@@ -219,11 +258,27 @@ export function ftsDiagnostics(db) {
   const disabled = ftsDisabledByEnv();
   const supported = supportsFts(db);
   const table = tableExists(db, 'memories_fts');
+  const presentTriggers = FTS_TRIGGER_NAMES.filter((name) => triggerExists(db, name));
+  const legacyTriggers = matchingFtsTriggers(db, LEGACY_FTS_TRIGGER_SQL);
+  const recognizedTriggers = matchingFtsTriggers(db, FTS_TRIGGER_SQL);
+  const nameConflicts = [
+    ...presentTriggers.filter((name) => !recognizedTriggers.includes(name)),
+    ...LEGACY_FTS_TRIGGER_NAMES.filter((name) => !legacyTriggers.includes(name) && triggerExists(db, name))
+  ];
+  const missingTriggers = FTS_TRIGGER_NAMES.filter((name) => !presentTriggers.includes(name));
+  const needsRepair = legacyTriggers.length || nameConflicts.length
+    || (supported ? missingTriggers.length || !table : !disabled && recognizedTriggers.length);
+  const triggerHealth = needsRepair ? 'repair-needed' : supported ? 'ready' : 'unsupported';
   return {
     disabled_by_env: disabled,
     supported,
     table_present: table,
-    status: disabled ? 'disabled-by-env' : !supported ? 'unsupported' : !table ? 'table-missing' : 'ready'
+    status: disabled ? 'disabled-by-env' : !supported ? 'unsupported' : !table ? 'table-missing' : 'ready',
+    trigger_health: triggerHealth,
+    triggers_present: presentTriggers,
+    legacy_triggers: legacyTriggers,
+    trigger_name_conflicts: nameConflicts,
+    missing_triggers: missingTriggers
   };
 }
 
@@ -302,13 +357,10 @@ function runVersionedMigration(db, file) {
   throw new Error(`Unsupported migration type: ${file}`);
 }
 
-function ensureTrigger(db, triggerName, sql) {
-  if (!triggerExists(db, triggerName)) {
-    db.exec(sql);
-  }
-}
-
 function rebuildFtsIndex(db) {
+  if (normalizedSql(tableSql(db, 'memories_fts')) !== "create virtual table memories_fts using fts5(content,tokenize='trigram')") {
+    throw new Error('cannot rebuild FTS: memories_fts is not a recognized FTS5 table');
+  }
   db.exec('DELETE FROM memories_fts');
   db.exec(`
     INSERT INTO memories_fts(rowid, content)
@@ -319,81 +371,64 @@ function rebuildFtsIndex(db) {
 // 纯读，用来决定要不要进写事务。进去之后 work() 会把同样的判断再做一遍，
 // 所以两个进程同时判断"要写"也是安全的。
 function ftsReconcileNeeded(db, ftsUsable, rebuild) {
+  const hasLegacyTrigger = matchingFtsTriggers(db, LEGACY_FTS_TRIGGER_SQL).length > 0;
   if (!ftsUsable) {
-    return (
-      triggerExists(db, 'memories_ai') || triggerExists(db, 'memories_ad') || triggerExists(db, 'memories_au')
-    );
+    return hasLegacyTrigger || matchingFtsTriggers(db, FTS_TRIGGER_SQL).length > 0;
   }
 
   return (
     rebuild ||
+    hasLegacyFtsProbe(db) ||
+    hasLegacyTrigger ||
     !tableExists(db, 'memories_fts') ||
-    !triggerExists(db, 'memories_ai') ||
-    !triggerExists(db, 'memories_ad') ||
-    !triggerExists(db, 'memories_au')
+    FTS_TRIGGER_NAMES.some((name) => !triggerExists(db, name))
   );
 }
 
-function reconcileFtsArtifacts(db, { rebuild = false, transactional = true } = {}) {
+function reconcileFtsArtifacts(db, { rebuild = false, transactional = true, requireStoppedDaemon = false, backup = false } = {}) {
   const work = () => {
-    if (!supportsFts(db)) {
-      dropTriggerIfExists(db, 'memories_ai');
-      dropTriggerIfExists(db, 'memories_ad');
-      dropTriggerIfExists(db, 'memories_au');
-      return false;
+    const legacyTriggers = matchingFtsTriggers(db, LEGACY_FTS_TRIGGER_SQL);
+    for (const triggerName of legacyTriggers) dropTriggerIfExists(db, triggerName);
+
+    if (!supportsFts(db, { cleanupMainProbe: true })) {
+      for (const triggerName of matchingFtsTriggers(db, FTS_TRIGGER_SQL)) dropTriggerIfExists(db, triggerName);
+      return legacyTriggers.length;
     }
 
     const hadTable = tableExists(db, 'memories_fts');
-    const missingInsertTrigger = !triggerExists(db, 'memories_ai');
-    const missingDeleteTrigger = !triggerExists(db, 'memories_ad');
-    const missingUpdateTrigger = !triggerExists(db, 'memories_au');
-
+    const missingTriggers = FTS_TRIGGER_NAMES.filter((name) => !triggerExists(db, name));
     if (!hadTable) {
       db.exec("CREATE VIRTUAL TABLE memories_fts USING fts5(content, tokenize='trigram')");
     }
+    for (const name of missingTriggers) db.exec(FTS_TRIGGER_SQL[name]);
 
-    ensureTrigger(db, 'memories_ai', `
-      CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
-        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
-      END;
-    `);
-    ensureTrigger(db, 'memories_ad', `
-      CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
-        DELETE FROM memories_fts WHERE rowid = old.id;
-      END;
-    `);
-    ensureTrigger(db, 'memories_au', `
-      CREATE TRIGGER memories_au AFTER UPDATE OF content ON memories BEGIN
-        DELETE FROM memories_fts WHERE rowid = old.id;
-        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
-      END;
-    `);
-
-    if (!hadTable || missingInsertTrigger || missingDeleteTrigger || missingUpdateTrigger || rebuild) {
+    if (!hadTable || legacyTriggers.length || missingTriggers.length || rebuild) {
       rebuildFtsIndex(db);
     }
 
-    return true;
+    return legacyTriggers.length;
   };
 
   if (!transactional) {
     return work();
   }
 
-  // 稳态下这里没有任何要写的东西，而 ensureSchema 每次 openDb() 都会走到 —— 若无条件进事务，
-  // BEGIN IMMEDIATE 会为一次纯读取取一次写锁，把每个 openDb() 都串行化到彼此和 daemon 的写批次上。
-  // supportsFts() 首次调用会自己写（建/删探测表），放在事务外让它走 autocommit：那是一次独立的写，
-  // 本来就该受 busy_timeout 管，而不是钉在一个读快照后面。
+  // Probe only the temp schema before locking. Recheck after reserving the writer,
+  // so the backup and repair use the same committed starting state.
   const ftsUsable = supportsFts(db);
-  if (!ftsReconcileNeeded(db, ftsUsable, rebuild)) {
-    return ftsUsable;
-  }
+  if (!ftsReconcileNeeded(db, ftsUsable, rebuild)) return 0;
 
-  return runInTransaction(db, work);
+  return runInTransaction(db, () => {
+    if (!ftsReconcileNeeded(db, ftsUsable, rebuild)) return 0;
+    if (requireStoppedDaemon) assertDaemonStopped(db);
+    if (backup) createMigrationBackup(getDbPath(), null, { prune: false });
+    return work();
+  });
 }
 
-function runV06Migration(db) {
-  runInTransaction(db, () => {
+function runV06Migration(db, populated) {
+  return runInTransaction(db, () => {
+    if (populated) assertDaemonStopped(db);
     const fromVersion = getSchemaVersion(db);
     const now = Date.now();
 
@@ -411,7 +446,7 @@ function runV06Migration(db) {
       db.exec('ALTER TABLE metrics_daily_rollup ADD COLUMN vec_backfill_embedded INTEGER NOT NULL DEFAULT 0');
     }
 
-    reconcileFtsArtifacts(db, { rebuild: true, transactional: false });
+    const droppedLegacyFtsTriggers = reconcileFtsArtifacts(db, { rebuild: true, transactional: false });
 
     db.prepare('UPDATE schema_meta SET version = 7, applied_at = ?').run(now);
     if (!migrationRecorded(db, 7)) {
@@ -420,6 +455,7 @@ function runV06Migration(db) {
         VALUES (?, 7, 'v0.6: embedding BLOB + audit_log ts sec-to-ms + vec_backfill rollup + optional FTS artifacts', ?, 'ccmem-cli')
       `).run(fromVersion, now);
     }
+    return droppedLegacyFtsTriggers;
   });
 }
 
@@ -626,11 +662,6 @@ function runV09Migration(db) {
 }
 
 function runSpecialMigration(db, toVersion) {
-  if (toVersion === 7) {
-    runV06Migration(db);
-    return true;
-  }
-
   if (toVersion === 8) {
     runV07Migration(db);
     return true;
@@ -707,17 +738,29 @@ export function runMigration(db, { migrate = false, plan = migrationPlan(db) } =
     assertDaemonStopped(db);
     createMigrationBackup(getDbPath(), db, { prune: false });
   }
+  let droppedLegacyFtsTriggers = 0;
   for (const file of pending) {
     const toVersion = Number(file.split('_', 1)[0]);
-    if (!runSpecialMigration(db, toVersion)) runVersionedMigration(db, file);
+    if (toVersion === 7) droppedLegacyFtsTriggers = runV06Migration(db, populated);
+    else if (!runSpecialMigration(db, toVersion)) runVersionedMigration(db, file);
   }
+  return droppedLegacyFtsTriggers;
 }
 
 export { createMigrationBackup, findReusableMigrationBackup, listMigrationBackups, pruneMigrationBackups, publishMigrationSnapshot };
 
-export function ensureSchema(db, options) {
-  runMigration(db, options);
-  reconcileFtsArtifacts(db);
+export function ensureSchema(db, { migrate = false, plan = migrationPlan(db) } = {}) {
+  const dropped = runMigration(db, { migrate, plan }) ?? 0;
+  if (!migrate && plan.version > 0) {
+    dropCanonicalFtsTriggersWithoutModule(db);
+    return dropped;
+  }
+
+  const existingStore = plan.version > 0 || plan.populated;
+  return dropped + reconcileFtsArtifacts(db, {
+    requireStoppedDaemon: migrate && existingStore,
+    backup: migrate && existingStore && plan.pending.length === 0
+  });
 }
 
 // 每个连接撞写锁时最多等这么久。导出是为了让"等这个库放锁"的调用方能按它定预算 ——
@@ -735,7 +778,7 @@ export function isDatabaseBusy(error) {
   return BUSY_ERRCODES.has(error?.errcode);
 }
 
-export function openDb({ migrate = false, forDaemonStop = false } = {}) {
+export function openDb({ migrate = false, forDaemonStop = false, migrationReport } = {}) {
   mkdirSync(getDataRoot(), { recursive: true });
   const db = new DatabaseSync(getDbPath());
   try {
@@ -752,7 +795,8 @@ export function openDb({ migrate = false, forDaemonStop = false } = {}) {
       assertDaemonStopped(db);
     }
     db.exec('PRAGMA journal_mode = WAL;');
-    ensureSchema(db, { migrate, plan });
+    const droppedLegacyFtsTriggers = ensureSchema(db, { migrate, plan });
+    if (migrationReport) migrationReport.droppedLegacyFtsTriggers = droppedLegacyFtsTriggers;
     return db;
   } catch (error) {
     db.close();

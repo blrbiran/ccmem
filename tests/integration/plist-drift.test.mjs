@@ -796,6 +796,49 @@ test('CLI reporting: a blocked gate writes the remedy to stderr', () => withFake
   assert.match(result.stderr, /uninstall && ccmem admin daemon install/, 'a blocked gate must surface the remedy on stderr');
 }));
 
+for (const [label, backend, backendOrder, expectedStatus, relativeConfig] of [
+  ['Claude is configured', 'claude', ['claude'], 3],
+  ['Claude is a fallback', 'codex', ['codex', 'claude'], 3],
+  ['only Codex is configured', 'codex', ['codex'], 0],
+  ['an empty order enables default fallbacks', 'codex', [], 3],
+  ['launchd cannot resolve the shell-relative config reliably', 'codex', ['codex'], 3, true],
+]) test(`CLI restart handles a signalled Claude binary when ${label} (#532)`, () => withFakeLaunchctl(async () => {
+  const { spawnSync } = await import('node:child_process');
+  const cliPath = new URL('../../scripts/cli.mjs', import.meta.url).pathname;
+  const agentDir = trackedMkdtemp('ccmem-la-');
+  const fakeClaude = join(agentDir, 'fake-claude');
+  const plistPath = join(agentDir, 'com.ccmem.daemon.plist');
+  writeFileSync(fakeClaude, '#!/bin/sh\nkill -KILL "$$"\n', { mode: 0o700 });
+  const configPath = join(agentDir, 'config.json');
+  writeFileSync(configPath, JSON.stringify({ llm: { backend, backend_order: backendOrder } }));
+  const { relative } = await import('node:path');
+  const savedEnv = process.env;
+  try {
+    process.env = {
+      ...savedEnv,
+      CCMEM_LAUNCHAGENT_DIR: agentDir,
+      CCMEM_CLAUDE_P_COMMAND: fakeClaude,
+      CCMEM_CONFIG_PATH: relativeConfig ? relative(process.cwd(), configPath) : configPath
+    };
+    const expected = (await import('../../scripts/lib/admin/daemon.mjs')).renderPlist();
+    const before = expected.replace(/<key>PATH<\/key><string>[^<]*<\/string>/, '<key>PATH</key><string>/stale/bin</string>');
+    assert.notEqual(before, expected);
+    writeFileSync(plistPath, before);
+    const result = spawnSync(process.execPath, [cliPath, 'admin', '--', 'daemon', 'restart'], { env: process.env, encoding: 'utf8' });
+    assert.match(result.stdout, /daemon restarted pid=/);
+    assert.equal(result.status, expectedStatus, result.stderr);
+    if (expectedStatus === 3) {
+      assert.match(result.stderr, /G4_INDETERMINATE.*SIGKILL/);
+      assert.equal(readFileSync(plistPath, 'utf8'), before);
+    } else {
+      assert.doesNotMatch(result.stderr, /plist not rewritten/);
+      assert.equal(readFileSync(plistPath, 'utf8'), expected);
+    }
+  } finally {
+    process.env = savedEnv;
+  }
+}));
+
 test('CLI reporting: a successful rewrite adds no extra stderr noise', () => withFakeLaunchctl(async () => {
   const { spawnSync } = await import('node:child_process');
   const { fileURLToPath } = await import('node:url');
@@ -954,9 +997,9 @@ test('CLI reporting: an in_sync plist that still differs names the differing key
     encoding: 'utf8'
   });
 
-  assert.match(result.stdout, /plist=in_sync/, 'free-key and template differences must not raise the verdict');
-  assert.match(result.stderr, /PATH/, 'the differing free key must be named');
-  assert.match(result.stderr, /ProgramArguments/, 'the differing template part must be named');
+  assert.match(result.stdout, /plist=differs \(no alarm; restart may leave it unchanged if a rewrite check fails\)/);
+  assert.match(result.stdout, /PATH/, 'the differing free key must be named');
+  assert.match(result.stdout, /ProgramArguments/, 'the differing template part must be named');
   assert.doesNotMatch(result.stdout + result.stderr, /\/stale\//, 'no value may leak');
 
   const cleanupDb = openDb();

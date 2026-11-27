@@ -127,7 +127,7 @@ const POINTING_LITERAL_KEYS = ['CCMEM_DATA_ROOT', 'ANTHROPIC_BASE_URL', 'ANTHROP
 // CCMEM_DATA_ROOT 的同等待遇。其余指向类 key 仍只报 key 名。
 const POINTING_KEYS_WITH_VALUES = new Set(['CCMEM_DATA_ROOT', 'CCMEM_CONFIG_PATH']);
 
-export function evaluateGates(oldEnv, newEnv, { defaultDataRoot, probe }) {
+export function evaluateGates(oldEnv, newEnv, { defaultDataRoot, probe, claudeConfigured = true }) {
   // G1 —— key 非缩减。
   const removed = Object.keys(oldEnv).filter((key) => !(key in newEnv));
   if (removed.length) {
@@ -167,7 +167,7 @@ export function evaluateGates(oldEnv, newEnv, { defaultDataRoot, probe }) {
   // G4 —— 探针。新 env 没有 claude 可探时空过（正常路径已被 G1 拦下），
   // 但空过不得记成"探针通过"。
   const command = newEnv.CCMEM_CLAUDE_P_COMMAND;
-  if (command) {
+  if (command && claudeConfigured) {
     const probed = probe(command, newEnv);
     if (!probed.ok) {
       // 探针没能问成 ≠ 答案是"没有"。两者都拦（安全门失败关闭是对的），但报不同的码，

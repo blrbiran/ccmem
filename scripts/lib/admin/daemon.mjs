@@ -3,7 +3,7 @@ import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, re
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describeBackendState } from '../../daemon/backend-state.mjs';
+import { backendOrder, describeBackendState, preferredBackend } from '../../daemon/backend-state.mjs';
 import { clearStartHistory } from '../../daemon/crash-guard.mjs';
 import { isLockRowAlive } from '../../daemon/lock.mjs';
 import { loadConfig } from '../config.mjs';
@@ -364,9 +364,11 @@ function probeClaudeJsonSchemaSupport(command, daemonEnv, timeoutMs) {
   }
 
   if (result.status !== 0) {
+    const outcome = result.signal ? `was killed by ${result.signal}` : `exited ${result.status}`;
     return {
       ok: false,
-      reason: `resolved Claude Code binary at ${command} but capability check failed: \`claude -p --help\` exited ${result.status}`
+      indeterminate: true,
+      reason: `resolved Claude Code binary at ${command} but capability check did not complete: \`claude -p --help\` ${outcome}`
     };
   }
 
@@ -1139,8 +1141,12 @@ function rewritePlistIfAllowed() {
     return { written: false, blocked_by: 'unparsable', reason: 'the installed plist is not in a shape this build can read; leaving it alone' };
   }
 
+  const config = loadConfig();
+  // launchd may resolve a relative config path differently from this shell.
+  const relativeConfig = newEnv.env.CCMEM_CONFIG_PATH && !path.isAbsolute(newEnv.env.CCMEM_CONFIG_PATH);
   const verdict = evaluateGates(oldEnv.env, newEnv.env, {
     defaultDataRoot: getDataRoot(),
+    claudeConfigured: Boolean(relativeConfig) || preferredBackend(config) === 'claude' || backendOrder(config).includes('claude'),
     probe: (command, env) => probeClaudeJsonSchemaSupport(command, env, PLIST_PROBE_TIMEOUT_MS)
   });
   if (!verdict.ok) {

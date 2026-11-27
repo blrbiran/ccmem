@@ -953,7 +953,14 @@ try {
         // plist_drift.status is a four-value enum here (comparePlist's three plus
         // describePlistDrift's own 'not_installed'), not comparePlist's three —
         // print whatever it is rather than assuming one of three values.
-        const plistStatus = result.plist_drift?.status ?? 'unknown';
+        const drift = result.plist_drift;
+        const differences = [...new Set([
+          ...(drift?.added ?? []), ...(drift?.removed ?? []),
+          ...(drift?.benign_changed ?? []), ...(drift?.template_changed ?? [])
+        ])];
+        const plistStatus = drift?.status === 'in_sync' && differences.length > 0
+          ? `differs (no alarm; restart may leave it unchanged if a rewrite check fails): ${differences.join(', ')}`
+          : drift?.status ?? 'unknown';
         process.stdout.write(
           `ccmem: daemon alive pid=${result.pid} host=${result.hostname} heartbeat_ms=${result.heartbeat_age_ms} startup_schema=${result.startup_schema_version ?? 'unknown'} uptime_sec=${result.uptime_sec ?? 'unknown'} running=${running}${source} plist=${plistStatus}\n`
         );
@@ -968,23 +975,6 @@ try {
             ])
           ];
           process.stderr.write(`ccmem: plist drift detected; changed keys: ${changedKeys.join(', ')}\n`);
-        } else if (plistStatus === 'in_sync') {
-          // in_sync is the alarm axis, not byte equality: free keys and the
-          // template may still differ (an old node path, an old claude shim).
-          // Name them so "in_sync" is not read as "the plist is current".
-          const differing = [
-            ...new Set([
-              ...(result.plist_drift.added ?? []),
-              ...(result.plist_drift.removed ?? []),
-              ...(result.plist_drift.benign_changed ?? []),
-              ...(result.plist_drift.template_changed ?? [])
-            ])
-          ];
-          if (differing.length) {
-            process.stderr.write(
-              `ccmem: plist differs from what this shell would install (no alarm; the next restart rewrites it): ${differing.join(', ')}\n`
-            );
-          }
         }
       }
       process.stdout.write(`${formatLlmStatus(result.llm)}\n`);
@@ -1026,6 +1016,7 @@ try {
       process.exitCode = 1;
     } else if (result.status === 'restarted') {
       process.stdout.write(`ccmem: daemon restarted pid=${result.pid}\n`);
+      if (result.plist_rewrite?.blocked_by) process.exitCode = 3;
     } else if (result.status === 'installed') {
       const variant = result.variant ? ` (${result.variant})` : '';
       process.stdout.write(`ccmem: daemon installed${variant} ${result.plist_path}\n`);

@@ -67,7 +67,8 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 ### 1.最新 2026-11-27（Orca 会话 `ed65fdb8`）—— #525 与召回评估接手
 
 - `fix(admin): reject unknown top-level verbs` 已合入本地 main。未知 `admin` 子命令在开库前报用法并返回 64。README 补任务清理和 daemon 排障说明。观测提交 `889d1b7` 的隔离 `npm test` 由实施席报告 1164 项全过；控制器用 `env -u CCMEM_CONFIG_PATH CCMEM_INSTALL_NODE_PATH=/usr/local/bin/node NODE_OPTIONS=--no-warnings sh scripts/run-tests.sh tests/integration/admin-diagnose-command.test.mjs` 独立复验 41/41。旧语料错误的堆栈仍待处理。生产库、daemon 与 LaunchAgent 未改。
-- #566/#576 先明确实际注入的 ID、agent 与路径归因。#571 保留词法冒烟检查，另建冻结语料与人工相关性标签的离线判据，分别量候选、门控、实际注入。#573/#574 作为公开数据与对照口径的设计输入。#572 可用本机 magpie 归档量传输与成本，真实回答收益需另立对照。#575/#578 的 Orca bundle 与 hooks 按各自路径分析，不能把整包 ID 当成单条使用证据。
+- **#566** 已合入 `fix(injection): record the memory IDs rendered for each prompt (#566)`。检索段按实际渲染 ID 计入反馈与分数。稳定段去重保留会话中途新增、尚未内联的记忆。隔离 `npm test` 在源码观测提交 `4f7ec78` 通过 1166 项，0 跳过。日志 `/tmp/ccmem-566-commit.x4dAFZ`。文件送达只能作为已渲染的证据，#576 的 agent 与路径归因仍待做。
+- #571 保留词法冒烟检查，另建冻结语料与人工相关性标签的离线判据，分别量候选、门控、实际注入。#573/#574 作为公开数据与对照口径的设计输入。#572 可用本机 magpie 归档量传输与成本，真实回答收益需另立对照。#575/#578 的 Orca bundle 与 hooks 按各自路径分析，不能把整包 ID 当成单条使用证据。
 - #569 原地覆盖正文是独立的数据保留问题，优先设计保留原文与可恢复的合并。#567 去重、#568 到期、#577/#579 适配覆盖分别处理。#453 仍默认关。#524 生产部署仍按下文演练和核验。
 
 ### 1.上一轮 2026-11-27（Orca 会话 `862140e4`）—— Codex 钩子可达性与 daemon 重启诊断

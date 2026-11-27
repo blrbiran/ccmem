@@ -64,7 +64,13 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.最新 2026-11-27（Orca 会话 `51784279`）—— #524 重复 FTS 触发器
+### 1.最新 2026-11-27（Orca 会话 `862140e4`）—— Codex 钩子可达性与 daemon 重启诊断
+
+- **#559**：`fix(diagnose): distinguish Codex subagents and continuation turns (#559)` 已合入。诊断按 session UUID 合并续写，单列子会话。只扫描原有的日期范围，范围内较旧的根文件只用于识别子会话。hooks-off 只取最新 rollout 的明确证据。尚待测试者复核真实 Codex 现场读数。
+- **#532**：`fix(daemon): report blocked plist rewrites and scope the Claude probe (#532)` 已合入。Claude 主后端、备用后端或相对配置路径无法可靠解析时仍跑 G4。信号终止与非零退出记为 `G4_INDETERMINATE`。daemon 已重启但 plist 更新受阻时，CLI 返回 3 并报告原因。`status` 会报告差异但不启动探针。未新增强制跳过探针的选项。
+- 隔离验证 `CCMEM_INSTALL_NODE_PATH=/usr/local/bin/node NODE_OPTIONS=--no-warnings npm test`，观测提交 `77faaa3`，1163 项通过，0 跳过。日志 `/tmp/ccmem-532-combined.N3Wgjg`。本轮没有改生产数据库、LaunchAgent 或 daemon。
+
+### 1.上一轮 2026-11-27（Orca 会话 `51784279`）—— #524 重复 FTS 触发器
 
 - `fix(db): repair duplicate FTS triggers and report memory insert failures (#524)` 已集成本地 `main`。已有库用 `ccmem admin migrate` 显式修复。事务内检查 daemon 锁，备份后只移除定义匹配的旧触发器并重建 FTS，保留自定义触发器。schema 版本仍为 21。`admin diagnose` 报告异常触发器，抽取的真实 INSERT 失败会记录为任务失败并留下不含正文的审计。
 - `npm test` 在集成代码提交 `03a4fd2` 为 1157/1157，0 fail、0 skip。日志 `/tmp/ccmem-524-integrated.vT39mW`。全部验证使用隔离库。
@@ -336,7 +342,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-27，Orca 会话 `51784279`。人推动远端后现核 `main` 已含 #524。验证与待部署步骤见 §1.最新。Orca 集成状态见 Orca handoff §3.最新。#446 存量回填、#453 付费 A/B 和 #507 历史汇总仍待处理。
+2026-11-27，Orca 会话 `862140e4`。#559、#532 的集成与隔离验证见 §1.最新。#524 的部署仍按 §1.上一轮执行。召回评估讨论见 Orca handoff §3.最新及本文件 §6.5。#446 存量回填、#453 付费 A/B 和 #507 历史汇总仍待处理。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

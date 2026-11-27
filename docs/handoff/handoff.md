@@ -64,7 +64,13 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.最新 2026-11-26 凌晨（Orca 会话 tester-ledger-batch-70）—— #507 守卫/指标/保留、#452 关闭请求单列、#445 超时独立计量
+### 1.最新 2026-11-27（Orca 会话 `51784279`）—— #524 重复 FTS 触发器
+
+- `fix(db): repair duplicate FTS triggers and report memory insert failures (#524)` 已集成本地 `main`。已有库用 `ccmem admin migrate` 显式修复。事务内检查 daemon 锁，备份后只移除定义匹配的旧触发器并重建 FTS，保留自定义触发器。schema 版本仍为 21。`admin diagnose` 报告异常触发器，抽取的真实 INSERT 失败会记录为任务失败并留下不含正文的审计。
+- `npm test` 在集成代码提交 `03a4fd2` 为 1157/1157，0 fail、0 skip。日志 `/tmp/ccmem-524-integrated.vT39mW`。全部验证使用隔离库。
+- 部署待处理。先在生产副本演练并核验独立备份和回退，再暂停 daemon 与其他写入方，用支持 trigram FTS5 的 Node 执行 `ccmem admin migrate`，复核后再启动。回退前停所有库客户端，保留当前 DB、WAL、SHM，再验证预迁移快照。快照之后的新写入需另行保全。远端状态以 `git ls-remote` 为准。
+
+### 1.上一轮 2026-11-26 凌晨（Orca 会话 tester-ledger-batch-70）—— #507 守卫/指标/保留、#452 关闭请求单列、#445 超时独立计量
 
 - **#507**（`fix(daemon): deduplicate backfill and isolate task history (tester #507)`）：`enqueueVecBackfill` 统一启动与续队守卫（启动时不豁免任何行；续队只豁免当前 running 行），孤儿 running 行不再与主队列互相看不见；无 provider 或凭据缺失 ⇒ 结果带 `why:"no-provider"`、不续队；`llm_*` 指标只统计真正的生成任务（summarize/weekly/monthly/security/contradiction），`vec_backfill`／embed／维护不再计入；`reclaimOrphanedTasks` 把经过时间写进新列 `reclaimed_ms`、`duration_ms=0`，迁移 **021**（rollback 注释在文件头）。**没有自动删除**：新增 `ccmem admin tasks-prune --failed-days N --success-days N [--dry-run|--apply]`，默认 dry-run，`--apply` 先备份再删过期的 failed/success 行，`daily_maintenance` 不调用它。**迁移 021 尚未在生产库执行**；部署顺序仍是 stop daemon → `admin migrate` → start daemon，先备份。
 - **#452**（`fix(diagnose): report Codex sessions requesting hooks off (tester #452)`）：`codex_sessions_24h` 从 rollout 首行读 `features.hooks=false`（或 `config_overrides`），把「请求关闭」单列，不再混进「从未到达 hook」；有 hook 行的会话优先算已到。真实 Codex rollout 是否写这些字段只有 fixture 证据，待真会话复核。
@@ -330,7 +336,7 @@ shell 正则遇 NUL 可截成空模式；跑过扫描器 ≠ 有效检查，恒�
 
 ### 6.2 Orca 滚动状态（**本小节每轮就地整段替换，不许增长；只放指针**）
 
-2026-11-27，Orca 会话 `51784279`。§1.最新的 #507/#452/#445 仍成立。#524 已在隔离分支 `fix/issue-524-sqlite-fts-diagnostics` 提交，主题行 `fix(db): repair duplicate FTS triggers and report memory insert failures (#524)`。自动权限审查拒绝合入 main。补丁在 schema 21 用显式 `admin migrate` 备份并修复已知 legacy 触发器，保留自定义触发器。诊断与抽取 INSERT 失败可见。生产库未操作。部署前在副本验收并核验备份，停 daemon 后用支持 trigram FTS5 的 Node 执行迁移，复核后再启动。Orca 状态见 Orca handoff 最新节。#446 的存量回填、#453 付费 A/B、#507 历史汇总仍待处理。
+2026-11-27，Orca 会话 `51784279`。本地 `main` 已含 #524，验证与部署见 §1.最新。Orca 集成状态见 Orca handoff §3.最新。#446 存量回填、#453 付费 A/B 和 #507 历史汇总仍待处理。
 
 ## 6.5 用 magpie 测 ccmem 的 context 占用与 cache 影响（方法论；2026-11-10，Orca 会话 `3153bf70` 起草）
 

@@ -244,6 +244,13 @@ if (verb === 'admin' && args[0] == null) {
   process.exit(0);
 }
 
+const ADMIN_VERBS = ['daemon', 'migrate', 'tasks-prune', 'cron', 'llm', 'semantic', 'retrieval-check', 'diagnose', 'alias'];
+if (verb === 'admin' && !ADMIN_VERBS.includes(args[0])) {
+  process.stderr.write(`ccmem: unknown admin verb: ${args[0]}\n`);
+  process.stderr.write(`usage: ccmem admin <${ADMIN_VERBS.join('|')}>\n`);
+  process.exit(64);
+}
+
 if (verb === 'audit' && args[0] == null) {
   printHelp();
   process.exit(0);

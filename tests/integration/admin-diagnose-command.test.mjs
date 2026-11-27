@@ -34,6 +34,20 @@ const { recordMetric } = await import('../../scripts/lib/metrics.mjs');
 const { writeMetricsDailyRollup } = await import('../../scripts/lib/metrics-rollup.mjs');
 const { probeFile } = await import('../../scripts/daemon/tasks/embed-latency-probe.mjs');
 
+test('unknown top-level admin verb is rejected before opening the database', () => {
+  const result = spawnSync(NODE, [CLI, 'admin', '--', 'bogus'], {
+    cwd: diagnoseCwd,
+    env,
+    encoding: 'utf8'
+  });
+
+  assert.equal(result.status, 64);
+  assert.ok(result.stderr.endsWith(
+    'ccmem: unknown admin verb: bogus\nusage: ccmem admin <daemon|migrate|tasks-prune|cron|llm|semantic|retrieval-check|diagnose|alias>\n'
+  ));
+  assert.equal(existsSync(path.join(dataRoot, 'global.db')), false, 'rejecting bad input must not create/open the database');
+});
+
 function runDiagnoseFeedbackWithProbeFile(content, decisionContent) {
   writeFileSync(probeFile({}), content, 'utf8');
   writeFileSync(path.join(dataRoot, 'l25-probe.jsonl'), decisionContent, 'utf8');

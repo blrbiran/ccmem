@@ -92,7 +92,7 @@ ccmem admin daemon status
 ccmem admin diagnose
 ```
 
-`admin diagnose` reports an unhealthy FTS trigger set and exits nonzero. Stop the daemon, then run `ccmem admin migrate` to back up the database and repair the known legacy triggers transactionally.
+`admin diagnose` reports daemon liveness and database health. If the daemon is unavailable, inspect `ccmem admin daemon status` and `ccmem admin diagnose`; diagnose reports detected launchd or startup problems. The daemon stderr log is `daemon.err.log` under the data root (`$CCMEM_DATA_ROOT`, default `~/.claude/ccmem/`). If a restart is appropriate, run `ccmem admin daemon restart`. `diagnose --migrations` shows schema history and exits nonzero for unhealthy FTS triggers. For known legacy triggers or missing canonical triggers, stop the daemon and run `ccmem admin migrate`; it backs up the database and repairs those cases transactionally. An unrecognized trigger using a canonical name needs separate investigation.
 
 ### Promote or review memories
 
@@ -163,6 +163,14 @@ ccmem admin retrieval-check [--corpus <path>] [--k 1,3,5]
 `list` takes `--issues`, `--history N --task <type>` and `--verbose`; a type that never takes a lease
 (`summarize_pending`) reports its last run from the task rows themselves, not from an empty lease table. An unknown
 subcommand is refused with exit 64 and a usage line rather than exiting 0 in silence.
+
+Prune old task rows with explicit age limits. The command previews by default; `--apply` makes a database backup before deleting eligible rows:
+
+```bash
+ccmem admin tasks-prune --failed-days 30 --success-days 90
+ccmem admin tasks-prune --failed-days 30 --success-days 90 --apply
+```
+
 `retrieval-check` runs lexical retrieval against a corpus and reports recall and precision at the given cutoffs; it
 writes an audit row.
 

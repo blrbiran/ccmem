@@ -1503,13 +1503,18 @@ try {
         process.stdout.write(`Codex    : hooks installed, ${approved}\n`);
         // Tester #452: approved is not the same as running -- count the sessions the hooks never saw.
         const reach = result.codex_sessions_24h;
+        const subagents = reach.subagent_sessions ? `, ${reach.subagent_sessions} subagent sessions excluded` : '';
         if (reach.missed === null) {
           // Tester #452 (nit): with ccmem off or in shadow the hooks run but record no session, so
           // "never reached" would blame approval for what is only the mode.
-          process.stdout.write(`Codex    : last 24h ${reach.sessions} sessions; not checked against the ccmem hooks while ccmem mode is ${reach.mode} (hooks record no session then; ccmem mode active)\n`);
+          process.stdout.write(`Codex    : last 24h ${reach.sessions} sessions${subagents}; not checked against the ccmem hooks while ccmem mode is ${reach.mode} (hooks record no session then; ccmem mode active)\n`);
         } else {
-          const missed = reach.missed ? ' (check hook approval and the hook command)' : '';
-          process.stdout.write(`Codex    : last 24h ${reach.sessions} sessions, ${reach.hooks_off} requested hooks off for that run, ${reach.missed} never reached the ccmem hooks${missed}\n`);
+          const missed = reach.missed
+            ? hooks.approved < hooks.total
+              ? ' (check hook approval and the hook command)'
+              : ' (check the hook command and whether this session type runs hooks)'
+            : '';
+          process.stdout.write(`Codex    : last 24h ${reach.sessions} sessions${subagents}, ${reach.hooks_off} requested hooks off for that run, ${reach.missed} never reached the ccmem hooks${missed}\n`);
         }
       } else if (hooks.home_exists) {
         process.stdout.write('Codex    : ccmem hooks are not installed (ccmem install codex)\n');

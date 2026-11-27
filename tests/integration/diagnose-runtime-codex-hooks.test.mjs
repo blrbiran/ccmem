@@ -22,7 +22,7 @@ const dataRoot = mkdtempSync(path.join(tmpdir(), 'ccmem-diagnose-runtime-'));
 const codexHome = mkdtempSync(path.join(tmpdir(), 'ccmem-diagnose-codex-'));
 const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-diagnose-cwd-'));
 
-const env = { ...process.env, CCMEM_TEST_MODE: '1', CCMEM_DATA_ROOT: dataRoot, CODEX_HOME: codexHome };
+const env = { ...process.env, CCMEM_TEST_MODE: '1', CCMEM_DATA_ROOT: dataRoot, CCMEM_LAUNCHAGENT_DIR: path.join(dataRoot, 'launch-agents'), CODEX_HOME: codexHome };
 delete env.CCMEM_CONFIG_PATH;
 
 process.env.CCMEM_TEST_MODE = '1';
@@ -208,7 +208,7 @@ test('admin diagnose counts the last 24 h of Codex sessions that never reached t
     assert.match(out, /^Codex {4}: hooks installed, all approved$/m);
     // mutation: count every rollout file (drop the 24 h mtime filter) -> 5 sessions, red;
     // mutation: count sessions without the session_context lookup -> 0 or 4 missed, red
-    assert.match(out, /^Codex {4}: last 24h 4 sessions, 2 requested hooks off for that run, 1 never reached the ccmem hooks \(check hook approval and the hook command\)$/m);
+    assert.match(out, /^Codex {4}: last 24h 4 sessions, 2 requested hooks off for that run, 1 never reached the ccmem hooks \(check the hook command and whether this session type runs hooks\)$/m);
 
     // Tester #452 (nit): SessionStart writes no session_context while ccmem is off or in shadow, so the same four
     // sessions must not read as "never reached ... not approved"; the line names the mode instead.
@@ -225,6 +225,53 @@ test('admin diagnose counts the last 24 h of Codex sessions that never reached t
     try { setMode(modeDb, 'active'); } finally { modeDb.close(); }
     rmSync(path.join(codexHome, 'sessions'), { recursive: true, force: true });
   }
+});
+
+test('admin diagnose excludes subagent rollouts and recognizes continuation files (#559)', () => {
+  writeCodexHome({ approve: 3, quoted: true });
+  const now = new Date();
+  const day = path.join(codexHome, 'sessions', String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0'));
+  mkdirSync(day, { recursive: true });
+  const subagents = Array.from({ length: 19 }, (_, index) => `00000000-0000-7000-8000-${String(index + 1).padStart(12, '0')}`);
+  const users = [
+    '10000000-0000-7000-8000-000000000001',
+    '10000000-0000-7000-8000-000000000002',
+    '10000000-0000-7000-8000-000000000003'
+  ];
+  for (const [index, id] of subagents.entries()) {
+    const meta = index < 10
+      ? { type: 'session_meta', payload: { thread_source: 'guardian_review' } }
+      : { type: 'session_meta', payload: { source: { subagent: { name: `review-${index}` } } } };
+    writeFileSync(path.join(day, `rollout-2026-11-27T08-00-${String(index).padStart(2, '0')}-${id}.jsonl`), `${JSON.stringify(meta)}\n`);
+  }
+  const outsideWindowRollout = path.join(day, `rollout-2026-11-27T08-00-00-${subagents[0]}.jsonl`);
+  const outsideWindow = (Date.now() - 48 * 3600 * 1000) / 1000;
+  utimesSync(outsideWindowRollout, outsideWindow, outsideWindow);
+  const incompleteContinuation = path.join(day, `rollout-2026-11-27T08-59-00-${subagents[0]}_20000000-0000-7000-8000-000000000002.jsonl`);
+  writeFileSync(incompleteContinuation, '{');
+  const future = (Date.now() + 1000) / 1000;
+  utimesSync(incompleteContinuation, future, future);
+  const conflictingContinuation = path.join(day, `rollout-2026-11-27T09-04-00-${subagents[0]}_20000000-0000-7000-8000-000000000003.jsonl`);
+  writeFileSync(conflictingContinuation, '{"type":"session_meta","payload":{"thread_source":"user"}}\n');
+  utimesSync(conflictingContinuation, future + 1, future + 1);
+  writeFileSync(path.join(day, 'rollout-2026-11-27T09-03-00-20000000-0000-7000-8000-000000000001_dead.jsonl'), '{"type":"session_meta"}\n');
+  const userMeta = { type: 'session_meta', payload: { thread_source: 'user' } };
+  writeFileSync(path.join(day, `rollout-2026-11-27T09-00-00-${users[0]}.jsonl`), `${JSON.stringify(userMeta)}\n`);
+  writeFileSync(path.join(day, `rollout-2026-11-27T09-01-00-${users[1]}_20000000-0000-7000-8000-000000000004.jsonl`), `${JSON.stringify(userMeta)}\n`);
+  writeFileSync(path.join(day, `rollout-2026-11-27T09-02-00-${users[2]}.jsonl`),
+    '{"type":"session_meta","payload":{"thread_source":"user","features":{"hooks":false}}}\n');
+  const unfinishedUserTurn = path.join(day, `rollout-2026-11-27T09-05-00-${users[2]}_20000000-0000-7000-8000-000000000005.jsonl`);
+  writeFileSync(unfinishedUserTurn, '{');
+  utimesSync(unfinishedUserTurn, future, future);
+  const db = openDb();
+  try {
+    for (const id of users.slice(0, 2)) {
+      db.prepare(`INSERT INTO session_context (session_id, project_key, tool_calls, message_count, duration_ms, last_seq, updated_at, agent)
+        VALUES (?, 'p', 0, 0, 0, 0, ?, 'codex')`).run(id, Date.now());
+    }
+  } finally { db.close(); }
+  const out = execFileSync(NODE, [CLI, 'admin', '--', 'diagnose'], { cwd, env, encoding: 'utf8' });
+  assert.match(out, /^Codex {4}: last 24h 22 sessions, 19 subagent sessions excluded, 0 requested hooks off for that run, 1 never reached the ccmem hooks \(check the hook command and whether this session type runs hooks\)$/m);
 });
 
 test('admin diagnose says so when the Codex hooks are not installed at all', () => {

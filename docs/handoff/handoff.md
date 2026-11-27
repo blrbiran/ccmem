@@ -64,7 +64,13 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.最新 2026-11-27（Orca 会话 `862140e4`）—— Codex 钩子可达性与 daemon 重启诊断
+### 1.最新 2026-11-27（Orca 会话 `ed65fdb8`）—— #525 与召回评估接手
+
+- `fix(admin): reject unknown top-level verbs` 已合入本地 main。未知 `admin` 子命令在开库前报用法并返回 64。README 补任务清理和 daemon 排障说明。观测提交 `889d1b7` 的隔离 `npm test` 由实施席报告 1164 项全过；控制器用 `env -u CCMEM_CONFIG_PATH CCMEM_INSTALL_NODE_PATH=/usr/local/bin/node NODE_OPTIONS=--no-warnings sh scripts/run-tests.sh tests/integration/admin-diagnose-command.test.mjs` 独立复验 41/41。旧语料错误的堆栈仍待处理。生产库、daemon 与 LaunchAgent 未改。
+- #566/#576 先明确实际注入的 ID、agent 与路径归因。#571 保留词法冒烟检查，另建冻结语料与人工相关性标签的离线判据，分别量候选、门控、实际注入。#573/#574 作为公开数据与对照口径的设计输入。#572 可用本机 magpie 归档量传输与成本，真实回答收益需另立对照。#575/#578 的 Orca bundle 与 hooks 按各自路径分析，不能把整包 ID 当成单条使用证据。
+- #569 原地覆盖正文是独立的数据保留问题，优先设计保留原文与可恢复的合并。#567 去重、#568 到期、#577/#579 适配覆盖分别处理。#453 仍默认关。#524 生产部署仍按下文演练和核验。
+
+### 1.上一轮 2026-11-27（Orca 会话 `862140e4`）—— Codex 钩子可达性与 daemon 重启诊断
 
 - **#559**：`fix(diagnose): distinguish Codex subagents and continuation turns (#559)` 已合入。诊断按 session UUID 合并续写，单列子会话。只扫描原有的日期范围，范围内较旧的根文件只用于识别子会话。hooks-off 只取最新 rollout 的明确证据。尚待测试者复核真实 Codex 现场读数。
 - **#532**：`fix(daemon): report blocked plist rewrites and scope the Claude probe (#532)` 已合入。Claude 主后端、备用后端或相对配置路径无法可靠解析时仍跑 G4。信号终止与非零退出记为 `G4_INDETERMINATE`。daemon 已重启但 plist 更新受阻时，CLI 返回 3 并报告原因。`status` 会报告差异但不启动探针。未新增强制跳过探针的选项。

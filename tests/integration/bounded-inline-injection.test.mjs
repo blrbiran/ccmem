@@ -112,6 +112,22 @@ test('switch on: prompt submit inlines only the retrieved rows, within the retri
   assert.equal(none.additionalContext, '');
 });
 
+test('a matching memory saved after session start still reaches bounded inline output (#566)', async () => {
+  seed();
+  writeConfig({ inline_bounded: true });
+  await sessionStart();
+  const db = openDb();
+  try {
+    const { insertMemory } = await import('../../scripts/lib/cmd/save.mjs');
+    const content = 'saffron migration marker';
+    await insertMemory(db, { cwd: CWD, content, type: 'fact', pinned: 1, embedSync: false });
+    const { additionalContext } = await promptSubmit(content);
+    assert.match(additionalContext, /saffron migration marker/);
+  } finally {
+    db.close();
+  }
+});
+
 test('switch off (absent or false): both hooks emit exactly what they emit today', async () => {
   for (const injection of [null, { inline_bounded: false }]) {
     seed();

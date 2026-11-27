@@ -16,7 +16,7 @@ const HOOK = path.join(ROOT, 'scripts/hook.mjs');
 const { openDb } = await import('../../scripts/lib/db.mjs');
 const { callClaudeP } = await import('../../scripts/daemon/claude-p.mjs');
 const { getContextFilePath } = await import('../../scripts/lib/context-file.mjs');
-const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
+const { cmdSave, insertMemory: insertTestMemory } = await import('../../scripts/lib/cmd/save.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { handleSessionStart } = await import('../../scripts/handlers/session-start.mjs');
 const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submit.mjs');
@@ -49,6 +49,17 @@ async function saveProjectFact(content) {
       scope: 'project',
       type: 'fact'
     });
+  } finally {
+    db.close();
+  }
+}
+
+// Ruling (2026-11-27, #566): retrieval telemetry covers delivered rows. Keep the fixture out of
+// the stable section in tests that expect a per-prompt injection.
+async function saveRetrievedFact(content) {
+  const db = openDb();
+  try {
+    return await insertTestMemory(db, { cwd: process.cwd(), content, type: 'fact', tags: ['retrieval_only'], embedSync: false });
   } finally {
     db.close();
   }
@@ -117,7 +128,7 @@ function execPromptSubmitHook(input, extraEnv = {}) {
 }
 
 test('prompt-submit retrieves relevant memories and records recent injections', async () => {
-  const saved = await saveProjectFact('API routes live under /app/api');
+  const saved = await saveRetrievedFact('API routes live under /app/api');
 
   await handleSessionStart({ cwd: process.cwd(), session_id: 's-retrieval' });
   const result = await runPromptSubmit({
@@ -435,7 +446,7 @@ test('prompt-submit keeps session-scoped context files isolated across sessions'
 });
 
 test('prompt-submit infers previous negative feedback from a correction prompt', async () => {
-  const saved = await saveProjectFact('API routes live under /app/api');
+  const saved = await saveRetrievedFact('API routes live under /app/api');
 
   await runPromptSubmit({
     cwd: process.cwd(),
@@ -570,7 +581,7 @@ test('prompt-submit hook exits early for sessions blacklisted by daemon bridge c
 });
 
 test('prompt-submit hook ignores expired blacklisted sessions and proceeds normally', async () => {
-  await saveProjectFact('API routes live under /app/api');
+  await saveRetrievedFact('API routes live under /app/api');
   setStoredMode('active');
   const now = Date.now();
 
@@ -596,7 +607,7 @@ test('prompt-submit hook ignores expired blacklisted sessions and proceeds norma
 
 test('prompt-submit falls back to non-FTS retrieval when FTS5 is unavailable', async () => {
   await withEnv('CCMEM_DISABLE_FTS5', '1', async () => {
-    const saved = await saveProjectFact('Semantic fallback remembers API route handlers under /app/api');
+    const saved = await saveRetrievedFact('Semantic fallback remembers API route handlers under /app/api');
     await handleSessionStart({ cwd: process.cwd(), session_id: 's-no-fts' });
 
     const result = await runPromptSubmit({
@@ -625,6 +636,7 @@ test('prompt-submit falls back to non-FTS retrieval when FTS5 is unavailable', a
 test('prompt-submit drops the stale retrieved block but keeps the stable section when retrieval is empty', async () => {
   const sessionId = 's-empty-1';
   await saveProjectFact('Existing context memory under /app/api');
+  await saveRetrievedFact('Per-prompt seed for app api');
   await runPromptSubmit({
     cwd: process.cwd(),
     session_id: sessionId,

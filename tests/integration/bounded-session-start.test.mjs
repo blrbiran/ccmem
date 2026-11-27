@@ -165,6 +165,9 @@ test('pinned rows of both scopes land', async () => {
 
 test('prompt submit keeps the stable section', async () => {
   const { db } = seed();
+  // #566: the stable project rule is retained once, alongside a distinct retrieved row.
+  const { insertMemory } = await import('../../scripts/lib/cmd/save.mjs');
+  await insertMemory(db, { cwd: CWD, content: `${PROMPT} methods`, type: 'fact', tags: ['retrieval_only'], embedSync: false });
   db.close();
 
   await captureStderr(() => handleSessionStart({ cwd: CWD, session_id: SESSION_ID }));
@@ -175,7 +178,7 @@ test('prompt submit keeps the stable section', async () => {
   assert.ok(result._metricFields.matched > 0, 'fixture must retrieve something');
   assert.match(text, /PINNED-MARKER/);
   assert.match(text, /=== ccmem: retrieved for current prompt ===/);
-  assert.match(text, /\[m\d+\] rule \| project zebrafish research notes/);
+  assert.match(text, /\[m\d+\] fact \| project tell me about the zebrafish research notes methods/);
   assert.ok(Buffer.byteLength(text, 'utf8') <= MAX_CONTEXT_FILE_BYTES);
   assert.ok(Buffer.byteLength(stableSectionOf(text), 'utf8') <= STABLE_SECTION_MAX_BYTES);
 

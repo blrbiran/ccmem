@@ -61,6 +61,24 @@ test('writeContextFile creates .ccmem/context.md with content hash header', () =
   }
 });
 
+test('writeContextFile reports only retrieved IDs rendered after stable deduplication and trimming (#566)', () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-context-file-'));
+  try {
+    const rows = makeRows(['Unique stable rule', 'Unique retrieved fact', 'x'.repeat(10000)]);
+    const options = { stableRows: [{ ...rows[0], scope: 'global', type: 'rule' }] };
+    const { result } = captureStderr(() => writeContextFile(cwd, rows, null, null, options));
+    const text = readFileSync(getContextFilePath(cwd), 'utf8');
+    assert.equal(text.split('Unique stable rule').length - 1, 1);
+    assert.match(text, /Unique retrieved fact/);
+    assert.deepEqual(result.retrievedIds, [2]);
+    const unchanged = captureStderr(() => writeContextFile(cwd, rows, null, null, options)).result;
+    assert.equal(unchanged.skipped, true);
+    assert.deepEqual(unchanged.retrievedIds, [2]);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('writeContextFile hash-gates unchanged content and returns existing file bytes', () => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'ccmem-context-file-'));
 

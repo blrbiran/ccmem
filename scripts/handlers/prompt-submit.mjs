@@ -77,6 +77,7 @@ export async function handlePromptSubmit(hookData) {
     let contextFileWritten = false;
     let contextFileBytes = 0;
     let inlineRetrieved = '';
+    let injectedRows = useFileBased ? [] : rows;
 
     if (useFileBased) {
       try {
@@ -92,10 +93,23 @@ export async function handlePromptSubmit(hookData) {
           process.stderr.write(`ccmem: llm proposal lookup failed (${error.message})\n`);
         }
         if (rows.length || stableRows.length || notice) {
-          const result = writeContextFile(hookData.cwd, rows, hookData.session_id, db, { stableRows, projectKey, notice });
+          let deliveredStableIds = null;
+          if (inlineBounded) {
+            const delivered = db.prepare(`SELECT mem_ids FROM recent_injections
+              WHERE session_id = ? AND inject_source = 'session_start' ORDER BY id DESC LIMIT 1`).get(hookData.session_id ?? '');
+            try {
+              const ids = JSON.parse(delivered?.mem_ids ?? '[]');
+              deliveredStableIds = new Set(Array.isArray(ids) ? ids : []);
+            } catch {
+              deliveredStableIds = new Set();
+            }
+          }
+          const result = writeContextFile(hookData.cwd, rows, hookData.session_id, db, { stableRows, projectKey, notice, deliveredStableIds });
           contextFileWritten = result.written;
           contextFileBytes = result.bytes;
           inlineRetrieved = result.retrievedText;
+          const delivered = new Set(result.retrievedIds);
+          injectedRows = rows.filter((row) => delivered.has(row.id));
         } else {
           contextFileBytes = clearContextFile(hookData.cwd, hookData.session_id, db);
         }
@@ -105,8 +119,8 @@ export async function handlePromptSubmit(hookData) {
       }
     }
 
-    if (hookData.session_id && rows.length && !disableScopeIsolation) {
-      const injectedIds = rows.map((row) => row.id);
+    if (hookData.session_id && injectedRows.length && !disableScopeIsolation) {
+      const injectedIds = injectedRows.map((row) => row.id);
       const promptIdx = getNextPromptIdx(db, hookData.session_id);
       writeRecentInjection(
         db,
@@ -115,7 +129,7 @@ export async function handlePromptSubmit(hookData) {
         'user_prompt_submit',
         injectedIds,
         retrieval.timing
-          ? rows.map((row) => ({
+          ? injectedRows.map((row) => ({
               id: row.id,
               fts: Number((row.score?.fts ?? 0).toFixed(3)),
               jac: Number((row.score?.jaccard ?? 0).toFixed(3)),

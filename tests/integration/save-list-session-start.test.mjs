@@ -71,7 +71,7 @@ const { openDb } = await import('../../scripts/lib/db.mjs');
 const { callClaudeP } = await import('../../scripts/daemon/claude-p.mjs');
 const { cmdExport } = await import('../../scripts/lib/cmd/export.mjs');
 const { cmdImport } = await import('../../scripts/lib/cmd/import.mjs');
-const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
+const { cmdSave, insertMemory } = await import('../../scripts/lib/cmd/save.mjs');
 const { cmdList } = await import('../../scripts/lib/cmd/list.mjs');
 const { setMode } = await import('../../scripts/lib/mode.mjs');
 const { handlePromptSubmit } = await import('../../scripts/handlers/prompt-submit.mjs');
@@ -364,7 +364,8 @@ test('cli show prints recent injection history when scores are present', async (
      VALUES ('embedding.enabled', 'true', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at`
   ).run(Date.now());
-  const saved = await cmdSave(db, { cwd: process.cwd(), content: 'Show history memory', scope: 'project' });
+  // #566: this memory must be delivered through the scored retrieval section.
+  const saved = await insertMemory(db, { cwd: process.cwd(), content: 'Show history memory', scope: 'project', tags: ['retrieval_only'] });
   db.close();
 
   await handlePromptSubmit({

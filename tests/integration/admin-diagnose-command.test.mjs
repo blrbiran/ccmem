@@ -23,7 +23,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const CLI = path.join(ROOT, 'scripts/cli.mjs');
 
 const { openDb } = await import('../../scripts/lib/db.mjs');
-const { cmdSave } = await import('../../scripts/lib/cmd/save.mjs');
+const { cmdSave, insertMemory } = await import('../../scripts/lib/cmd/save.mjs');
 const { cmdAdminAlias } = await import('../../scripts/lib/admin/alias.mjs');
 const { cmdAdminDiagnose } = await import('../../scripts/lib/admin/diagnose.mjs');
 const { fallbackProjectKey } = await import('../../scripts/lib/project-key.mjs');
@@ -497,6 +497,8 @@ test('cli admin diagnose --sessions reflects hook-produced session diagnostics',
     scope: 'project',
     type: 'fact'
   });
+  // #566: a stable memory and a per-prompt memory arrive through separate sections.
+  const retrieved = await insertMemory(db, { cwd: diagnoseCwd, content: 'Extra app api route guidance', type: 'fact', tags: ['retrieval_only'], embedSync: false });
   db.close();
 
   await handleSessionStart({ cwd: diagnoseCwd, session_id: 's-hook' });
@@ -514,7 +516,7 @@ test('cli admin diagnose --sessions reflects hook-produced session diagnostics',
 
   assert.match(output, /ccmem: sessions 1/);
   assert.match(output, /session s-hook msgs=0 tools=0 duration_ms=0 last_seq=0/);
-  assert.match(output, new RegExp(`inject prompt=1 source=user_prompt_submit mems=${projectMem.id}`));
+  assert.match(output, new RegExp(`inject prompt=1 source=user_prompt_submit mems=${retrieved.id}`));
   assert.match(output, new RegExp(`inject prompt=0 source=session_start mems=${globalMem.id},${projectMem.id}`));
 });
 

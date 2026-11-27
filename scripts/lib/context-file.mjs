@@ -372,19 +372,21 @@ export function boundedInlineContext(sections, fallback) {
 // stableIds in the result are the stable rows that actually landed in the
 // file (after the byte cap), for injection telemetry. stableText and
 // retrievedText are the capped sections as written, for inline injection.
-export function writeContextFile(cwd, rows, sessionId = null, db = null, { stableRows = null, projectKey = null, notice = null } = {}) {
+export function writeContextFile(cwd, rows, sessionId = null, db = null, { stableRows = null, projectKey = null, notice = null, deliveredStableIds = null } = {}) {
   const dir = getContextDir(cwd);
   mkdirSync(dir, { recursive: true });
 
   const filePath = getContextFilePath(cwd, sessionId);
   const stable = buildStableSection(projectKey, stableRows);
-  const truncated = truncateRows(rows, stable.text, notice);
+  const stableIds = new Set(deliveredStableIds === null ? stable.ids : stable.ids.filter((id) => deliveredStableIds.has(id)));
+  const truncated = truncateRows(rows.filter((row) => !stableIds.has(row.id)), stable.text, notice);
   if (truncated.notices > 0) {
     process.stderr.write(`ccmem: ${contextFileName(sessionId)} exceeded ${RETRIEVED_MAX_BYTES}B, trimmed to ${truncated.rows.length} mems\n`);
   }
 
   const sections = {
     stableIds: stable.ids,
+    retrievedIds: truncated.rows.map((row) => row.id),
     stableText: stable.text,
     retrievedText: truncated.rows.length ? renderRetrievedBlock(truncated.rows) : ''
   };

@@ -19,6 +19,7 @@ import { cmdOrcaOutcomeList, cmdOrcaOutcomeUpsert, OrcaOutcomeInputError, parseO
 import { cmdPin } from './lib/cmd/pin.mjs';
 import { cmdPromote } from './lib/cmd/promote.mjs';
 import { cmdResurrect } from './lib/cmd/resurrect.mjs';
+import { cmdRevert } from './lib/cmd/revert.mjs';
 import { cmdSave } from './lib/cmd/save.mjs';
 import { cmdShow } from './lib/cmd/show.mjs';
 import { cmdStats } from './lib/cmd/stats.mjs';
@@ -54,6 +55,7 @@ function printHelp() {
     '  list [query] [--limit N] [--offset N] [--json] [--scope project|global|all] [--quarantined] [--never-injected] [--days N] [--score]\n' +
     '  show <id>\n' +
     '  forget <id>             archive a memory: never retrieved or injected again; audited\n' +
+    '  revert <id>             undo a current weekly synthesis merge and restore its source memories\n' +
     '  pin <id> [--remove]     pin a memory so decay never takes it\n' +
     '  export --json [--scope global|project]\n' +
     '  import <file>\n' +
@@ -299,7 +301,7 @@ if (verb === 'show' && args.find((arg) => !arg.startsWith('--')) == null) {
   process.exit(0);
 }
 
-if ((verb === 'forget' || verb === 'pin') && args.find((arg) => !arg.startsWith('--')) == null) {
+if ((verb === 'forget' || verb === 'pin' || verb === 'revert') && args.find((arg) => !arg.startsWith('--')) == null) {
   printHelp();
   process.exit(0);
 }
@@ -309,7 +311,7 @@ if (verb === 'promote' && args.find((arg) => !arg.startsWith('--')) == null) {
   process.exit(0);
 }
 
-if (['show', 'forget', 'pin', 'promote'].includes(verb)) {
+if (['show', 'forget', 'pin', 'promote', 'revert'].includes(verb)) {
   const rawId = args.find((arg) => !arg.startsWith('--'));
   if (parseMemoryId(rawId) == null) {
     process.stderr.write(`ccmem: invalid memory id '${rawId}' (expected 123 or m123)\n`);
@@ -388,7 +390,7 @@ if (verb === 'admin' && args[0] === 'diagnose') {
   // handled below.
 }
 
-if (!['save', 'list', 'show', 'forget', 'pin', 'export', 'import', 'orca-correction', 'orca-outcome', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect', 'install', 'uninstall'].includes(verb)) {
+if (!['save', 'list', 'show', 'forget', 'pin', 'revert', 'export', 'import', 'orca-correction', 'orca-outcome', 'mode', 'audit', 'admin', 'stats', 'promote', 'resurrect', 'install', 'uninstall'].includes(verb)) {
   printHelp();
   process.exit(64);
 }
@@ -848,6 +850,18 @@ try {
       process.exitCode = 2;
     } else {
       process.stdout.write(`ccmem: forgot memory #m${result.id} (${result.scope} ${result.type}; archived, see ccmem audit show ${result.audit_id})\n`);
+    }
+  } else if (verb === 'revert') {
+    const id = positionalArgs()[0];
+    const result = cmdRevert(getDb(), { id });
+    if (result.status === 'not_found') {
+      process.stderr.write('ccmem: memory not found\n');
+      process.exitCode = 2;
+    } else if (result.status === 'unsupported') {
+      process.stderr.write(`ccmem: cannot revert memory #m${parseMemoryId(id)}: ${result.reason}\n`);
+      process.exitCode = 64;
+    } else {
+      process.stdout.write(`ccmem: reverted merge #m${result.id}; restored ${result.restoredIds.length} source memories\n`);
     }
   } else if (verb === 'pin') {
     const result = await cmdPin(getDb(), { id: positionalArgs()[0], remove: args.includes('--remove') });

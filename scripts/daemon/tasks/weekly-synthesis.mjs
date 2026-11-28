@@ -235,10 +235,10 @@ export function clusterBatchV2(batch, config) {
 
 async function applyMergedDuplicates(db, cluster, mergedDuplicates, fitToLimit, maxChars) {
   let mergedCount = 0;
-  const now = Date.now();
 
   for (const merged of mergedDuplicates) {
-    const sources = merged.source_ids.filter((id) => cluster.some((memory) => memory.id === id));
+    const clusterIds = new Set(cluster.map((memory) => memory.id));
+    const sources = [...new Set(merged.source_ids.filter((id) => clusterIds.has(id)))];
     if (sources.length < 2 || !merged.content) {
       continue;
     }
@@ -249,25 +249,72 @@ async function applyMergedDuplicates(db, cluster, mergedDuplicates, fitToLimit, 
     }
 
     const keepId = sources[0];
-    db.prepare(
-      `UPDATE memories
-       SET content = ?, updated_at = ?, last_touched_at = ?
-       WHERE id = ?`
-    ).run(content, now, now, keepId);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const placeholders = sources.map(() => '?').join(', ');
+      const rows = db.prepare(
+        `SELECT * FROM memories WHERE id IN (${placeholders}) ORDER BY id`
+      ).all(...sources);
+      const byId = new Map(rows.map((row) => [Number(row.id), row]));
+      const sourceRows = sources.map((id) => byId.get(id));
+      if (sourceRows.some((row) => !row || row.status !== 'active' || !['active', 'probation'].includes(row.decay_status))) {
+        db.exec('ROLLBACK');
+        continue;
+      }
 
-    for (const sourceId of sources.slice(1)) {
-      db.prepare(
+      const keep = byId.get(keepId);
+      const now = Date.now();
+      const version = Math.max(...sourceRows.map((row) => Number(row.version ?? 1))) + 1;
+      const roots = sourceRows.map((row) => {
+        const id = Number(row.root_id ?? row.id);
+        const root = id === Number(row.id)
+          ? row
+          : db.prepare('SELECT created_at FROM memories WHERE id = ?').get(id);
+        return { id, createdAt: Number(root?.created_at ?? row.created_at) };
+      }).sort((a, b) => a.createdAt - b.createdAt || a.id - b.id);
+      const versionRow = {
+        ...keep,
+        content,
+        status: 'active',
+        last_touched_at: now,
+        created_at: now,
+        updated_at: now,
+        version,
+        root_id: roots[0].id,
+        parent_id: keepId,
+        superseded_by: null
+      };
+      const columns = db.prepare('PRAGMA table_info(memories)').all().map((column) => column.name).filter((name) => name !== 'id');
+      const insert = db.prepare(
+        `INSERT INTO memories (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`
+      );
+      const insertedId = Number(insert.run(...columns.map((name) => versionRow[name] ?? null)).lastInsertRowid);
+
+      const supersede = db.prepare(
         `UPDATE memories
-         SET status = 'superseded', updated_at = ?
-         WHERE id = ?`
-      ).run(now, sourceId);
-    }
+         SET status = 'superseded', superseded_by = ?, updated_at = ?
+         WHERE id = ? AND status = 'active'`
+      );
+      for (const sourceId of sources) {
+        if (Number(supersede.run(insertedId, now, sourceId).changes) !== 1) {
+          throw new Error(`weekly synthesis source changed during merge: ${sourceId}`);
+        }
+      }
 
-    writeAudit(db, 'synthesis_dedup_merged', keepId, {
-      superseded_ids: sources.slice(1),
-      merged_content_excerpt: content.slice(0, 80)
-    });
-    mergedCount += 1;
+      writeAudit(db, 'synthesis_dedup_merged', insertedId, {
+        source_ids: sources,
+        superseded_ids: sources,
+        parent_id: keepId,
+        root_id: roots[0].id,
+        version,
+        merged_content_excerpt: content.slice(0, 80)
+      });
+      db.exec('COMMIT');
+      mergedCount += 1;
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
   }
 
   return mergedCount;

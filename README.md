@@ -101,7 +101,10 @@ ccmem promote 12
 ccmem promote 12 --global
 ccmem resurrect
 ccmem resurrect --quarantined | --alerts | --revalidation | --contradictions | --promote-candidates
+ccmem revert 42                 # undo a current weekly synthesis merge
 ```
+
+`revert` restores a current merged version's source memories and audits the action. It refuses a version that has a successor; merges made before schema 22 cannot be reconstructed.
 
 ### Export, import and audit
 

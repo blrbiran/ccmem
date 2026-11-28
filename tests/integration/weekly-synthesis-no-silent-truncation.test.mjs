@@ -105,8 +105,14 @@ test('merged duplicate: over-long is stored as its fitting rewrite', async () =>
       [JSON.stringify({ content: rewrite })]
     );
 
-    assert.equal(row(db, keep).content, rewrite);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM memories').get().n, 3, 'the accepted merge is a new version row');
+    assert.equal(row(db, keep).content, 'source one keeps output whole');
+    assert.equal(row(db, keep).status, 'superseded');
+    assert.equal(row(db, other).content, 'source two keeps exit codes');
     assert.equal(row(db, other).status, 'superseded');
+    const merged = db.prepare('SELECT content, status FROM memories WHERE id NOT IN (?, ?)').get(keep, other);
+    assert.equal(merged.content, rewrite);
+    assert.equal(merged.status, 'active');
     assert.deepEqual(rejectAudits(db), []);
   } finally {
     db.close();
@@ -198,6 +204,73 @@ test('an exhausted backend during the refine is thrown for a retry, not audited 
     assert.deepEqual(rejectAudits(db), [], 'an unanswered refine is not a rejection');
     assert.equal(row(db, keep).content, 'source one keeps output whole');
     assert.equal(row(db, other).status, 'active');
+  } finally {
+    db.close();
+  }
+});
+
+test('merged duplicate inserts one version and preserves every source row', async () => {
+  const db = openDb();
+  try {
+    const [keep, other] = seedSources(db);
+    const now = Date.now();
+    const third = Number(db.prepare(`INSERT INTO memories (
+      scope, project_key, type, content, pinned, source, trust_score, consolidation_depth,
+      status, decay_status, parent_ids, last_touched_at, created_at, updated_at, tags,
+      version, root_id
+    ) VALUES ('project', ?, 'fact', 'third source stays byte-identical', 1, 'tool_output', 0.8, 2,
+      'active', 'probation', '[6,7]', ?, ?, ?, '["third"]', 2, NULL)`).run(
+      PROJECT, now - 20, now - 30, now - 30
+    ).lastInsertRowid);
+
+    db.prepare('UPDATE memories SET created_at = ?, version = 1, root_id = NULL WHERE id = ?').run(now - 20, keep);
+    db.prepare('UPDATE memories SET created_at = ?, version = 4, root_id = ? WHERE id = ?').run(now - 40, other, other);
+    db.prepare('UPDATE memories SET created_at = ?, root_id = ? WHERE id = ?').run(now - 30, third, third);
+
+    const sources = [keep, other, third];
+    const before = db.prepare(`SELECT id, content, type, source, trust_score, consolidation_depth,
+      decay_status, parent_ids, created_at, last_touched_at, tags, version, root_id
+      FROM memories WHERE id IN (?, ?, ?) ORDER BY id`).all(...sources).map((item) => ({ ...item }));
+    const countBefore = db.prepare('SELECT COUNT(*) AS n FROM memories').get().n;
+    const mergeContent = 'Merged summary keeps every source available for recovery.';
+
+    await runWith(db, { merged_duplicates: [{ content: mergeContent, source_ids: sources }] });
+
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM memories').get().n, countBefore + 1);
+    assert.deepEqual(
+      db.prepare(`SELECT id, content, type, source, trust_score, consolidation_depth,
+        decay_status, parent_ids, created_at, last_touched_at, tags, version, root_id
+        FROM memories WHERE id IN (?, ?, ?) ORDER BY id`).all(...sources).map((item) => ({ ...item })),
+      before,
+      'all source contents and metadata remain byte-identical'
+    );
+
+    const merged = db.prepare(`SELECT id, content, type, source, trust_score, consolidation_depth,
+      decay_status, parent_ids, tags, version, root_id, parent_id, superseded_by, status
+      FROM memories WHERE id NOT IN (?, ?, ?)`).get(...sources);
+    assert.equal(merged.content, mergeContent);
+    assert.equal(merged.type, 'fact');
+    assert.equal(merged.source, 'auto_inferred');
+    assert.equal(merged.trust_score, 0.6);
+    assert.equal(merged.consolidation_depth, 0);
+    assert.equal(merged.decay_status, 'active');
+    assert.equal(merged.parent_ids, null);
+    assert.equal(merged.tags, '[]');
+    assert.equal(merged.version, 5);
+    assert.equal(merged.root_id, other, 'the oldest source root wins regardless of source order');
+    assert.equal(merged.parent_id, keep);
+    assert.equal(merged.superseded_by, null);
+    assert.equal(merged.status, 'active');
+    assert.deepEqual(
+      db.prepare('SELECT id, status, superseded_by FROM memories WHERE id IN (?, ?, ?) ORDER BY id').all(...sources).map((item) => ({ ...item })),
+      sources.map((id) => ({ id, status: 'superseded', superseded_by: merged.id })),
+      'every source points at the new version'
+    );
+    assert.deepEqual(
+      db.prepare("SELECT id FROM memories WHERE status = 'active' ORDER BY id").all().map((item) => item.id),
+      [merged.id],
+      'the merge alone remains visible to active-row readers'
+    );
   } finally {
     db.close();
   }

@@ -88,7 +88,7 @@ test('admin migrate publishes a pre-upgrade snapshot and is idempotent', (t) => 
   for (const file of existing) copyFileSync(path.join(root, 'global.db'), path.join(root, file));
   const result = cli('admin', 'migrate');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(version(), 21);
+  assert.equal(version(), 22);
   const names = backups();
   const added = names.filter((name) => !existing.includes(name));
   for (const name of existing) assert.ok(names.includes(name), `keeps ${name}`);
@@ -159,7 +159,7 @@ test('admin migrate completes on a version-18 store that already has a column a 
   db.close();
   const result = cli('admin', 'migrate');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(version(), 21);
+  assert.equal(version(), 22);
   const after = open();
   try {
     const columns = (table) => after.prepare(`SELECT name FROM pragma_table_info('${table}')`).all().map((row) => row.name);
@@ -317,5 +317,73 @@ test('migration 21 relabels old reclaimed age without changing ordinary task dur
     assert.equal(normal.reclaimed_ms, null);
   } finally {
     migrated.close();
+  }
+});
+
+test('migration 22 adds reversible synthesis lineage without rewriting existing memories', (t) => {
+  const { root, cli, version, open } = fixture(t);
+  const before = open();
+  before.exec(`BEGIN IMMEDIATE;
+    ALTER TABLE memories DROP COLUMN superseded_by;
+    ALTER TABLE memories DROP COLUMN parent_id;
+    ALTER TABLE memories DROP COLUMN root_id;
+    ALTER TABLE memories DROP COLUMN version;
+    DELETE FROM schema_migrations WHERE to_version = 22;
+    UPDATE schema_meta SET version = 21;
+    COMMIT;`);
+  const now = Date.now();
+  const originalId = Number(before.prepare(`INSERT INTO memories (
+    scope, type, content, source, trust_score, status, decay_status,
+    last_touched_at, created_at, updated_at
+  ) VALUES ('global', 'fact', 'preserve this source exactly', 'user_explicit', 0.7, 'active', 'active', ?, ?, ?)`)
+    .run(now, now, now).lastInsertRowid);
+  before.close();
+
+  assert.equal(version(), 21);
+  const migrated = cli('admin', 'migrate');
+  assert.equal(migrated.status, 0, migrated.stderr);
+  assert.equal(version(), 22);
+
+  const db = open();
+  try {
+    const columns = db.prepare(`SELECT name, type, "notnull" AS not_null, dflt_value FROM pragma_table_info('memories')`).all();
+    const byName = new Map(columns.map((column) => [column.name, column]));
+    assert.deepEqual(
+      ['version', 'root_id', 'parent_id', 'superseded_by'].map((name) => byName.get(name)?.type),
+      ['INTEGER', 'INTEGER', 'INTEGER', 'INTEGER']
+    );
+    assert.equal(byName.get('version').not_null, 1);
+    assert.equal(byName.get('version').dflt_value, '1');
+    for (const name of ['root_id', 'parent_id', 'superseded_by']) {
+      assert.equal(byName.get(name).not_null, 0, `${name} stays nullable for existing rows`);
+    }
+    assert.deepEqual(
+      { ...db.prepare('SELECT content, version, root_id, parent_id, superseded_by FROM memories WHERE id = ?').get(originalId) },
+      { content: 'preserve this source exactly', version: 1, root_id: null, parent_id: null, superseded_by: null }
+    );
+  } finally {
+    db.close();
+  }
+
+  const rollbackPath = path.join(root, 'rollback.db');
+  copyFileSync(path.join(root, 'global.db'), rollbackPath);
+  const rollback = new DatabaseSync(rollbackPath);
+  try {
+    rollback.exec(`BEGIN IMMEDIATE;
+      ALTER TABLE memories DROP COLUMN superseded_by;
+      ALTER TABLE memories DROP COLUMN parent_id;
+      ALTER TABLE memories DROP COLUMN root_id;
+      ALTER TABLE memories DROP COLUMN version;
+      DELETE FROM schema_migrations WHERE to_version = 22;
+      UPDATE schema_meta SET version = 21;
+      COMMIT;`);
+    assert.equal(rollback.prepare('SELECT version FROM schema_meta').get().version, 21);
+    assert.deepEqual(
+      rollback.prepare("SELECT name FROM pragma_table_info('memories') WHERE name IN ('version', 'root_id', 'parent_id', 'superseded_by') ORDER BY name").all(),
+      []
+    );
+    assert.equal(rollback.prepare('SELECT content FROM memories WHERE id = ?').get(originalId).content, 'preserve this source exactly');
+  } finally {
+    rollback.close();
   }
 });

@@ -64,7 +64,17 @@ nvm default 是 v22.23.4（**有 fts5**，ABI 127；人 2026-11-07 升级，Orca
 
 > 2026-10-18（Orca 会话 `a3b2a7a7`）把 §1.0／§1.1 的分支与操作流水压成结论；过程原文在 git 历史（§7）。
 
-### 1.最新 2026-11-27（Orca 会话 `ed65fdb8`）—— #525 与召回评估接手
+### 1.最新 2026-11-28（Orca 会话 `1cdb9811`）—— #569 合成合并改为版本化历史 + `ccmem revert`
+
+- `feat(synthesis): weekly synthesis keeps versioned history and a revert path (issue #569)` 与 `test(schema): latest schema is 22 after migration 022` 已合入本地 main（未推，push 由本会话统一做）。
+- **做法**：`applyMergedDuplicates` 不再原地覆盖 `keepId` 的正文，而是**插入一条新版本行**（`version = max(源版本)+1`、`root_id`＝簇内最早根、`parent_id = keepId`、`superseded_by = NULL`），所有源行只置 `status='superseded'`＋`superseded_by=新行`＋`updated_at`，正文一字不改。整个合并在一个 `BEGIN IMMEDIATE` 事务里，任何源行在合并中途变化都会回滚并抛错。审计 `synthesis_dedup_merged` 现在记 `source_ids`、`parent_id`、`root_id`、`version`（`affected_ids` 是新行）。
+- **迁移 022**（`scripts/migrations/022_reversible_synthesis_versions.sql`）：给 `memories` 加 `version`（NOT NULL DEFAULT 1）、`root_id`、`parent_id`、`superseded_by`；**不回写既有行**。回退 SQL 写在文件头（只在副本上、daemon 停时执行）。
+- **`ccmem revert <id>`**：对一条当前合并版本，把源行恢复为 `active`、本行置 `superseded`，写 `memory_reverted` 审计并重建该项目注入缓存。拒绝：非合并行、审计缺失/有歧义、源集合不再匹配（含 scope／project_key）、已有后继的版本、已归档或候选过期的目标——全部不改行。
+- **schema 现在是最新 22**：既有「最新版本 = 21」的判据已改为 22（`migration-016`、`migration-017`、`migration-v1-to-v2`、`unit/db`、`unit/self-restart`、`admin-diagnose-command`、`db-write-transaction-busy`）；`migration-017` 的 v16 降级夹具补上 022 的回退步骤，才能重放升级路径。
+- **门（现测）**：隔离全套 `npm test` **1174/1174，0 fail，0 skip**。**生产库未迁移、daemon 未重启、LaunchAgent 未动**；迁移 022 上生产仍按既有顺序：停 daemon → 备份 → `ccmem admin migrate` → 复核 → 启动。
+- **诚实边界**：`revert` 只还原「一簇合并 = 一条链」的最近一次合并，不做完整时间旅行；本机已发生的 66 次旧覆盖原文已丢，无法恢复。
+
+### 1.上一轮 2026-11-27（Orca 会话 `ed65fdb8`）—— #525 与召回评估接手
 
 - `fix(admin): reject unknown top-level verbs` 已合入本地 main。未知 `admin` 子命令在开库前报用法并返回 64。README 补任务清理和 daemon 排障说明。观测提交 `889d1b7` 的隔离 `npm test` 由实施席报告 1164 项全过；控制器用 `env -u CCMEM_CONFIG_PATH CCMEM_INSTALL_NODE_PATH=/usr/local/bin/node NODE_OPTIONS=--no-warnings sh scripts/run-tests.sh tests/integration/admin-diagnose-command.test.mjs` 独立复验 41/41。旧语料错误的堆栈仍待处理。生产库、daemon 与 LaunchAgent 未改。
 - **#566** 已合入 `fix(injection): record the memory IDs rendered for each prompt (#566)`。检索段按实际渲染 ID 计入反馈与分数。稳定段去重保留会话中途新增、尚未内联的记忆。隔离 `npm test` 在源码观测提交 `4f7ec78` 通过 1166 项，0 跳过。日志 `/tmp/ccmem-566-commit.x4dAFZ`。文件送达只能作为已渲染的证据，#576 的 agent 与路径归因仍待做。

@@ -170,7 +170,7 @@ test('FTS repair rechecks the daemon lock inside its own transaction after a sch
 
     assert.throws(() => ensureSchema(seam, { migrate: true }), /stop the running daemon/);
     assert.equal(transactions, 2);
-    assert.equal(db.prepare('SELECT version FROM schema_meta').get().version, 21);
+    assert.equal(db.prepare('SELECT version FROM schema_meta').get().version, 22);
     assert.equal(triggerExists(db, 'memories_ai'), true, 'an active daemon prevents the FTS repair');
   } finally {
     db.exec('DELETE FROM daemon_lock');
